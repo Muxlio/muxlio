@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "id": "muxlio-core_cmd_muxlio",
+      "path": "muxlio-core/cmd/muxlio"
+    },
+    {
+      "id": "muxlio-core_internal_artifacts",
+      "path": "muxlio-core/internal/artifacts"
+    },
+    {
+      "id": "muxlio-core_internal_plan",
+      "path": "muxlio-core/internal/plan"
+    },
+    {
+      "id": "muxlio-core_internal_state",
+      "path": "muxlio-core/internal/state"
+    },
+    {
+      "id": "muxlio-core_internal_workers",
+      "path": "muxlio-core/internal/workers"
+    },
+    {
+      "id": "muxlio-core_tests_conformance",
+      "path": "muxlio-core/tests/conformance"
+    }
+  ]
+}

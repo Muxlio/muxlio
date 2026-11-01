@@ -1,0 +1,24 @@
+{
+  "name": "muxlio",
+  "private": true,
+  "workspaces": [
+    "muxlio-sdk",
+    "muxlio-compiler",
+    "muxlio-testing",
+    "recipes"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "setup": "bash scripts/setup.sh",
+    "release": "bash scripts/release.sh",
+    "upgrade": "bash scripts/upgrade.sh",
+    "start:server": "bash scripts/start.sh server",
+    "start:ui": "bash scripts/start.sh ui",
+    "restart:server": "bash scripts/start.sh restart server",
+    "restart:ui": "bash scripts/start.sh restart ui"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}

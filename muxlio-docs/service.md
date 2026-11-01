@@ -1,0 +1,260 @@
+# Overnight Mac mini service
+
+The foreground `muxlio service start` command owns the coordinator, one outbound
+local worker, and the static UI on one port. launchd or Homebrew supervises that
+single process. It does not detach, invoke nohup, or launch another daemon.
+The service runs as your login user, never as root. Linux can use the same
+foreground command under a user systemd unit or another supervisor.
+
+## Build and install locally
+
+Requires Go matching `muxlio-core/go.mod` (currently 1.26). Runtime use requires
+neither Go nor Node nor a source checkout. Agent provider CLIs and the tools
+needed by the selected command adapter must separately be on PATH.
+
+```sh
+bash scripts/build-release.sh /private/tmp/muxlio-install
+/private/tmp/muxlio-install/bin/muxlio version
+# Install to a stable user prefix and make the CLI available in this shell:
+bash scripts/build-release.sh "$HOME/.local/muxlio"
+export PATH="$HOME/.local/muxlio/bin:$PATH"
+```
+
+The resulting prefix contains `bin/muxlio`, six compiled adapters under
+`libexec/muxlio/adapters` (`agent-claude`, `agent-codex`, `agent-cursor`,
+`agent-gemini-cli`, `agent-kiro`, and `command-go-test`), and UI assets under
+`share/muxlio/ui`. Copy the
+**whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
+removing or moving the checkout. Relative resource discovery uses the installed
+executable, never its build directory. No SDK is required to execute compiled
+plans. Use the SDK/compiler from a development checkout to author plans.
+
+For a local Homebrew formula, first create a source archive of this tree (not
+just HEAD: include the implemented files):
+
+```sh
+tar --exclude=.git --exclude=node_modules --exclude=.go-cache --exclude=.go-tmp \
+  --exclude=.bin --exclude=dist -czf /private/tmp/muxlio-source.tar.gz -C .. service-install
+export MUXLIO_SOURCE_ARCHIVE=/private/tmp/muxlio-source.tar.gz
+export MUXLIO_SOURCE_SHA256="$(shasum -a 256 "$MUXLIO_SOURCE_ARCHIVE" | cut -d ' ' -f 1)"
+brew tap-new local/muxlio
+cp packaging/homebrew/muxlio.rb "$(brew --repository)/Library/Taps/local/homebrew-muxlio/Formula/muxlio.rb"
+brew install --build-from-source local/muxlio/muxlio
+brew test local/muxlio/muxlio
+```
+
+These commands create only a local tap. The formula intentionally has **no
+published release URL or fabricated checksum**. A public tap needs an actual
+versioned source release, its verified checksum, and a formula referencing that
+release instead of the local archive environment variables. For release builds,
+run all tests below, build the prefix on each supported OS/architecture, archive
+that prefix, and record SHA-256 checksums of the actual archives. This template
+does not claim those releases or bottles already exist. No tap publication,
+deployment, or actual service installation was performed by this change.
+
+## Configure and start
+
+Create your authorized workspace and configuration before starting. Use absolute
+paths, and select only the adapters you intend to permit. The service is a native
+execution service for trusted users; a workspace is an execution target, **not a
+filesystem sandbox**. Any client that can reach the service can submit plans
+that invoke the advertised capabilities with your user permissions.
+
+```sh
+mkdir -p "$HOME/.muxlio/logs" "$HOME/.muxlio/workspaces/overnight"
+chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
+cat > "$HOME/.muxlio/config.json" <<EOF
+{
+  "workspace": "$HOME/.muxlio/workspaces/overnight",
+  "capabilities": ["agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command/go-test"],
+  "attemptTimeoutSeconds": 600
+}
+EOF
+chmod 600 "$HOME/.muxlio/config.json"
+muxlio service start
+```
+
+Native adapters run with `HOME` set to the operator's real home directory by
+default, so provider CLIs reuse existing login state already present there
+(e.g. `~/.claude`, `~/.codex`, `~/.cursor`, Gemini CLI config under your home). No extra configuration is needed if the agents
+are already logged in under your normal home.
+
+For **Cursor** on headless macOS hosts (SSH sessions, launchd user agents), the
+login keychain stays locked, so the `agent` CLI must not rely on keychain
+credentials. Log in once with on-disk credential storage:
+
+```sh
+AGENT_CLI_CREDENTIAL_STORE=file agent login
+```
+
+The muxlio worker injects `AGENT_CLI_CREDENTIAL_STORE=file` into every
+`agent/cursor` adapter environment (including when the coordinator runs under
+`muxlio service` or launchd); values from `~/.zshrc` are not inherited. The
+service does not unlock the keychain or change keychain lock settings.
+
+To isolate provider credentials in a **dedicated** directory instead, log in
+there once and set its absolute path as `agentHome` in config.json before
+starting the service:
+
+```sh
+mkdir -p "$HOME/.muxlio/agent-home"
+chmod 700 "$HOME/.muxlio/agent-home"
+HOME="$HOME/.muxlio/agent-home" codex login
+```
+
+This is a provider login command you run interactively yourself; the service
+does not run login or print credentials. For other providers use their login
+command with this same dedicated HOME. Native adapters then read that explicit
+credential directory instead of your real home. Required isolation always
+retains scratch HOME and does not mount provider credentials.
+
+Or run the installed absolute path when it is not on PATH. Keep the coordinator bound to loopback and use SSH forwarding for remote access. Client calls use `--token` or `MUXLIO_TOKEN`; remote workers use `--worker-token`, `--worker-token-file`, or `MUXLIO_WORKER_TOKEN`.
+
+After verifying foreground startup, Ctrl-C shuts it down. To opt in to Homebrew
+supervision yourself:
+
+```sh
+brew services start local/muxlio/muxlio
+brew services info local/muxlio/muxlio
+# Stop gracefully when needed:
+brew services stop local/muxlio/muxlio
+```
+
+Alternatively render `packaging/launchd/com.muxlio.service.plist.in`, replacing
+`__PREFIX__` and `__HOME__` with XML-escaped absolute paths; install it in your
+`~/Library/LaunchAgents` and use `launchctl bootstrap gui/$(id -u) PATH`.
+Choose one supervisor. The PID file `~/.muxlio/service.pid` is informational;
+an advisory lock prevents concurrent services sharing one runtime directory.
+launchd KeepAlive restarts after exit; interrupted effects are reconciled
+explicitly rather than silently re-executed. User LaunchAgents require a logged
+in user session after reboot. Configure the Mac mini's sleep/power and login
+settings separately; the application does not keep a sleeping Mac awake.
+
+Runtime layout: `~/.muxlio/data/coordinator.db`, `logs/` (including `service.log` and `service.error.log`), scratch `work/`, `artifacts/`, `bin/`, `libexec/muxlio/adapters/`, `share/muxlio/ui/`, `service.pid`, `service.lock`, `config.json`, and `env` (shell exports).
+Supervisor stdout/stderr go to `logs/service.log` and `logs/service.error.log`.
+Rotate these supervisor logs with your normal host log management. Adapter
+capture is bounded and explicit request secrets are redacted before persistence.
+
+Configuration fields also accept `runtimeDir`, `addr`, `adapters`, `ui`, and
+`agentHome`. To accept remote workers over a LAN or tailnet, set `addr` to a
+**specific** non-loopback host and port with matching `tlsCert` and `tlsKey` PEM
+paths (HTTPS on that address, plain HTTP on `127.0.0.1` with the same port). For
+plain HTTP on every local interface (for example `0.0.0.0:7600` or `[::]:7600`),
+use a wildcard `addr` without TLS; the API still requires the bearer token. Prefer
+TLS when the coordinator is reachable from untrusted networks.
+`--config PATH` or `MUXLIO_CONFIG` selects a configuration file.
+Environment overrides: `MUXLIO_HOME`, `MUXLIO_ADDR`, `MUXLIO_ADAPTERS`, `MUXLIO_UI`,
+`MUXLIO_WORKSPACE`, `MUXLIO_CAPABILITIES` (comma-separated), `MUXLIO_TLS_CERT`,
+`MUXLIO_TLS_KEY`, `MUXLIO_SERVER`, `MUXLIO_TOKEN`, `MUXLIO_CONFIG`. Explicit environment values override configuration.
+See the README Configuration section for the full field reference.
+
+Standalone commands remain available. For real standalone execution, explicitly
+select the project with `muxlio run plan.json input.json --adapters /path/to/adapters
+--workspace /absolute/authorized/project`; `MUXLIO_WORKSPACE` is also accepted.
+Standalone `server start` accepts its workspace through `MUXLIO_WORKSPACE` and
+is unauthenticated. Fake standalone runs require no workspace or provider
+authentication.
+
+## Submit tonight, check in the morning
+
+`plan.json` must be a compiled Plan IR envelope member, not a JavaScript recipe.
+The CLI sends the existing API envelope `{ "plan": ..., "input": ... }` and
+returns immediately after durable acceptance. Closing the client or SSH session
+does not cancel the server's work.
+
+```sh
+muxlio submit --server http://127.0.0.1:7600 plan.json input.json
+# Save the returned runId, then disconnect the client.
+muxlio status --server http://127.0.0.1:7600
+muxlio status --server http://127.0.0.1:7600 run_RETURNED_ID
+ muxlio pause --server http://127.0.0.1:7600 run_RETURNED_ID
+ muxlio resume --server http://127.0.0.1:7600 run_RETURNED_ID
+ muxlio cancel --server http://127.0.0.1:7600 run_RETURNED_ID
+curl --fail http://127.0.0.1:7600/healthz
+```
+
+The UI offers the same run controls. Pause takes effect at the next operation
+boundary; an already running operation is allowed to finish. Cancel stops
+local adapter processes when possible. A remote worker may continue an
+operation already assigned to it, so external side effects can occur after a
+run is marked cancelled. The event history can be followed over
+`GET /v1/runs/{id}/events/stream?after={sequence}` using Server-Sent Events;
+reconnect with the last received event ID to continue without replaying prior
+events.
+
+Visit the configured UI URL to inspect runs. The `/healthz` endpoint is public; all `/v1/*` routes require the Bearer token generated by `muxlio init`.
+
+For remote use, prefer SSH port forwarding (encrypted, no public bind):
+
+```sh
+ssh -N -L 17600:127.0.0.1:7600 mac-mini
+muxlio submit --server http://127.0.0.1:17600 plan.json input.json
+muxlio status --server http://127.0.0.1:17600
+```
+
+The API requires a Bearer token on `/v1/*` routes. The CLI attaches it automatically for loopback URLs from `~/.muxlio/config.json`; pass `--token` or set `MUXLIO_TOKEN` for forwarded ports. Do not expose the API directly to an untrusted network; use SSH forwarding or a trusted private network and firewall.
+
+## Recovery and limits
+
+Every accepted run pins immutable plan JSON and its verified canonical digest.
+Recovery checks those bytes, never a latest workflow definition. Queued work
+that has not been assigned is eligible for recovery; executions whose effects
+may already have happened are marked for manual reconciliation. This is not an
+exactly-once guarantee for arbitrary external systems. Old assignment epochs
+and generations are fenced; identical completion retries are acknowledged.
+
+Attempts time out (default ten minutes), kill their process group, and can use
+the plan's configured fallback executors. Automatic retries require the existing
+effect policy; use `retry.maxAttempts`, `backoffSeconds`, `maxBackoffSeconds` to
+control retries. Backoff for provider throttling is bounded. Timeout cannot undo
+external effects: choose retries/fallback only for work whose effects tolerate
+them. `effect: "retryable"` authorizes repeating effects; omitted effect preserves
+the legacy retry contract. `manual`, `none`, `reconcile` and `idempotency-key`
+disable automatic retry/fallback: this runtime does not pretend to implement
+reconciliation or external idempotency keys. At most 100 attempts are accepted.
+Remote workers reconnect and re-register; capacity is currently one active
+execution per worker loop despite larger advertised capacity.
+
+Native child processes run with a minimal environment but `HOME` set to the
+operator's real home directory, so they inherit existing provider login state
+(e.g. `~/.codex`, `~/.cursor`) by default; set a dedicated `agentHome` to use a
+separate credential directory instead. Required isolation always uses scratch
+HOME and does not mount provider credentials. Other host secrets and
+environment values are still not inherited. The worker protocol's explicit
+request secret policy filters propagated secrets; there is no automatic host
+secret lookup or secret forwarding from environment values. Providers using OS
+keychains or environment-only credentials may require an audited custom
+adapter. This feature does not claim automatic desktop credential forwarding.
+Required unsupported macOS VM isolation fails closed. Native trusted execution
+does not promise network/filesystem containment. Back up the SQLite database
+using SQLite-aware tooling; retention, quotas, multi-tenant authorization and
+automatic side-effect reconciliation remain outside this scope.
+
+Attempt start/finish events are persisted while work runs; captured log chunks
+are published on attempt completion, not streamed live. A missed lease or
+coordinator restart can make a real external effect uncertain; the service
+holds that work for manual reconciliation rather than replaying it. Fake
+adapters cover the service contract; this feature has not exercised paid agent
+providers or real provider login flows. `command/go-test` defaults to the
+authorized workspace root; set `params.cwd` for a nested Go module.
+
+## Verification
+
+```sh
+(cd muxlio-core && go test ./...)
+(cd muxlio-adapters && go test ./...)
+npm run build
+npm test
+npm --prefix muxlio-ui run smoke
+bash scripts/build-release.sh /private/tmp/muxlio-install
+python3 scripts/verify-install.py /private/tmp/muxlio-install
+```
+
+For runtime compiler imports in isolated worktrees with shared dependencies,
+`node --loader ./scripts/workspace-loader.mjs ...` resolves local built workspace
+packages without changing node_modules. TypeScript builds use local SDK types.
+Run `npm run build` before Go tests to include the real async compiler regression.
+
+Tests use temporary runtimes, ephemeral loopback ports and fake adapters. They
+do not install a service or control any existing coordinator. See `notes.md`
+for the exact results and any environment restrictions from this implementation.

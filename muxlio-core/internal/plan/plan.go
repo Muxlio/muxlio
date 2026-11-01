@@ -1,0 +1,292 @@
+// Package plan defines the Muxlio Plan IR: the immutable, content-addressed
+// workflow definition that the Go coordinator interprets. The IR is the
+// canonical contract between the TypeScript authoring frontends and the Go
+// execution engine. No JavaScript reaches the coordinator.
+//
+// IR v1.0 supports: execute, map, branch, loop, join, wait, child, project.
+package plan
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+)
+
+// Plan is an immutable compiled workflow definition.
+type Plan struct {
+	sourceJSON  json.RawMessage
+	sourceTyped []byte
+	// IRVersion is the Plan IR version this document conforms to.
+	IRVersion string `json:"irVersion"`
+
+	// Name is the human-readable workflow name.
+	Name string `json:"name"`
+
+	// Root names the entry subgraph within Subgraphs. Defaults to "root".
+	Root string `json:"root"`
+
+	// InputSchema is a JSON Schema describing the run input contract.
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+
+	// OutputSchema is a JSON Schema describing the run output contract.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+
+	// Subgraphs maps named subgraphs. The root subgraph (key Plan.Root)
+	// is the entry point; its output is the run output.
+	Subgraphs map[string]Subgraph `json:"subgraphs"`
+
+	// RequiredExecutors lists executor capabilities the plan needs.
+	RequiredExecutors []string `json:"requiredExecutors,omitempty"`
+
+	// Digest is the content digest of the canonical IR JSON, set by
+	// the compiler or ComputeDigest. Plans with the same digest are
+	// identical.
+	Digest string `json:"digest,omitempty"`
+}
+
+// Subgraph is a named collection of nodes with an output projection.
+type Subgraph struct {
+	// Nodes are the nodes in this subgraph, processed in dependency order.
+	Nodes []Node `json:"nodes"`
+
+	// Output maps output port names to bindings. The root subgraph's
+	// output is the run output.
+	Output map[string]Binding `json:"output,omitempty"`
+}
+
+// Node is a single step or control-flow construct within a subgraph.
+type Node struct {
+	// ID is the stable node identifier within its subgraph. Used in
+	// value references and activation identity.
+	ID string `json:"id"`
+
+	// Kind selects the node semantics: execute, map, branch, loop,
+	// join, wait, child, project.
+	Kind string `json:"kind"`
+
+	// --- execute ---
+
+	// Executor names the executor capability, e.g. "agent/claude".
+	Executor          string            `json:"executor,omitempty"`
+	ExecutorVersion   string            `json:"executorVersion,omitempty"`
+	PlacementLabels   map[string]string `json:"placementLabels,omitempty"`
+	FallbackExecutors []string          `json:"fallbackExecutors,omitempty"`
+
+	// Task is the natural-language or structured task description.
+	Task string `json:"task,omitempty"`
+
+	// Params is arbitrary JSON data passed to the executor.
+	Params json.RawMessage `json:"params,omitempty"`
+
+	// Inputs maps input names to bindings resolved before execution.
+	Inputs map[string]Binding `json:"inputs,omitempty"`
+
+	// Outputs declares named output ports and their file contracts.
+	Outputs map[string]OutputDecl `json:"outputs,omitempty"`
+
+	// --- map ---
+
+	// Items is an expression evaluating to the collection to fan out over.
+	Items *Expr `json:"items,omitempty"`
+
+	// Key is an expression evaluating to a unique, stable key per item.
+	Key *Expr `json:"key,omitempty"`
+
+	// Concurrency limits parallel item processing.
+	Concurrency *int `json:"concurrency,omitempty"`
+
+	// MaxItems caps the collection size.
+	MaxItems *int `json:"maxItems,omitempty"`
+
+	// BodyRef names the subgraph invoked once per collection item.
+	BodyRef string `json:"bodyRef,omitempty"`
+
+	// --- branch ---
+
+	// Condition is a pure predicate expression.
+	Condition *Expr `json:"condition,omitempty"`
+
+	// ThenRef names the subgraph executed when Condition is true.
+	ThenRef string `json:"thenRef,omitempty"`
+
+	// ElseRef names the subgraph executed when Condition is false.
+	ElseRef string `json:"elseRef,omitempty"`
+
+	// --- loop ---
+
+	// While is a predicate evaluated before each iteration.
+	While *Expr `json:"while,omitempty"`
+
+	// InitState is the initial loop-carried state value.
+	InitState *Expr `json:"initState,omitempty"`
+
+	// MaxIterations caps the number of loop iterations.
+	MaxIterations *int `json:"maxIterations,omitempty"`
+
+	// StateRef names the port on the body subgraph output that becomes
+	// the next iteration's state. If empty, the body output is used
+	// directly.
+	StateRef string `json:"stateRef,omitempty"`
+
+	// OnExhausted selects behaviour when MaxIterations is reached while
+	// While is still true: "pause" (resumable) or "fail".
+	OnExhausted string `json:"onExhausted,omitempty"`
+
+	// --- child ---
+
+	// ChildRef names the subgraph invoked by a child node.
+	ChildRef string `json:"childRef,omitempty"`
+
+	// MaxDepth bounds recursive child invocations of the same subgraph.
+	MaxDepth *int `json:"maxDepth,omitempty"`
+
+	// --- retry / effect policy ---
+
+	Retry *RetryPolicy `json:"retry,omitempty"`
+
+	// --- wait ---
+
+	// WaitFor selects the wait condition type: "timer" or "signal".
+	WaitFor string `json:"waitFor,omitempty"`
+
+	// TimerSeconds is the duration in seconds for a timer wait.
+	TimerSeconds *float64 `json:"timerSeconds,omitempty"`
+
+	// SignalName is the name of the signal to wait for.
+	SignalName string `json:"signalName,omitempty"`
+}
+
+// OutputDecl declares a named output port and its file contract.
+type OutputDecl struct {
+	// Mime is the expected MIME type of the output.
+	Mime string `json:"mime,omitempty"`
+
+	// Path is the expected file name within the executor's output dir.
+	Path string `json:"path,omitempty"`
+
+	// Schema is an optional JSON Schema for structured JSON output ports.
+	Schema json.RawMessage `json:"schema,omitempty"`
+}
+
+// RetryPolicy defines retry behaviour for an execute node.
+type RetryPolicy struct {
+	MaxAttempts       int     `json:"maxAttempts,omitempty"`
+	Effect            string  `json:"effect,omitempty"` // retryable, idempotency-key, reconcile, manual, none
+	BackoffSeconds    float64 `json:"backoffSeconds,omitempty"`
+	MaxBackoffSeconds float64 `json:"maxBackoffSeconds,omitempty"`
+}
+
+// Binding is either a reference to another node's output port or a
+// computed expression. Exactly one of Ref or Expr should be non-nil.
+type Binding struct {
+	Ref  *ValueRef `json:"ref,omitempty"`
+	Expr *Expr     `json:"expr,omitempty"`
+}
+
+// ValueRef references a specific node's output port within the current
+// scope. The scope is determined by the referencing node's position in
+// the activation tree.
+type ValueRef struct {
+	Node string `json:"node"`
+	Port string `json:"port"`
+}
+
+// Resolve evaluates the binding against the given evaluation context.
+func (b *Binding) Resolve(ctx *EvalContext) (any, error) {
+	if b == nil {
+		return nil, nil
+	}
+	if b.Ref != nil {
+		nodeOut, ok := ctx.Outputs[b.Ref.Node]
+		if !ok {
+			return nil, fmt.Errorf("muxlio: no outputs for node %q", b.Ref.Node)
+		}
+		val, ok := nodeOut[b.Ref.Port]
+		if !ok {
+			return nil, fmt.Errorf("muxlio: no output port %q on node %q", b.Ref.Port, b.Ref.Node)
+		}
+		return val, nil
+	}
+	if b.Expr != nil {
+		return b.Expr.Eval(ctx)
+	}
+	return nil, nil
+}
+
+// NodeKinds enumerates the supported node kinds.
+const (
+	// CurrentIRVersion is the only Plan IR version interpreted by this build.
+	CurrentIRVersion = "1.0"
+
+	KindExecute = "execute"
+	KindMap     = "map"
+	KindBranch  = "branch"
+	KindLoop    = "loop"
+	KindJoin    = "join"
+	KindWait    = "wait"
+	KindChild   = "child"
+	KindProject = "project"
+)
+
+// RunStates enumerates run lifecycle states.
+const (
+	RunCreated   = "created"
+	RunRunning   = "running"
+	RunWaiting   = "waiting"
+	RunPaused    = "paused"
+	RunSucceeded = "succeeded"
+	RunFailed    = "failed"
+	RunCancelled = "cancelled"
+)
+
+// ActivationStates enumerates activation lifecycle states.
+const (
+	ActBlocked   = "blocked"
+	ActQueued    = "queued"
+	ActRunning   = "running"
+	ActWaiting   = "waiting"
+	ActSucceeded = "succeeded"
+	ActFailed    = "failed"
+	ActCancelled = "cancelled"
+)
+
+// ComputeDigest sets Plan.Digest to the SHA-256 of the canonical JSON
+// encoding of the plan (with Digest zeroed). Returns the digest.
+func (p *Plan) ComputeDigest() (string, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("muxlio: marshal plan: %w", err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", err
+	}
+	delete(value, "digest")
+	data, err = canonicalJSON(value)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	p.Digest = "sha256:" + hex.EncodeToString(sum[:])
+	return p.Digest, nil
+}
+
+// VerifyDigest checks a supplied content digest without changing the plan.
+// Plans without a digest remain accepted for locally authored/test plans.
+func (p *Plan) VerifyDigest() error {
+	if p == nil || p.Digest == "" {
+		return nil
+	}
+	want := p.Digest
+	copy := *p
+	copy.Digest = ""
+	got, err := copy.ComputeDigest()
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("muxlio: plan digest mismatch: declared %q, computed %q", want, got)
+	}
+	return nil
+}

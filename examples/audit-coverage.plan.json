@@ -1,0 +1,180 @@
+{
+  "irVersion": "1.0",
+  "name": "audit-test-coverage",
+  "root": "root",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "packages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "packages"
+    ]
+  },
+  "outputSchema": {
+    "type": "array"
+  },
+  "subgraphs": {
+    "root": {
+      "nodes": [
+        {
+          "id": "packages",
+          "kind": "map",
+          "items": {
+            "op": "field",
+            "expr": {
+              "op": "input"
+            },
+            "name": "packages"
+          },
+          "key": {
+            "op": "field",
+            "expr": {
+              "op": "item"
+            },
+            "name": "id"
+          },
+          "concurrency": 4,
+          "maxItems": 50,
+          "bodyRef": "packages_body__0"
+        }
+      ],
+      "output": {
+        "result": {
+          "ref": {
+            "node": "packages",
+            "port": "items"
+          }
+        }
+      }
+    },
+    "packages_body__0": {
+      "nodes": [
+        {
+          "id": "analyze",
+          "kind": "execute",
+          "executor": "command/go-list",
+          "task": "List Go files in the package and check for _test.go files.",
+          "params": {
+            "cmd": "find",
+            "args": [
+              "-name",
+              "*_test.go"
+            ]
+          },
+          "outputs": {
+            "hasTests": {
+              "mime": "application/json"
+            },
+            "fileCount": {
+              "mime": "application/json"
+            }
+          }
+        },
+        {
+          "id": "has-tests",
+          "kind": "branch",
+          "condition": {
+            "op": "eq",
+            "left": {
+              "op": "field",
+              "expr": {
+                "op": "ref",
+                "node": "analyze",
+                "port": "hasTests"
+              },
+              "name": "hasTests"
+            },
+            "right": {
+              "op": "literal",
+              "value": true
+            }
+          },
+          "thenRef": "has-tests_then__1",
+          "elseRef": "has-tests_else__2"
+        }
+      ],
+      "output": {
+        "package": {
+          "expr": {
+            "op": "field",
+            "expr": {
+              "op": "item"
+            },
+            "name": "id"
+          }
+        },
+        "status": {
+          "ref": {
+            "node": "has-tests",
+            "port": "result"
+          }
+        }
+      }
+    },
+    "has-tests_then__1": {
+      "nodes": [
+        {
+          "id": "verify-tests",
+          "kind": "execute",
+          "executor": "command/go-test",
+          "task": "Run go test for this package and report pass/fail.",
+          "outputs": {
+            "passed": {
+              "mime": "application/json"
+            }
+          }
+        }
+      ],
+      "output": {
+        "status": {
+          "expr": {
+            "op": "literal",
+            "value": "tested"
+          }
+        },
+        "passed": {
+          "ref": {
+            "node": "verify-tests",
+            "port": "passed"
+          }
+        }
+      }
+    },
+    "has-tests_else__2": {
+      "nodes": [],
+      "output": {
+        "status": {
+          "expr": {
+            "op": "literal",
+            "value": "no-tests"
+          }
+        },
+        "passed": {
+          "expr": {
+            "op": "literal",
+            "value": false
+          }
+        }
+      }
+    }
+  },
+  "requiredExecutors": [
+    "command/go-list",
+    "command/go-test"
+  ],
+  "digest": "sha256:5b72596033973e4d5aa4e74ca45864dfe949fced6812b047ee9cf36147ff9905"
+}

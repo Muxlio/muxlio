@@ -1,0 +1,238 @@
+{
+  "irVersion": "1.0",
+  "name": "repeat-until-test",
+  "root": "root",
+  "subgraphs": {
+    "root": {
+      "nodes": [
+        {
+          "id": "loop",
+          "kind": "loop",
+          "while": {
+            "op": "not",
+            "expr": {
+              "op": "field",
+              "expr": {
+                "op": "state"
+              },
+              "name": "passed"
+            }
+          },
+          "initState": {
+            "op": "literal",
+            "value": {
+              "passed": false,
+              "attempts": 0,
+              "value_passed": null,
+              "value_output": null
+            }
+          },
+          "maxIterations": 10,
+          "onExhausted": "pause",
+          "bodyRef": "loop_body__0"
+        }
+      ],
+      "output": {}
+    },
+    "loop_fix__1": {
+      "nodes": [
+        {
+          "id": "fix",
+          "kind": "execute",
+          "executor": "test/fix",
+          "inputs": {
+            "failures": {
+              "ref": {
+                "node": "loop__cap",
+                "port": "value_output"
+              }
+            }
+          },
+          "outputs": {
+            "notes": {
+              "mime": "text/markdown",
+              "path": "fix.md"
+            }
+          }
+        }
+      ],
+      "output": {
+        "result": {
+          "expr": {
+            "op": "literal",
+            "value": null
+          }
+        }
+      }
+    },
+    "loop_noop__2": {
+      "nodes": [],
+      "output": {
+        "result": {
+          "expr": {
+            "op": "literal",
+            "value": null
+          }
+        }
+      }
+    },
+    "loop_body__0": {
+      "nodes": [
+        {
+          "id": "verify",
+          "kind": "execute",
+          "executor": "test/verify",
+          "outputs": {
+            "passed": {
+              "mime": "application/json"
+            },
+            "report": {
+              "mime": "text/markdown",
+              "path": "verification.md"
+            }
+          }
+        },
+        {
+          "id": "loop__cap",
+          "kind": "project",
+          "inputs": {
+            "passed": {
+              "expr": {
+                "op": "ref",
+                "node": "verify",
+                "port": "passed"
+              }
+            },
+            "value_passed": {
+              "ref": {
+                "node": "verify",
+                "port": "passed"
+              }
+            },
+            "value_output": {
+              "ref": {
+                "node": "verify",
+                "port": "report"
+              }
+            }
+          }
+        },
+        {
+          "id": "loop__branch",
+          "kind": "branch",
+          "condition": {
+            "op": "and",
+            "left": {
+              "op": "not",
+              "expr": {
+                "op": "ref",
+                "node": "loop__cap",
+                "port": "passed"
+              }
+            },
+            "right": {
+              "op": "lt",
+              "left": {
+                "op": "add",
+                "left": {
+                  "op": "field",
+                  "expr": {
+                    "op": "state"
+                  },
+                  "name": "attempts"
+                },
+                "right": {
+                  "op": "literal",
+                  "value": 1
+                }
+              },
+              "right": {
+                "op": "literal",
+                "value": 10
+              }
+            }
+          },
+          "thenRef": "loop_fix__1",
+          "elseRef": "loop_noop__2"
+        },
+        {
+          "id": "loop__state",
+          "kind": "project",
+          "inputs": {
+            "passed": {
+              "ref": {
+                "node": "loop__cap",
+                "port": "passed"
+              }
+            },
+            "attempts": {
+              "expr": {
+                "op": "add",
+                "left": {
+                  "op": "field",
+                  "expr": {
+                    "op": "state"
+                  },
+                  "name": "attempts"
+                },
+                "right": {
+                  "op": "literal",
+                  "value": 1
+                }
+              }
+            },
+            "__after_branch": {
+              "ref": {
+                "node": "loop__branch",
+                "port": "result"
+              }
+            },
+            "value_passed": {
+              "ref": {
+                "node": "loop__cap",
+                "port": "value_passed"
+              }
+            },
+            "value_output": {
+              "ref": {
+                "node": "loop__cap",
+                "port": "value_output"
+              }
+            }
+          }
+        }
+      ],
+      "output": {
+        "passed": {
+          "ref": {
+            "node": "loop__state",
+            "port": "passed"
+          }
+        },
+        "attempts": {
+          "ref": {
+            "node": "loop__state",
+            "port": "attempts"
+          }
+        },
+        "value_passed": {
+          "ref": {
+            "node": "loop__state",
+            "port": "value_passed"
+          }
+        },
+        "value_output": {
+          "ref": {
+            "node": "loop__state",
+            "port": "value_output"
+          }
+        }
+      }
+    }
+  },
+  "requiredExecutors": [
+    "test/fix",
+    "test/verify"
+  ],
+  "digest": "sha256:765ca18e18d221205b446b4d3574d601a28292b488aaba80bd5a0943b0c8d483"
+}

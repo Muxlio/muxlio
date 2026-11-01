@@ -1,0 +1,54 @@
+# ---- Go ----
+/muxlio-core/muxlio
+/muxlio-core/bin/
+/.bin/
+*.test
+*.out
+
+# ---- TypeScript / Node ----
+node_modules/
+muxlio-sdk/dist/
+muxlio-compiler/dist/
+muxlio-testing/dist/
+.npm/
+*.tsbuildinfo
+
+# ---- Runtime data ----
+.muxlio/
+/.muxlio-*/
+*.log
+*.pid
+*.pid.lock
+*.db
+*.db-wal
+*.db-shm
+
+# ---- Compiled plan artifacts (generated, not source) ----
+recipes/**/plan.json
+recipes/**/input.json
+recipes/**/*.input.json
+recipes/**/fake.json
+
+# ---- Adapter binaries (built outputs) ----
+adapters
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---- Build outputs ----
+dist/
+build/
+out/
+
+# ---- Local environment and credentials ----
+.env
+.env.*
+!.env.example
+!.env.sample
+
+semantic-review

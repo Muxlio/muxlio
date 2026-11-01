@@ -1,0 +1,26 @@
+{
+  "name": "@muxlio/testing",
+  "version": "0.1.0",
+  "description": "Muxlio testing: fake workers, fixtures, and test harness for workflow validation without real model calls",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "echo 'tests are in muxlio-tests'"
+  },
+  "dependencies": {
+    "@muxlio/sdk": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

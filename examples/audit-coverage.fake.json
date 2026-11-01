@@ -1,0 +1,15 @@
+{
+  "byNode": {
+    "analyze": {
+      "outputs": {
+        "hasTests": { "hasTests": true, "fileCount": 3 },
+        "fileCount": 3
+      }
+    },
+    "verify-tests": {
+      "outputs": {
+        "passed": true
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "muxlio-recipes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --import tsx -e \"import w from './implement-features/workflow.ts'; if (!w.plan?.digest) { console.error('recipe plan missing'); process.exit(1); }\"",
+    "test": "node --import tsx --test implement-features/workflow.test.mjs"
+  },
+  "dependencies": {
+    "@muxlio/sdk": "*",
+    "zod": "^3.23.0"
+  }
+}

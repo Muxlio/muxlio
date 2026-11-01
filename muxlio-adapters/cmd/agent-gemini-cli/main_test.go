@@ -1,0 +1,240 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/muxlio/muxlio-adapters/adapter"
+)
+
+func TestTailBufferKeepsLastLimitBytes(t *testing.T) {
+	buf := &tailBuffer{limit: 8}
+	_, _ = buf.Write([]byte("012345"))
+	_, _ = buf.Write([]byte("6789"))
+	if got, want := buf.String(), "23456789"; got != want {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, want)
+	}
+}
+
+func TestTailBufferTruncatesLargeWrite(t *testing.T) {
+	buf := &tailBuffer{limit: 8}
+	_, _ = buf.Write([]byte("0123456789abcdef"))
+	if got, want := buf.String(), "89abcdef"; got != want {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, want)
+	}
+}
+
+func TestWithStderrEmpty(t *testing.T) {
+	if got := withStderr("process failed", ""); got != "process failed" {
+		t.Fatalf("withStderr(_, \"\") = %q, want plain reason", got)
+	}
+}
+
+func TestWithStderrAddsDetail(t *testing.T) {
+	got := withStderr("process failed", "  QUOTA_EXCEEDED\n")
+	if !strings.Contains(got, "QUOTA_EXCEEDED") {
+		t.Fatalf("withStderr() = %q, expected QUOTA_EXCEEDED in output", got)
+	}
+}
+
+func TestAppendFailure(t *testing.T) {
+	if got := appendFailure("", "first"); got != "first" {
+		t.Fatalf("appendFailure(\"\", \"first\") = %q, want %q", got, "first")
+	}
+	if got := appendFailure("first", "second"); got != "first; second" {
+		t.Fatalf("appendFailure(\"first\", \"second\") = %q, want %q", got, "first; second")
+	}
+}
+
+func TestExtractAssistantTextPlainString(t *testing.T) {
+	raw := []byte(`{"content":"hello world"}`)
+	chunks := extractAssistantText(raw)
+	if len(chunks) != 1 || chunks[0] != "hello world" {
+		t.Fatalf("extractAssistantText plain = %v, want [\"hello world\"]", chunks)
+	}
+}
+
+func TestExtractAssistantTextBlockArray(t *testing.T) {
+	raw := []byte(`{"content":[{"type":"text","text":"alpha"},{"type":"tool_use","text":""},{"type":"text","text":"beta"}]}`)
+	chunks := extractAssistantText(raw)
+	if len(chunks) != 2 || chunks[0] != "alpha" || chunks[1] != "beta" {
+		t.Fatalf("extractAssistantText blocks = %v, want [alpha beta]", chunks)
+	}
+}
+
+func TestExtractAssistantTextNil(t *testing.T) {
+	chunks := extractAssistantText(nil)
+	if len(chunks) != 0 {
+		t.Fatalf("extractAssistantText(nil) should return empty, got %v", chunks)
+	}
+}
+
+func TestStderrTailIsBounded(t *testing.T) {
+	buf := &tailBuffer{limit: 8 * 1024}
+	_, _ = buf.Write([]byte(strings.Repeat("x", 9*1024)))
+	if got := len(buf.String()); got != 8*1024 {
+		t.Fatalf("stderr tail length = %d, want %d", got, 8*1024)
+	}
+}
+
+func TestBuildPromptDeclaresOutputs(t *testing.T) {
+	workDir := t.TempDir()
+	req := &adapter.Request{
+		Task:    "implement feature",
+		WorkDir: workDir,
+		NodeID:  "step1",
+		Outputs: map[string]adapter.OutputDecl{
+			"notes": {Mime: "text/markdown", Path: "notes.md"},
+		},
+	}
+	prompt := buildPrompt(req)
+	if !strings.Contains(prompt, workDir+"/notes.md") {
+		t.Fatalf("buildPrompt() missing declared output path, got %q", prompt)
+	}
+}
+
+func TestAgentGeminiCLIAdapterCLIError(t *testing.T) {
+	bin := buildAgentGeminiCLI(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	script := "#!/bin/sh\n" +
+		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"AuthError\",\"message\":\"auth failed\"}}'\n" +
+		"echo 'provider error' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir,
+		"executor":  "agent/gemini-cli",
+		"task":      "do nothing",
+		"workDir":   workDir,
+		"nodeId":    "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	if cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("adapter should exit 0 on adapter error, got %d", cmd.ProcessState.ExitCode())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini-cli:") {
+		t.Fatalf("expected adapter error in response, got %q", resp.Error)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "gemini-stream.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("adapter should not write a CLI stream diagnostic file, stat error = %v", err)
+	}
+}
+
+func TestAgentGeminiCLIAdapterGeminiResultErrorStatus(t *testing.T) {
+	bin := buildAgentGeminiCLI(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	script := "#!/bin/sh\n" +
+		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"QuotaError\",\"message\":\"quota exceeded\"}}'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir,
+		"executor":  "agent/gemini-cli",
+		"task":      "do nothing",
+		"workDir":   workDir,
+		"nodeId":    "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if !strings.Contains(resp.Error, "quota exceeded") {
+		t.Fatalf("expected Gemini result error in response, got %q", resp.Error)
+	}
+}
+
+func TestAgentGeminiCLIAdapterCollectsOutputs(t *testing.T) {
+	bin := buildAgentGeminiCLI(t)
+	workDir := t.TempDir()
+	outFile := filepath.Join(workDir, "notes.md")
+	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	script := "#!/bin/sh\n" +
+		"echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}'\n" +
+		"echo '{\"type\":\"result\",\"result\":\"done\"}'\n" +
+		"printf '%s' '# notes' > '" + outFile + "'\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir,
+		"executor":  "agent/gemini-cli",
+		"task":      "write notes",
+		"workDir":   workDir,
+		"nodeId":    "n1",
+		"outputs": map[string]any{
+			"notes": map[string]any{"mime": "text/markdown", "path": "notes.md"},
+		},
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+		Error   string         `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	notes, ok := resp.Outputs["notes"].(map[string]any)
+	if !ok || notes["data"] != "# notes" {
+		t.Fatalf("notes output = %v", resp.Outputs["notes"])
+	}
+	text, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok || text["data"] != "done" {
+		t.Fatalf("_text output = %v", resp.Outputs["_text"])
+	}
+}
+
+func buildAgentGeminiCLI(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "agent-gemini-cli")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = wd
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build agent-gemini-cli: %v\n%s", err, out)
+	}
+	return bin
+}

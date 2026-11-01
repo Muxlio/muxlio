@@ -1,0 +1,26 @@
+{
+  "name": "@muxlio/compiler",
+  "version": "0.1.0",
+  "description": "Muxlio compiler: restricted TypeScript frontend that lowers to the canonical Plan IR",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "echo 'no tests in compiler package; see muxlio-testing'"
+  },
+  "dependencies": {
+    "@muxlio/sdk": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@muxlio/sdk",
+  "version": "0.1.0",
+  "description": "Muxlio SDK: TypeScript plan builder and types for authoring workflow definitions that compile to the Plan IR",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs && tsc --noEmit -p test/tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

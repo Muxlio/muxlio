@@ -1,0 +1,6 @@
+{
+  "byNode": {
+    "gather": { "outputs": { "findings": { "digest": "sha256:fake-findings", "mime": "text/markdown" } } },
+    "transform": { "outputs": { "result": { "digest": "sha256:fake-result", "mime": "text/markdown" } } }
+  }
+}

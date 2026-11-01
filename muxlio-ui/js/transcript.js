@@ -1,0 +1,128 @@
+/* ── transcript page ──────────────────────────── */
+const TPAGE_POLL_MS = 1200;
+let tpageRunId = null, tpageActId = null;
+let tpagePollTimer = null, tpagePollToken = 0;
+let tpageActState = '';
+const transcriptPageLogs = new Map();
+
+function stopTranscriptPage() {
+  if (tpagePollTimer) { clearTimeout(tpagePollTimer); tpagePollTimer = null; }
+  tpagePollToken++;
+}
+
+function updateTranscriptPageBody(text, live) {
+  const el = document.getElementById('transcriptPageBody');
+  if (!el) return;
+  const wrap = el.closest('.transcript-body-wrap');
+  const atBottom = wrap ? wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80 : false;
+  if (!text) {
+    if (live) {
+      el.textContent = 'Waiting for agent output…';
+      el.classList.add('waiting');
+    } else {
+      el.textContent = 'No transcript recorded.';
+      el.classList.remove('waiting');
+    }
+  } else {
+    el.textContent = text;
+    el.classList.remove('waiting');
+  }
+  if (live && atBottom && wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function renderTranscriptMeta(runId, act, attempt) {
+  const meta = document.getElementById('transcriptMeta');
+  if (!meta) return;
+  if (!act) { meta.innerHTML = '<p class="inspector-placeholder">Loading…</p>'; return; }
+  const executor = (attempt && attempt.state !== 'queued' ? attempt.executor : '') || act.executorHint || act.executor || '—';
+  const attemptState = attempt?.state || '—';
+  meta.innerHTML = `<dl class="live-meta-kv transcript-meta-kv">
+    <dt>Run</dt><dd class="mono"><a href="#run/${encodeURIComponent(runId)}" style="color:var(--teal)">${esc(runId)}</a></dd>
+    <dt>Node</dt><dd>${esc(act.nodeId)} <span class="state ${esc(stateClass(act.state) || '')}">${esc(act.state)}</span></dd>
+    <dt>Agent</dt><dd>${esc(executor)}</dd>
+    <dt>Attempt</dt><dd>${attempt ? `#${esc(attempt.retryNumber)} · <span class="state ${esc(stateClass(attemptState) || '')}">${esc(attemptState)}</span>` : '—'}</dd>
+  </dl>`;
+  const desc = document.getElementById('transcriptDesc');
+  if (desc) desc.textContent = `${act.nodeId} · ${act.state}`;
+  const back = document.getElementById('transcriptBackLink');
+  if (back) { back.href = `#run/${encodeURIComponent(runId)}`; back.textContent = '← Back to run'; }
+}
+
+function scheduleTranscriptPagePoll(runId, actId) {
+  stopTranscriptPage();
+  const token = ++tpagePollToken;
+  let statePollCount = 0;
+  async function tick() {
+    if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+    try {
+      const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
+      if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+      const text = mergeActivationLogs(actId, d.logs || []);
+      transcriptPageLogs.set(`${runId}:${actId}`, text);
+      updateTranscriptPageBody(text, tpageActState === 'running');
+    } catch {}
+    if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+    // Periodically re-check the activation state so the page detects
+    // when a running activation finishes and stops polling.
+    statePollCount++;
+    if (statePollCount % 5 === 0) {
+      try {
+        const g = await api(`/v1/runs/${encodeURIComponent(runId)}/graph`);
+        if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+        const act = (g.activations || []).find(a => a.id === actId);
+        if (act) tpageActState = act.state || tpageActState;
+      } catch {}
+    }
+    if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+    // Only continue polling while the activation is still running.
+    if (tpageActState === 'running') {
+      tpagePollTimer = setTimeout(tick, TPAGE_POLL_MS);
+    }
+  }
+  tick();
+}
+
+async function refreshTranscriptState(runId, actId) {
+  if (!runId || !actId) return;
+  try {
+    const [graphData, attemptsData] = await Promise.all([
+      api(`/v1/runs/${encodeURIComponent(runId)}/graph`),
+      api(`/v1/runs/${encodeURIComponent(runId)}/attempts`).catch(() => ({ attempts: [] })),
+    ]);
+    if (tpageRunId !== runId || tpageActId !== actId) return;
+    const act = (graphData.activations || []).find(a => a.id === actId);
+    if (!act) return;
+    tpageActState = act.state || '';
+    const attempts = (attemptsData.attempts || []).filter(a => a.activationId === actId)
+      .sort((a, b) => (b.retryNumber || 0) - (a.retryNumber || 0));
+    const latestAttempt = attempts[0] || null;
+    renderTranscriptMeta(runId, act, latestAttempt);
+    // Show cached text while polling loads fresh content
+    const cached = transcriptPageLogs.get(`${runId}:${actId}`) || activationTranscripts.get(actId)?.agent || '';
+    updateTranscriptPageBody(cached, tpageActState === 'running');
+    scheduleTranscriptPagePoll(runId, actId);
+  } catch (err) {
+    if (tpageRunId !== runId || tpageActId !== actId) return;
+    const meta = document.getElementById('transcriptMeta');
+    if (meta) meta.innerHTML = `<div class="notice error" role="alert">Unable to load transcript: ${esc(err.message)}</div>`;
+  }
+}
+
+async function loadTranscriptPage(runId, actId) {
+  stopTranscriptPage();
+  tpageRunId = runId;
+  tpageActId = actId;
+  tpageActState = '';
+  const meta = document.getElementById('transcriptMeta');
+  if (meta) meta.innerHTML = '<p class="inspector-placeholder">Loading…</p>';
+  const body = document.getElementById('transcriptPageBody');
+  if (body) body.textContent = '';
+  // Show any cached transcript immediately
+  const cached = transcriptPageLogs.get(`${runId}:${actId}`) || activationTranscripts.get(actId)?.agent || '';
+  if (cached) updateTranscriptPageBody(cached, false);
+  await refreshTranscriptState(runId, actId);
+}
+
+document.getElementById('refreshTranscript')?.addEventListener('click', () => {
+  if (tpageRunId && tpageActId) refreshTranscriptState(tpageRunId, tpageActId);
+});

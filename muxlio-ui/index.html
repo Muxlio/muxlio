@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark">
+<title>Muxlio · Execution Workbench</title><link rel="icon" href="/favicon.ico?v=2">
+
+<link rel="stylesheet" href="/app.css?v=control-flow-20261103">
+<link rel="stylesheet" href="/workspace.css">
+</head>
+<body>
+<div class="shell">
+
+<!-- ─── RAIL ──────────────────────────────────── -->
+<aside class="rail">
+  <div class="brand">
+    <span class="brand-mark"><img src="/logo.png" alt="Muxlio logo" width="16" height="16"></span>
+    <span>muxlio<small>Durable agent workflows</small></span>
+  </div>
+  <div class="nav-label">Workspace</div>
+  <nav class="nav" aria-label="Main navigation">
+    <a href="#overview" id="overviewNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg></span>Workflow</a>
+    <a href="#runs" id="runsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg></span>Run history</a>
+    <a href="#live" id="liveNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg></span>Live</a>
+    <a href="#workers" id="workersNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 14h4M8 11v3"/></svg></span>Workers</a>
+  </nav>
+  <div class="nav-label" style="margin-top:18px">Library</div>
+  <nav class="nav" aria-label="Library navigation">
+    <a href="#workflows" id="workflowsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 3.5h4.2L9 5.5H13v7H3z"/></svg></span>Workflows</a>
+    <a href="#artifacts" id="artifactsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3V13.5H4z"/><path d="M9 2.5V6h3"/></svg></span>Artifacts</a>
+  </nav>
+  <div class="rail-bottom">Coordinator-backed operational data</div>
+</aside>
+
+<!-- ─── TOPBAR ─────────────────────────────────── -->
+<header class="top">
+  <div class="crumb">
+    <span>workspace</span>
+    <span class="crumb-sep" aria-hidden="true">/</span>
+    <strong id="topContext">Overview</strong>
+  </div>
+  <div class="top-actions">
+    <button class="btn ghost" id="forkRunBtn" hidden>
+      <svg viewBox="0 0 20 20"><path d="M7 3 3 7l4 4M3 7h10a4 4 0 0 1 4 4v3"/></svg>
+      Fork run
+    </button>
+    <button class="btn primary" id="resumeRunBtn" hidden>
+      <svg viewBox="0 0 20 20"><polygon points="5,3 17,10 5,17" fill="currentColor" stroke="none"/></svg>
+      Resume run
+    </button>
+  </div>
+</header>
+
+<!-- ─── MAIN ───────────────────────────────────── -->
+<main class="content">
+  <div id="message" role="status" aria-live="polite"></div>
+
+  <!-- ═══ OVERVIEW ═══════════════════════════════ -->
+  <section id="overviewView" class="page">
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Workspace</div>
+        <h1>Workflow overview</h1>
+        <p>Current run activity from the coordinator.</p>
+      </div>
+      <button class="btn" id="refreshOverview">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="summary-grid" id="summaryGrid" aria-live="polite"></div>
+    <div class="section-head">
+      <div><h2>Recent runs</h2><p>Latest activity across workflows</p></div>
+      <a class="btn ghost" href="#runs">View all runs →</a>
+    </div>
+    <div id="recentRuns"></div>
+  </section>
+
+  <!-- ═══ RUNS ════════════════════════════════════ -->
+  <section id="runsView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Execution history</div>
+        <h1>Runs</h1>
+        <p>Search and inspect workflow executions.</p>
+      </div>
+      <button class="btn" id="refreshRuns">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="section-head">
+      <div><h2>Run records</h2><p id="runCount">Loading…</p></div>
+      <div class="controls">
+        <input class="control search" id="search" type="search" placeholder="Search workflow or run ID" aria-label="Search">
+        <select class="control" id="stateFilter" aria-label="Filter by state">
+          <option value="">All states</option>
+          <option>paused</option>
+          <option>running</option><option>waiting</option><option>succeeded</option>
+          <option>failed</option><option>cancelled</option>
+        </select>
+        <select class="control" id="sortOrder" aria-label="Sort">
+          <option value="updated">Recently updated</option>
+          <option value="created">Recently created</option>
+          <option value="workflow">Workflow name</option>
+        </select>
+      </div>
+    </div>
+    <div id="runList"></div>
+  </section>
+
+  <!-- ═══ LIVE OUTPUT ═════════════════════════════ -->
+  <section id="liveView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Monitoring</div>
+        <h1>Live output</h1>
+        <p>Watch agent transcripts for running activations without opening the workbench.</p>
+      </div>
+      <button class="btn" id="refreshLive">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="section-head">
+      <div><h2>Running activations</h2><p id="liveActiveCount">Loading…</p></div>
+    </div>
+    <div id="liveActiveList"></div>
+    <div class="section-head" style="margin-top:28px">
+      <div><h2>Stream</h2><p>Output grows until the activation finishes; final text stays on screen.</p></div>
+    </div>
+    <div class="live-monitor">
+      <div id="liveStreamMeta" class="live-monitor-meta"></div>
+      <pre class="live-monitor-body" id="liveTranscriptBody"></pre>
+    </div>
+  </section>
+
+  <!-- ═══ DETAIL ══════════════════════════════════ -->
+  <section id="detailView" hidden>
+    <!-- Workbench layout for active run detail -->
+    <div id="workbenchView" class="workbench" hidden>
+      <div class="wb-head">
+        <div class="wb-eyebrow">Execution workbench</div>
+        <div class="wb-title-row">
+          <div>
+            <div class="wb-title" id="wbTitle">—</div>
+            <div class="wb-subtitle" id="wbSubtitle"></div>
+          </div>
+          <span id="wbStatusBadge" class="status-badge"></span>
+        </div>
+      </div>
+      <div class="stat-row" id="wbStats"></div>
+      <div class="tab-bar" role="tablist" aria-label="Workbench tabs">
+        <button class="tab-btn" role="tab" aria-selected="true" data-wb-tab="graph">Live graph</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="events">Execution history</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="data">Run data</button>
+      </div>
+      <div class="wb-body">
+        <!-- Graph tab -->
+        <div id="wbTabGraph" class="graph-panel">
+          <div class="graph-toolbar">
+            <div class="graph-toolbar-left">
+              <span>Workflow graph</span>
+              <span class="subtle">Click a node to inspect it</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="graph-legend">
+                <span class="legend-item"><span class="legend-dot passed"></span>Passed</span>
+                <span class="legend-item"><span class="legend-dot failed"></span>Failed</span>
+                <span class="legend-item"><span class="legend-dot pending"></span>Pending</span>
+              </div>
+              <button class="btn ghost" id="focusCurrent" style="font-size:10px;padding:4px 9px">Focus current</button>
+            </div>
+          </div>
+          <div class="graph-canvas" id="graphCanvas">
+            <div id="graphFlow" class="graph-flow"></div>
+          </div>
+          <div class="wb-bottom">
+            <div class="bottom-panel">
+              <div class="bottom-head">
+                <h3>Recent events <span style="color:var(--muted2);font-weight:400">· execution journal</span></h3>
+              </div>
+              <div class="bottom-body">
+                <div class="event-list" id="wbEventList"></div>
+              </div>
+            </div>
+            <div class="bottom-panel">
+              <div class="bottom-head">
+                <h3>Artifacts <span style="color:var(--muted2);font-weight:400">· immutable revisions</span></h3>
+              </div>
+              <div class="bottom-body">
+                <div id="wbArtifactList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Events tab -->
+        <div id="wbTabEvents" class="graph-panel" hidden>
+          <div class="wb-tab-body">
+            <div class="panel-head" style="border-bottom:1px solid var(--border);margin-bottom:12px;padding:0 0 10px">
+              <h2 style="font-size:12px;font-weight:650;color:#e4eeee">Event timeline</h2>
+              <button class="btn" id="moreEventsWb" disabled style="font-size:10px;padding:4px 9px">Load next events</button>
+            </div>
+            <ol id="wbTimeline" class="timeline" style="list-style:none;padding:2px 0 0 5px"></ol>
+          </div>
+        </div>
+
+        <!-- Data tab -->
+        <div id="wbTabData" class="graph-panel" hidden>
+          <div class="wb-tab-body wb-tab-body--grid">
+            <section class="panel">
+              <div class="panel-head"><h2>Run input</h2></div>
+              <div class="panel-body" id="runInputInspector"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head"><h2>Run output</h2></div>
+              <div class="panel-body" id="runOutputInspector"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- Node Inspector -->
+        <aside class="inspector-panel" id="nodeInspector">
+          <div class="insp-head">
+            <span class="insp-label">Node inspector</span>
+            <span class="insp-count" id="inspActivationCount"></span>
+          </div>
+          <div class="insp-identity" id="inspIdentity" hidden>
+            <div id="inspNodeLabel" class="insp-node-label"></div>
+            <div id="inspNodeName" class="insp-node-name"></div>
+            <div id="inspNodeDesc" class="insp-node-desc" hidden></div>
+          </div>
+          <div class="insp-body" id="inspBody">
+            <p class="inspector-placeholder">Select a node in the graph to inspect its execution data.</p>
+          </div>
+          <div class="insp-actions" id="inspActions" hidden>
+            <button class="btn primary" id="inspRerun">
+              <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6"/></svg>
+              Retry run
+            </button>
+            <button class="btn" id="inspViewOutput">View output</button>
+          </div>
+
+        </aside>
+      </div>
+    </div>
+
+    <!-- Fallback non-workbench detail (for older runs) -->
+    <div id="runDetail" class="loading page">Loading run…</div>
+  </section>
+
+  <!-- ═══ TRANSCRIPT ═════════════════════════════ -->
+  <section id="transcriptView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Agent output</div>
+        <h1>Transcript</h1>
+        <p id="transcriptDesc">Live agent output for this activation.</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <a class="btn ghost" id="transcriptBackLink" href="#overview">← Back to run</a>
+        <button class="btn" id="refreshTranscript">
+          <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+    <div id="transcriptMeta" class="transcript-meta-block"></div>
+    <div class="transcript-body-wrap">
+      <pre class="transcript-page-body" id="transcriptPageBody"></pre>
+    </div>
+  </section>
+
+  <!-- ═══ WORKERS ══════════════════════════════════ -->
+  <section id="workersView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Compute</div>
+        <h1>Workers</h1>
+        <p>Registered workers within the coordinator heartbeat window and their active assignments.</p>
+      </div>
+      <button class="btn" id="refreshWorkers">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="section-head">
+      <div><h2>Available workers</h2><p>Workers that have heartbeated within the last 90 seconds.</p></div>
+    </div>
+    <div id="workerRoster"></div>
+    <div class="section-head">
+      <div><h2>Active assignments</h2><p class="workers-caption">Each row links the worker lease to the run and activation being processed.</p></div>
+    </div>
+    <div id="workerList"></div>
+  </section>
+
+  <!-- ═══ WORKFLOWS ════════════════════════════════ -->
+  <section id="workflowsView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Library</div>
+        <h1>Workflows</h1>
+        <p>Registered Plan IR versions. Each entry is an immutable, content-addressed workflow definition.</p>
+      </div>
+      <button class="btn" id="refreshWorkflows">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div id="workflowList"></div>
+    <!-- Plan viewer modal -->
+    <div id="planModal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="planModalTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker" id="planModalEyebrow">Plan IR</div>
+            <div class="modal-title" id="planModalTitle"></div>
+          </div>
+          <button class="btn ghost" id="closePlanModal">Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="meta-chips" id="planModalMeta"></div>
+          <div style="margin-bottom:14px">
+            <div class="block-label">Input schema</div>
+            <pre id="planModalSchema" class="codeblock"></pre>
+          </div>
+          <div>
+            <div class="block-label">Subgraphs</div>
+            <pre id="planModalSubgraphs" class="codeblock"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ ARTIFACTS ════════════════════════════════ -->
+  <section id="artifactsView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Library</div>
+        <h1>Artifacts</h1>
+        <p>Immutable, SHA-256 content-addressed files generated by workflow runs.</p>
+      </div>
+      <button class="btn" id="refreshArtifacts">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="section-head">
+      <div><h2>All artifact references</h2><p id="artifactCount">Loading…</p></div>
+      <div class="controls">
+        <input class="control search" id="artifactSearch" type="search" placeholder="Search run, node, or digest" aria-label="Search artifacts" style="width:min(300px,40vw)">
+      </div>
+    </div>
+    <div id="artifactList"></div>
+  </section>
+
+</main>
+</div>
+
+<div id="retryRunModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="retryRunModalTitle">
+    <div class="modal-head">
+      <div>
+        <div class="modal-kicker">Run</div>
+        <div class="modal-title" id="retryRunModalTitle">Retry run?</div>
+      </div>
+    </div>
+    <div class="modal-body">
+      <p>Already-succeeded steps will be kept. Only failed or incomplete steps will run again.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn ghost" type="button" id="retryRunModalCancel">Cancel</button>
+        <button class="btn primary" type="button" id="retryRunModalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/core.js"></script>
+<script src="/js/workbench.js?v=control-flow-20261103"></script>
+<script src="/js/inspector.js"></script>
+<script src="/js/live.js"></script>
+<script src="/js/transcript.js"></script>
+<script src="/js/boot.js"></script>
+<script src="/workspace.js"></script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+package workers
+
+import (
+	"bufio"
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+)
+
+const muxlioLogFDEnv = "MUXLIO_LOG_FD"
+
+type muxlioLogLine struct {
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
+}
+
+// startAdapterLogPump wires MUXLIO_LOG_FD (fd 3) into req.LogSink while the adapter runs.
+func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err error) {
+	if req.LogSink == nil {
+		return func() {}, nil
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.ExtraFiles = append(cmd.ExtraFiles, writer)
+	cmd.Env = append(cmd.Env, muxlioLogFDEnv+"=3")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer reader.Close()
+		sc := bufio.NewScanner(reader)
+		sc.Buffer(make([]byte, 64*1024), logChunkMaxBytes)
+		for sc.Scan() {
+			var line muxlioLogLine
+			if json.Unmarshal(sc.Bytes(), &line) != nil || line.Text == "" {
+				continue
+			}
+			_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(line.Text))
+		}
+	}()
+	return func() {
+		writer.Close()
+		<-done
+	}, nil
+}
+
+// AdapterLogWriter returns the incremental log sink file adapters should write to.
+func AdapterLogWriter() *os.File {
+	value := os.Getenv(muxlioLogFDEnv)
+	if value == "" {
+		return nil
+	}
+	fd, err := strconv.Atoi(value)
+	if err != nil || fd < 0 {
+		return nil
+	}
+	return os.NewFile(uintptr(fd), "muxlio-log")
+}
+
+// ReadAdapterLogLines consumes newline-delimited muxlio log records until EOF.
+func ReadAdapterLogLines(r io.Reader, sink LogSink) error {
+	if sink == nil {
+		return nil
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), logChunkMaxBytes)
+	for sc.Scan() {
+		var line muxlioLogLine
+		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Text == "" {
+			continue
+		}
+		if err := sink.Append(normalizeLogStream(line.Stream), []byte(line.Text)); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
+}
+
+// EncodeAdapterLogLine formats one incremental log record for MUXLIO_LOG_FD.
+func EncodeAdapterLogLine(stream, text string) ([]byte, error) {
+	if text == "" {
+		return nil, nil
+	}
+	return json.Marshal(muxlioLogLine{Stream: normalizeLogStream(stream), Text: text})
+}

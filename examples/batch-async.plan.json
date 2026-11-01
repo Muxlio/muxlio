@@ -1,0 +1,124 @@
+{
+  "irVersion": "1.0",
+  "name": "batch-async",
+  "root": "root",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "items"
+    ]
+  },
+  "outputSchema": {
+    "type": "array"
+  },
+  "subgraphs": {
+    "root": {
+      "nodes": [
+        {
+          "id": "items",
+          "kind": "map",
+          "items": {
+            "op": "field",
+            "expr": {
+              "op": "input"
+            },
+            "name": "items"
+          },
+          "key": {
+            "op": "field",
+            "expr": {
+              "op": "item"
+            },
+            "name": "id"
+          },
+          "concurrency": 5,
+          "maxItems": 100,
+          "bodyRef": "items_body__0"
+        }
+      ],
+      "output": {
+        "result": {
+          "ref": {
+            "node": "items",
+            "port": "items"
+          }
+        }
+      }
+    },
+    "items_body__0": {
+      "nodes": [
+        {
+          "id": "gather",
+          "kind": "execute",
+          "executor": "agent/gemini-cli",
+          "task": "Investigate the topic.",
+          "inputs": {},
+          "outputs": {
+            "findings": {
+              "mime": "text/markdown",
+              "path": "findings.md"
+            }
+          }
+        },
+        {
+          "id": "transform",
+          "kind": "execute",
+          "executor": "agent/claude",
+          "task": "Read the findings and produce result.md.",
+          "inputs": {
+            "findings": {
+              "ref": {
+                "node": "gather",
+                "port": "findings"
+              }
+            }
+          },
+          "outputs": {
+            "result": {
+              "mime": "text/markdown",
+              "path": "result.md"
+            }
+          }
+        }
+      ],
+      "output": {
+        "id": {
+          "expr": {
+            "op": "field",
+            "expr": {
+              "op": "item"
+            },
+            "name": "id"
+          }
+        },
+        "result": {
+          "ref": {
+            "node": "transform",
+            "port": "result"
+          }
+        }
+      }
+    }
+  },
+  "requiredExecutors": [
+    "agent/gemini-cli",
+    "agent/claude"
+  ],
+  "digest": "sha256:a72330ca3ab6db249db3ea45bd06aa962599e5b3d7e1f3e93d48e67c798ddb95"
+}
