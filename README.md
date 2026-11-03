@@ -192,7 +192,11 @@ muxlio run examples/batch.plan.json examples/batch.input.json \
   --json
 ```
 
-Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command/go-test` → `command-go-test`).
+Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command/go-test` → `command-go-test`). The generic `command` executor passes `program` and `args` directly to the process without a shell. Declare an `_result` JSON output to expose its exit code and bounded stdout/stderr previews. Declared files are collected from `MUXLIO_OUTPUT_DIR`.
+
+Host execution is denied by default. For owner-controlled local CLI runs, set `"commandHostEnabled": true` in `~/.muxlio/config.json`, or use `MUXLIO_COMMAND_HOST_ENABLED=true` for a single shell session. For a self-hosted service, the same config field explicitly enables host execution on its local worker and allows `command` in the configured capabilities. Keep the service API token enabled and restrict it to trusted workflow submitters; this setting authorizes their commands on the service host. The environment variable overrides the config value for standalone runs. Outbound remote workers remain default-deny. Workflow parameters cannot enable host execution. `execution.isolation: "sandbox"` fails closed: the current release has no verified OCI command backend and never falls back to host. The adapter runs with the worker process's OS permissions, so a dedicated low-privilege worker account is recommended.
+
+`examples/command.workflow.ts` shows two tasks using the same executor. Task output files live under the per-attempt artifact directory, exposed to child programs through `MUXLIO_OUTPUT_DIR`; executables must be installed and authorized on the selected worker. Host mode is intended for a self-hosted, single-owner worker. There is no OCI sandbox support in this release.
 
 ### Implement-features recipe
 

@@ -75,3 +75,36 @@ func ResolveOutput(workDir, name string) (string, error) {
 	}
 	return resolved, nil
 }
+
+// ValidateOutputPath checks a declared relative output before execution. It
+// rejects lexical traversal and any existing parent symlink that escapes the
+// allocated artifact directory while allowing the final file not to exist yet.
+func ValidateOutputPath(workDir, name string) error {
+	if name == "" || filepath.IsAbs(name) {
+		return fmt.Errorf("output path must be relative to the work directory")
+	}
+	clean := filepath.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("output path escapes the work directory")
+	}
+	root, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(filepath.Join(root, clean))
+	for {
+		if resolved, e := filepath.EvalSymlinks(parent); e == nil {
+			rel, e := filepath.Rel(root, resolved)
+			if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("output path escapes the work directory")
+			}
+			break
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			break
+		}
+		parent = next
+	}
+	return nil
+}

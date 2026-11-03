@@ -8,7 +8,7 @@
 //     --adapters adapters --data-dir ~/.muxlio --json
 import { workflow } from '@muxlio/sdk';
 import { input } from './schemas.js';
-import { commit, fix, implement, review, verify } from './tasks.js';
+import { commit, fix, implement, readCommitSHA, requireCleanWorkspace, review, stageChanges, verify } from './tasks.js';
 
 export default workflow('implement-features', {
   input,
@@ -21,6 +21,7 @@ export default workflow('implement-features', {
         concurrency: 1,
       },
       feature => {
+        step('require-clean-workspace', requireCleanWorkspace, { feature });
         const implementation = step('implement', implement, {
           feature,
           branch: input.branch,
@@ -32,39 +33,32 @@ export default workflow('implement-features', {
         });
 
         const verification = repeatUntil('verification', {
-          attempt: () =>
-            step(
-              'verify',
-              verify,
-              { feature },
-              { after: reviewed },
-            ),
+          attempt: () => step('verify', verify, { feature }, { after: reviewed }),
 
-          until: result => result.passed,
+          until: result => result._result.passed,
 
           otherwise: result =>
             step('fix', fix, {
               feature,
-              failures: result.output,
+              failures: result._result,
             }),
 
           maxAttempts: 10,
           onExhausted: 'pause',
         });
 
+        const staged = step('stage-changes', stageChanges, { feature, verificationReport: verification.value }, { requiresPassed: verification });
         const committed = step(
           'commit',
           commit,
-          {
-            feature,
-            verificationReport: verification.value.output,
-          },
-          { requiresPassed: verification },
+          { feature },
+          { after: staged, requiresPassed: verification },
         );
+        const commitSHA = step('commit-sha', readCommitSHA, {}, { after: committed, requiresPassed: verification });
 
         return {
           id: feature.id,
-          commit: committed.sha,
+          commit: commitSHA._result.stdout,
           attempts: verification.attempts,
         };
       },

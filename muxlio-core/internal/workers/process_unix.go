@@ -24,8 +24,15 @@ func runProcess(ctx context.Context, cmd *exec.Cmd) error {
 		killProcessGroup(cmd)
 		return err
 	case <-ctx.Done():
-		killProcessGroup(cmd)
-		<-done
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		}
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			killProcessGroup(cmd)
+			<-done
+		}
 		return ctx.Err()
 	}
 }

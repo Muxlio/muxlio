@@ -37,6 +37,7 @@ func TestBundledExecutorCapabilitiesIncludeShippedAgents(t *testing.T) {
 		"agent/gemini-cli",
 		"agent/kiro",
 		"command/go-test",
+		"command",
 	}
 	for _, want := range required {
 		found := false

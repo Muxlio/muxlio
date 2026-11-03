@@ -20,9 +20,9 @@ bash scripts/build-release.sh "$HOME/.local/muxlio"
 export PATH="$HOME/.local/muxlio/bin:$PATH"
 ```
 
-The resulting prefix contains `bin/muxlio`, six compiled adapters under
+The resulting prefix contains `bin/muxlio`, seven compiled adapters under
 `libexec/muxlio/adapters` (`agent-claude`, `agent-codex`, `agent-cursor`,
-`agent-gemini-cli`, `agent-kiro`, and `command-go-test`), and UI assets under
+`agent-gemini-cli`, `agent-kiro`, `command-go-test`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
 removing or moving the checkout. Relative resource discovery uses the installed

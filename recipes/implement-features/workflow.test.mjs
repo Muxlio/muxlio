@@ -7,7 +7,7 @@ const plan = compiled.plan;
 test('implement-features plan structure', () => {
   assert.equal(plan.name, 'implement-features');
   assert.ok(plan.requiredExecutors.includes('agent/codex'), 'must require agent/codex');
-  assert.ok(!plan.requiredExecutors.includes('command/go-test'));
+  assert.ok(plan.requiredExecutors.includes('command'));
 
   // No prepare step — the recipe is workspace-agnostic.
   const root = plan.subgraphs.root;
@@ -22,7 +22,32 @@ test('implement-features plan structure', () => {
 
   // implement is the first step in the body.
   const implement = body.nodes.find((n) => n.id === 'implement');
-  assert.equal(implement?.executor, 'agent/codex');
+  assert.equal(implement?.executor, 'agent/kiro');
+
+  const allNodes = Object.values(plan.subgraphs).flatMap((g) => g.nodes);
+  const stage = allNodes.find((n) => n.id === 'stage-changes');
+  const commit = allNodes.find((n) => n.id === 'commit');
+  assert.equal(stage?.executor, 'command');
+  assert.equal(commit?.executor, 'command');
+  assert.deepEqual(commit?.params?.argTemplates, [null, null, 'implement {{feature.feature}}']);
+  const commitSHA = allNodes.find((n) => n.id === 'commit-sha');
+  assert.equal(commitSHA?.executor, 'command');
+  assert.deepEqual(commitSHA?.params?.args, ['rev-parse', 'HEAD']);
+  assert.equal(commitSHA?.params?.trimStdout, true);
+  const cleanCheck = allNodes.find((n) => n.id === 'require-clean-workspace');
+  assert.equal(cleanCheck?.params?.failOnOutput, true);
+
+  const verificationLoop = body.nodes.find((n) => n.kind === 'loop');
+  const attemptNodes = plan.subgraphs[verificationLoop.bodyRef].nodes;
+  const verify = attemptNodes.find((n) => n.id === 'verify');
+  assert.equal(verify?.executor, 'command');
+  assert.equal(verify?.params?.args?.[0], '-e');
+  assert.match(verify?.params?.args?.[1], /muxlio-core/);
+  assert.match(verify?.params?.args?.[1], /muxlio-adapters/);
+  assert.equal(verify?.params?.onNonZero, 'return');
+  const capture = attemptNodes.find((n) => n.id === 'verification__cap');
+  assert.equal(capture?.inputs?.passed?.expr?.op, 'field');
+  assert.equal(capture?.inputs?.passed?.expr?.name, 'passed');
 
   // Commit is guarded by a branch (requiresPassed).
   const commitGuard = body.nodes.find(

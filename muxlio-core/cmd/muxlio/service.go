@@ -27,6 +27,7 @@ type serviceConfig struct {
 	UI                    string   `json:"ui"`
 	Workspace             string   `json:"workspace"`
 	Capabilities          []string `json:"capabilities"`
+	CommandHostEnabled    bool     `json:"commandHostEnabled,omitempty"`
 	AttemptTimeoutSeconds int      `json:"attemptTimeoutSeconds"`
 	// Token is an optional bearer token that the coordinator will require on all
 	// API requests (except /healthz). Can also be set via MUXLIO_TOKEN env.

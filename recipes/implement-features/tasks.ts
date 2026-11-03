@@ -2,8 +2,8 @@ import { task, artifact } from '@muxlio/sdk';
 import { z } from 'zod';
 
 export const implement = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/kiro',
+  fallbackExecutors: ['agent/codex'],
   task: `Implement the requested feature in the current workspace, following
 existing conventions and patterns. Add or update focused tests where relevant.
 Run any applicable checks and make sure they pass.
@@ -16,8 +16,8 @@ delegate to another agent.`,
 });
 
 export const review = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/kiro',
+  fallbackExecutors: ['agent/codex'],
   task: `Independently review the feature implementation. Read the implementation
 notes from the previous step (provided in context). Check correctness,
 regressions, security, and test coverage. Fix any issues directly in the
@@ -29,8 +29,8 @@ confirmed. Do not delegate or edit SKILL.md.`,
 });
 
 export const fix = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/kiro',
+  fallbackExecutors: ['agent/codex'],
   task: `Read the verification failure report provided in context. Determine root
 causes and fix them in the workspace without weakening or disabling any checks.
 Keep changes scoped to the feature. Write fix.md to the scratch directory
@@ -40,45 +40,67 @@ SKILL.md.`,
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
 
+const commandResult = z.object({
+  exitCode: z.number().nullable(), signal: z.string().optional(),
+  stdout: z.string(), stderr: z.string(), durationMs: z.number(),
+});
+
+function verifyCommand(id: string, program: string, args: string[], cwd: string) {
+  return task({
+  executor: 'command',
+  task: `Run ${id}.`,
+  params: { program, args, cwd, onNonZero: 'return', timeout: '10m' },
+  outputs: { _result: commandResult },
+  });
+}
+
 export const verify = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/cursor'],
-  task: `Verify the feature implementation objectively. Run the project's primary
-build and test commands. For this repository that is:
-  1. npm run build   (from the repo root)
-  2. npm test        (from the repo root)
-  3. go test ./...   (from muxlio-adapters — these always pass)
-
-The muxlio-core Go suite requires network listener binding which is blocked in
-this sandbox; skip it or treat bind-permission failures as environment noise,
-not feature regressions. Set passed=true if the npm build, npm test, and
-muxlio-adapters Go tests all pass, regardless of core listener failures.
-
-Write verification.md to the scratch directory: list every command run, its
-exit code, and relevant log excerpts.
-
-Write a file named \`passed\` to the scratch directory containing ONLY the JSON
-literal true or false (no quotes, no surrounding text).`,
-  outputs: {
-    passed: z.boolean(),
-    output: artifact.markdown('verification.md'),
+  executor: 'command',
+  task: 'Run the repository build and test suites; return nonzero if any suite fails.',
+  params: {
+    program: 'node',
+    args: ['-e', `const {spawnSync}=require('node:child_process');
+const checks=[['npm run build','npm',['run','build'],'.'],['npm test','npm',['test'],'.'],['UI tests','npm',['--prefix','muxlio-ui','test'],'.'],['core Go tests','go',['test','./...'],'muxlio-core'],['adapter Go tests','go',['test','./...'],'muxlio-adapters']];
+let failed=false;
+for(const [label,program,args,cwd] of checks){process.stdout.write('\\n=== '+label+' ===\\n');const r=spawnSync(program,args,{cwd,stdio:'inherit'});const code=r.error?1:(r.status??1);process.stdout.write('\\n=== '+label+': exit '+code+' ===\\n');if(code!==0)failed=true;}
+process.exitCode=failed?1:0;`],
+    cwd: '.',
+    onNonZero: 'return',
+    timeout: '10m',
   },
-  retry: { maxAttempts: 2, effect: 'retryable' },
+  outputs: { _result: commandResult.extend({ passed: z.boolean() }) },
 });
 
 export const commit = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/cursor'],
-  task: `Verification passed. Commit the feature changes. Stage only the
-intended changes — do not stage report files (notes.md, review.md,
-verification.md, fix.md) from the scratch directory.
+  executor: 'command',
+  task: 'Create the verified feature commit.',
+  params: {
+    program: 'git',
+    args: ['commit', '-m', ''],
+    argTemplates: [null, null, 'implement {{feature.feature}}'],
+    cwd: '.',
+    onNonZero: 'fail',
+  },
+  outputs: { _result: commandResult },
+});
 
-Create a commit with message "feat(<id>): <feature>" where <id> and <feature>
-come from the feature input. If an equivalent commit already exists, use its
-SHA.
+export const readCommitSHA = task({
+  executor: 'command',
+  task: 'Read the commit SHA.',
+  params: { program: 'git', args: ['rev-parse', 'HEAD'], cwd: '.', onNonZero: 'fail', trimStdout: true },
+  outputs: { _result: commandResult },
+});
 
-Write the resulting commit sha as a JSON-encoded string (e.g. "abc1234") to
-the output file listed below. The file must contain ONLY the JSON string.`,
-  outputs: { sha: z.string() },
-  retry: { maxAttempts: 2, effect: 'retryable' },
+export const stageChanges = task({
+  executor: 'command',
+  task: 'Stage workspace changes for the verified feature commit.',
+  params: { program: 'git', args: ['add', '-A'], cwd: '.', onNonZero: 'fail' },
+  outputs: { _result: commandResult },
+});
+
+export const requireCleanWorkspace = task({
+  executor: 'command',
+  task: 'Require a clean workspace before beginning a feature.',
+  params: { program: 'git', args: ['status', '--porcelain'], cwd: '.', onNonZero: 'fail', failOnOutput: true },
+  outputs: { _result: commandResult },
 });

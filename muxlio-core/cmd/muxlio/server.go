@@ -315,11 +315,15 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		executor.Context = ctx
 		executor.Workspace = config.Workspace
 		executor.AgentHome = config.AgentHome
+		executor.AllowCommandHost = config.CommandHostEnabled
 		if config.AttemptTimeoutSeconds > 0 {
 			executor.Timeout = time.Duration(config.AttemptTimeoutSeconds) * time.Second
 		}
 		caps := make([]workers.RemoteCapability, 0, len(config.Capabilities))
 		for _, name := range config.Capabilities {
+			if name == "command" && !config.CommandHostEnabled {
+				continue
+			}
 			caps = append(caps, workers.RemoteCapability{Name: name})
 		}
 		_, port, _ := net.SplitHostPort(servers.loopbackAddr())

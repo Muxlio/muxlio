@@ -115,6 +115,22 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 			return 2
 		}
 	}
+	// Remote workers currently have no authenticated local-owner provenance and
+	// no verified OCI backend. Never advertise host command execution there.
+	filtered := caps[:0]
+	for _, cap := range caps {
+		if cap.Name != "command" {
+			filtered = append(filtered, cap)
+		}
+	}
+	if len(filtered) != len(caps) {
+		fmt.Fprintln(os.Stderr, "command capability omitted: remote host authorization/sandbox is unavailable")
+	}
+	caps = filtered
+	if len(caps) == 0 {
+		fmt.Fprintln(os.Stderr, "error: no remotely authorized capabilities remain")
+		return 2
+	}
 
 	// Parse capacity from the CLI, then the environment, or use the default.
 	capacity := 1

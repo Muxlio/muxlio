@@ -49,6 +49,9 @@ type ScriptExecutor struct {
 	AgentHome string
 	Timeout   time.Duration
 	Context   context.Context
+	// AllowCommandHost is an administrator-controlled worker setting. Workflow
+	// parameters never enable this capability.
+	AllowCommandHost bool
 }
 
 // isolationPolicy is read from the execute step's params.isolation object.
@@ -119,6 +122,26 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	req, guardErr = GuardRequest(req)
 	if guardErr != nil {
 		return ExecuteResult{Error: guardErr.Error()}, nil
+	}
+	if req.Executor == "command" {
+		var params struct {
+			Execution struct {
+				Isolation string `json:"isolation"`
+			} `json:"execution"`
+		}
+		if len(req.Params) > 0 {
+			_ = json.Unmarshal(req.Params, &params)
+		}
+		mode := params.Execution.Isolation
+		if mode == "sandbox" {
+			return ExecuteResult{Error: "command sandbox requested but no verified OCI backend is configured"}, nil
+		}
+		if mode != "" && mode != "host" {
+			return ExecuteResult{Error: "command execution.isolation must be host or sandbox"}, nil
+		}
+		if !s.AllowCommandHost {
+			return ExecuteResult{Error: "command host execution denied by worker policy"}, nil
+		}
 	}
 	if strings.Contains(req.Executor, "..") || strings.ContainsAny(req.Executor, "\\") {
 		return ExecuteResult{}, fmt.Errorf("invalid executor name")

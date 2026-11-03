@@ -126,6 +126,10 @@ class RecordingContext {
     outputs?: Record<string, OutputDecl>;
   }): any {
     this.requiredExecutors.add(opts.executor);
+    const outputDecls = { ...(opts.outputs || {}) };
+    if (opts.executor === 'command' && !outputDecls._result) {
+      outputDecls._result = { mime: 'application/json' };
+    }
     const inputs: Record<string, Binding> = {};
     if (opts.inputs) {
       for (const [name, val] of Object.entries(opts.inputs)) {
@@ -139,9 +143,9 @@ class RecordingContext {
       task: opts.task,
       params: opts.params,
       inputs,
-      outputs: opts.outputs,
+      outputs: outputDecls,
     });
-    return createExecuteResult(id, opts.outputs || {});
+    return createExecuteResult(id, outputDecls);
   }
 
   async map(

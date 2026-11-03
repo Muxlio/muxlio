@@ -208,6 +208,9 @@ func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []Val
 		// Warn when a scalar output port is never mentioned in the task prompt.
 		// Agents won't know what to write to the output file if it isn't named.
 		for port, decl := range node.Outputs {
+			if node.Executor == "command" {
+				continue // command outputs come from the process, not an agent prompt
+			}
 			if decl.Path != "" {
 				continue // file artifact — path is explicit in the prompt
 			}

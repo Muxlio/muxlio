@@ -11,6 +11,7 @@ var BundledExecutorCapabilities = []string{
 	"agent/cursor",
 	"agent/gemini-cli",
 	"agent/kiro",
+	"command",
 	"command/go-test",
 }
 

@@ -23,6 +23,21 @@ func AppendStreamText(text string) {
 	_, _ = file.Write(raw)
 }
 
+// AppendLogChunk writes one bounded structured log record for executor output.
+func AppendLogChunk(stream, text string) {
+	if text == "" {
+		return
+	}
+	file := logWriter()
+	if file == nil {
+		return
+	}
+	raw, err := json.Marshal(map[string]string{"stream": stream, "text": text})
+	if err == nil {
+		_, _ = file.Write(append(raw, '\n'))
+	}
+}
+
 // CaptureAgentText accumulates assistant output and mirrors it to the live log stream.
 func CaptureAgentText(chunks *BoundedBuffer, text string) {
 	if text == "" {

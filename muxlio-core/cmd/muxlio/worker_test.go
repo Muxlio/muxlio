@@ -45,6 +45,7 @@ func TestDiscoverCapabilities(t *testing.T) {
 	write("agent-gemini-cli", 0o755)
 	write("agent-kiro", 0o755)
 	write("command-go-test", 0o755)
+	write("command", 0o755)
 	// Non-executable — must be skipped.
 	write("README.md", 0o644)
 	// Hidden — must be skipped.
