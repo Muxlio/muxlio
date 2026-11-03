@@ -181,7 +181,10 @@ func main() {
 	}
 	if runErr != "" {
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
-		adapter.Fail("agent-claude: %s", withStderr(runErr, stderr.String()))
+		// Preserve provider-reported usage from the terminal result event so
+		// failed attempts that still returned usage are recorded, not estimated
+		// as zero/unavailable. usage is nil when no result event was parsed.
+		adapter.FailWithUsage(usage, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared output files from workDir.

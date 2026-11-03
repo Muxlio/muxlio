@@ -104,6 +104,16 @@ func Fail(format string, args ...any) {
 	os.Exit(0)
 }
 
+// FailWithUsage writes an error Response that also carries provider-reported
+// usage, then exits 0. Use it when a terminal result event reported usage even
+// though the run failed, so a failed attempt keeps its real token counts
+// instead of being recorded as unavailable. A nil usage is reported as absent
+// (omitted via omitempty), matching Fail.
+func FailWithUsage(usage *TokenUsage, format string, args ...any) {
+	_ = WriteResponse(Response{Outputs: map[string]any{}, Error: fmt.Sprintf(format, args...), Usage: usage})
+	os.Exit(0)
+}
+
 // InputString extracts a plain string value from an input port. The port
 // value may be a raw string, or a map with a "data" key.
 func InputString(inputs map[string]any, port string) string {
