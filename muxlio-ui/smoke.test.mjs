@@ -139,6 +139,16 @@ try {
   assert.match(html, /id="retryRunModal"/, 'retry confirmation modal should be present in the shell');
   assert.match(html, /retryRunModalConfirm/, 'retry modal should expose a confirm action');
   assert.match(html, /Already-succeeded steps will be kept/, 'retry modal should explain skipped succeeded steps');
+  // cancel run modal
+  assert.match(html, /id="cancelRunModal"/, 'cancel confirmation modal should be present in the shell');
+  assert.match(html, /cancelRunModalConfirm/, 'cancel modal should expose a confirm action');
+  assert.match(html, /An operation already in progress may have external effects/, 'cancel modal should warn about in-progress effects');
+  assert.match(workspace, /if\(cancelModalResolve\)return Promise\.resolve\(false\)/, 'only one cancel confirmation should be pending at a time');
+  assert.match(workspace, /cancelRunModalCancel'\)\?\.addEventListener\('click',\(\)=>closeCancelRunModal\(false\)/, 'keep-running button should close the dialog without confirming');
+  assert.match(workspace, /cancelRunModalConfirm'\)\?\.addEventListener\('click',\(\)=>closeCancelRunModal\(true\)/, 'cancel-run button should confirm cancellation');
+  assert.match(workspace, /e\.target===e\.currentTarget\)closeCancelRunModal\(false\)/, 'cancel modal backdrop clicks should dismiss');
+  assert.match(workspace, /e\.key!=='Escape'[\s\S]*?closeCancelRunModal\(false\)/, 'Escape should dismiss the cancel modal');
+  assert.doesNotMatch(workspace, /action==='cancel'&&!confirm/, 'cancel action must not use window.confirm');
   const inspectorSource = await (await fetch(`${baseURL}/js/inspector.js`)).text();
   assert.match(inspectorSource, /actionsEl\.hidden=!\['failed','cancelled'\]\.includes\(wbCurrentRunState\)/, 'inspector retry should only be available for failed or cancelled runs');
   const css = await (await fetch(`${baseURL}/workspace.css`)).text();

@@ -376,6 +376,24 @@
   </div>
 </div>
 
+<div id="cancelRunModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cancelRunModalTitle">
+    <div class="modal-head">
+      <div>
+        <div class="modal-kicker">Run</div>
+        <div class="modal-title" id="cancelRunModalTitle">Cancel this run?</div>
+      </div>
+    </div>
+    <div class="modal-body">
+      <p>An operation already in progress may have external effects.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn ghost" type="button" id="cancelRunModalCancel">Keep running</button>
+        <button class="btn ghost" type="button" id="cancelRunModalConfirm" style="color:var(--red)">Cancel run</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/js/core.js"></script>
 <script src="/js/workbench.js?v=control-flow-20261103"></script>
 <script src="/js/inspector.js"></script>

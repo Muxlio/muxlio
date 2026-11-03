@@ -105,7 +105,7 @@ renderWorkbench=function(r,g,events){
   controls.innerHTML=`${active?'<button class="btn ghost" data-run-action="pause">Pause run</button>':''}${paused?'<button class="btn primary" data-run-action="resume">Resume run</button>':''}${retryable?'<button class="btn primary" data-run-action="retry">Retry run</button>':''}${active||paused?'<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>':''}`;
   controls.querySelectorAll('[data-run-action]').forEach(button=>button.onclick=async()=>{
     const action=button.dataset.runAction;
-    if(action==='cancel'&&!confirm('Cancel this run? An operation already in progress may have external effects.'))return;
+    if(action==='cancel'){if(!await openCancelRunModal())return;}
     if(action==='retry'){await retryRun(r.id,button);return;}
     button.disabled=true;
     try{await api(`/v1/runs/${encodeURIComponent(r.id)}/${action}`,{method:'POST'});await openRun(r.id);}
@@ -157,6 +157,40 @@ document.addEventListener('keydown',e=>{
   if(!modal||modal.hidden||!retryModalResolve)return;
   e.preventDefault();
   closeRetryRunModal(false);
+});
+
+let cancelModalResolve=null;
+
+function openCancelRunModal(){
+  if(cancelModalResolve)return Promise.resolve(false);
+  return new Promise(resolve=>{
+    const modal=document.getElementById('cancelRunModal');
+    if(!modal){resolve(false);return;}
+    cancelModalResolve=resolve;
+    modal.hidden=false;
+    modal.style.display='';
+  });
+}
+
+function closeCancelRunModal(confirmed){
+  const modal=document.getElementById('cancelRunModal');
+  if(modal)modal.hidden=true;
+  const resolve=cancelModalResolve;
+  cancelModalResolve=null;
+  if(resolve)resolve(confirmed);
+}
+
+document.getElementById('cancelRunModalCancel')?.addEventListener('click',()=>closeCancelRunModal(false));
+document.getElementById('cancelRunModalConfirm')?.addEventListener('click',()=>closeCancelRunModal(true));
+document.getElementById('cancelRunModal')?.addEventListener('click',e=>{
+  if(e.target===e.currentTarget)closeCancelRunModal(false);
+});
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  const modal=document.getElementById('cancelRunModal');
+  if(!modal||modal.hidden||!cancelModalResolve)return;
+  e.preventDefault();
+  closeCancelRunModal(false);
 });
 
 // ── wire #inspRerun — retries the run from the last checkpoint ────────────
