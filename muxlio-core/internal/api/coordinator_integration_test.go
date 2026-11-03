@@ -118,7 +118,7 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 	if !after[0].LeaseUntil.After(before[0].LeaseUntil) {
 		t.Fatal("heartbeat did not renew lease")
 	}
-	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs"})
+	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs", Usage: &state.TokenUsage{Input: 9, Output: 4, Cached: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
-		if result.Outputs["answer"] != "ok" || result.Logs != "worker logs" {
+		if result.Outputs["answer"] != "ok" || result.Logs != "worker logs" || result.Usage == nil || result.Usage.Input != 9 || result.Usage.Output != 4 || result.Usage.Cached != 2 {
 			t.Fatalf("lost completion: %#v", result)
 		}
 	case <-time.After(3 * time.Second):

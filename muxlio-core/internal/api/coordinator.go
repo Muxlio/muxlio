@@ -166,7 +166,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if c.initErr != nil {
 		return c.initErr
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs}
+	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}

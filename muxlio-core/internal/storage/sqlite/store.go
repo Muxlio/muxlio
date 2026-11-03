@@ -71,7 +71,7 @@ var schemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_timers_due ON timers(state, due_at)`,
 	`CREATE TABLE IF NOT EXISTS signals (run_id TEXT NOT NULL, name TEXT NOT NULL, seq INTEGER NOT NULL, payload_json TEXT, timestamp TEXT NOT NULL, PRIMARY KEY(run_id,name,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS log_chunks (run_id TEXT NOT NULL, activation_id TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, timestamp TEXT NOT NULL, PRIMARY KEY(activation_id,stream,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
-	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', usage_json TEXT, FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_execution_attempts_run ON execution_attempts(run_id, activation_id, retry_number)`,
 	`CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, created_at)`,
@@ -112,6 +112,8 @@ func Open(path string) (*Store, error) {
 		// Signal idempotency key: allows callers to deduplicate retried deliveries.
 		`ALTER TABLE signals ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE workers ADD COLUMN labels_json TEXT NOT NULL DEFAULT '{}'`,
+		// Attempt-level token usage reported by the executor/adapter.
+		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -686,11 +688,19 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure)
+	usageJSON, err := marshalUsage(a.Usage)
 	if err != nil {
 		return err
 	}
-	if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}); err != nil {
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
+	if a.Usage != nil {
+		payload["usage"] = a.Usage
+	}
+	if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, payload); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -708,7 +718,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -724,7 +734,8 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 	for rows.Next() {
 		var a state.ExecutionAttempt
 		var started, finished string
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure); err != nil {
+		var usageJSON sql.NullString
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -732,6 +743,10 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 			return nil, err
 		}
 		a.FinishedAt, err = time.Parse(time.RFC3339Nano, finished)
+		if err != nil {
+			return nil, err
+		}
+		a.Usage, err = unmarshalUsage(usageJSON)
 		if err != nil {
 			return nil, err
 		}
@@ -1325,6 +1340,30 @@ func marshalJSON(v any) ([]byte, error) {
 
 func rfc3339(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// marshalUsage serialises attempt token usage to a JSON column value. A nil
+// pointer (provider did not report usage) is stored as NULL so that it can be
+// distinguished from a reported zero on read-back.
+func marshalUsage(u *state.TokenUsage) ([]byte, error) {
+	if u == nil {
+		return nil, nil
+	}
+	return json.Marshal(u)
+}
+
+// unmarshalUsage deserialises the usage_json column. A NULL or empty value
+// yields a nil pointer (explicitly unavailable); a present JSON object yields
+// a non-nil pointer even when all counts are zero (reported as zero).
+func unmarshalUsage(v sql.NullString) (*state.TokenUsage, error) {
+	if !v.Valid || v.String == "" {
+		return nil, nil
+	}
+	var u state.TokenUsage
+	if err := json.Unmarshal([]byte(v.String), &u); err != nil {
+		return nil, fmt.Errorf("muxlio: parsing attempt usage: %w", err)
+	}
+	return &u, nil
 }
 
 func stateKeys(m map[string]any) []string {

@@ -56,6 +56,7 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var streamErr string
 	completed := false
+	var usage *adapter.TokenUsage
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -86,6 +87,7 @@ func main() {
 			}
 		case "result":
 			completed = true
+			usage = adapter.ParseTokenUsage(event["usage"])
 			if textChunks.Len() == 0 {
 				for _, text := range resultText(event) {
 					adapter.CaptureAgentText(&textChunks, text)
@@ -124,7 +126,7 @@ func main() {
 	if len(missing) > 0 {
 		errMsg = fmt.Sprintf("agent-cursor did not write expected output files: %s", strings.Join(missing, ", "))
 	}
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
 }
 
 func assistantText(raw json.RawMessage) []string {

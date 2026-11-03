@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
+	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 const remoteProtocolVersion = "v1"
@@ -58,31 +59,32 @@ type remoteError struct {
 	Retryable bool   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
-	AssignmentID     string         `json:"assignmentId"`
-	RunID            string         `json:"runId"`
-	ActivationID     string         `json:"activationId"`
-	AttemptID        string         `json:"attemptId"`
-	CoordinatorEpoch int64          `json:"coordinatorEpoch"`
-	Generation       int64          `json:"generation"`
-	State            string         `json:"state"`
-	Outputs          map[string]any `json:"outputs,omitempty"`
-	Error            *remoteError   `json:"error,omitempty"`
-	Logs             string         `json:"logs,omitempty"`
+	AssignmentID     string            `json:"assignmentId"`
+	RunID            string            `json:"runId"`
+	ActivationID     string            `json:"activationId"`
+	AttemptID        string            `json:"attemptId"`
+	CoordinatorEpoch int64             `json:"coordinatorEpoch"`
+	Generation       int64             `json:"generation"`
+	State            string            `json:"state"`
+	Outputs          map[string]any    `json:"outputs,omitempty"`
+	Error            *remoteError      `json:"error,omitempty"`
+	Logs             string            `json:"logs,omitempty"`
+	Usage            *state.TokenUsage `json:"usage,omitempty"`
 }
 
 // RemoteWorkerConfig describes an outbound worker connection.
 type RemoteWorkerConfig struct {
-	CoordinatorURL string
-	WorkerID       string
-	Token          string
-	Capacity       int
-	Capabilities   []RemoteCapability
-	Labels         map[string]string
+	CoordinatorURL    string
+	WorkerID          string
+	Token             string
+	Capacity          int
+	Capabilities      []RemoteCapability
+	Labels            map[string]string
 	PollInterval      time.Duration
 	HeartbeatInterval time.Duration
 	HTTPClient        *http.Client
-	WorkBase       string
-	Workspace      string
+	WorkBase          string
+	Workspace         string
 }
 
 // RunRemoteWorker registers and polls until ctx is cancelled. Assignments are
@@ -280,12 +282,12 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		ticker := time.NewTicker(cfg.HeartbeatInterval)
 		var finished execution
 		revoked := false
-	applyHeartbeat := func(hb remoteHeartbeatResult) {
-		if remoteHeartbeatRevokesAssignment(assignment.AssignmentID, assignment.CoordinatorEpoch, hb) {
-			revoked = true
-			execCancel()
+		applyHeartbeat := func(hb remoteHeartbeatResult) {
+			if remoteHeartbeatRevokesAssignment(assignment.AssignmentID, assignment.CoordinatorEpoch, hb) {
+				revoked = true
+				execCancel()
+			}
 		}
-	}
 	executing:
 		for {
 			select {
@@ -319,7 +321,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		ticker.Stop()
 		result, execErr := finished.result, finished.err
 		result.Logs = boundedLog(RedactSecrets(result.Logs, executeReq.Secrets))
-		completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs}
+		completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage}
 		if revoked {
 			completion.State = "cancelled"
 			completion.Outputs = nil

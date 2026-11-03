@@ -38,6 +38,49 @@ type Request struct {
 type Response struct {
 	Outputs map[string]any `json:"outputs"`
 	Error   string         `json:"error"`
+	Usage   *TokenUsage    `json:"usage,omitempty"`
+}
+
+// TokenUsage holds provider-reported token counts. A nil pointer on Response
+// means the provider did not supply usage; a non-nil zero value is reported zero.
+type TokenUsage struct {
+	Input  int64 `json:"input"`
+	Output int64 `json:"output"`
+	Cached int64 `json:"cached"`
+}
+
+// ParseTokenUsage parses common provider usage shapes while preserving absence.
+// Input keys: input_tokens, prompt_token_count, prompt_tokens.
+// Output keys: output_tokens, candidates_token_count, completion_tokens.
+func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var values map[string]json.RawMessage
+	if json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	var u TokenUsage
+	var found bool
+	read := func(keys ...string) int64 {
+		for _, key := range keys {
+			if b, ok := values[key]; ok {
+				var n int64
+				if json.Unmarshal(b, &n) == nil {
+					found = true
+					return n
+				}
+			}
+		}
+		return 0
+	}
+	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens")
+	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens")
+	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cached_content_token_count", "cached_tokens")
+	if !found {
+		return nil
+	}
+	return &u
 }
 
 // ReadRequest decodes the Request from stdin.

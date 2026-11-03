@@ -1,10 +1,31 @@
 package adapter
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
+	if got := ParseTokenUsage(nil); got != nil {
+		t.Fatalf("missing usage = %+v, want nil", got)
+	}
+	if got := ParseTokenUsage(json.RawMessage(`{"other":1}`)); got != nil {
+		t.Fatalf("unrecognized usage = %+v, want nil", got)
+	}
+	got := ParseTokenUsage(json.RawMessage(`{"input_tokens":0,"output_tokens":0,"cached_input_tokens":0}`))
+	if got == nil || got.Input != 0 || got.Output != 0 || got.Cached != 0 {
+		t.Fatalf("reported zero = %+v", got)
+	}
+}
+
+func TestParseTokenUsageNormalizesProviderKeys(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"prompt_token_count":100,"candidates_token_count":40,"cached_content_token_count":12}`))
+	if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
+		t.Fatalf("normalized usage = %+v", got)
+	}
+}
 
 // ---- WorkingDir -------------------------------------------------------
 
@@ -256,7 +277,7 @@ func TestComposePromptListsOutputFiles(t *testing.T) {
 		Task:    "Do work.",
 		WorkDir: "/tmp/work",
 		Outputs: map[string]OutputDecl{
-			"notes": {Mime: "text/markdown", Path: "notes.md"}, // artifact
+			"notes":  {Mime: "text/markdown", Path: "notes.md"}, // artifact
 			"passed": {Mime: "application/json"},                // scalar
 		},
 	}

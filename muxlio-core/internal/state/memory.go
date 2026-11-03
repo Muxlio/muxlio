@@ -446,7 +446,11 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	if !found {
 		s.attempts = append(s.attempts, a)
 	}
-	s.appendEventLocked(a.RunID, EventExecutionAttempt, a.ActivationID, map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure})
+	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
+	if a.Usage != nil {
+		payload["usage"] = a.Usage
+	}
+	s.appendEventLocked(a.RunID, EventExecutionAttempt, a.ActivationID, payload)
 	return nil
 }
 

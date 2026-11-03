@@ -78,17 +78,30 @@ type Dispatch struct {
 	Request      []byte `json:"request"`
 }
 
+// TokenUsage records the input, output, and cached token counts reported by
+// an executor for a single execution attempt. A nil pointer means the provider
+// did not report usage; this is intentionally distinct from a reported zero,
+// which is represented by a non-nil pointer with all fields set to zero. The
+// distinction lets consumers tell "unavailable" from "free/empty" — missing
+// provider usage must remain explicitly unavailable, not be reported as zero.
+type TokenUsage struct {
+	Input  int64 `json:"input"`
+	Output int64 `json:"output"`
+	Cached int64 `json:"cached"`
+}
+
 // ExecutionAttempt records one interpreter call to an executor.
 type ExecutionAttempt struct {
-	ID           string    `json:"id"`
-	RunID        string    `json:"runId"`
-	ActivationID string    `json:"activationId"`
-	RetryNumber  int       `json:"retryNumber"`
-	Executor     string    `json:"executor"`
-	State        string    `json:"state"`
-	StartedAt    time.Time `json:"startedAt"`
-	FinishedAt   time.Time `json:"finishedAt"`
-	Failure      string    `json:"failure,omitempty"`
+	ID           string      `json:"id"`
+	RunID        string      `json:"runId"`
+	ActivationID string      `json:"activationId"`
+	RetryNumber  int         `json:"retryNumber"`
+	Executor     string      `json:"executor"`
+	State        string      `json:"state"`
+	StartedAt    time.Time   `json:"startedAt"`
+	FinishedAt   time.Time   `json:"finishedAt"`
+	Failure      string      `json:"failure,omitempty"`
+	Usage        *TokenUsage `json:"usage,omitempty"`
 }
 
 // LogChunk is an append-only chunk of worker output.

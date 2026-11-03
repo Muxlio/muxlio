@@ -87,6 +87,7 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var runErr string
 	completed := false
+	var usage *adapter.TokenUsage
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -130,6 +131,7 @@ func main() {
 			}
 		case "result":
 			completed = true
+			usage = adapter.ParseTokenUsage(ev["usage"])
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
 				var s string
@@ -221,7 +223,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

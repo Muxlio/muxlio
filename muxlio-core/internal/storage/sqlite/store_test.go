@@ -315,6 +315,93 @@ func TestExecutionAttemptsArePersistedAndEmitEvents(t *testing.T) {
 	}
 }
 
+func TestSQLiteExecutionAttemptUsage(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateRun(&state.Run{ID: "usage-run"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateActivation(&state.Activation{ID: "usage-act", RunID: "usage-run", NodeID: "task", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reported usage persists and round-trips.
+	reported := &state.TokenUsage{Input: 5000, Output: 3000, Cached: 1500}
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-1", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: reported}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing usage stays nil (unavailable), not zero.
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-2", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 2, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reported zero is distinct from nil.
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-3", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 3, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: &state.TokenUsage{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.ListExecutionAttempts("usage-run", "usage-act")
+	if err != nil || len(got) != 3 {
+		t.Fatalf("expected 3 attempts, got=%+v err=%v", got, err)
+	}
+
+	byID := make(map[string]state.ExecutionAttempt, len(got))
+	for _, a := range got {
+		byID[a.ID] = a
+	}
+
+	a1 := byID["usage-act-1"]
+	if a1.Usage == nil || a1.Usage.Input != 5000 || a1.Usage.Output != 3000 || a1.Usage.Cached != 1500 {
+		t.Fatalf("reported usage mismatch: %+v", a1.Usage)
+	}
+
+	a2 := byID["usage-act-2"]
+	if a2.Usage != nil {
+		t.Fatalf("missing usage should be nil, not zero: %+v", a2.Usage)
+	}
+
+	a3 := byID["usage-act-3"]
+	if a3.Usage == nil {
+		t.Fatal("reported zero usage should be non-nil")
+	}
+	if a3.Usage.Input != 0 || a3.Usage.Output != 0 || a3.Usage.Cached != 0 {
+		t.Fatalf("reported zero should have zero fields: %+v", a3.Usage)
+	}
+}
+
+func TestSQLiteExecutionAttemptUsagePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "coordinator.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateRun(&state.Run{ID: "persist-run"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateActivation(&state.Activation{ID: "persist-act", RunID: "persist-run", NodeID: "task", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "persist-act-1", RunID: "persist-run", ActivationID: "persist-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: &state.TokenUsage{Input: 42, Output: 17, Cached: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	got, err := st2.ListExecutionAttempts("persist-run", "persist-act")
+	if err != nil || len(got) != 1 || got[0].Usage == nil {
+		t.Fatalf("usage not persisted across reopen: %+v err=%v", got, err)
+	}
+	if got[0].Usage.Input != 42 || got[0].Usage.Output != 17 || got[0].Usage.Cached != 5 {
+		t.Fatalf("usage mismatch after reopen: %+v", got[0].Usage)
+	}
+}
+
 func TestClaimDispatchVersionMismatch(t *testing.T) {
 	st := openTemp(t)
 	if err := st.CreateRun(&state.Run{ID: "version-run"}); err != nil {

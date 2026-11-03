@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 // WorkerProtocolVersion is the current outbound worker wire contract.
@@ -67,17 +69,18 @@ type WorkerAssignment struct {
 }
 
 type WorkerCompletion struct {
-	AssignmentID     string         `json:"assignmentId"`
-	RunID            string         `json:"runId"`
-	ActivationID     string         `json:"activationId"`
-	AttemptID        string         `json:"attemptId"`
-	CoordinatorEpoch int64          `json:"coordinatorEpoch"`
-	Generation       int64          `json:"generation"`
-	State            string         `json:"state"`
-	Outputs          map[string]any `json:"outputs,omitempty"`
-	Error            *WorkerError   `json:"error,omitempty"`
-	LogCursor        string         `json:"logCursor,omitempty"`
-	Logs             string         `json:"logs,omitempty"`
+	AssignmentID     string            `json:"assignmentId"`
+	RunID            string            `json:"runId"`
+	ActivationID     string            `json:"activationId"`
+	AttemptID        string            `json:"attemptId"`
+	CoordinatorEpoch int64             `json:"coordinatorEpoch"`
+	Generation       int64             `json:"generation"`
+	State            string            `json:"state"`
+	Outputs          map[string]any    `json:"outputs,omitempty"`
+	Error            *WorkerError      `json:"error,omitempty"`
+	LogCursor        string            `json:"logCursor,omitempty"`
+	Logs             string            `json:"logs,omitempty"`
+	Usage            *state.TokenUsage `json:"usage,omitempty"`
 }
 
 // WorkerLogAppend carries one incremental log chunk for an active assignment.

@@ -9,21 +9,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
-	Context      context.Context `json:"-"`
-	Workspace    string          `json:"workspace,omitempty"`
-	RunID        string          `json:"runId,omitempty"`
-	ActivationID string          `json:"activationId,omitempty"`
-	AttemptID    string          `json:"attemptId,omitempty"`
-	Executor         string            `json:"executor"`
-	ExecutorVersion  string            `json:"executorVersion,omitempty"`
-	PlacementLabels  map[string]string `json:"placementLabels,omitempty"`
-	Task             string            `json:"task,omitempty"`
-	Params       json.RawMessage `json:"params,omitempty"`
-	Inputs       map[string]any  `json:"inputs,omitempty"`
+	Context         context.Context   `json:"-"`
+	Workspace       string            `json:"workspace,omitempty"`
+	RunID           string            `json:"runId,omitempty"`
+	ActivationID    string            `json:"activationId,omitempty"`
+	AttemptID       string            `json:"attemptId,omitempty"`
+	Executor        string            `json:"executor"`
+	ExecutorVersion string            `json:"executorVersion,omitempty"`
+	PlacementLabels map[string]string `json:"placementLabels,omitempty"`
+	Task            string            `json:"task,omitempty"`
+	Params          json.RawMessage   `json:"params,omitempty"`
+	Inputs          map[string]any    `json:"inputs,omitempty"`
 	// Secrets contains named secret values supplied by the coordinator. Executors
 	// must only receive names explicitly allowed by Policy.
 	Secrets   map[string]string     `json:"secrets,omitempty"`
@@ -90,9 +92,10 @@ type OutputDecl struct {
 
 // ExecuteResult is what an executor returns.
 type ExecuteResult struct {
-	Outputs map[string]any `json:"outputs,omitempty"`
-	Error   string         `json:"error,omitempty"`
-	Logs    string         `json:"logs,omitempty"`
+	Outputs map[string]any    `json:"outputs,omitempty"`
+	Error   string            `json:"error,omitempty"`
+	Logs    string            `json:"logs,omitempty"`
+	Usage   *state.TokenUsage `json:"usage,omitempty"`
 }
 
 // UncertainExecutionError requires reconciliation before another attempt can

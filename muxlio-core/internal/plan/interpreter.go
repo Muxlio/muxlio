@@ -478,11 +478,11 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		ExecutorVersion: node.ExecutorVersion,
 		PlacementLabels: node.PlacementLabels,
 		Task:            node.Task,
-		Params:    node.Params,
-		Inputs:    inputs,
-		Outputs:   outDecls,
-		ScopePath: scope,
-		NodeID:    node.ID,
+		Params:          node.Params,
+		Inputs:          inputs,
+		Outputs:         outDecls,
+		ScopePath:       scope,
+		NodeID:          node.ID,
 	}
 	if ws := workspaceFromInputs(inputs); ws != "" {
 		req.Workspace = ws
@@ -568,7 +568,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		if failure != "" {
 			attemptState = "failed"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attempt), RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attempt), RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Usage: result.Usage}); recordErr != nil {
 			return nil, recordErr
 		}
 		if err != nil {

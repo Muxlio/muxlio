@@ -86,6 +86,7 @@ func main() {
 	// Parse the newline-delimited stream-json event stream.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var usage *adapter.TokenUsage
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -134,6 +135,7 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, payload.Content)
 			}
 		case "result":
+			usage = adapter.ParseTokenUsage(ev["usage"])
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
 				var s string
@@ -243,7 +245,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

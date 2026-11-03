@@ -83,6 +83,54 @@ func TestObservabilityEndpoints(t *testing.T) {
 	}
 }
 
+func TestAttemptsAPIExposesUsage(t *testing.T) {
+	store := state.New()
+	if err := store.CreateRun(&state.Run{ID: "run-usage"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateActivation(&state.Activation{ID: "act-usage", RunID: "run-usage", NodeID: "n", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	// Attempt with reported usage.
+	if err := store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "att-1", RunID: "run-usage", ActivationID: "act-usage", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Usage: &state.TokenUsage{Input: 100, Output: 50, Cached: 25}}); err != nil {
+		t.Fatal(err)
+	}
+	// Attempt with no usage (provider unavailable).
+	if err := store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "att-2", RunID: "run-usage", ActivationID: "act-usage", RetryNumber: 2, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := httptest.NewRecorder()
+	NewRouter(store, nil).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/v1/runs/run-usage/attempts", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s", resp.Code, resp.Body.String())
+	}
+	var page struct {
+		Attempts []map[string]any `json:"attempts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(page.Attempts))
+	}
+
+	// First attempt carries usage.
+	att1 := page.Attempts[0]
+	usage, ok := att1["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage object in attempt 1, got %v", att1)
+	}
+	if usage["input"] != float64(100) || usage["output"] != float64(50) || usage["cached"] != float64(25) {
+		t.Fatalf("usage values mismatch: %v", usage)
+	}
+
+	// Second attempt has no usage key (missing = unavailable, not zero).
+	if _, ok := page.Attempts[1]["usage"]; ok {
+		t.Fatalf("missing usage should be omitted, not reported as zero: %v", page.Attempts[1])
+	}
+}
+
 func TestHealthzMethods(t *testing.T) {
 	handler := NewRouter(state.New(), nil)
 
