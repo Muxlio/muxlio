@@ -85,6 +85,7 @@ func main() {
 	// Collect all assistant text chunks; watch for runFinished.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var usage *adapter.TokenUsage
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -143,6 +144,12 @@ func main() {
 			}
 			if dataRaw, ok := ev["data"]; ok {
 				_ = json.Unmarshal(dataRaw, &payload)
+				// Kiro reports token counts in structured result metadata. Keep
+				// the last reported result usage for both successful and failed
+				// runs; absent counts remain unavailable.
+				if reported := parseKiroUsage(dataRaw); reported != nil {
+					usage = reported
+				}
 			}
 			if payload.Status != "" && payload.Status != "success" {
 				runErr = fmt.Sprintf("kiro run finished with status %s", payload.Status)
@@ -170,7 +177,7 @@ func main() {
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(stdoutTail.String()), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
-		adapter.Fail("agent-kiro: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithUsage(usage, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
@@ -192,7 +199,25 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
+}
+
+func parseKiroUsage(result json.RawMessage) *adapter.TokenUsage {
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(result, &payload) != nil {
+		return nil
+	}
+	if usage := adapter.ParseTokenUsage(payload["usage"]); usage != nil {
+		return usage
+	}
+	metadata := payload["metadata"]
+	var structured map[string]json.RawMessage
+	if json.Unmarshal(metadata, &structured) == nil {
+		if usage := adapter.ParseTokenUsage(structured["usage"]); usage != nil {
+			return usage
+		}
+	}
+	return adapter.ParseTokenUsage(metadata)
 }
 
 // tailBuffer retains only the most recent limit bytes written to it.

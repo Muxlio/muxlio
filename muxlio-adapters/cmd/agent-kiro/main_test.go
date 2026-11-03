@@ -1,9 +1,61 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestParseKiroUsageFromStructuredResultMetadata(t *testing.T) {
+	got := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{"usage":{"input_tokens":100,"output_tokens":40,"cached_input_tokens":12}}}`))
+	if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
+		t.Fatalf("usage = %+v, want input=100 output=40 cached=12", got)
+	}
+}
+
+func TestParseKiroUsageFromFailedResult(t *testing.T) {
+	got := parseKiroUsage(json.RawMessage(`{"status":"error","metadata":{"inputTokens":7,"outputTokens":3,"cachedTokens":2}}`))
+	if got == nil || got.Input != 7 || got.Output != 3 || got.Cached != 2 {
+		t.Fatalf("usage = %+v, want input=7 output=3 cached=2", got)
+	}
+}
+
+func TestParseKiroUsageLeavesUnreportedCountsUnavailable(t *testing.T) {
+	got := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{"usage":{"input_tokens":9}}}`))
+	if got == nil || got.Input != 9 || got.Output != 0 || got.Cached != 0 {
+		t.Fatalf("usage = %+v, want reported input=9 and other counts unavailable as zero fields", got)
+	}
+	if absent := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{}}`)); absent != nil {
+		t.Fatalf("usage = %+v, want absent", absent)
+	}
+}
+
+func TestParseKiroUsageFromRunFinishedUsageAndDirectMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"direct usage", `{"usage":{"input_tokens":11,"output_tokens":5,"cached_input_tokens":2}}`},
+		{"direct metadata fields", `{"metadata":{"input_tokens":13,"output_tokens":6,"cached_input_tokens":3}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseKiroUsage(json.RawMessage(tc.data))
+			if got == nil || got.Input == 0 || got.Output == 0 || got.Cached == 0 {
+				t.Fatalf("usage = %+v, want all direct counts parsed", got)
+			}
+		})
+	}
+}
+
+func TestParseKiroUsageKeepsAnyReportedTerminalCounts(t *testing.T) {
+	prior := parseKiroUsage(json.RawMessage(`{"metadata":{"usage":{"input_tokens":11}}}`))
+	if later := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{}}`)); later != nil {
+		prior = later
+	}
+	if prior == nil || prior.Input != 11 {
+		t.Fatalf("usage after empty terminal metadata = %+v, want prior reported input=11", prior)
+	}
+}
 
 func TestTailBufferKeepsLastLimitBytes(t *testing.T) {
 	buffer := &tailBuffer{limit: 8}
