@@ -135,7 +135,19 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, payload.Content)
 			}
 		case "result":
-			usage = adapter.ParseTokenUsage(ev["usage"])
+			// Gemini CLI's stream-json result event carries aggregated token
+			// usage. The field name depends on the CLI version: newer builds
+			// emit a top-level "usage" object, while the documented headless
+			// stream-json contract places aggregated counts under "stats"
+			// (e.g. {"input_tokens":120,"output_tokens":18}). Try both so the
+			// adapter captures usage regardless of the wire format; a nil
+			// result (no recognised keys) preserves any usage reported by an
+			// earlier "usage" event rather than overwriting it with absence.
+			if u := adapter.ParseTokenUsage(ev["usage"]); u != nil {
+				usage = u
+			} else if u := adapter.ParseTokenUsage(ev["stats"]); u != nil {
+				usage = u
+			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
 				var s string
@@ -190,6 +202,17 @@ func main() {
 					break
 				}
 			}
+		case "usage":
+			// Newer Gemini CLI builds emit a dedicated "usage" event whose
+			// provider-reported counts live at the top level of the event
+			// object (camelCase: inputTokens, outputTokens, cachedTokens, or
+			// the raw usageMetadata names promptTokenCount, etc.). Parse the
+			// whole line so ParseTokenUsage sees those top-level keys. The
+			// last "usage" event holds the final total, so overwrite each
+			// time a non-nil value is parsed.
+			if u := adapter.ParseTokenUsage(json.RawMessage(line)); u != nil {
+				usage = u
+			}
 		case "completion", "done":
 			// No extra action needed; process exit determines success.
 		}
@@ -203,7 +226,12 @@ func main() {
 		runErr = appendFailure(runErr, fmt.Sprintf("gemini-cli process error: %v", err))
 	}
 	if runErr != "" {
-		adapter.Fail("agent-gemini-cli: %s", withStderr(runErr, stderr.String()))
+		// Preserve provider-reported usage from the terminal result/usage
+		// event so failed attempts that still returned usage are recorded,
+		// not estimated as zero/unavailable. usage is nil when no usage
+		// event was parsed, which omitempty reports as absent (matching
+		// Fail).
+		adapter.FailWithUsage(usage, "agent-gemini-cli: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared output files from workDir.

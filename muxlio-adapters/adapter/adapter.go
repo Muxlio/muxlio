@@ -50,8 +50,19 @@ type TokenUsage struct {
 }
 
 // ParseTokenUsage parses common provider usage shapes while preserving absence.
-// Input keys: input_tokens, prompt_token_count, prompt_tokens.
-// Output keys: output_tokens, candidates_token_count, completion_tokens.
+// Input keys: input_tokens, prompt_token_count, prompt_tokens, inputTokens,
+// promptTokenCount.
+// Output keys: output_tokens, candidates_token_count, completion_tokens,
+// outputTokens, candidatesTokenCount.
+// Cached keys: cached_input_tokens, cache_read_input_tokens,
+// cached_content_token_count, cached_tokens, cachedTokens,
+// cachedContentTokenCount.
+//
+// The camelCase aliases cover the Gemini CLI's stream-json "usage" event,
+// which surfaces provider-reported counts at the top level of the event
+// object using camelCase field names (inputTokens, outputTokens,
+// cachedTokens) and the raw Gemini usageMetadata names (promptTokenCount,
+// candidatesTokenCount, cachedContentTokenCount).
 func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -74,9 +85,9 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 		}
 		return 0
 	}
-	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens")
-	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens")
-	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cached_content_token_count", "cached_tokens")
+	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "inputTokens", "promptTokenCount")
+	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
+	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount")
 	if !found {
 		return nil
 	}
