@@ -347,6 +347,9 @@ select.control{
 .control:focus{border-color:var(--teal);outline:none}
 .search{width:min(280px,40vw)}
 .tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:14px}
+.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;color:var(--muted);font-size:13px}
+.pager-controls{display:flex;gap:8px}
+.pager .btn:disabled{opacity:.45;cursor:not-allowed}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:var(--muted2);font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:#182024;padding:11px 16px;border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:13px 16px;border-bottom:1px solid var(--border);font-size:13px;color:var(--ink);vertical-align:middle}

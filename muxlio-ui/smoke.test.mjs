@@ -46,6 +46,15 @@ try {
   assert.match(html, /src="\/js\/workbench.js\?v=[^"\s]+"/);
   assert.match(app, /function graphMarkup\(acts,scopes\)/, 'graph renderer should include root-scope activations');
   assert.match(app, /function renderRuns\(\)/, 'run search, filter, and sort interactions should be wired');
+  assert.match(app, /function paginate\(items,page,pageSize\)/, 'run history should use the reusable pager helper');
+  assert.match(app, /pagerMarkup\(page\.page,page\.pageCount,page\.total\)/, 'run history should render page navigation after filtering and sorting');
+  const pagingSource = app.slice(app.indexOf('function paginate('), app.indexOf('async function loadRuns('));
+  const paging = vm.runInNewContext(`${pagingSource};({paginate,pagerMarkup})`);
+  const records = Array.from({length:51}, (_, index) => index + 1);
+  assert.deepEqual(Array.from(paging.paginate(records, 2, 25).items), records.slice(25, 50));
+  assert.equal(paging.paginate(records, 99, 25).page, 3, 'stale page numbers clamp to the last page');
+  assert.equal(paging.paginate([], 1, 25).pageCount, 1, 'empty results retain a valid page');
+  assert.match(paging.pagerMarkup(1, 3, 51), /data-page="2"/);
   assert.match(html, /id="runInputInspector"/, 'run input should use a structured inspector');
   assert.match(html, /id="runOutputInspector"/, 'run output should use an artifact inspector');
   assert.match(app, /function treeMarkup\(/, 'nested input values should render as an expandable tree');

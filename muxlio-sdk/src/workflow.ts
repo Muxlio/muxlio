@@ -470,7 +470,7 @@ export interface WorkflowBuildContext<TInputSchema extends z.ZodTypeAny = z.ZodT
   ): StepResult<TOutputs>;
 
   each<TItem>(
-    collection: SymbolicRef<readonly TItem[]>,
+    collection: readonly TItem[],
     options: EachOptions,
     body: (item: SymbolicRef<TItem>, ctx: WorkflowBuildContext<TInputSchema>) => Record<string, unknown> | unknown,
   ): EachResult;
