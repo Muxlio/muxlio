@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/muxlio/muxlio-adapters/adapter"
 )
 
 func TestCursorAgentEnvSetsFileCredentialStore(t *testing.T) {
@@ -73,6 +75,65 @@ func TestCursorAdapterChildUsesFileCredentialsWithoutSecurity(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
+}
+
+func TestCursorAdapterReportsUsageFromSuccessfulResult(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","result":"done","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}}'`)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage == nil || got.Usage.Input != 100 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
+		t.Fatalf("usage = %+v, want input=100 output=40 cached=12", got.Usage)
+	}
+}
+
+func TestCursorAdapterPreservesUsageFromFailedResult(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","is_error":true,"error":"request failed","usage":{"inputTokens":7,"outputTokens":3,"cacheReadTokens":2}}'`+"\nexit 1")
+	if got.Error == "" {
+		t.Fatal("expected adapter error")
+	}
+	if got.Usage == nil || got.Usage.Input != 7 || got.Usage.Output != 3 || got.Usage.Cached != 2 {
+		t.Fatalf("usage = %+v, want input=7 output=3 cached=2", got.Usage)
+	}
+}
+
+func TestCursorAdapterLeavesUsageAbsentWhenNotReported(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","result":"done"}'`)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage != nil {
+		t.Fatalf("usage = %+v, want absent", got.Usage)
+	}
+}
+
+func runCursorFixture(t *testing.T, script string) struct {
+	Error string              `json:"error"`
+	Usage *adapter.TokenUsage `json:"usage"`
+} {
+	t.Helper()
+	bin := buildAgentCursor(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(fakeCLI, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/cursor", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CURSOR_AGENT="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error string              `json:"error"`
+		Usage *adapter.TokenUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	return resp
 }
 
 func envLookup(env []string, key string) string {

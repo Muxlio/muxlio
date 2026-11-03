@@ -34,6 +34,13 @@ func TestParseTokenUsageHandlesCamelCaseKeys(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsageHandlesCursorMetadataCamelCase(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}`))
+	if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
+		t.Fatalf("Cursor metadata usage = %+v", got)
+	}
+}
+
 func TestParseTokenUsageHandlesGeminiMetadataCamelCase(t *testing.T) {
 	got := ParseTokenUsage(json.RawMessage(`{"promptTokenCount":100,"candidatesTokenCount":40,"cachedContentTokenCount":12}`))
 	if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {

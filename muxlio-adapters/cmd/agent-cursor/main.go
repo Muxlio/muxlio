@@ -106,16 +106,16 @@ func main() {
 	}
 	waitErr := cmd.Wait()
 	if readErr != nil {
-		adapter.Fail("agent-cursor: reading stream: %v", readErr)
+		adapter.FailWithUsage(usage, "agent-cursor: reading stream: %v", readErr)
 	}
 	if !completed {
-		adapter.Fail("agent-cursor: stream ended without a completion event")
+		adapter.FailWithUsage(usage, "agent-cursor: stream ended without a completion event")
 	}
 	if streamErr != "" {
-		adapter.Fail("agent-cursor: %s", streamErr)
+		adapter.FailWithUsage(usage, "agent-cursor: %s", streamErr)
 	}
 	if waitErr != nil {
-		adapter.Fail("agent-cursor: agent exited with error: %v", waitErr)
+		adapter.FailWithUsage(usage, "agent-cursor: agent exited with error: %v", waitErr)
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as

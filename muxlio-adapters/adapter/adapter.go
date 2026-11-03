@@ -54,7 +54,7 @@ type TokenUsage struct {
 // promptTokenCount.
 // Output keys: output_tokens, candidates_token_count, completion_tokens,
 // outputTokens, candidatesTokenCount.
-// Cached keys: cached_input_tokens, cache_read_input_tokens,
+// Cached keys: cached_input_tokens, cache_read_input_tokens, cacheReadTokens,
 // cached_content_token_count, cached_tokens, cachedTokens,
 // cachedContentTokenCount.
 //
@@ -87,7 +87,7 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	}
 	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "inputTokens", "promptTokenCount")
 	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
-	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount")
+	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount")
 	if !found {
 		return nil
 	}
