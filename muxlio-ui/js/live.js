@@ -27,7 +27,7 @@ function updateLiveTranscript(text,live){
       el.classList.remove('waiting');
     }
   }else{
-    el.textContent=text;
+    el.innerHTML=renderMarkdown(text);
     el.classList.remove('waiting');
   }
   if(live&&atBottom&&page)page.scrollTop=page.scrollHeight;
@@ -165,7 +165,7 @@ async function loadLive(){
         if(completed){
           liveMonitorEntry={...selected,act:completed,attempt:latestAttemptFor(attemptsResp.attempts||[],completed.id)};
           renderLiveMeta(liveMonitorEntry);
-          updateLiveTranscript(activationTranscripts.get(completed.id)?.agent||$('#liveTranscriptBody')?.textContent||'',false);
+          updateLiveTranscript(activationTranscripts.get(completed.id)?.agent||'',false);
           if(activationIsStreaming(completed,liveMonitorEntry.attempt))scheduleLiveOutputPoll(liveMonitorEntry);
         }
       }

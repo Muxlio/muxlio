@@ -33,7 +33,7 @@ try {
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
   const html = await page.text();
-  const app = (await Promise.all(['core.js', 'workbench.js', 'inspector.js', 'live.js', 'boot.js'].map(async name => {
+  const app = (await Promise.all(['markdown.js', 'core.js', 'workbench.js', 'inspector.js', 'live.js', 'boot.js'].map(async name => {
     const response = await fetch(`${baseURL}/js/${name}`);
     assert.equal(response.status, 200, name);
     return response.text();
@@ -63,7 +63,8 @@ try {
   assert.match(app, /PREVIEW_LIMIT=4096/, 'text previews should stay bounded');
   const helperSource = app.match(/const PREVIEW_LIMIT=4096;[\s\S]*?let currentRunInput,currentRunOutput;/)?.[0];
   assert.ok(helperSource, 'inspector rendering helpers should be present');
-  const helpers = vm.runInNewContext(`const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); ${helperSource}; ({treeMarkup,inputMarkup,outputMarkup,safePreview})`, { TextEncoder });
+  const markdownSource = await (await fetch(`${baseURL}/js/markdown.js`)).text();
+  const helpers = vm.runInNewContext(`${markdownSource};const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); ${helperSource}; ({treeMarkup,inputMarkup,outputMarkup,safePreview})`, { TextEncoder });
   const nested = helpers.inputMarkup({name:'<script>alert(1)</script>', nested:[1,true,null,{ok:'yes'}]});
   assert.match(nested, /<details/);
   assert.match(nested, /<span class="data-type">boolean<\/span>/);
@@ -72,26 +73,27 @@ try {
   assert.match(helpers.inputMarkup(null), /Input is null/);
   const output = helpers.outputMarkup({report:{mime:'text/markdown',path:'reports/out.md',digest:'sha256:abc',size:12,data:'# Hello <script>'}, map:[{ok:true}]});
   for (const metadata of ['text/markdown','reports/out.md','sha256:abc','12']) assert.ok(output.includes(metadata), `artifact metadata should include ${metadata}`);
-  assert.ok(output.includes('# Hello &lt;script&gt;'), 'text preview should escape HTML');
+  assert.ok(output.includes('<h1>Hello &lt;script&gt;</h1>'), 'text preview should escape HTML');
   assert.ok(!output.includes('# Hello <script>'), 'artifact preview must not inject HTML');
   assert.match(output, /map/);
   assert.equal(helpers.safePreview('x'.repeat(5000), 'text/plain').text.length, 4096);
   assert.match(helpers.outputMarkup({data:{mime:'application/json',path:'x.json',data:{a:1}}}), /&quot;a&quot;: 1/);
   assert.match(helpers.outputMarkup({data:{mime:'application/octet-stream',path:'x.bin',data:'abc'}}), /Preview unavailable/);
-  let copied, downloaded, filename, clipboardFailure;
+  let copied, downloaded, filename, clipboardFailure, copyCalls=0;
   const actions = vm.runInNewContext(`const esc=String;${helperSource};currentRunOutput={report:{data:'wrong run payload'}};inspectorAction`, {
-    TextEncoder, Blob, ArrayBuffer, selectedActivation:'selected', activationData:[{id:'selected',outputs:{report:{mime:'text/plain',path:'report.txt',data:'selected payload'}}}],
-    navigator:{clipboard:{async writeText(value){copied=value}}},
+    TextEncoder, Blob, ArrayBuffer, selectedActivation:'selected', activationData:[{id:'selected',outputs:{report:{mime:'text/markdown',path:'report.md',data:'# Selected\n\n**raw payload**'}}}],
+    navigator:{clipboard:{async writeText(value){copied=value;copyCalls++}}},
     message(value){clipboardFailure=value},
     URL:{createObjectURL(blob){downloaded=blob;return 'blob:test'},revokeObjectURL(){}},
     document:{createElement(){return {click(){filename=this.download}}}},setTimeout(){},
   });
-  const actionEvent = kind => ({target:{closest(selector){if(selector==='#inspectorContent')return {};if(selector==='[data-'+kind+']')return {dataset:{[kind]:'artifact',name:'report'}};return null}}});
+  const actionEvent = kind => ({target:{closest(selector){if(selector==='#inspectorContent')return {};if(selector==='[data-'+kind+']'||(kind==='download'&&selector==='[data-copy]'))return {dataset:{copy:'run-output',...(kind==='download'?{download:'artifact'}:{}),name:'report'}};return null}}});
   await actions(actionEvent('copy'));
-  assert.equal(copied,'"selected payload"');
+  assert.equal(copied,JSON.stringify('# Selected\n\n**raw payload**'));
   await actions(actionEvent('download'));
-  assert.equal(await downloaded.text(),'selected payload');
-  assert.equal(filename,'report.txt');
+  assert.equal(await downloaded.text(),'# Selected\n\n**raw payload**');
+  assert.equal(copyCalls,1,'Download must not invoke the copy action');
+  assert.equal(filename,'report.md');
 
   // Exercise overlapping responses for the same activation/tab, not just tab changes.
   const pending = [];

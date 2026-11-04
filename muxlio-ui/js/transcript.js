@@ -24,7 +24,7 @@ function updateTranscriptPageBody(text, live) {
       el.classList.remove('waiting');
     }
   } else {
-    el.textContent = text;
+    el.innerHTML = renderMarkdown(text);
     el.classList.remove('waiting');
   }
   if (live && atBottom && wrap) wrap.scrollTop = wrap.scrollHeight;

@@ -34,7 +34,7 @@ function updateTranscriptPanel(text,live){
       el.classList.remove('waiting');
     }
   }else{
-    el.textContent=text;
+    el.innerHTML=renderMarkdown(text);
     el.classList.remove('waiting');
   }
   if(live&&atBottom)el.scrollTop=el.scrollHeight;
@@ -68,9 +68,15 @@ function transcriptSectionMarkup(act,runId){
   if(!activationHasTranscript(act))return '';
   const cached=activationTranscripts.get(act.id);
   const transcriptUrl=`#transcript/${encodeURIComponent(runId||current||'')}/${encodeURIComponent(act.id)}`;
-  const text=cached?.agent||(act.state==='running'?'Waiting for agent output…':'No transcript recorded.');
+  const rawText=cached?.agent||'';
   const isWaiting=!cached?.agent&&act.state==='running';
-  return `<div class="insp-section" id="inspTranscriptSection"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="font-size:10px;font-weight:650;color:var(--muted)">Live transcript${act.state==='running'?' · streaming':''}</span><a href="${transcriptUrl}" class="insp-transcript-link" aria-label="Open transcript page">Open ↗</a></div><pre class="insp-transcript${isWaiting?' waiting':''}" id="inspTranscriptBody">${esc(text)}</pre></div>`;
+  const bodyContent=isWaiting
+    ? 'Waiting for agent output…'
+    : rawText
+      ? renderMarkdown(rawText)
+      : 'No transcript recorded.';
+  const bodyInner=isWaiting?`<span>${esc(bodyContent)}</span>`:bodyContent;
+  return `<div class="insp-section" id="inspTranscriptSection"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="font-size:10px;font-weight:650;color:var(--muted)">Live transcript${act.state==='running'?' · streaming':''}</span><a href="${transcriptUrl}" class="insp-transcript-link" aria-label="Open transcript page">Open ↗</a></div><div class="insp-transcript markdown-body${isWaiting?' waiting':''}" id="inspTranscriptBody">${bodyInner}</div></div>`;
 }
 
 function resolveInspectorAgent(act){
@@ -148,7 +154,7 @@ function renderInspectorWb(act){
     ${act.outputs?`
     <div class="insp-section">
       <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Outputs</div>
-      <div class="data-tree">${treeMarkup(act.outputs,'outputs',0,`run:${current}:activation:${act.id}:outputs`)}</div>
+      ${outputMarkup(act.outputs)}
     </div>`:''}
     ${act.error?`<div class="insp-section"><div class="insp-error">${esc(act.error)}</div></div>`:''}
     ${buildAttemptUsageMarkup(act)}
@@ -167,7 +173,7 @@ function inputMarkup(value){if(value===undefined||value===null)return `<div clas
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
 function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
 function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT}}
-function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `<div class="data-tools"><button class="btn ghost" data-copy="run-output">Copy output</button></div>${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div><div class="data-tree">${treeMarkup(item,'Value')}</div></section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data,preview=safePreview(data,mime);let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">Artifact</span></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<div class="data-tools"><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div>${preview?`<details><summary class="data-type">${preview.truncated?'Preview (4 KB)':'Preview'}</summary><pre class="preview">${esc(preview.text)}</pre></details>`:`<div class="data-note" style="color:var(--muted);font-size:10px">Preview unavailable</div>`}</section>`}).join('')}`}
+function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `<div class="data-tools"><button class="btn ghost" data-copy="run-output">Copy output</button></div>${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data,preview=safePreview(data,mime);let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">Artifact</span></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<div class="data-tools"><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div>${preview?`<details><summary class="data-type">${preview.truncated?'Preview (4 KB)':'Preview'}</summary>${/^text\/markdown(?:;|$)/i.test(mime)?`<div class="preview markdown-body">${renderMarkdown(preview.text)}</div>`:`<pre class="preview">${esc(preview.text)}</pre>`}</details>`:`<div class="data-note" style="color:var(--muted);font-size:10px">Preview unavailable</div>`}</section>`}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
 async function inspectorAction(e){
   const copyLogs=e.target.closest('[data-copylogs]');
@@ -179,7 +185,7 @@ async function inspectorAction(e){
   const name=(copy||download).dataset.name;
   if(name&&value&&typeof value==='object')value=value[name];
   const ref=artifactData(value),content=ref?(ref.data??ref):value;
-  if(copy){const text=JSON.stringify(content??null,null,2);try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
+  if(copy&&!download){const text=JSON.stringify(content??null,null,2);try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const blob=new Blob([typeof content==='string'?content:JSON.stringify(content??null,null,2)],{type:ref?.mime||'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=safeFilename(ref?.path?.split('/').pop()||name||'output.json');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
