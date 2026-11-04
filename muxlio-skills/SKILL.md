@@ -4,15 +4,23 @@ Use this guide to author and run workflows with this repository's TypeScript SDK
 
 ## Muxlio-assisted feature work
 
-For feature work, use `recipes/implement-features/workflow.ts`. Edit its input JSON with the requested features and relevant context paths, then check and fake-run before a real run. The recipe maps features serially (`concurrency: 1`): an agent prepares a worktree, implements with Kiro (Cursor fallback), reviews with Codex, runs a Codex agent verify → fix loop, and an agent creates the git commit when checks pass.
+For feature work, use `recipes/implement-features/workflow.ts`. Edit its input JSON with the requested features and relevant context paths, then check and fake-run before a real run. The recipe works in the current clean git workspace and maps features serially (`concurrency: 1`): implement → review → command verification/fix loop → command commit. Agent tasks currently use Kiro with Codex fallback. A final command step runs `git push` once after every feature finishes.
+
+Before a real run, configure `executors.command.allow: true` in the worker's
+`config.json`. For SSH Git remotes, set `executors.command.env.SSH_AUTH_SOCK`
+to the socket path obtained on that worker machine, check GitHub authentication
+as its OS user, and ensure the workspace branch has an upstream. Restart the
+service after changing configuration. Agent steps should not commit or push;
+the recipe owns those operations. If only push fails, fix its prerequisites and
+use **Retry run** in the UI to preserve completed feature work and retry push.
 
 Typical repository commands:
 
 ```sh
 npm run build
 go -C muxlio-core build ./...
-.bin/muxlio check recipes/implement-features/workflow.ts
-.bin/muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json --json --fake-config recipes/implement-features/fake.json
+muxlio check recipes/implement-features/workflow.ts
+muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json --json --fake-config recipes/implement-features/fake.json
 ```
 
 `npm run build` builds the SDK, compiler, and testing workspaces. Run `npm run setup` once to build and install the full release prefix under `~/.muxlio` and copy the CLI to `.bin/muxlio`. Use `npm run release` to refresh binaries in an existing runtime without re-running `muxlio init`. `check` compiles the TypeScript workflow and validates the resulting Plan IR. With no `--adapters`, `run` uses the fake executor. Fake outputs are keyed by node ID or executor name:

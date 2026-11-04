@@ -213,9 +213,19 @@ For Git pushes, configure the command executor and restart the service:
 
 The `executors` map is optional and defaults to `{}`. Omitted entries use executor defaults; `allow: false` disables an executor, and `allow: true` explicitly authorizes it. The same configuration applies to service, standalone, and outbound workers. Environment values are scoped to the named executor and are not inherited from the shell. Isolated execution does not receive these values. These entries replace the old top-level `commandHostEnabled` and `sshAgentSocket` settings.
 
+Use the socket from the machine running the worker, not the machine submitting
+the workflow. On that machine, check `ssh -T git@github.com` and read the socket
+path with `echo "$SSH_AUTH_SOCK"`; save that exact path in config.json. The
+workspace branch must have a configured upstream because the recipe runs plain
+`git push`. If the socket path changes, update the config and restart the service.
+
 ### Implement-features recipe
 
 `recipes/implement-features/workflow.ts` is a ready-to-use recipe: in the current git workspace, each feature runs implement → review → a verify/fix loop (`repeatUntil`, `maxAttempts: 10`, `onExhausted: 'pause'`) → commit. Features run serially (`concurrency: 1`); the commit step is gated on a passed verification via `{ requiresPassed }`. After all features finish, a final `push` step runs `git push` once, using the repository's configured upstream. A failed push fails the step.
+
+If only the push fails, fix authentication or the upstream, then use **Retry run**
+in the UI. Completed activations and commits are retained; the failed push is
+retried without implementing the features again.
 
 ```sh
 muxlio check recipes/implement-features/workflow.ts

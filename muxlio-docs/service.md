@@ -98,6 +98,15 @@ environment maps generically and do not inherit shell credentials. Isolated
 execution receives none of these configured environment values. Provider
 settings can be supplied through the same per-executor `env` map.
 
+Obtain the socket path on the worker machine with `echo "$SSH_AUTH_SOCK"`;
+a submitting machine's socket path does not identify the worker's agent.
+Check `ssh -T git@github.com` as the worker's OS user and confirm the workspace
+branch has an upstream with `git rev-parse --abbrev-ref '@{upstream}'`.
+The implement-features recipe runs `git push` once after all feature commits.
+If only that step fails, fix the credentials or upstream and use **Retry run**
+in the UI; successful steps and their commits are preserved. Update the
+configured socket and restart the service whenever its path changes.
+
 To isolate provider credentials in a **dedicated** directory instead, log in
 there once and set its absolute path as `agentHome` in config.json before
 starting the service:

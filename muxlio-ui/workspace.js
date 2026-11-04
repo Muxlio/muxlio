@@ -102,7 +102,7 @@ renderWorkbench=function(r,g,events){
   let controls=document.getElementById('runControls');
   if(!controls){controls=document.createElement('span');controls.id='runControls';controls.style.cssText='display:flex;gap:7px';actions.prepend(controls);}
   const active=['running','waiting','created'].includes(r.state),paused=r.state==='paused',retryable=['failed','cancelled'].includes(r.state);
-  controls.innerHTML=`${active?'<button class="btn ghost" data-run-action="pause">Pause run</button>':''}${paused?'<button class="btn primary" data-run-action="resume">Resume run</button>':''}${retryable?'<button class="btn primary" data-run-action="retry">Retry run</button>':''}${active||paused?'<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>':''}`;
+  controls.innerHTML=`${active?'<button class="btn ghost" data-run-action="pause">Pause run</button>':''}${paused?'<button class="btn primary" data-run-action="resume">Resume run</button>':''}${retryable?'<button class="btn primary" data-run-action="retry">Retry run</button>':''}${active||paused?'<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>':''}<button class="btn ghost copy-id" data-runid="${esc(r.id)}">Copy run ID</button>`;
   controls.querySelectorAll('[data-run-action]').forEach(button=>button.onclick=async()=>{
     const action=button.dataset.runAction;
     if(action==='cancel'){if(!await openCancelRunModal())return;}

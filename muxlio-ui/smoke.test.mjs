@@ -149,6 +149,9 @@ try {
   assert.match(workspace, /e\.target===e\.currentTarget\)closeCancelRunModal\(false\)/, 'cancel modal backdrop clicks should dismiss');
   assert.match(workspace, /e\.key!=='Escape'[\s\S]*?closeCancelRunModal\(false\)/, 'Escape should dismiss the cancel modal');
   assert.doesNotMatch(workspace, /action==='cancel'&&!confirm/, 'cancel action must not use window.confirm');
+  // copy run ID button in workbench
+  assert.match(workspace, /copy-id.*data-runid|data-runid.*copy-id/, 'workbench controls should include a copy-id button with a data-runid attribute');
+  assert.match(workspace, /Copy run ID/, 'workbench copy button should be labelled Copy run ID');
   const inspectorSource = await (await fetch(`${baseURL}/js/inspector.js`)).text();
   assert.match(inspectorSource, /actionsEl\.hidden=!\['failed','cancelled'\]\.includes\(wbCurrentRunState\)/, 'inspector retry should only be available for failed or cancelled runs');
   const css = await (await fetch(`${baseURL}/workspace.css`)).text();
