@@ -106,7 +106,9 @@ func main() {
 			// --ephemeral the thread is fresh, so this is the run's usage.
 			// When multiple turns complete, the last holds the final total,
 			// so overwrite each time.
-			usage = adapter.ParseTokenUsage(ev["usage"])
+			if reported := adapter.ParseTokenUsage(ev["usage"]); reported != nil {
+				usage = reported
+			}
 		case "turn.failed":
 			// A failed turn reports no usage (its tokens land in the next
 			// run's total), but an earlier turn.completed may have reported

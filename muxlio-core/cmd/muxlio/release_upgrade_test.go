@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 func TestReleaseUpgradeRemovesObsoleteAdapter(t *testing.T) {
@@ -51,6 +53,10 @@ exit 1
 		}
 		if _, err := os.Lstat(obsolete); !os.IsNotExist(err) {
 			t.Fatalf("obsolete adapter still installed: %v", err)
+		}
+		executor := workers.NewScriptExecutor(adapters, t.TempDir())
+		if allowed, err := executor.CanExecute("command"); err != nil || allowed {
+			t.Fatalf("release did not install the host-authorization descriptor: allowed=%v error=%v", allowed, err)
 		}
 		for _, path := range []string{custom, config} {
 			content, err := os.ReadFile(path)

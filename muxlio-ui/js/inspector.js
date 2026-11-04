@@ -93,7 +93,7 @@ function buildAttemptUsageMarkup(act){
     const retry=a.retryNumber||0;
     const label=retry===0?'Attempt 1':`Retry ${retry} (attempt ${retry+1})`;
     if(a.usage==null){
-      return `<tr><td>${esc(label)}</td><td colspan="3" style="color:var(--muted)">Unavailable</td></tr>`;
+      return `<tr><td>${esc(label)}</td><td colspan="3" style="color:var(--muted)">Unavailable — no token counts recorded</td></tr>`;
     }
     const fmtTokens=n=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n||0);
     return `<tr><td>${esc(label)}</td><td class="num">${esc(fmtTokens(a.usage.input))}</td><td class="num">${esc(fmtTokens(a.usage.output))}</td><td class="num">${esc(fmtTokens(a.usage.cached))}</td></tr>`;

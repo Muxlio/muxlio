@@ -13,6 +13,26 @@ func TestParseKiroUsageFromStructuredResultMetadata(t *testing.T) {
 	}
 }
 
+func TestParseKiroOptionalNumericMetadata(t *testing.T) {
+	// These shapes exercise optional token counts understood by Kiro's client;
+	// they are not evidence that its credit-only completion reports tokens.
+	for _, container := range []string{"tokenUsage", "usage", "metrics"} {
+		raw := `{"update":{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_completion","` + container + `":{"uncachedInputTokens":100,"outputTokens":40,"cacheReadInputTokens":12}}}}}`
+		got := parseKiroUsage(json.RawMessage(raw))
+		if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
+			t.Fatalf("ACP %s usage = %+v", container, got)
+		}
+	}
+	for _, raw := range []string{
+		`{"update":{"_meta":{"kiro":{"kind":"turn_completion","promptTurnSummaries":[{"unit":"credit","usage":0.1}]}}}}`,
+		`{"update":{"_meta":{"kiro":{"kind":"context_usage","contextUsage":{"usagePercentage":10},"breakdown":{"yourPrompts":{"tokens":1000}}}}}}`,
+	} {
+		if got := parseKiroUsage(json.RawMessage(raw)); got != nil {
+			t.Fatalf("credits/context size must not become token usage: %+v", got)
+		}
+	}
+}
+
 func TestParseKiroUsageFromFailedResult(t *testing.T) {
 	got := parseKiroUsage(json.RawMessage(`{"status":"error","metadata":{"inputTokens":7,"outputTokens":3,"cachedTokens":2}}`))
 	if got == nil || got.Input != 7 || got.Output != 3 || got.Cached != 2 {

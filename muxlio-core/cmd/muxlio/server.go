@@ -315,14 +315,18 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		executor.Context = ctx
 		executor.Workspace = config.Workspace
 		executor.AgentHome = config.AgentHome
-		executor.AllowCommandHost = config.CommandHostEnabled
-		executor.SSHAgentSocket = config.SSHAgentSocket
+		executor.Executors = config.Executors
 		if config.AttemptTimeoutSeconds > 0 {
 			executor.Timeout = time.Duration(config.AttemptTimeoutSeconds) * time.Second
 		}
 		caps := make([]workers.RemoteCapability, 0, len(config.Capabilities))
 		for _, name := range config.Capabilities {
-			if name == "command" && !config.CommandHostEnabled {
+			allowed, err := executor.CanExecute(name)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "executor %q: %v\n", name, err)
+				return 2
+			}
+			if !allowed {
 				continue
 			}
 			caps = append(caps, workers.RemoteCapability{Name: name})

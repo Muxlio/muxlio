@@ -169,5 +169,21 @@ console.log('buildWbStats token stat checks passed');
   assert.match(htmlAllNull, /Unavailable/, 'row shows Unavailable');
   // Must NOT include a numeric usage table with zeros
   assert.doesNotMatch(htmlAllNull, /<td class="num">0<\/td>/, 'unavailable must not render as zero');
+
+  for (const usage of [null, { input: 0, output: 0, cached: 0 }]) {
+    const context = makeInspCtx([
+      { activationId: 'agent', executor: 'custom/agent', retryNumber: 1, state: 'succeeded', usage },
+    ]);
+    const render = vm.runInNewContext(`${wbSource}; ${inspSource}; buildAttemptUsageMarkup`, context);
+    const html = render({ id: 'agent' });
+    if (usage === null) {
+      assert.match(html, /Unavailable — no token counts recorded/);
+      assert.doesNotMatch(html, /<td class="num">0<\/td>/);
+    } else {
+      assert.doesNotMatch(html, /Unavailable/);
+      assert.equal((html.match(/<td class="num">0<\/td>/g) || []).length, 3,
+        'actual reported zero remains distinct from missing usage');
+    }
+  }
 }
 console.log('buildAttemptUsageMarkup checks passed');

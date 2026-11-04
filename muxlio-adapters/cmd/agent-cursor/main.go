@@ -87,7 +87,9 @@ func main() {
 			}
 		case "result":
 			completed = true
-			usage = adapter.ParseTokenUsage(event["usage"])
+			if reported := adapter.ParseTokenUsage(event["usage"]); reported != nil {
+				usage = reported
+			}
 			if textChunks.Len() == 0 {
 				for _, text := range resultText(event) {
 					adapter.CaptureAgentText(&textChunks, text)

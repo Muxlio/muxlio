@@ -47,6 +47,8 @@ func TestDiscoverCapabilities(t *testing.T) {
 	write("command", 0o755)
 	// Non-executable — must be skipped.
 	write("README.md", 0o644)
+	// Runtime descriptors are metadata, even if accidentally made executable.
+	write("custom-tool.json", 0o755)
 	// Hidden — must be skipped.
 	write(".gitkeep", 0o755)
 	// Subdir — must be skipped.

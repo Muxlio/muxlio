@@ -20,18 +20,19 @@ type OutputDecl struct {
 // Request is what ScriptExecutor sends on stdin: the standard ExecuteRequest
 // fields plus a WorkDir for this invocation's scratch space.
 type Request struct {
-	Workspace    string                `json:"workspace"`
-	RunID        string                `json:"runId,omitempty"`
-	ActivationID string                `json:"activationId,omitempty"`
-	AttemptID    string                `json:"attemptId,omitempty"`
-	Executor     string                `json:"executor"`
-	Task         string                `json:"task,omitempty"`
-	Params       json.RawMessage       `json:"params,omitempty"`
-	Inputs       map[string]any        `json:"inputs,omitempty"`
-	Outputs      map[string]OutputDecl `json:"outputs,omitempty"`
-	ScopePath    []string              `json:"scopePath,omitempty"`
-	NodeID       string                `json:"nodeId,omitempty"`
-	WorkDir      string                `json:"workDir"`
+	HostExecutionAllowed bool                  `json:"hostExecutionAllowed,omitempty"`
+	Workspace            string                `json:"workspace"`
+	RunID                string                `json:"runId,omitempty"`
+	ActivationID         string                `json:"activationId,omitempty"`
+	AttemptID            string                `json:"attemptId,omitempty"`
+	Executor             string                `json:"executor"`
+	Task                 string                `json:"task,omitempty"`
+	Params               json.RawMessage       `json:"params,omitempty"`
+	Inputs               map[string]any        `json:"inputs,omitempty"`
+	Outputs              map[string]OutputDecl `json:"outputs,omitempty"`
+	ScopePath            []string              `json:"scopePath,omitempty"`
+	NodeID               string                `json:"nodeId,omitempty"`
+	WorkDir              string                `json:"workDir"`
 }
 
 // Response is what the adapter writes to stdout.
@@ -50,13 +51,13 @@ type TokenUsage struct {
 }
 
 // ParseTokenUsage parses common provider usage shapes while preserving absence.
-// Input keys: input_tokens, prompt_token_count, prompt_tokens, inputTokens,
+// Input keys: input_tokens, prompt_token_count, prompt_tokens, uncachedInputTokens, inputTokens,
 // promptTokenCount.
 // Output keys: output_tokens, candidates_token_count, completion_tokens,
 // outputTokens, candidatesTokenCount.
-// Cached keys: cached_input_tokens, cache_read_input_tokens, cacheReadTokens,
+// Cached keys: cached_input_tokens, cache_read_input_tokens, cacheReadInputTokens, cacheReadTokens,
 // cached_content_token_count, cached_tokens, cachedTokens,
-// cachedContentTokenCount.
+// cachedContentTokenCount, cached (Gemini result.stats).
 //
 // The camelCase aliases cover the Gemini CLI's stream-json "usage" event,
 // which surfaces provider-reported counts at the top level of the event
@@ -76,18 +77,18 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	read := func(keys ...string) int64 {
 		for _, key := range keys {
 			if b, ok := values[key]; ok {
-				var n int64
-				if json.Unmarshal(b, &n) == nil {
+				var n *int64
+				if json.Unmarshal(b, &n) == nil && n != nil && *n >= 0 {
 					found = true
-					return n
+					return *n
 				}
 			}
 		}
 		return 0
 	}
-	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "inputTokens", "promptTokenCount")
+	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
 	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
-	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount")
+	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
 	if !found {
 		return nil
 	}

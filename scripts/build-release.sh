@@ -17,6 +17,9 @@ mv "$build_tmp" "$destination/bin/muxlio"
 (cd "$repo/muxlio-core" && go build -trimpath -ldflags "-X main.Version=$version" -o "$destination/bin/muxlio-mcp" ./cmd/muxlio-mcp)
 for adapter in agent-claude agent-codex agent-cursor agent-gemini-cli agent-kiro command; do
   (cd "$repo/muxlio-adapters" && go build -trimpath -o "$destination/libexec/muxlio/adapters/$adapter" "./cmd/$adapter")
+  if [ -f "$repo/muxlio-adapters/cmd/$adapter/adapter.json" ]; then
+    cp "$repo/muxlio-adapters/cmd/$adapter/adapter.json" "$destination/libexec/muxlio/adapters/$adapter.json"
+  fi
 done
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"

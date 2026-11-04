@@ -1,0 +1,3 @@
+{"type":"sessionUpdate","data":{"update":{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"context_usage","contextUsage":{"usagePercentage":1,"summarizationThreshold":80},"breakdown":{"tools":{"tokens":6384,"percent":0.6},"yourPrompts":{"tokens":4291,"percent":0.4}}}}}}}
+{"type":"sessionUpdate","data":{"update":{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_completion","promptTurnSummaries":[{"unit":"credit","unitPlural":"credits","usage":0.18065595854063016,"usedTools":["execute_bash","fs_write"]}],"elapsedTime":4454,"status":"success"}}}}}
+{"type":"runFinished","data":{"status":"success","stopReason":"end_turn","finalText":"done","finalTextTruncated":false}}

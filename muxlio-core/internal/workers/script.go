@@ -17,13 +17,7 @@ import (
 
 // ScriptExecutor dispatches execute requests to per-executor shell scripts.
 //
-// The executor name (e.g. "agent/codex") is mapped to a script filename by
-// replacing "/" with "-":
-//
-//	agent/claude      → <adapterDir>/agent-claude
-//	agent/codex       → <adapterDir>/agent-codex
-//	agent/gemini-cli  → <adapterDir>/agent-gemini-cli
-//	command          → <adapterDir>/command
+// Executor names map to executable filenames by replacing "/" with "-".
 //
 // The script receives a JSON object on stdin:
 //
@@ -44,16 +38,13 @@ type ScriptExecutor struct {
 	adapterDir string
 	workBase   string
 	Workspace  string
-	// AgentHome explicitly opts native adapters into a dedicated provider login
-	// directory. Isolated adapters always keep their scratch HOME.
+	// AgentHome sets HOME for native executor processes. Isolated processes
+	// always keep their scratch HOME.
 	AgentHome string
 	Timeout   time.Duration
 	Context   context.Context
-	// AllowCommandHost is an administrator-controlled worker setting. Workflow
-	// parameters never enable this capability.
-	AllowCommandHost bool
-	// SSHAgentSocket is the operator-configured agent socket for host commands.
-	SSHAgentSocket string
+	// Executors contains local operator permissions and environment settings.
+	Executors map[string]ExecutorConfig
 }
 
 // isolationPolicy is read from the execute step's params.isolation object.
@@ -125,28 +116,12 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	if guardErr != nil {
 		return ExecuteResult{Error: guardErr.Error()}, nil
 	}
-	if req.Executor == "command" {
-		var params struct {
-			Execution struct {
-				Isolation string `json:"isolation"`
-			} `json:"execution"`
-		}
-		if len(req.Params) > 0 {
-			_ = json.Unmarshal(req.Params, &params)
-		}
-		mode := params.Execution.Isolation
-		if mode == "sandbox" {
-			return ExecuteResult{Error: "command sandbox requested but no verified OCI backend is configured"}, nil
-		}
-		if mode != "" && mode != "host" {
-			return ExecuteResult{Error: "command execution.isolation must be host or sandbox"}, nil
-		}
-		if !s.AllowCommandHost {
-			return ExecuteResult{Error: "command host execution denied by worker policy"}, nil
-		}
+	allowed, policyErr := s.CanExecute(req.Executor)
+	if policyErr != nil {
+		return ExecuteResult{}, policyErr
 	}
-	if strings.Contains(req.Executor, "..") || strings.ContainsAny(req.Executor, "\\") {
-		return ExecuteResult{}, fmt.Errorf("invalid executor name")
+	if !allowed {
+		return ExecuteResult{Error: "executor host execution denied by worker policy"}, nil
 	}
 	script := s.scriptPath(req.Executor)
 	if _, err := os.Stat(script); err != nil {
@@ -181,9 +156,10 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	// Build the stdin payload: ExecuteRequest + workDir.
 	type scriptInput struct {
 		ExecuteRequest
-		WorkDir string `json:"workDir"`
+		WorkDir              string `json:"workDir"`
+		HostExecutionAllowed bool   `json:"hostExecutionAllowed"`
 	}
-	stdin, err := json.Marshal(scriptInput{ExecuteRequest: req, WorkDir: workDir})
+	stdin, err := json.Marshal(scriptInput{ExecuteRequest: req, WorkDir: workDir, HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed()})
 	if err != nil {
 		return ExecuteResult{}, fmt.Errorf("muxlio: marshalling script input: %w", err)
 	}
@@ -468,36 +444,28 @@ func (s *ScriptExecutor) environment(workDir string, isolated bool, executor str
 			home = s.AgentHome
 		}
 	} else if !isolated {
-		// No explicit agentHome is configured: default native adapters to the
-		// operator's real home so they reuse existing provider logins already
-		// present there (e.g. ~/.codex, ~/.cursor) instead of a throwaway
-		// scratch HOME. Isolated runtimes keep the scratch HOME below.
+		// Native processes use the operator's home unless explicitly configured.
+		// Isolated processes retain the scratch HOME.
 		if h, err := os.UserHomeDir(); err == nil && h != "" {
 			home = h
 		}
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + workDir, "LANG=C.UTF-8"}
-	// Authorized host commands can reuse the configured SSH agent for git remotes.
-	// Never expose the host socket to isolated execution or unrelated adapters.
-	if executor == "command" && s.AllowCommandHost && !isolated {
-		if s.SSHAgentSocket != "" {
-			if !filepath.IsAbs(s.SSHAgentSocket) {
-				return nil, fmt.Errorf("sshAgentSocket must be an absolute path")
-			}
-			env = append(env, "SSH_AUTH_SOCK="+s.SSHAgentSocket)
+	if !isolated {
+		config := s.Executors[executor]
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{executor: config}); err != nil {
+			return nil, err
 		}
-	}
-	// Kiro keeps sign-in state under KIRO_HOME rather than HOME. Forward only
-	// this explicit opt-in path for trusted-native adapters; isolated runtimes
-	// must not inherit host credentials.
-	if !isolated && os.Getenv("KIRO_HOME") != "" {
-		env = append(env, "KIRO_HOME="+os.Getenv("KIRO_HOME"))
-	}
-	// Cursor's agent CLI defaults to the macOS login keychain, which headless
-	// SSH and launchd sessions never unlock. Use on-disk credentials instead;
-	// the operator runs `AGENT_CLI_CREDENTIAL_STORE=file agent login` once.
-	if executor == "agent/cursor" {
-		env = append(env, "AGENT_CLI_CREDENTIAL_STORE=file")
+		for key, value := range config.Env {
+			prefix := key + "="
+			for i := 0; i < len(env); i++ {
+				if strings.HasPrefix(env[i], prefix) {
+					env = append(env[:i], env[i+1:]...)
+					break
+				}
+			}
+			env = append(env, prefix+value)
+		}
 	}
 	return env, nil
 }

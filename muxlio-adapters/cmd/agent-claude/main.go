@@ -131,7 +131,9 @@ func main() {
 			}
 		case "result":
 			completed = true
-			usage = adapter.ParseTokenUsage(ev["usage"])
+			if reported := adapter.ParseTokenUsage(ev["usage"]); reported != nil {
+				usage = reported
+			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
 				var s string

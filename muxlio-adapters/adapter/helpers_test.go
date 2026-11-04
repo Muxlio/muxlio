@@ -8,6 +8,14 @@ import (
 )
 
 func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
+	for _, raw := range []string{
+		`{"input_tokens":null,"output_tokens":null,"cached_input_tokens":null}`,
+		`{"input_tokens":-1,"output_tokens":1.5,"cached_input_tokens":"unknown"}`,
+	} {
+		if got := ParseTokenUsage(json.RawMessage(raw)); got != nil {
+			t.Fatalf("invalid or unknown counts became usage: %+v", got)
+		}
+	}
 	if got := ParseTokenUsage(nil); got != nil {
 		t.Fatalf("missing usage = %+v, want nil", got)
 	}
@@ -17,6 +25,18 @@ func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
 	got := ParseTokenUsage(json.RawMessage(`{"input_tokens":0,"output_tokens":0,"cached_input_tokens":0}`))
 	if got == nil || got.Input != 0 || got.Output != 0 || got.Cached != 0 {
 		t.Fatalf("reported zero = %+v", got)
+	}
+}
+
+func TestParseTokenUsageProviderSummaryFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"uncachedInputTokens":100,"outputTokens":40,"cacheReadInputTokens":12}`,
+		`{"input_tokens":100,"output_tokens":40,"cached":12,"input":88}`,
+	} {
+		got := ParseTokenUsage(json.RawMessage(raw))
+		if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
+			t.Fatalf("summary %s parsed as %+v", raw, got)
+		}
 	}
 }
 

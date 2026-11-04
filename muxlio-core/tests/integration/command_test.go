@@ -1,4 +1,4 @@
-package plan_test
+package integration_test
 
 import (
 	"encoding/json"
@@ -91,8 +91,10 @@ console.log(JSON.stringify(compiled.plan));`)
 			}
 			executor := workers.NewScriptExecutor(adapterDir, filepath.Join(t.TempDir(), "work"))
 			executor.Workspace = workspace
-			executor.AllowCommandHost = true
-			executor.SSHAgentSocket = "/test/worker-agent.sock"
+			allow := true
+			executor.Executors = map[string]workers.ExecutorConfig{
+				"command": {Allow: &allow, Env: map[string]string{"SSH_AUTH_SOCK": "/test/worker-agent.sock"}},
+			}
 			engine := plan.NewEngine(&p, executor)
 			input, _ := json.Marshal(map[string]bool{"repair": tc.repair})
 			id, err := engine.CreateRun(input)

@@ -24,6 +24,8 @@ class Muxlio < Formula
       cd "muxlio-adapters" do
         system "go", "build", "-trimpath", "-o", adapters/adapter, "./cmd/#{adapter}"
       end
+      descriptor = "muxlio-adapters/cmd/#{adapter}/adapter.json"
+      adapters.install descriptor => "#{adapter}.json" if File.exist?(descriptor)
     end
 
     ui = share/"muxlio/ui"

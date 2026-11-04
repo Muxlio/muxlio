@@ -3,12 +3,54 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
 )
+
+func TestCommandRuntimeAuthorizationAndIsolation(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "command")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	for _, tc := range []struct {
+		name            string
+		allowed         bool
+		mode, wantError string
+	}{
+		{"default denied", false, "host", "denied by worker policy"},
+		{"sandbox fails closed", true, "sandbox", "no verified OCI backend"},
+		{"unknown isolation rejected", true, "unknown", "must be host or sandbox"},
+		{"explicit host permission", true, "host", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			req := adapter.Request{Workspace: workspace, WorkDir: t.TempDir(), HostExecutionAllowed: tc.allowed,
+				Params: json.RawMessage(`{"program":"/bin/echo","args":["ok"],"hostExecutionAllowed":true,"execution":{"isolation":"` + tc.mode + `"}}`)}
+			raw, _ := json.Marshal(req)
+			cmd := exec.Command(bin)
+			cmd.Stdin = strings.NewReader(string(raw))
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resp adapter.Response
+			if err := json.Unmarshal(out, &resp); err != nil {
+				t.Fatalf("response: %s, %v", out, err)
+			}
+			if tc.wantError == "" {
+				if resp.Error != "" || resp.Outputs["passed"] != true {
+					t.Fatalf("authorized result: %+v", resp)
+				}
+			} else if !strings.Contains(resp.Error, tc.wantError) {
+				t.Fatalf("error = %q, want %q", resp.Error, tc.wantError)
+			}
+		})
+	}
+}
 
 func commandResponse(t *testing.T, params map[string]any) (adapter.Response, string) {
 	t.Helper()
@@ -18,7 +60,7 @@ func commandResponse(t *testing.T, params map[string]any) (adapter.Response, str
 		t.Fatal(err)
 	}
 	defer input.Close()
-	req := map[string]any{"workspace": workspace, "workDir": workDir, "executor": "command", "params": params, "outputs": map[string]any{"passed": map[string]any{"mime": "application/json"}}}
+	req := map[string]any{"workspace": workspace, "workDir": workDir, "executor": "command", "hostExecutionAllowed": true, "params": params, "outputs": map[string]any{"passed": map[string]any{"mime": "application/json"}}}
 	if err = json.NewEncoder(input).Encode(req); err != nil {
 		t.Fatal(err)
 	}

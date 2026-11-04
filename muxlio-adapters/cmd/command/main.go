@@ -35,6 +35,9 @@ type params struct {
 	OnNonZero    string            `json:"onNonZero"`
 	FailOnOutput bool              `json:"failOnOutput"`
 	TrimStdout   bool              `json:"trimStdout"`
+	Execution    struct {
+		Isolation string `json:"isolation"`
+	} `json:"execution"`
 }
 type preview struct {
 	b strings.Builder
@@ -71,6 +74,15 @@ func main() {
 		if err = json.Unmarshal(req.Params, &p); err != nil {
 			adapter.Fail("command: invalid params: %v", err)
 		}
+	}
+	if p.Execution.Isolation == "sandbox" {
+		adapter.Fail("command sandbox requested but no verified OCI backend is configured")
+	}
+	if p.Execution.Isolation != "" && p.Execution.Isolation != "host" {
+		adapter.Fail("command execution.isolation must be host or sandbox")
+	}
+	if !req.HostExecutionAllowed {
+		adapter.Fail("command host execution denied by worker policy")
 	}
 	if p.Program == "" || strings.IndexByte(p.Program, 0) >= 0 {
 		adapter.Fail("command: program must be a nonempty executable")
@@ -158,6 +170,9 @@ func main() {
 	cmd.Dir = cwd
 	cmd.Env = []string{"PATH=" + workerPath, "HOME=" + req.WorkDir, "TMPDIR=" + req.WorkDir, "LANG=C.UTF-8", "MUXLIO_OUTPUT_DIR=" + req.WorkDir}
 	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
+		if !filepath.IsAbs(socket) {
+			adapter.Fail("command: SSH_AUTH_SOCK must be an absolute path")
+		}
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+socket)
 	}
 	for k, v := range p.Env {

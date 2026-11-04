@@ -106,6 +106,13 @@ func main() {
 		}
 		var evType string
 		_ = json.Unmarshal(typeRaw, &evType)
+		// ACP reports turn metadata on sessionUpdate before runFinished. The
+		// final event may carry no usage; do not discard already reported counts.
+		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
+			if reported := parseKiroUsage(ev["data"]); reported != nil {
+				usage = reported
+			}
+		}
 
 		switch evType {
 		case "sessionUpdate":
@@ -144,12 +151,6 @@ func main() {
 			}
 			if dataRaw, ok := ev["data"]; ok {
 				_ = json.Unmarshal(dataRaw, &payload)
-				// Kiro reports token counts in structured result metadata. Keep
-				// the last reported result usage for both successful and failed
-				// runs; absent counts remain unavailable.
-				if reported := parseKiroUsage(dataRaw); reported != nil {
-					usage = reported
-				}
 			}
 			if payload.Status != "" && payload.Status != "success" {
 				runErr = fmt.Sprintf("kiro run finished with status %s", payload.Status)
@@ -207,17 +208,22 @@ func parseKiroUsage(result json.RawMessage) *adapter.TokenUsage {
 	if json.Unmarshal(result, &payload) != nil {
 		return nil
 	}
-	if usage := adapter.ParseTokenUsage(payload["usage"]); usage != nil {
-		return usage
-	}
-	metadata := payload["metadata"]
-	var structured map[string]json.RawMessage
-	if json.Unmarshal(metadata, &structured) == nil {
-		if usage := adapter.ParseTokenUsage(structured["usage"]); usage != nil {
+	for _, key := range []string{"tokenUsage", "usage", "metrics"} {
+		if usage := adapter.ParseTokenUsage(payload[key]); usage != nil {
 			return usage
 		}
 	}
-	return adapter.ParseTokenUsage(metadata)
+	if usage := adapter.ParseTokenUsage(result); usage != nil {
+		return usage
+	}
+	// Follow only protocol metadata containers, never tool output, credit
+	// summaries, or context-window percentages (none are token usage).
+	for _, key := range []string{"metadata", "update", "_meta", "kiro"} {
+		if usage := parseKiroUsage(payload[key]); usage != nil {
+			return usage
+		}
+	}
+	return nil
 }
 
 // tailBuffer retains only the most recent limit bytes written to it.

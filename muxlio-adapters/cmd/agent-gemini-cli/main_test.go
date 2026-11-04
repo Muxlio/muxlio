@@ -233,7 +233,7 @@ func TestAgentGeminiCLIAdapterReportsUsageFromResultStats(t *testing.T) {
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
-		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"cached_content_token_count":30}}'` + "\n"
+		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"cached":30,"input":70}}'` + "\n"
 	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

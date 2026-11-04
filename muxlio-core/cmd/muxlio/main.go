@@ -594,10 +594,12 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 		script := workers.NewScriptExecutor(adaptersDir, workBase)
 		script.Workspace = workspace
 		script.Context = ctx
-		// Explicit opt-in is available only to a local-owner CLI invocation.
-		// Service and remote workers stay default-deny.
-		script.AllowCommandHost = localCommandHostEnabled(dataDir)
-		script.SSHAgentSocket = localCommandSettings(dataDir).SSHAgentSocket
+		settings, err := localExecutorSettings(dataDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		script.Executors = settings
 		exec = script
 	} else {
 		fakeExec, err := loadFakeExecutor(fakeConfigPath)
@@ -664,23 +666,19 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 	return 0
 }
 
-func localCommandHostEnabled(dataDir string) bool {
-	if value, ok := os.LookupEnv("MUXLIO_COMMAND_HOST_ENABLED"); ok && strings.TrimSpace(value) != "" {
-		return strings.EqualFold(strings.TrimSpace(value), "true")
-	}
-	return localCommandSettings(dataDir).CommandHostEnabled
-}
-
-func localCommandSettings(dataDir string) serviceConfig {
+func localExecutorSettings(dataDir string) (map[string]workers.ExecutorConfig, error) {
 	raw, err := os.ReadFile(authConfigPath(dataDir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		return serviceConfig{}
+		return nil, err
 	}
 	var cfg serviceConfig
-	if json.Unmarshal(raw, &cfg) != nil {
-		return serviceConfig{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
-	return cfg
+	return cfg.Executors, workers.ValidateExecutorConfigs(cfg.Executors)
 }
 
 func mustEvents(store state.Store, runID string) []state.Event {

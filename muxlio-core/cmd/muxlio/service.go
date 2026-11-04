@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 // originalArgs preserves the process command line at startup so that daemon
@@ -20,16 +22,15 @@ var originalArgs = append([]string(nil), os.Args...)
 
 // serviceConfig authorizes native execution within one explicit workspace.
 type serviceConfig struct {
-	AgentHome             string   `json:"agentHome"`
-	RuntimeDir            string   `json:"runtimeDir"`
-	Addr                  string   `json:"addr"`
-	Adapters              string   `json:"adapters"`
-	UI                    string   `json:"ui"`
-	Workspace             string   `json:"workspace"`
-	Capabilities          []string `json:"capabilities"`
-	CommandHostEnabled    bool     `json:"commandHostEnabled,omitempty"`
-	SSHAgentSocket        string   `json:"sshAgentSocket,omitempty"`
-	AttemptTimeoutSeconds int      `json:"attemptTimeoutSeconds"`
+	AgentHome             string                            `json:"agentHome"`
+	RuntimeDir            string                            `json:"runtimeDir"`
+	Addr                  string                            `json:"addr"`
+	Adapters              string                            `json:"adapters"`
+	UI                    string                            `json:"ui"`
+	Workspace             string                            `json:"workspace"`
+	Capabilities          []string                          `json:"capabilities"`
+	Executors             map[string]workers.ExecutorConfig `json:"executors,omitempty"`
+	AttemptTimeoutSeconds int                               `json:"attemptTimeoutSeconds"`
 	// Token is an optional bearer token that the coordinator will require on all
 	// API requests (except /healthz). Can also be set via MUXLIO_TOKEN env.
 	Token     string `json:"token,omitempty"`
@@ -87,8 +88,8 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	if v := os.Getenv("MUXLIO_CAPABILITIES"); v != "" {
 		c.Capabilities = strings.Split(v, ",")
 	}
-	if c.SSHAgentSocket != "" && !filepath.IsAbs(c.SSHAgentSocket) {
-		return c, fmt.Errorf("sshAgentSocket must be an absolute path")
+	if err := workers.ValidateExecutorConfigs(c.Executors); err != nil {
+		return c, err
 	}
 	return c, nil
 }

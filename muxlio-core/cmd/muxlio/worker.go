@@ -16,7 +16,7 @@ import (
 
 // adapterNameToCapability converts an adapter filename to its capability name.
 // The mapping is the inverse of scriptPath: the first "-" becomes "/".
-// e.g. "agent-claude" → "agent/claude", "agent-codex" → "agent/codex", "command" → "command".
+// Names without a dash are unchanged.
 func adapterNameToCapability(name string) string {
 	idx := strings.Index(name, "-")
 	if idx < 0 {
@@ -34,7 +34,7 @@ func discoverCapabilities(dir string) ([]workers.RemoteCapability, error) {
 	}
 	var caps []workers.RemoteCapability
 	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		info, err := e.Info()
@@ -115,16 +115,27 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 			return 2
 		}
 	}
-	// Remote workers currently have no authenticated local-owner provenance and
-	// no verified OCI backend. Never advertise host command execution there.
+	executor := workers.NewScriptExecutor(adaptersDir, filepath.Join(dataDir, "work"))
+	settings, err := localExecutorSettings(dataDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	executor.Executors = settings
+	// Advertise only capabilities authorized by local operator policy.
 	filtered := caps[:0]
 	for _, cap := range caps {
-		if cap.Name != "command" {
+		allowed, err := executor.CanExecute(cap.Name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		if allowed {
 			filtered = append(filtered, cap)
 		}
 	}
 	if len(filtered) != len(caps) {
-		fmt.Fprintln(os.Stderr, "command capability omitted: remote host authorization/sandbox is unavailable")
+		fmt.Fprintln(os.Stderr, "capabilities omitted by local executor policy")
 	}
 	caps = filtered
 	if len(caps) == 0 {
@@ -150,7 +161,6 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(os.Stderr, "muxlio worker %s connecting to %s (%s/%s, capacity=%d)\n", workerID, coordinator, runtime.GOOS, runtime.GOARCH, capacity)
-	executor := workers.NewScriptExecutor(adaptersDir, filepath.Join(dataDir, "work"))
 	executor.Context = ctx
 	executor.Workspace = workspace
 	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace}, executor)

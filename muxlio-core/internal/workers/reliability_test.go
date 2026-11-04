@@ -143,25 +143,6 @@ func TestAdapterExplicitAgentHome(t *testing.T) {
 	}
 }
 
-func TestCursorAdapterEnvironmentFileCredentialStore(t *testing.T) {
-	s := NewScriptExecutor(t.TempDir(), t.TempDir())
-	env, err := s.environment("/scratch", false, "agent/cursor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(env, "\n")
-	if !strings.Contains(joined, "AGENT_CLI_CREDENTIAL_STORE=file") {
-		t.Fatalf("cursor adapter env missing file credential store: %v", env)
-	}
-	other, err := s.environment("/scratch", false, "agent/claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(strings.Join(other, "\n"), "AGENT_CLI_CREDENTIAL_STORE=") {
-		t.Fatalf("non-cursor adapter env must not set credential store: %v", other)
-	}
-}
-
 type testTransport func(*http.Request) (*http.Response, error)
 
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
