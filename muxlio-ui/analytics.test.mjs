@@ -18,7 +18,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics})`,
     ctx,
   );
 }
@@ -81,39 +81,39 @@ console.log('buildAnalyticsModel state counts passed');
   ];
   const attemptsByRun = new Map([
     ['r1', [
-      { id: 'a1', activationId: 'act-1', executor: 'kiro', retryNumber: 0, state: 'succeeded',
+      { id: 'a1', activationId: 'act-1', executor: 'executorA', retryNumber: 0, state: 'succeeded',
         usage: { input: 1000, output: 400, cached: 100 } },
     ]],
     ['r2', [
-      { id: 'a2', activationId: 'act-2', executor: 'kiro', retryNumber: 0, state: 'succeeded',
+      { id: 'a2', activationId: 'act-2', executor: 'executorA', retryNumber: 0, state: 'succeeded',
         usage: { input: 500, output: 200, cached: 0 } },
-      { id: 'a3', activationId: 'act-3', executor: 'openai', retryNumber: 0, state: 'succeeded',
+      { id: 'a3', activationId: 'act-3', executor: 'executorB', retryNumber: 0, state: 'succeeded',
         usage: { input: 300, output: 100, cached: 50 } },
     ]],
-    ['r-running', [{ id: 'a-running', activationId: 'act-running', executor: 'kiro', retryNumber: 0, state: 'running',
+    ['r-running', [{ id: 'a-running', activationId: 'act-running', executor: 'executorA', retryNumber: 0, state: 'running',
       usage: { input: 9000, output: 9000, cached: 0 } }]],
     // r3 has attempt with null usage — provider did not report
     ['r3', [
-      { id: 'a4', activationId: 'act-4', executor: 'kiro', retryNumber: 0, state: 'failed', usage: null },
+      { id: 'a4', activationId: 'act-4', executor: 'executorA', retryNumber: 0, state: 'failed', usage: null },
     ]],
   ]);
   const model = buildAnalyticsModel(runs, attemptsByRun);
 
-  // kiro should aggregate r1 + r2 attempts only (r3 had null usage)
-  const kiro = model.executorUsage.get('kiro');
-  assert.ok(kiro, 'kiro executor entry exists');
-  assert.strictEqual(kiro.input, 1000 + 500, 'kiro input summed across runs');
-  assert.strictEqual(kiro.output, 400 + 200, 'kiro output summed');
-  assert.strictEqual(kiro.cached, 100 + 0, 'kiro cached summed');
-  assert.ok(kiro.runIds.has('r1'), 'r1 contributed to kiro');
-  assert.ok(kiro.runIds.has('r2'), 'r2 contributed to kiro');
-  assert.ok(!kiro.runIds.has('r3'), 'r3 NOT counted for kiro (null usage)');
+  // executorA should aggregate r1 + r2 attempts only (r3 had null usage)
+  const executorA = model.executorUsage.get('executorA');
+  assert.ok(executorA, 'executorA executor entry exists');
+  assert.strictEqual(executorA.input, 1000 + 500, 'executorA input summed across runs');
+  assert.strictEqual(executorA.output, 400 + 200, 'executorA output summed');
+  assert.strictEqual(executorA.cached, 100 + 0, 'executorA cached summed');
+  assert.ok(executorA.runIds.has('r1'), 'r1 contributed to executorA');
+  assert.ok(executorA.runIds.has('r2'), 'r2 contributed to executorA');
+  assert.ok(!executorA.runIds.has('r3'), 'r3 NOT counted for executorA (null usage)');
 
-  const openai = model.executorUsage.get('openai');
-  assert.ok(openai, 'openai executor entry exists');
-  assert.strictEqual(openai.input, 300);
-  assert.strictEqual(openai.output, 100);
-  assert.strictEqual(openai.cached, 50);
+  const executorB = model.executorUsage.get('executorB');
+  assert.ok(executorB, 'executorB executor entry exists');
+  assert.strictEqual(executorB.input, 300);
+  assert.strictEqual(executorB.output, 100);
+  assert.strictEqual(executorB.cached, 50);
 
   // r3 has attempt but null usage → runsWithUnavailableUsage
   assert.strictEqual(model.runsWithUnavailableUsage, 1, 'one run with no reported usage');
@@ -196,9 +196,9 @@ console.log('daily bucket aggregation passed');
     { id: 'r2', state: 'failed',    workflowName: 'my-workflow', createdAt: now, updatedAt: now },
   ];
   const attemptsByRun = new Map([
-    ['r1', [{ id: 'a1', activationId: 'act-1', executor: 'kiro', retryNumber: 0, state: 'succeeded',
+    ['r1', [{ id: 'a1', activationId: 'act-1', executor: 'executorA', retryNumber: 0, state: 'succeeded',
               usage: { input: 2000, output: 800, cached: 200 } }]],
-    ['r2', [{ id: 'a2', activationId: 'act-2', executor: 'kiro', retryNumber: 0, state: 'failed',
+    ['r2', [{ id: 'a2', activationId: 'act-2', executor: 'executorA', retryNumber: 0, state: 'failed',
               usage: null }]],
   ]);
   const model = buildAnalyticsModel(runs, attemptsByRun);
@@ -218,8 +218,8 @@ console.log('daily bucket aggregation passed');
   // Success rate: 1 succeeded / (1 succeeded + 1 failed) = 50%
   assert.match(content, /50%/, 'success rate calculated correctly');
 
-  // Token data for kiro executor
-  assert.match(content, /kiro/, 'kiro executor in table');
+  // Token data for executorA executor
+  assert.match(content, /executorA/, 'executorA executor in table');
   assert.match(content, /2\.0K/, 'input token count formatted');
 
   // Incomplete data note should appear (r2 has null usage)
@@ -311,3 +311,172 @@ console.log('analytics navigation and incomplete usage checks passed');
   assert.match(content, /&lt;script&gt;xss/, 'workflow name HTML-escaped');
 }
 console.log('XSS escaping checks passed');
+
+// Timing samples stay independent of token availability and coordinator elapsed.
+{
+  const output = { innerHTML: '' };
+  const { buildAnalyticsModel, renderAnalytics } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
+  const runs = [{id:'mixed/run', state:'succeeded', createdAt:'invalid'}, {id:'legacy', state:'created'}];
+  const model = buildAnalyticsModel(runs, new Map([
+    ['mixed/run', [
+      {executor:'executorA', state:'succeeded', executionDurationMs:100, usage:null},
+      {executor:'executorA', state:'failed', executionDurationMs:300, usage:{input:0,output:0,cached:0}},
+      {executor:'executorA', state:'succeeded', startedAt:'2026-01-01T00:00:00Z', finishedAt:'2026-01-01T00:00:04Z'},
+      {executor:'executorA', state:'failed', executionDurationMs:-1, startedAt:'bad', finishedAt:'bad'},
+      {executor:'executorB', state:'running'},
+      {executor:'executorC', state:'succeeded', executionDurationMs:0, usage:{input:7}},
+    ]],
+    ['legacy', []],
+  ]));
+  const a = model.executorStats.get('executorA');
+  assert.equal(a.attempts, 4);
+  assert.equal(a.durationSumMs / a.durationSamples, 200);
+  assert.equal(a.elapsedSumMs / a.elapsedSamples, 4000);
+  assert.equal(a.missingTiming, 1);
+  assert.equal(model.executorStats.get('executorB').attempts, 1);
+  assert.equal(model.executorStats.get('executorB').running, 1);
+  assert.equal(model.executorStats.get('executorC').durationSamples, 1);
+  assert.equal(model.executorUsage.get('executorC').output, null);
+  assert.equal(model.runsWithNoAttempts, 1);
+  renderAnalytics(model);
+  assert.match(output.innerHTML, /200 ms \(n=2\)/);
+  assert.match(output.innerHTML, /4.0 s \(n=1\)/);
+  assert.match(output.innerHTML, /0 ms \(n=1\)/);
+  assert.match(output.innerHTML, /1 missing timing; 0 in progress/);
+  assert.match(output.innerHTML, /Unavailable/);
+  assert.match(output.innerHTML, /href="#run\/mixed%2Frun"/);
+  assert.doesNotMatch(output.innerHTML, /NaN/);
+}
+console.log('mixed executor timing, legacy and partial usage checks passed');
+
+// Exercise script order: boot must not replace the actual Analytics loader.
+{
+  const boot = readFileSync(new URL('./js/boot.js', import.meta.url), 'utf8');
+  const output = {innerHTML:''};
+  let resolveRuns;
+  const pending = new Promise(resolve => { resolveRuns = resolve; });
+  const ctx = vm.createContext(makeCtx({
+    api: async path => path === '/v1/runs' ? pending : {attempts:[]},
+    document: {getElementById: () => output, querySelectorAll: () => []},
+    window: {addEventListener(){}}, navigate(){},
+    loadOverview(){}, loadRuns(){}, loadWorkers(){}, loadOlder(){},
+  }));
+  const sourceByPath = new Map([['/js/analytics.js', analyticsSource], ['/js/boot.js', boot]]);
+  for (const match of indexSource.matchAll(/<script src="([^"]+)"/g)) {
+    if (sourceByPath.has(match[1])) vm.runInContext(sourceByPath.get(match[1]), ctx);
+  }
+  const loading = ctx.loadAnalytics();
+  assert.match(output.innerHTML, /Loading analytics/);
+  resolveRuns({runs:[{id:'r',state:'succeeded'}]});
+  await loading;
+  assert.match(output.innerHTML, /Total runs/);
+}
+console.log('Analytics bootstrap and loading checks passed');
+
+{
+  const output = {innerHTML:''};
+  const {loadAnalyticsData, loadAnalytics} = getHelpers(makeCtx({
+    document: {getElementById: () => output},
+    api: async path => {
+      if (path === '/v1/runs') return {runs:[{id:'good',state:'succeeded'},{id:'bad',state:'failed'}]};
+      if (path.includes('/bad/')) throw new Error('service <offline>');
+      return {attempts:[{executor:'executorZ',state:'succeeded',executionDurationMs:10}]};
+    },
+  }));
+  const model = await loadAnalyticsData();
+  assert.equal(model.runs.length, 2);
+  assert.equal(model.attemptErrors.size, 1);
+  assert.equal(model.runsWithNoAttempts, 0, 'failed fetch is not an empty attempt history');
+  await loadAnalytics();
+  assert.match(output.innerHTML, /statistics are partial/);
+  assert.match(output.innerHTML, /service &lt;offline&gt;/);
+  assert.match(output.innerHTML, /executorZ/);
+  assert.match(output.innerHTML, /href="#run\/bad"/);
+
+  for (const api of [
+    async () => {throw new Error('runs unavailable');},
+    async () => ({}),
+    async path => path === '/v1/runs' ? {runs:[{id:'bad'}]} : {},
+  ]) {
+    const helpers = getHelpers(makeCtx({api,document:{getElementById: () => output}}));
+    await helpers.loadAnalytics();
+    assert.match(output.innerHTML, /role="alert"/);
+    assert.doesNotMatch(output.innerHTML, /Loading analytics/);
+  }
+}
+console.log('Analytics fetch failure checks passed');
+
+// The coordinator serializes empty Go slices as null.
+{
+  const {loadAnalyticsData} = getHelpers(makeCtx({api:async () => ({runs:null})}));
+  assert.equal((await loadAnalyticsData()).runs.length, 0);
+  const helpers = getHelpers(makeCtx({api:async path => path === '/v1/runs' ? {runs:[{id:'legacy'}]} : {attempts:null}}));
+  const model = await helpers.loadAnalyticsData();
+  assert.equal(model.runsWithNoAttempts, 1);
+  assert.equal(model.attemptErrors.size, 0);
+}
+console.log('Analytics API empty slice checks passed');
+
+// Missing token fields cannot produce a numeric relative-volume bar.
+{
+  const output = {innerHTML:''};
+  const {buildAnalyticsModel, renderAnalytics} = getHelpers(makeCtx({document:{getElementById:()=>output}}));
+  const runs = [{id:'partial',state:'succeeded'}, {id:'zero',state:'succeeded'}];
+  const model = buildAnalyticsModel(runs, new Map([
+    ['partial', [{executor:'partialExecutor',state:'succeeded',usage:{input:100}}]],
+    ['zero', [{executor:'zeroExecutor',state:'succeeded',usage:{input:0,output:0,cached:0}}]],
+  ]));
+  renderAnalytics(model);
+  const row = name => output.innerHTML.match(new RegExp(`<tr>\\s*<td[^>]*><strong>${name}</strong>[\\s\\S]*?</tr>`, 'g')).at(-1);
+  assert.match(row('partialExecutor'), /<td>Unavailable<\/td>/);
+  assert.doesNotMatch(row('partialExecutor'), /abc-bar/);
+  assert.match(row('zeroExecutor'), /width:0\.0%/);
+}
+console.log('Partial token relative-volume checks passed');
+
+// UTC labels must match UTC bucket keys even for viewers on a different day.
+{
+  class ViewerDate extends Date {
+    constructor(...args) { super(...(args.length ? args : ['2026-11-04T00:30:00Z'])); }
+    toLocaleDateString(locales, options) {
+      return super.toLocaleDateString('en-US', {timeZone:'America/Los_Angeles', ...options});
+    }
+  }
+  const {buildAnalyticsModel} = getHelpers(makeCtx({Date:ViewerDate}));
+  const runs = [{id:'today',createdAt:'2026-11-04T00:15:00Z'}];
+  const model = buildAnalyticsModel(runs, new Map([['today', [{usage:{input:0},state:'succeeded'}]]]));
+  for (const buckets of [model.buckets, model.tokenBuckets]) {
+    assert.equal(buckets.at(-1).dateKey, '2026-11-04');
+    assert.equal(buckets.at(-1).label, 'Nov 4');
+  }
+  assert.equal(model.buckets.at(-1).total, 1);
+  assert.equal(model.tokenBuckets.at(-1).input, 0);
+  assert.equal(model.tokenBuckets.at(-1).output, null);
+}
+console.log('Analytics UTC date checks passed');
+
+// Revisiting Analytics can overlap loads; old successes and failures must not
+// overwrite the latest request's data or loading state.
+for (const staleFailure of [false, true]) {
+  const output = {innerHTML:''};
+  const pending = [];
+  const {loadAnalytics} = getHelpers(makeCtx({
+    document:{getElementById:()=>output},
+    api:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),
+  }));
+  const oldLoad = loadAnalytics();
+  const newLoad = loadAnalytics();
+  pending[1].resolve({runs:[]});
+  await newLoad;
+  const latestHTML = output.innerHTML;
+  if (staleFailure) pending[0].reject(new Error('stale failure'));
+  else pending[0].resolve({runs:[{id:'stale',state:'succeeded'}]});
+  // The stale successful load still finishes its attempt request.
+  if (!staleFailure) {
+    await new Promise(resolve=>setImmediate(resolve));
+    pending[2].resolve({attempts:[]});
+  }
+  await oldLoad;
+  assert.equal(output.innerHTML, latestHTML);
+}
+console.log('Analytics overlapping-load checks passed');
