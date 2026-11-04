@@ -1,0 +1,173 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+// ── helpers ───────────────────────────────────────────────────────────────
+const wbSource = readFileSync(new URL('./js/workbench.js', import.meta.url), 'utf8');
+const inspSource = readFileSync(new URL('./js/inspector.js', import.meta.url), 'utf8');
+
+function makeCtx(runAttempts = []) {
+  return {
+    runAttempts,
+    selectedActivation: null,
+    activationDisplayNumbers: new Map(),
+    activationData: [],
+    activationTranscripts: new Map(),
+    current: 'run-x',
+    wbCurrentRunState: 'succeeded',
+    esc: s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+    duration: (a, b) => '1.0 s',
+    date: x => x ? new Date(x).toLocaleString() : '—',
+    stateClass: s => s || '',
+    replaceHTMLPreservingDetails: () => {},
+    treeMarkup: () => '',
+    transcriptSectionMarkup: () => '',
+    activationHasTranscript: () => false,
+    scheduleTranscriptPoll: () => {},
+    pretty: x => JSON.stringify(x ?? null, null, 2),
+  };
+}
+
+// ── sumRunTokenUsage ──────────────────────────────────────────────────────
+{
+  const ctx = makeCtx();
+  const { sumRunTokenUsage } = vm.runInNewContext(`${wbSource}; ({sumRunTokenUsage})`, ctx);
+
+  // No attempts → null
+  assert.strictEqual(sumRunTokenUsage([]), null, 'empty attempts → null');
+  assert.strictEqual(sumRunTokenUsage(null), null, 'null attempts → null');
+
+  // All attempts have null usage → null (provider unavailable)
+  assert.strictEqual(
+    sumRunTokenUsage([
+      { id: 'a', usage: null },
+      { id: 'b', usage: null },
+    ]),
+    null,
+    'all-null usage → null (unavailable, not zero)',
+  );
+
+  // Mix of reported and null usage: nulls are excluded, reported are summed
+  // (retries are included)
+  const mixed = sumRunTokenUsage([
+    { id: 'a', usage: { input: 100, output: 50, cached: 20 } },
+    { id: 'b', usage: null },                                    // retry with no report
+    { id: 'c', usage: { input: 200, output: 80, cached: 10 } }, // second agent
+  ]);
+  assert.ok(mixed !== null, 'at least one reported usage → non-null result');
+  assert.strictEqual(mixed.input,  300, 'input summed across reported attempts');
+  assert.strictEqual(mixed.output, 130, 'output summed');
+  assert.strictEqual(mixed.cached,  30, 'cached summed');
+
+  // Reported zero is distinct from null (zero usage, e.g. cached-only call)
+  const zero = sumRunTokenUsage([{ id: 'z', usage: { input: 0, output: 0, cached: 0 } }]);
+  assert.ok(zero !== null, 'reported-zero usage → non-null (distinguishable from unavailable)');
+  assert.strictEqual(zero.input, 0);
+}
+console.log('sumRunTokenUsage checks passed');
+
+// ── buildWbStats token stat display ──────────────────────────────────────
+{
+  const run = { state: 'succeeded', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const acts = [{ state: 'succeeded' }, { state: 'succeeded' }];
+
+  // Case 1: no attempts at all — stats show '—' (older run, no records)
+  const ctxNone = makeCtx([]);
+  const { buildWbStats: buildWbStatsNone } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxNone);
+  const htmlNone = buildWbStatsNone(run, acts);
+  assert.match(htmlNone, /Tokens in/, 'stat label "Tokens in" present');
+  // With no attempts the values for the three token stats should all be em-dashes.
+  const emDashMatches = (htmlNone.match(/stat-val[^>]*>—</g) || []).length;
+  assert.ok(emDashMatches >= 3, `three token stats show em-dash for no-attempt runs (found ${emDashMatches} em-dash stats)`);
+
+  // Case 2: attempts present but all have null usage → show "Unavailable"
+  const ctxUnavail = makeCtx([
+    { activationId: 'act-1', retryNumber: 0, state: 'succeeded', usage: null },
+    { activationId: 'act-2', retryNumber: 0, state: 'succeeded', usage: null },
+  ]);
+  const { buildWbStats: buildWbStatsUnavail } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxUnavail);
+  const htmlUnavail = buildWbStatsUnavail(run, acts);
+  assert.match(htmlUnavail, /Unavailable/, 'stat shows "Unavailable" when provider did not report usage');
+  // Token stats must not show a numeric 0 value when usage is unavailable.
+  assert.doesNotMatch(htmlUnavail, />0<\/div><div class="stat-label">Tokens/, 'must not show zero when usage is unavailable');
+
+  // Case 3: reported usage — values shown with correct totals
+  const ctxReported = makeCtx([
+    { activationId: 'act-1', retryNumber: 0, state: 'failed',    usage: { input: 500, output: 200, cached: 100 } },
+    { activationId: 'act-1', retryNumber: 1, state: 'succeeded', usage: { input: 300, output: 150, cached:  50 } }, // retry
+    { activationId: 'act-2', retryNumber: 0, state: 'succeeded', usage: { input: 200, output: 100, cached:   0 } },
+  ]);
+  const { buildWbStats: buildWbStatsRep } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxReported);
+  const htmlRep = buildWbStatsRep(run, acts);
+  // Total input = 500 + 300 + 200 = 1000 → "1.0K"
+  assert.match(htmlRep, /1\.0K/, 'input tokens formatted with K suffix and retries included');
+  assert.doesNotMatch(htmlRep, /Unavailable/, 'no "Unavailable" when usage is reported');
+}
+console.log('buildWbStats token stat checks passed');
+
+// ── buildAttemptUsageMarkup per-activation inspector section ─────────────
+{
+  // Build minimal inspector context with the workbench source too (it provides
+  // stateClass and checkIcon which inspector.js uses).
+  function makeInspCtx(runAttempts, selectedAct) {
+    return makeCtx(runAttempts);
+  }
+
+  // No attempts → empty string (section suppressed for older runs)
+  const ctxNoAtt = makeInspCtx([]);
+  const { buildAttemptUsageMarkup: buNoAtt } = vm.runInNewContext(
+    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    ctxNoAtt,
+  );
+  const act0 = { id: 'act-old', nodeId: 'n', state: 'succeeded' };
+  assert.strictEqual(buNoAtt(act0), '', 'no attempts → empty (older run graceful)');
+
+  // Single attempt with reported usage
+  const ctxWith = makeInspCtx([
+    { activationId: 'act-1', retryNumber: 0, state: 'succeeded', usage: { input: 1200, output: 800, cached: 300 } },
+  ]);
+  const { buildAttemptUsageMarkup: buWith } = vm.runInNewContext(
+    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    ctxWith,
+  );
+  const act1 = { id: 'act-1', nodeId: 'n', state: 'succeeded' };
+  const html1 = buWith(act1);
+  assert.match(html1, /Token usage/, 'section heading present');
+  assert.match(html1, /Attempt 1/, 'first attempt labelled correctly');
+  assert.match(html1, /1\.2K/, 'input formatted with K suffix');
+  assert.match(html1, /800/, 'output shown');
+  assert.match(html1, /300/, 'cached shown');
+
+  // Retry: second attempt labelled as retry
+  const ctxRetry = makeInspCtx([
+    { activationId: 'act-2', retryNumber: 0, state: 'failed',    usage: { input: 500, output: 200, cached: 0 } },
+    { activationId: 'act-2', retryNumber: 1, state: 'succeeded', usage: null },
+  ]);
+  const { buildAttemptUsageMarkup: buRetry } = vm.runInNewContext(
+    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    ctxRetry,
+  );
+  const act2 = { id: 'act-2', nodeId: 'n', state: 'succeeded' };
+  const htmlRetry = buRetry(act2);
+  assert.match(htmlRetry, /Attempt 1/, 'first attempt label');
+  assert.match(htmlRetry, /Retry 1 \(attempt 2\)/, 'retry labelled with number');
+  assert.match(htmlRetry, /Unavailable/, 'null usage attempt shows "Unavailable"');
+  assert.match(htmlRetry, /500/, 'first attempt usage shown');
+  // The "Unavailable" row must not contain a numeric cell — it uses colspan.
+  assert.doesNotMatch(htmlRetry, /Retry 1[^<]*<\/td><td class="num">/, 'unavailable row must not render as numeric cells');
+
+  // All attempts have null usage → section exists but all rows say "Unavailable"
+  const ctxAllNull = makeInspCtx([
+    { activationId: 'act-3', retryNumber: 0, state: 'succeeded', usage: null },
+  ]);
+  const { buildAttemptUsageMarkup: buAllNull } = vm.runInNewContext(
+    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    ctxAllNull,
+  );
+  const htmlAllNull = buAllNull({ id: 'act-3', nodeId: 'n', state: 'succeeded' });
+  assert.match(htmlAllNull, /Token usage/, 'section still rendered when all unavailable');
+  assert.match(htmlAllNull, /Unavailable/, 'row shows Unavailable');
+  // Must NOT include a numeric usage table with zeros
+  assert.doesNotMatch(htmlAllNull, /<td class="num">0<\/td>/, 'unavailable must not render as zero');
+}
+console.log('buildAttemptUsageMarkup checks passed');

@@ -81,6 +81,32 @@ function resolveInspectorAgent(act){
   return actAttempts[0]?.executor||act.executorHint||act.executor||'—';
 }
 
+// buildAttemptUsageMarkup renders a compact token-usage section for each
+// attempt of an activation. Attempts without provider-reported usage are
+// labelled "Unavailable"; the section is suppressed entirely when the
+// activation has no attempts at all (older runs with no records).
+function buildAttemptUsageMarkup(act){
+  const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
+  const actAttempts=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
+  if(!actAttempts.length)return '';
+  const rows=actAttempts.map(a=>{
+    const retry=a.retryNumber||0;
+    const label=retry===0?'Attempt 1':`Retry ${retry} (attempt ${retry+1})`;
+    if(a.usage==null){
+      return `<tr><td>${esc(label)}</td><td colspan="3" style="color:var(--muted)">Unavailable</td></tr>`;
+    }
+    const fmtTokens=n=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n||0);
+    return `<tr><td>${esc(label)}</td><td class="num">${esc(fmtTokens(a.usage.input))}</td><td class="num">${esc(fmtTokens(a.usage.output))}</td><td class="num">${esc(fmtTokens(a.usage.cached))}</td></tr>`;
+  });
+  return `<div class="insp-section">
+    <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Token usage</div>
+    <div class="tablebox" style="font-size:11px"><table>
+      <thead><tr><th></th><th>In</th><th>Out</th><th>Cached</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
 function renderInspectorWb(act){
   const labelEl=$('#inspNodeLabel'),nameEl=$('#inspNodeName'),descEl=$('#inspNodeDesc');
   const parts=(act.nodeId||'').split('.');
@@ -126,6 +152,7 @@ function renderInspectorWb(act){
       <div class="data-tree">${treeMarkup(act.outputs,'outputs',0,`run:${current}:activation:${act.id}:outputs`)}</div>
     </div>`:''}
     ${act.error?`<div class="insp-section"><div class="insp-error">${esc(act.error)}</div></div>`:''}
+    ${buildAttemptUsageMarkup(act)}
     ${transcriptSectionMarkup(act,current)}
   `);
   if(activationHasTranscript(act)&&(act.state==='running'||activationTranscripts.get(act.id)?.agent))scheduleTranscriptPoll(act,current);

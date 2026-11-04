@@ -3,16 +3,40 @@ let activationDisplayNumbers = new Map();
 function stateClass(s){return{succeeded:'succeeded',failed:'failed',running:'running',waiting:'waiting',paused:'paused',queued:'queued',cancelled:'cancelled'}[s]||''}
 function checkIcon(s){if(s==='succeeded')return `<span class="node-card-check succeeded">✓</span>`;if(s==='failed')return `<span class="node-card-check failed">✕</span>`;if(s==='running')return `<span class="node-card-check running">⟳</span>`;return ''}
 
+// sumRunTokenUsage aggregates token counts across all attempts (including
+// retries) in the run. Returns null when no attempt has provider-reported
+// usage — callers must render that as "Unavailable", never as zero.
+function sumRunTokenUsage(attempts){
+  if(!attempts||!attempts.length)return null;
+  let anyReported=false,input=0,output=0,cached=0;
+  for(const a of attempts){
+    if(a.usage==null)continue; // provider did not report
+    anyReported=true;
+    input+=a.usage.input||0;
+    output+=a.usage.output||0;
+    cached+=a.usage.cached||0;
+  }
+  return anyReported?{input,output,cached}:null;
+}
+
+// fmtTokens formats a token count with a K suffix for readability.
+function fmtTokens(n){if(n>=1000)return `${(n/1000).toFixed(1)}K`;return String(n)}
+
 function buildWbStats(r,acts){
   const total=acts.length,done=acts.filter(a=>a.state==='succeeded').length;
   const failed=acts.filter(a=>a.state==='failed').length;
   const running=acts.filter(a=>a.state==='running').length;
+  const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
+  const usage=sumRunTokenUsage(attempts);
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:failed>0?String(failed):'—',label:'Failed',cls:failed?'red':''},
     {val:running>0?String(running):'—',label:'Running',cls:running?'amber':''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
     {val:duration(r.createdAt,r.updatedAt),label:'Duration',cls:''},
+    {val:attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—',label:'Tokens in',cls:''},
+    {val:attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—',label:'Tokens out',cls:''},
+    {val:attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—',label:'Tokens cached',cls:''},
   ];
   return stats.map(s=>`<div class="stat"><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
 }
