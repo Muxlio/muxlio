@@ -4,15 +4,14 @@ Use this guide to author and run workflows with this repository's TypeScript SDK
 
 ## Muxlio-assisted feature work
 
-For feature work, use `recipes/implement-features/workflow.ts`. Edit its input JSON with the requested features and relevant context paths, then check and fake-run before a real run. The recipe works in the current clean git workspace and maps features serially (`concurrency: 1`): implement → review → command verification/fix loop → command commit. Agent tasks currently use Kiro with Codex fallback. A final command step runs `git push` once after every feature finishes.
+For feature work, use `recipes/implement-features/workflow.ts`. Edit its input JSON with the requested features and relevant context paths, then check and fake-run before a real run. The recipe works in the current clean git workspace and maps features serially (`concurrency: 1`): implement → review → command verification/fix loop → command commit. Agent tasks currently use Kiro with Codex fallback. The recipe ends with verified local commits; review and push them manually from the worker when ready.
 
 Before a real run, configure `executors.command.allow: true` in the worker's
-`config.json`. For SSH Git remotes, set `executors.command.env.SSH_AUTH_SOCK`
-to the socket path obtained on that worker machine, check GitHub authentication
-as its OS user, and ensure the workspace branch has an upstream. Restart the
-service after changing configuration. Agent steps should not commit or push;
-the recipe owns those operations. If only push fails, fix its prerequisites and
-use **Retry run** in the UI to preserve completed feature work and retry push.
+`config.json` and restart the service after changing configuration. Agent steps
+should not commit or push; the recipe owns local commits. Git remote credentials
+and an upstream branch are not required for the recipe. Commits remain on the
+worker until pushed manually. Existing submitted runs keep their compiled plans;
+compile and submit the updated recipe for runs without a push step.
 
 Typical repository commands:
 

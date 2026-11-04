@@ -198,14 +198,13 @@ Executor permissions and environment values are configured per executor in `~/.m
 
 `examples/command.workflow.ts` shows two tasks using the same executor. Task output files live under the per-attempt artifact directory, exposed to child programs through `MUXLIO_OUTPUT_DIR`; executables must be installed and authorized on the selected worker. Host mode is intended for a self-hosted, single-owner worker. There is no OCI sandbox support in this release.
 
-For Git pushes, configure the command executor and restart the service:
+To authorize command tasks, configure the command executor and restart the service:
 
 ```json
 {
   "executors": {
     "command": {
-      "allow": true,
-      "env": { "SSH_AUTH_SOCK": "/absolute/path/to/agent.sock" }
+      "allow": true
     }
   }
 }
@@ -213,19 +212,17 @@ For Git pushes, configure the command executor and restart the service:
 
 The `executors` map is optional and defaults to `{}`. Omitted entries use executor defaults; `allow: false` disables an executor, and `allow: true` explicitly authorizes it. The same configuration applies to service, standalone, and outbound workers. Environment values are scoped to the named executor and are not inherited from the shell. Isolated execution does not receive these values. These entries replace the old top-level `commandHostEnabled` and `sshAgentSocket` settings.
 
-Use the socket from the machine running the worker, not the machine submitting
-the workflow. On that machine, check `ssh -T git@github.com` and read the socket
-path with `echo "$SSH_AUTH_SOCK"`; save that exact path in config.json. The
-workspace branch must have a configured upstream because the recipe runs plain
-`git push`. If the socket path changes, update the config and restart the service.
+The command adapter forwards the worker's scoped environment generically,
+keeping its scratch `HOME`, `TMPDIR`, and output directory. Task `params.env`
+can override forwarded values, except managed `PATH`, `HOME`, `TMPDIR`, `LANG`,
+and `MUXLIO_OUTPUT_DIR`.
 
 ### Implement-features recipe
 
-`recipes/implement-features/workflow.ts` is a ready-to-use recipe: in the current git workspace, each feature runs implement → review → a verify/fix loop (`repeatUntil`, `maxAttempts: 10`, `onExhausted: 'pause'`) → commit. Features run serially (`concurrency: 1`); the commit step is gated on a passed verification via `{ requiresPassed }`. After all features finish, a final `push` step runs `git push` once, using the repository's configured upstream. A failed push fails the step.
+`recipes/implement-features/workflow.ts` is a ready-to-use recipe: in the current git workspace, each feature runs implement → review → a verify/fix loop (`repeatUntil`, `maxAttempts: 10`, `onExhausted: 'pause'`) → commit. Features run serially (`concurrency: 1`); the commit step is gated on a passed verification via `{ requiresPassed }`. The recipe finishes with verified local commits; it does not push or require Git remote authentication.
 
-If only the push fails, fix authentication or the upstream, then use **Retry run**
-in the UI. Completed activations and commits are retained; the failed push is
-retried without implementing the features again.
+Review the commits in the worker's workspace and push manually when ready.
+Commits stay on that worker until you push them.
 
 ```sh
 muxlio check recipes/implement-features/workflow.ts

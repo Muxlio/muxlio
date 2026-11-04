@@ -18,16 +18,7 @@ test('implement-features plan structure', () => {
   const mapNode = root.nodes.find((n) => n.kind === 'map');
   assert.ok(mapNode, 'root must have a map node');
 
-  const push = root.nodes.find((n) => n.id === 'push');
-  assert.equal(push?.executor, 'command');
-  assert.equal(push?.params?.program, 'git');
-  assert.deepEqual(push?.params?.args, ['push']);
-  assert.equal(push?.params?.onNonZero, 'fail');
-  assert.deepEqual(push?.inputs?.__after_0, { ref: { node: mapNode.id, port: 'items' } },
-    'push must wait for the entire feature map to finish');
-  assert.equal(root.nodes.at(-1), push, 'push is the final root step');
-  assert.equal(Object.values(plan.subgraphs).flatMap((g) => g.nodes).filter((n) => n.id === 'push').length, 1,
-    'push runs once for the batch');
+  assert.equal(root.nodes.at(-1), mapNode, 'the recipe finishes after the feature map');
 
   const body = plan.subgraphs[mapNode.bodyRef];
 
@@ -36,6 +27,9 @@ test('implement-features plan structure', () => {
   assert.equal(implement?.executor, 'agent/kiro');
 
   const allNodes = Object.values(plan.subgraphs).flatMap((g) => g.nodes);
+  assert.equal(allNodes.some((n) => n.id === 'push' ||
+    (n.params?.program === 'git' && n.params?.args?.includes('push'))), false,
+    'the recipe leaves commits local and never pushes');
   for (const command of allNodes.filter((n) => n.executor === 'command')) {
     assert.equal(command.outputs?._result, undefined, 'command outputs must be flat');
     assert.ok(command.outputs?.passed, 'command completion exposes passed');

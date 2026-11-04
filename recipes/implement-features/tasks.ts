@@ -9,7 +9,7 @@ Run any applicable checks and make sure they pass.
 
 Write notes.md to the scratch directory summarising: what you changed, the
 exact commands run, and their exit codes. Work only on this feature; do not
-delegate to another agent.`,
+delegate to another agent. Do not commit or push; the recipe creates local commits.`,
   outputs: { notes: artifact.markdown('notes.md') },
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
@@ -22,7 +22,8 @@ notes from the previous step (provided in context). Check correctness,
 regressions, security, and test coverage. Fix any issues directly in the
 workspace. Write review.md to the scratch directory with findings, fixes made,
 and what you verified. If nothing needed fixing, state what you inspected and
-confirmed. Do not delegate or edit SKILL.md.`,
+confirmed. Do not delegate or edit SKILL.md. Do not commit or push; the recipe
+creates local commits.`,
   outputs: { report: artifact.markdown('review.md') },
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
@@ -34,7 +35,7 @@ export const fix = task({
 causes and fix them in the workspace without weakening or disabling any checks.
 Keep changes scoped to the feature. Write fix.md to the scratch directory
 describing what was broken and what was repaired. Do not delegate or edit
-SKILL.md.`,
+SKILL.md. Do not commit or push; the recipe creates local commits.`,
   outputs: { notes: artifact.markdown('fix.md') },
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
@@ -65,12 +66,6 @@ export const commit = task({
     cwd: '.',
     onNonZero: 'fail',
   },
-});
-
-export const push = task({
-  executor: 'command',
-  task: 'Push the completed feature commits to the configured upstream.',
-  params: { program: 'git', args: ['push'], cwd: '.', onNonZero: 'fail' },
 });
 
 export const stageChanges = task({

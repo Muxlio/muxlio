@@ -169,18 +169,22 @@ func main() {
 	cmd := exec.Command(program, p.Args...)
 	cmd.Dir = cwd
 	cmd.Env = []string{"PATH=" + workerPath, "HOME=" + req.WorkDir, "TMPDIR=" + req.WorkDir, "LANG=C.UTF-8", "MUXLIO_OUTPUT_DIR=" + req.WorkDir}
-	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
-		if !filepath.IsAbs(socket) {
-			adapter.Fail("command: SSH_AUTH_SOCK must be an absolute path")
+	// The worker supplies a minimal environment plus this executor's configured
+	// values. Forward those values generically, retaining command scratch paths.
+	managedEnv := map[string]bool{"PATH": true, "HOME": true, "TMPDIR": true, "LANG": true, "MUXLIO_OUTPUT_DIR": true}
+	for _, entry := range adapter.CleanEnvForChild() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && !managedEnv[key] {
+			if _, overridden := p.Env[key]; !overridden {
+				cmd.Env = append(cmd.Env, entry)
+			}
 		}
-		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+socket)
 	}
 	for k, v := range p.Env {
 		if k == "" || strings.ContainsAny(k, "=\x00") || strings.IndexByte(v, 0) >= 0 {
 			adapter.Fail("command: invalid environment entry")
 		}
-		switch k {
-		case "PATH", "HOME", "TMPDIR", "LANG", "MUXLIO_OUTPUT_DIR", "SSH_AUTH_SOCK":
+		if managedEnv[k] {
 			adapter.Fail("command: environment key %q is worker-managed", k)
 		}
 		cmd.Env = append(cmd.Env, k+"="+v)

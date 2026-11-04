@@ -1,14 +1,14 @@
 // recipes/implement-features/workflow.ts
 //
 // Batch feature implementation: implement → review → verify/fix loop → commit.
-// Push once after all features finish, using the repository's configured upstream.
+// Commits remain in the current workspace for manual review and push.
 //
 //   muxlio check recipes/implement-features/workflow.ts
 //   muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json \
 //     --adapters adapters --data-dir ~/.muxlio --json
 import { workflow } from '@muxlio/sdk';
 import { input } from './schemas.js';
-import { commit, fix, implement, push, requireCleanWorkspace, review, stageChanges, verify } from './tasks.js';
+import { commit, fix, implement, requireCleanWorkspace, review, stageChanges, verify } from './tasks.js';
 
 export default workflow('implement-features', {
   input,
@@ -68,8 +68,6 @@ export default workflow('implement-features', {
         };
       },
     );
-
-    step('push', push, {}, { after: results });
 
     return { results };
   },

@@ -11,10 +11,49 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
+type commandLogCapture map[string]string
+
+func (c commandLogCapture) Append(stream string, data []byte) error {
+	c[stream] += string(data)
+	return nil
+}
+
+func (c commandLogCapture) Close() error { return nil }
+
+func TestCommandChildEnvironmentWithLiveLogs(t *testing.T) {
+	adapterDir := t.TempDir()
+	build := exec.Command("go", "build", "-o", filepath.Join(adapterDir, "command"), "./cmd/command")
+	build.Dir = "../../../muxlio-adapters"
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build command adapter: %v\n%s", err, out)
+	}
+	executor := workers.NewScriptExecutor(adapterDir, t.TempDir())
+	executor.Workspace = t.TempDir()
+	allow := true
+	executor.Executors = map[string]workers.ExecutorConfig{
+		"command": {Allow: &allow, Env: map[string]string{"EXAMPLE_EXECUTOR_SETTING": "configured-value"}},
+	}
+	logs := commandLogCapture{}
+	result, err := executor.Execute(workers.ExecuteRequest{
+		Executor: "command", LogSink: logs,
+		Params: json.RawMessage(`{"program":"/bin/sh","args":["-c","test \"${MUXLIO_LOG_FD+x}\" != x || exit 7; test \"$EXAMPLE_EXECUTOR_SETTING\" = configured-value || exit 8; printf 'child stdout'; printf 'child stderr' >&2"]}`),
+	})
+	if err != nil || result.Error != "" || result.Outputs["passed"] != true {
+		t.Fatalf("command with live logs: result=%+v error=%v", result, err)
+	}
+	if logs["stdout"] != "child stdout" || logs["stderr"] != "child stderr" {
+		t.Fatalf("live output lost: %#v", logs)
+	}
+	if result.Outputs["stdout"] != "child stdout" || result.Outputs["stderr"] != "child stderr" {
+		t.Fatalf("captured output lost: %#v", result.Outputs)
+	}
+}
+
 // Compile the SDK condition and exercise it with real subprocess results,
 // including capture of passed=false into the fix branch and the final gate.
 func TestCommandPassedRepeatUntilEndToEnd(t *testing.T) {
-	t.Setenv("SSH_AUTH_SOCK", "/test/ambient-agent.sock")
+	t.Setenv("EXAMPLE_EXECUTOR_SETTING", "ambient-value")
+	t.Setenv("EXAMPLE_UNCONFIGURED_SETTING", "must-not-leak")
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable")
 	}
@@ -32,7 +71,7 @@ const command = (args, extra = {}) => task({
   executor: 'command',
   params: { program: process.execPath, args, cwd: '.', onNonZero: 'return', ...extra },
 });
-const verify = command(['-e', "if(process.env.SSH_AUTH_SOCK!=='/test/worker-agent.sock')process.exit(2);console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
+const verify = command(['-e', "if(process.env.EXAMPLE_EXECUTOR_SETTING!=='configured-value'||process.env.EXAMPLE_UNCONFIGURED_SETTING!==undefined)process.exit(2);console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
 const fix = command(['-e', "if(process.argv[2]!=='false')process.exit(2);if(process.argv[1]==='true')require('fs').writeFileSync('ready','')", '', ''],
   { onNonZero: 'fail', argTemplates: [null, null, '{{repair}}', '{{passed}}'] });
 const finish = command(['-e', "require('fs').writeFileSync('finished','')"]);
@@ -93,7 +132,7 @@ console.log(JSON.stringify(compiled.plan));`)
 			executor.Workspace = workspace
 			allow := true
 			executor.Executors = map[string]workers.ExecutorConfig{
-				"command": {Allow: &allow, Env: map[string]string{"SSH_AUTH_SOCK": "/test/worker-agent.sock"}},
+				"command": {Allow: &allow, Env: map[string]string{"EXAMPLE_EXECUTOR_SETTING": "configured-value"}},
 			}
 			engine := plan.NewEngine(&p, executor)
 			input, _ := json.Marshal(map[string]bool{"repair": tc.repair})

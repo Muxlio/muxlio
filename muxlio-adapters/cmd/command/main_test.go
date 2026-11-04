@@ -127,11 +127,32 @@ func TestTopLevelPassedForNonzeroExit(t *testing.T) {
 }
 
 func TestFlatCommandDetails(t *testing.T) {
-	t.Run("worker SSH agent", func(t *testing.T) {
-		t.Setenv("SSH_AUTH_SOCK", "/test/worker-agent.sock")
-		resp, _ := commandResponse(t, map[string]any{"program": "/bin/sh", "args": []string{"-c", `printf '%s' "$SSH_AUTH_SOCK"`}})
-		if resp.Error != "" || resp.Outputs["stdout"] != "/test/worker-agent.sock" {
-			t.Fatalf("worker SSH agent unavailable to command: %#v", resp)
+	t.Run("scoped executor environment", func(t *testing.T) {
+		t.Setenv("EXAMPLE_EXECUTOR_SETTING", "configured-value")
+		resp, _ := commandResponse(t, map[string]any{"program": "/bin/sh", "args": []string{"-c", `printf '%s' "$EXAMPLE_EXECUTOR_SETTING"`}})
+		if resp.Error != "" || resp.Outputs["stdout"] != "configured-value" {
+			t.Fatalf("scoped environment unavailable to command: %#v", resp)
+		}
+	})
+	t.Run("task environment overrides forwarded values", func(t *testing.T) {
+		t.Setenv("EXAMPLE_EXECUTOR_SETTING", "configured-value")
+		resp, _ := commandResponse(t, map[string]any{
+			"program": "/bin/sh", "args": []string{"-c", `printf '%s' "$EXAMPLE_EXECUTOR_SETTING"`},
+			"env": map[string]string{"EXAMPLE_EXECUTOR_SETTING": "task-value"},
+		})
+		if resp.Error != "" || resp.Outputs["stdout"] != "task-value" {
+			t.Fatalf("task environment override: %#v", resp)
+		}
+	})
+	t.Run("scratch paths remain managed", func(t *testing.T) {
+		t.Setenv("HOME", "/operator/home")
+		t.Setenv("TMPDIR", t.TempDir())
+		t.Setenv("MUXLIO_OUTPUT_DIR", "/operator/output")
+		resp, _ := commandResponse(t, map[string]any{
+			"program": "/bin/sh", "args": []string{"-c", `test "$HOME" = "$TMPDIR" && test "$HOME" = "$MUXLIO_OUTPUT_DIR" && test "$HOME" != /operator/home`},
+		})
+		if resp.Error != "" || resp.Outputs["passed"] != true {
+			t.Fatalf("scratch environment changed: %#v", resp)
 		}
 	})
 	t.Run("trimmed stdout", func(t *testing.T) {

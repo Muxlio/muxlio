@@ -91,21 +91,22 @@ The Cursor adapter sets `AGENT_CLI_CREDENTIAL_STORE=file` for its child CLI (inc
 `muxlio service` or launchd); values from `~/.zshrc` are not inherited. The
 service does not unlock the keychain or change keychain lock settings.
 
-For Git pushes, set `executors.command.allow` to `true` and
-`executors.command.env.SSH_AUTH_SOCK` to the absolute SSH-agent socket path
-in `config.json`, then restart the service. Workers apply executor-specific
-environment maps generically and do not inherit shell credentials. Isolated
-execution receives none of these configured environment values. Provider
-settings can be supplied through the same per-executor `env` map.
+### Feature commits
 
-Obtain the socket path on the worker machine with `echo "$SSH_AUTH_SOCK"`;
-a submitting machine's socket path does not identify the worker's agent.
-Check `ssh -T git@github.com` as the worker's OS user and confirm the workspace
-branch has an upstream with `git rev-parse --abbrev-ref '@{upstream}'`.
-The implement-features recipe runs `git push` once after all feature commits.
-If only that step fails, fix the credentials or upstream and use **Retry run**
-in the UI; successful steps and their commits are preserved. Update the
-configured socket and restart the service whenever its path changes.
+The implement-features recipe verifies changes and creates local Git commits in
+the worker's workspace. It does not push, so the service needs no Git remote
+credentials or upstream branch to complete a run. Authorize command execution
+with `executors.command.allow: true` in `config.json` and restart the service
+after changing configuration.
+
+Review and push the commits manually from the worker when ready, using your
+normal Git authentication. Commits remain on that machine until pushed.
+
+Existing submitted runs retain their compiled plans. Removing the push step
+from the recipe applies to newly compiled and submitted runs; it does not remove
+that step from an older failed run.
+
+### Dedicated provider credentials
 
 To isolate provider credentials in a **dedicated** directory instead, log in
 there once and set its absolute path as `agentHome` in config.json before
