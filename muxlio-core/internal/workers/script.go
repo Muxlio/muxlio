@@ -105,6 +105,14 @@ func (s *ScriptExecutor) scriptPath(executor string) string {
 
 // Execute implements Executor.
 func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
+	started := time.Now()
+	result, err := s.execute(req)
+	elapsed := time.Since(started).Milliseconds()
+	result.ExecutionDurationMS = &elapsed
+	return result, err
+}
+
+func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	req.Workspace = ignoreMissingWorkspace(req.Workspace)
 	if ws := workspaceFromExecuteInputs(req.Inputs); ws != "" {
 		req.Workspace = ignoreMissingWorkspace(ws)

@@ -38,6 +38,27 @@ func TestMemoryExecutionAttemptLifecycle(t *testing.T) {
 	}
 }
 
+func TestExecutionDurationOptionalAndMeasuredZero(t *testing.T) {
+	s := New()
+	if err := s.CreateRun(&Run{ID: "timing"}); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "old", RunID: "timing", ActivationID: "a", RetryNumber: 1, State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "zero", RunID: "timing", ActivationID: "b", RetryNumber: 1, State: "failed", ExecutionDurationMS: &zero}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListExecutionAttempts("timing", "")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("attempts=%+v err=%v", got, err)
+	}
+	if got[0].ExecutionDurationMS != nil || got[1].ExecutionDurationMS == nil || *got[1].ExecutionDurationMS != 0 {
+		t.Fatalf("optional timing lost: %+v", got)
+	}
+}
+
 func TestMemoryExecutionAttemptUsage(t *testing.T) {
 	s := New()
 	if err := s.CreateRun(&Run{ID: "ru"}); err != nil {
@@ -93,5 +114,26 @@ func TestMemoryExecutionAttemptUsage(t *testing.T) {
 	}
 	if zeroAttempt.Usage.Input != 0 || zeroAttempt.Usage.Output != 0 || zeroAttempt.Usage.Cached != 0 {
 		t.Fatalf("reported zero should have zero fields: %+v", zeroAttempt.Usage)
+	}
+}
+
+func TestMemoryTimingRetainedOnReplayAndEmitted(t *testing.T) {
+	s := New()
+	ms := int64(123)
+	a := ExecutionAttempt{ID: "attempt", RunID: "r", ExecutionDurationMS: &ms}
+	if err := s.RecordExecutionAttempt(a); err != nil {
+		t.Fatal(err)
+	}
+	a.ExecutionDurationMS = nil
+	if err := s.RecordExecutionAttempt(a); err != nil {
+		t.Fatal(err)
+	}
+	attempts, _ := s.ListExecutionAttempts("r", "")
+	if len(attempts) != 1 || attempts[0].ExecutionDurationMS == nil || *attempts[0].ExecutionDurationMS != 123 {
+		t.Fatalf("replay lost timing: %+v", attempts)
+	}
+	events, _ := s.GetEvents("r", 0, 0)
+	if events[len(events)-1].Payload["executionDurationMs"] != ms {
+		t.Fatalf("timing not emitted: %+v", events)
 	}
 }

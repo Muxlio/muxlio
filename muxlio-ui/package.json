@@ -8,6 +8,6 @@
     "test:scroll-layout": "node scroll-layout.test.mjs",
     "test:live-output": "node live-output.test.mjs",
     "test:inspector-transcript": "node inspector-transcript.test.mjs",
-    "test": "node inspector-transcript.test.mjs && node live-output.test.mjs && node graph.test.mjs && node scroll-layout.test.mjs && node token-usage.test.mjs && node analytics.test.mjs"
+    "test": "node inspector-transcript.test.mjs && node live-output.test.mjs && node graph.test.mjs && node scroll-layout.test.mjs && node token-usage.test.mjs && node analytics.test.mjs && node timing.test.mjs"
   }
 }

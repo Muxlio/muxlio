@@ -31,10 +31,13 @@ function makeCtx(runAttempts = []) {
 // ── sumRunTokenUsage ──────────────────────────────────────────────────────
 {
   const ctx = makeCtx();
-  const { sumRunTokenUsage } = vm.runInNewContext(`${wbSource}; ({sumRunTokenUsage})`, ctx);
+  const { sumRunTokenUsage, sumExecutionTime } = vm.runInNewContext(`${wbSource}; ({sumRunTokenUsage,sumExecutionTime})`, ctx);
 
   // No attempts → null
   assert.strictEqual(sumRunTokenUsage([]), null, 'empty attempts → null');
+  assert.strictEqual(sumExecutionTime([{executionDurationMs:100},{executionDurationMs:250}]), 350, 'parallel attempts add');
+  assert.strictEqual(sumExecutionTime([{executionDurationMs:0}]), 0, 'measured zero is retained');
+  assert.strictEqual(sumExecutionTime([{startedAt:'legacy'}]), null, 'legacy timing remains unavailable');
   assert.strictEqual(sumRunTokenUsage(null), null, 'null attempts → null');
 
   // All attempts have null usage → null (provider unavailable)
@@ -101,7 +104,7 @@ console.log('sumRunTokenUsage checks passed');
   const htmlRep = buildWbStatsRep(run, acts);
   // Total input = 500 + 300 + 200 = 1000 → "1.0K"
   assert.match(htmlRep, /1\.0K/, 'input tokens formatted with K suffix and retries included');
-  assert.doesNotMatch(htmlRep, /Unavailable/, 'no "Unavailable" when usage is reported');
+  assert.doesNotMatch(htmlRep, /<div class="stat-val ">Unavailable<\/div><div class="stat-label">Tokens/, 'reported token usage has no unavailable token values');
 }
 console.log('buildWbStats token stat checks passed');
 

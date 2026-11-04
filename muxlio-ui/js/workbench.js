@@ -24,18 +24,24 @@ function sumRunTokenUsage(attempts){
 // fmtTokens formats a token count with a K suffix for readability.
 function fmtTokens(n){if(n>=1000)return `${(n/1000).toFixed(1)}K`;return String(n)}
 
+function sumExecutionTime(attempts){if(!attempts?.length)return null;let total=0,known=false;for(const a of attempts){if(a.executionDurationMs==null){if(a.state!=='running')return null;continue;}known=true;total+=a.executionDurationMs}return known?total:null}
+function formatElapsed(start,end){if(!start||!end)return '—';const ms=Math.max(0,new Date(end)-new Date(start));if(ms<1000)return `${ms} ms`;if(ms<60000)return `${(ms/1000).toFixed(1)} s`;return `${Math.floor(ms/60000)}m ${Math.floor(ms%60000/1000)}s`}
+
 function buildWbStats(r,acts){
   const total=acts.length,done=acts.filter(a=>a.state==='succeeded').length;
   const failed=acts.filter(a=>a.state==='failed').length;
   const running=acts.filter(a=>a.state==='running').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
   const usage=sumRunTokenUsage(attempts);
+  const executionTime=sumExecutionTime(attempts);
+  const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:failed>0?String(failed):'—',label:'Failed',cls:failed?'red':''},
     {val:running>0?String(running):'—',label:'Running',cls:running?'amber':''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
-    {val:duration(r.createdAt,r.updatedAt),label:'Duration',cls:''},
+    {val:formatElapsed(r.createdAt,elapsedEnd),label:'Elapsed time',cls:''},
+    {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:''},
     {val:attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—',label:'Tokens in',cls:''},
     {val:attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—',label:'Tokens out',cls:''},
     {val:attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—',label:'Tokens cached',cls:''},

@@ -42,6 +42,7 @@ var schemaStmts = []string{
   scope_path_json TEXT NOT NULL DEFAULT '[]',
   node_id TEXT NOT NULL,
   occurrence INTEGER NOT NULL DEFAULT 0,
+  attempt_base INTEGER NOT NULL DEFAULT 0,
   state TEXT NOT NULL,
   outputs_json TEXT,
   error TEXT NOT NULL DEFAULT '',
@@ -71,7 +72,8 @@ var schemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_timers_due ON timers(state, due_at)`,
 	`CREATE TABLE IF NOT EXISTS signals (run_id TEXT NOT NULL, name TEXT NOT NULL, seq INTEGER NOT NULL, payload_json TEXT, timestamp TEXT NOT NULL, PRIMARY KEY(run_id,name,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS log_chunks (run_id TEXT NOT NULL, activation_id TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, timestamp TEXT NOT NULL, PRIMARY KEY(activation_id,stream,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
-	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', usage_json TEXT, FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', usage_json TEXT, execution_duration_ms INTEGER, FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS worker_execution_timings (attempt_id TEXT NOT NULL, assignment_id TEXT NOT NULL, generation INTEGER NOT NULL, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, worker_id TEXT NOT NULL, duration_ms INTEGER CHECK(duration_ms>=0), PRIMARY KEY(attempt_id,assignment_id,generation))`,
 	`CREATE INDEX IF NOT EXISTS idx_execution_attempts_run ON execution_attempts(run_id, activation_id, retry_number)`,
 	`CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, created_at)`,
@@ -114,6 +116,8 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE workers ADD COLUMN labels_json TEXT NOT NULL DEFAULT '{}'`,
 		// Attempt-level token usage reported by the executor/adapter.
 		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
+		`ALTER TABLE execution_attempts ADD COLUMN execution_duration_ms INTEGER`,
+		`ALTER TABLE activations ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -216,6 +220,9 @@ func (s *Store) ClaimAssignment(a state.Assignment) (int64, error) {
 	generation++
 	_, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, a.ActivationID, a.RunID, a.WorkerID, generation, rfc3339(a.LeaseUntil), a.AssignmentID, a.AttemptID)
 	if err != nil {
+		return 0, err
+	}
+	if err := registerWorkerTiming(tx, a, generation); err != nil {
 		return 0, err
 	}
 	return generation, tx.Commit()
@@ -476,6 +483,9 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	if _, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, selected.ActivationID, selected.RunID, workerID, generation, rfc3339(lease), selected.AssignmentID, selected.AttemptID); err != nil {
 		return nil, 0, err
 	}
+	if err := registerWorkerTiming(tx, state.Assignment{AttemptID: selected.AttemptID, AssignmentID: selected.AssignmentID, RunID: selected.RunID, ActivationID: selected.ActivationID, WorkerID: workerID}, generation); err != nil {
+		return nil, 0, err
+	}
 	if _, err = tx.Exec(`UPDATE dispatches SET state='assigned' WHERE assignment_id=?`, selected.AssignmentID); err != nil {
 		return nil, 0, err
 	}
@@ -692,13 +702,23 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON)
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,execution_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?)) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json,execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, a.ID, a.ExecutionDurationMS)
 	if err != nil {
 		return err
+	}
+	var recordedDuration sql.NullInt64
+	if err := tx.QueryRow(`SELECT execution_duration_ms FROM execution_attempts WHERE id=?`, a.ID).Scan(&recordedDuration); err != nil {
+		return err
+	}
+	if recordedDuration.Valid {
+		a.ExecutionDurationMS = &recordedDuration.Int64
 	}
 	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
 	if a.Usage != nil {
 		payload["usage"] = a.Usage
+	}
+	if a.ExecutionDurationMS != nil {
+		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
 	if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, payload); err != nil {
 		return err
@@ -718,7 +738,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,execution_duration_ms FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -735,7 +755,8 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 		var a state.ExecutionAttempt
 		var started, finished string
 		var usageJSON sql.NullString
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON); err != nil {
+		var execDuration sql.NullInt64
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &execDuration); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -747,6 +768,10 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 			return nil, err
 		}
 		a.Usage, err = unmarshalUsage(usageJSON)
+		if execDuration.Valid {
+			value := execDuration.Int64
+			a.ExecutionDurationMS = &value
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -921,7 +946,7 @@ func (s *Store) RetryRun(id string) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE activations SET state='queued', error='' WHERE run_id=? AND state!='succeeded'`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE activations SET state='queued', error='', attempt_base=MAX(attempt_base, COALESCE((SELECT MAX(retry_number) FROM execution_attempts WHERE activation_id=activations.id),0)) WHERE run_id=? AND state!='succeeded'`, id); err != nil {
 		return err
 	}
 	for _, a := range queued {
@@ -1067,9 +1092,9 @@ func (s *Store) CreateActivation(a *state.Activation) error {
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(
-		`INSERT INTO activations (id, run_id, scope_path_json, node_id, occurrence, state, error)
-		 VALUES (?, ?, ?, ?, ?, ?, '')`,
-		a.ID, a.RunID, string(scopeJSON), a.NodeID, a.Occurrence, a.State,
+		`INSERT INTO activations (id, run_id, scope_path_json, node_id, occurrence, state, attempt_base, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, '')`,
+		a.ID, a.RunID, string(scopeJSON), a.NodeID, a.Occurrence, a.State, a.AttemptBase,
 	)
 	if err != nil {
 		return fmt.Errorf("muxlio: inserting activation: %w", err)
@@ -1087,7 +1112,7 @@ func (s *Store) GetActivation(id string) (*state.Activation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.db.QueryRow(
-		`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error
+		`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base
 		 FROM activations WHERE id = ?`, id)
 	return scanActivation(row)
 }
@@ -1095,7 +1120,7 @@ func (s *Store) GetActivation(id string) (*state.Activation, error) {
 func (s *Store) ListActivations(runID string) ([]state.Activation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error FROM activations WHERE run_id=? ORDER BY rowid`, runID)
+	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base FROM activations WHERE run_id=? ORDER BY rowid`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -1312,7 +1337,7 @@ func scanRun(row rowScanner) (*state.Run, error) {
 func scanActivation(row rowScanner) (*state.Activation, error) {
 	var a state.Activation
 	var scope, outputs sql.NullString
-	if err := row.Scan(&a.ID, &a.RunID, &scope, &a.NodeID, &a.Occurrence, &a.State, &outputs, &a.Error); err != nil {
+	if err := row.Scan(&a.ID, &a.RunID, &scope, &a.NodeID, &a.Occurrence, &a.State, &outputs, &a.Error, &a.AttemptBase); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("muxlio: activation not found")
 		}
@@ -1604,4 +1629,59 @@ func (s *Store) ListWorkflowVersions() ([]state.WorkflowVersionSummary, error) {
 		})
 	}
 	return list, rows.Err()
+}
+
+// RecordWorkerExecutionDuration retains a measurement even if the interpreter has
+// stopped waiting (cancellation or recovery). A receipt is unique per worker
+// assignment generation, so completion replay cannot add it twice.
+func (s *Store) RecordWorkerExecutionDuration(a state.Assignment, duration int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Existing assignments from before the timing migration may have no receipt.
+	if _, err = tx.Exec(`INSERT INTO worker_execution_timings(attempt_id,assignment_id,generation,run_id,activation_id,worker_id)
+ SELECT attempt_id,assignment_id,?,run_id,activation_id,worker_id FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND (generation=? OR (generation=? AND state IN ('uncertain','cancelled'))) ON CONFLICT DO NOTHING`, a.Generation, a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.Generation+1); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`UPDATE worker_execution_timings SET duration_ms=? WHERE attempt_id=? AND assignment_id=? AND generation=? AND run_id=? AND activation_id=? AND worker_id=? AND duration_ms IS NULL`, duration, a.AttemptID, a.AssignmentID, a.Generation, a.RunID, a.ActivationID, a.WorkerID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	// An unknown identity or a replay must not mutate an attempt, including
+	// clearing a measurement recorded by a local worker or a previous version.
+	if n == 0 {
+		return nil
+	}
+	var retryNumber int
+	var executor, attemptState, started, finished, failure string
+	var total int64
+	err = tx.QueryRow(`UPDATE execution_attempts SET execution_duration_ms=(SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?) WHERE id=? AND run_id=? AND activation_id=? RETURNING retry_number,executor,state,started_at,finished_at,failure,execution_duration_ms`, a.AttemptID, a.AttemptID, a.RunID, a.ActivationID).Scan(&retryNumber, &executor, &attemptState, &started, &finished, &failure, &total)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		payload := map[string]any{"attemptId": a.AttemptID, "retryNumber": retryNumber, "executor": executor, "state": attemptState, "startedAt": started, "finishedAt": finished, "failure": failure, "executionDurationMs": total}
+		if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, payload); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Keep assignment identity after a retry replaces the current assignment, so a
+// late worker can still report the time it actually spent on the old attempt.
+func registerWorkerTiming(tx *sql.Tx, a state.Assignment, generation int64) error {
+	if a.AttemptID == "" || a.AssignmentID == "" {
+		return nil
+	}
+	_, err := tx.Exec(`INSERT INTO worker_execution_timings(attempt_id,assignment_id,generation,run_id,activation_id,worker_id) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, a.AttemptID, a.AssignmentID, generation, a.RunID, a.ActivationID, a.WorkerID)
+	return err
 }

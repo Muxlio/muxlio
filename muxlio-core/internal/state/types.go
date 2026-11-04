@@ -21,14 +21,16 @@ type Run struct {
 
 // Activation is one materialised plan node within a run and structural scope.
 type Activation struct {
-	ID         string         `json:"id"`
-	RunID      string         `json:"runId"`
-	ScopePath  []string       `json:"scopePath"`
-	NodeID     string         `json:"nodeId"`
-	Occurrence int            `json:"occurrence"`
-	State      string         `json:"state"`
-	Outputs    map[string]any `json:"outputs,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	// AttemptBase preserves previous attempts when a failed run is explicitly retried.
+	AttemptBase int            `json:"attemptBase,omitempty"`
+	ID          string         `json:"id"`
+	RunID       string         `json:"runId"`
+	ScopePath   []string       `json:"scopePath"`
+	NodeID      string         `json:"nodeId"`
+	Occurrence  int            `json:"occurrence"`
+	State       string         `json:"state"`
+	Outputs     map[string]any `json:"outputs,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 // Event is an append-only record of a run transition or activity.
@@ -92,16 +94,17 @@ type TokenUsage struct {
 
 // ExecutionAttempt records one interpreter call to an executor.
 type ExecutionAttempt struct {
-	ID           string      `json:"id"`
-	RunID        string      `json:"runId"`
-	ActivationID string      `json:"activationId"`
-	RetryNumber  int         `json:"retryNumber"`
-	Executor     string      `json:"executor"`
-	State        string      `json:"state"`
-	StartedAt    time.Time   `json:"startedAt"`
-	FinishedAt   time.Time   `json:"finishedAt"`
-	Failure      string      `json:"failure,omitempty"`
-	Usage        *TokenUsage `json:"usage,omitempty"`
+	ID                  string      `json:"id"`
+	RunID               string      `json:"runId"`
+	ActivationID        string      `json:"activationId"`
+	RetryNumber         int         `json:"retryNumber"`
+	Executor            string      `json:"executor"`
+	State               string      `json:"state"`
+	StartedAt           time.Time   `json:"startedAt"`
+	FinishedAt          time.Time   `json:"finishedAt"`
+	Failure             string      `json:"failure,omitempty"`
+	Usage               *TokenUsage `json:"usage,omitempty"`
+	ExecutionDurationMS *int64      `json:"executionDurationMs,omitempty"`
 }
 
 // LogChunk is an append-only chunk of worker output.

@@ -30,6 +30,7 @@ type dispatchStore interface {
 	WorkerResult(string) ([]byte, error)
 	LookupWorkerAssignment(string, string) (*state.Assignment, error)
 	RecordWorkerDiagnostic(string, []byte) error
+	RecordWorkerExecutionDuration(state.Assignment, int64) error
 	WorkerDiagnostic(string) ([]byte, error)
 	AckWorkerCompletionWithoutResult(state.Assignment, string, int64) (bool, error)
 }
@@ -166,7 +167,10 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if c.initErr != nil {
 		return c.initErr
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage}
+	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
+		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
+	}
+	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}
@@ -183,6 +187,15 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 		return err
 	}
 	assignment := state.Assignment{RunID: req.RunID, ActivationID: req.ActivationID, WorkerID: workerID, Generation: req.Generation, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID}
+	if req.State != "succeeded" && req.State != "failed" && req.State != "cancelled" {
+		return invalidCompletionError{message: "invalid worker completion state"}
+	}
+	// Persist the receipt before publishing a result to the interpreter. Recovery
+	// must never observe the result without the corresponding worker measurement.
+	// The store validates receipt identity even for late or revoked assignments.
+	if err := c.recordExecutionDuration(assignment, req.ExecutionDurationMS); err != nil {
+		return err
+	}
 	if req.CoordinatorEpoch != c.epoch {
 		known, err := c.store.LookupWorkerAssignment(workerID, req.AssignmentID)
 		if err != nil {
@@ -213,6 +226,13 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 		return c.recordDiagnosticCompletion(assignment, req.State, raw)
 	}
 	return staleAssignmentError{}
+}
+
+func (c *Coordinator) recordExecutionDuration(a state.Assignment, duration *int64) error {
+	if duration == nil {
+		return nil
+	}
+	return c.store.RecordWorkerExecutionDuration(a, *duration)
 }
 
 func (c *Coordinator) recordDiagnosticCompletion(a state.Assignment, terminalState string, raw []byte) error {

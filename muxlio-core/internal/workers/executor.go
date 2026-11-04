@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -96,6 +97,9 @@ type ExecuteResult struct {
 	Error   string            `json:"error,omitempty"`
 	Logs    string            `json:"logs,omitempty"`
 	Usage   *state.TokenUsage `json:"usage,omitempty"`
+	// ExecutionDurationMS is measured by the worker around executor execution.
+	// Nil means unavailable; a pointer to zero is a measured zero duration.
+	ExecutionDurationMS *int64 `json:"executionDurationMs,omitempty"`
 }
 
 // UncertainExecutionError requires reconciliation before another attempt can
@@ -176,24 +180,25 @@ func (f *FakeExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	started := time.Now()
 	f.calls = append(f.calls, req)
 	f.callCnt[req.NodeID]++
 
 	// Check for forced failures.
 	if err, ok := f.failOn[req.NodeID]; ok {
-		return ExecuteResult{}, err
+		return f.measured(started, ExecuteResult{}), err
 	}
 	key := fmt.Sprintf("%s:%d", req.NodeID, f.callCnt[req.NodeID])
 	if err, ok := f.failOn[key]; ok {
-		return ExecuteResult{}, err
+		return f.measured(started, ExecuteResult{}), err
 	}
 
 	// Look up by node ID first, then by executor.
 	if result, ok := f.byNode[req.NodeID]; ok {
-		return result, nil
+		return f.measured(started, result), nil
 	}
 	if result, ok := f.byExec[req.Executor]; ok {
-		return result, nil
+		return f.measured(started, result), nil
 	}
 	// Default: produce empty outputs for each declared port.
 	outputs := make(map[string]any)
@@ -204,7 +209,13 @@ func (f *FakeExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 			"path":   decl.Path,
 		}
 	}
-	return ExecuteResult{Outputs: outputs}, nil
+	return f.measured(started, ExecuteResult{Outputs: outputs}), nil
+}
+
+func (f *FakeExecutor) measured(started time.Time, result ExecuteResult) ExecuteResult {
+	ms := time.Since(started).Milliseconds()
+	result.ExecutionDurationMS = &ms
+	return result
 }
 
 // CompileExecutor is a simple executor that evaluates all inputs and passes

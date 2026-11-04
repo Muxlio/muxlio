@@ -122,6 +122,11 @@ func (s *Memory) RetryRun(id string) error {
 	}
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
+			for _, attempt := range s.attempts {
+				if attempt.ActivationID == act.ID && attempt.RetryNumber > act.AttemptBase {
+					act.AttemptBase = attempt.RetryNumber
+				}
+			}
 			act.State = "queued"
 			act.Error = ""
 			s.appendEventLocked(id, EventActivationQueued, act.ID, map[string]any{"nodeId": act.NodeID, "scopePath": act.ScopePath})
@@ -438,6 +443,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	found := false
 	for i := range s.attempts {
 		if s.attempts[i].ID == a.ID {
+			if a.ExecutionDurationMS == nil {
+				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
+			}
 			s.attempts[i] = a
 			found = true
 			break
@@ -449,6 +457,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
 	if a.Usage != nil {
 		payload["usage"] = a.Usage
+	}
+	if a.ExecutionDurationMS != nil {
+		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
 	s.appendEventLocked(a.RunID, EventExecutionAttempt, a.ActivationID, payload)
 	return nil

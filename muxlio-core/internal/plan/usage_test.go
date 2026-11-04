@@ -35,6 +35,9 @@ func TestExecutorUsagePropagatesToAttempt(t *testing.T) {
 	if attempts[0].Usage == nil {
 		t.Fatal("expected non-nil usage from executor result")
 	}
+	if attempts[0].ExecutionDurationMS == nil || *attempts[0].ExecutionDurationMS < 0 {
+		t.Fatalf("worker execution duration should be measured: %+v", attempts[0])
+	}
 	if attempts[0].Usage.Input != 1000 || attempts[0].Usage.Output != 500 || attempts[0].Usage.Cached != 200 {
 		t.Fatalf("usage mismatch: %+v", attempts[0].Usage)
 	}

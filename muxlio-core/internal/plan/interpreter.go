@@ -511,6 +511,10 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 
 	var lastErr error
 	actID := activationID(runID, scope, node.ID)
+	attemptBase := 0
+	if act, err := e.store.GetActivation(actID); err == nil {
+		attemptBase = act.AttemptBase
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			if err := e.wait(retryDelay(node.Retry, attempt-1, lastErr)); err != nil {
@@ -531,14 +535,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.Executor = executor
 		req.RunID = runID
 		req.ActivationID = actID
-		req.AttemptID = fmt.Sprintf("%s-attempt-%d", actID, attempt)
+		req.AttemptID = fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt)
 		guarded, guardErr := workers.GuardRequest(req)
 		if guardErr != nil {
 			return nil, fmt.Errorf("muxlio: execution policy: %w", guardErr)
 		}
 		coordinatorlog.RegisterSecrets(guarded.Secrets)
 		started := time.Now()
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: "running", StartedAt: started}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "running", StartedAt: started}); recordErr != nil {
 			return nil, recordErr
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets)
@@ -546,11 +550,11 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		result, err := e.executor.Execute(guarded)
 		_ = logSink.Close()
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error()})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), ExecutionDurationMS: result.ExecutionDurationMS})
 			return nil, err
 		}
 		if ctxErr := e.context().Err(); ctxErr != nil {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: ctxErr.Error()})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: ctxErr.Error(), ExecutionDurationMS: result.ExecutionDurationMS})
 			return nil, ctxErr
 		}
 		if result.Logs != "" {
@@ -568,7 +572,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		if failure != "" {
 			attemptState = "failed"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attempt), RunID: runID, ActivationID: actID, RetryNumber: attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Usage: result.Usage}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}); recordErr != nil {
 			return nil, recordErr
 		}
 		if err != nil {
