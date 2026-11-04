@@ -528,3 +528,43 @@ td.primary-cell small{display:block;margin-top:3px}
 /* ── node transcript link (running card) ──── */
 .node-transcript-link{display:inline-block;font-size:11px;font-weight:650;color:var(--teal);text-decoration:none;border:1px solid var(--teal-dim);border-radius:5px;padding:2px 7px;background:var(--teal-soft);margin-top:4px;white-space:nowrap}
 .node-transcript-link:hover{background:var(--teal-dim);color:#f4fffb}
+
+/* ── analytics page ───────────────────────── */
+.analytics-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:8px}
+
+/* Bar chart used in analytics */
+.analytics-bar-chart{display:flex;flex-direction:column;gap:7px}
+.abc-row{display:flex;align-items:center;gap:10px;font-size:12px}
+.abc-label{width:120px;min-width:80px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-weight:600}
+.abc-track{flex:1;height:12px;background:var(--surface2);border-radius:3px;overflow:hidden;min-width:60px}
+.abc-bar{height:100%;border-radius:3px;transition:width .2s ease}
+.abc-val{width:52px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* Sparkline chart */
+.sparkline{width:100%;overflow:hidden}
+.spark-bars{display:flex;align-items:flex-end;gap:2px;height:64px;padding-bottom:0}
+.spark-col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:default;height:64px}
+.spark-bar-wrap{width:100%;display:flex;flex-direction:column-reverse;align-items:stretch;border-radius:2px 2px 0 0;overflow:hidden;min-height:1px}
+.spark-seg{width:100%;min-height:1px}
+.spark-seg.succeeded{background:var(--green)}
+.spark-seg.failed{background:var(--red)}
+.spark-seg.pending{background:var(--border2)}
+.spark-seg.tok-in{background:var(--teal)}
+.spark-seg.tok-out{background:#4b9be0}
+.spark-seg.tok-cached{background:var(--amber)}
+.spark-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);padding-top:5px}
+
+/* Sparkline legend */
+.spark-legend{display:flex;gap:14px;flex-wrap:wrap}
+.spark-legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.spark-swatch{display:inline-block;width:10px;height:10px;border-radius:2px}
+.spark-swatch.succeeded{background:var(--green)}
+.spark-swatch.failed{background:var(--red)}
+.spark-swatch.pending{background:var(--border2)}
+.spark-swatch.tok-in{background:var(--teal)}
+.spark-swatch.tok-out{background:#4b9be0}
+.spark-swatch.tok-cached{background:var(--amber)}
+
+/* Link inside analytics table pointing to a run */
+.analytics-run-link{color:var(--teal);text-decoration:none;font-size:11px}
+.analytics-run-link:hover{text-decoration:underline}

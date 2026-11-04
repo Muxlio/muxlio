@@ -69,6 +69,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
       '/js/inspector.js': 'text/javascript',
       '/js/live.js': 'text/javascript',
       '/js/transcript.js': 'text/javascript',
+      '/js/analytics.js': 'text/javascript',
       '/js/boot.js': 'text/javascript',
       '/logo.png': 'image/png',
       '/favicon.ico': 'image/x-icon',

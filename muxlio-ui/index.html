@@ -22,6 +22,7 @@
     <a href="#runs" id="runsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg></span>Run history</a>
     <a href="#live" id="liveNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg></span>Live</a>
     <a href="#workers" id="workersNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 14h4M8 11v3"/></svg></span>Workers</a>
+    <a href="#analytics" id="analyticsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 12l3-4 3 2 3-5 3 3"/><path d="M2 14h12"/></svg></span>Analytics</a>
   </nav>
   <div class="nav-label" style="margin-top:18px">Library</div>
   <nav class="nav" aria-label="Library navigation">
@@ -355,6 +356,23 @@
     <div id="artifactList"></div>
   </section>
 
+
+  <!-- ═══ ANALYTICS ════════════════════════════════ -->
+  <section id="analyticsView" class="page" hidden>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Insights</div>
+        <h1>Analytics</h1>
+        <p>Cross-run operational insights: run volume, outcomes, and provider-reported token usage by agent.</p>
+      </div>
+      <button class="btn" id="refreshAnalytics">
+        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div id="analyticsContent"></div>
+  </section>
+
 </main>
 </div>
 
@@ -399,6 +417,7 @@
 <script src="/js/inspector.js"></script>
 <script src="/js/live.js"></script>
 <script src="/js/transcript.js"></script>
+<script src="/js/analytics.js"></script>
 <script src="/js/boot.js"></script>
 <script src="/workspace.js"></script>
 </body>

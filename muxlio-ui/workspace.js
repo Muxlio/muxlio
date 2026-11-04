@@ -317,7 +317,7 @@ window.addEventListener('hashchange',navigate);
 })();
 
 // ── wire manual refresh buttons ───────────────────────────────────────────
-['refreshOverview','refreshRuns','refreshLive','refreshWorkers'].forEach(id=>{
+['refreshOverview','refreshRuns','refreshLive','refreshWorkers','refreshAnalytics'].forEach(id=>{
   const el=document.getElementById(id);
   if(el)el.onclick=refreshWorkspace;
 });
@@ -551,6 +551,12 @@ refreshWorkspace=async function(){
   if(location.hash==='#artifacts'){
     const epoch=refreshEpoch;
     try{await loadArtifacts();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
+    finally{scheduleRefresh();}
+    return;
+  }
+  if(location.hash==='#analytics'){
+    const epoch=refreshEpoch;
+    try{await loadAnalytics();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
     finally{scheduleRefresh();}
     return;
   }

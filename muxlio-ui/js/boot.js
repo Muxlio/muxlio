@@ -31,6 +31,7 @@ async function checkConnection(){
 function loadWorkflows(force){}
 function loadArtifacts(force){}
 function renderArtifacts(){}
+function loadAnalytics(){}
 // workspace.js will call navigate() and handle connection status
 window.addEventListener('hashchange',navigate);
 // initial navigation handled by workspace.js
