@@ -70,3 +70,34 @@ const falsePath=graphMarkup([{id:'decision',nodeId:'choose',state:'succeeded'}, 
 assert.match(falsePath, /untaken[\s\S]*TRUE[\s\S]*taken[\s\S]*FALSE/, 'false choices select the false lane');
 assert.match(falsePath, /graph-status failed/);
 console.log('nested graph rendering checks passed');
+
+// ── Heartbeat animation state-transition checks ──────────────────────────────
+// A running node must carry the 'running' class so the CSS animation applies.
+const runningNode=graphMarkup([{id:'r1',nodeId:'task',state:'running'}]);
+assert.match(runningNode, /node-card running/, 'running node has running class for heartbeat animation');
+assert.match(runningNode, /node-card-check running/, 'running check icon has running class');
+
+// Queued/pending nodes must NOT have the running class (no animation).
+const queuedNode=graphMarkup([{id:'q1',nodeId:'task',state:'queued'}]);
+assert.doesNotMatch(queuedNode, /node-card running/, 'queued node must not carry running class');
+
+// When a node transitions out of running it no longer carries the running class.
+for(const terminalState of ['succeeded','failed','cancelled']){
+  const html=graphMarkup([{id:'t1',nodeId:'task',state:terminalState}]);
+  assert.doesNotMatch(html,/node-card running/,`${terminalState} node must not carry running class`);
+}
+
+// The accessible status text is always rendered regardless of state,
+// so animation is never the sole indicator of running activity.
+assert.match(runningNode, /graph-status running/, 'running status badge present alongside animation');
+
+// A node that is both selected and running must carry both classes so the CSS
+// can preserve the teal selection ring inside the heartbeat animation keyframes.
+const selectedRunning=graphMarkup(acts.map(a=>a.id==='verify-2'?{...a,state:'running'}:a));
+assert.match(selectedRunning, /node-card succeeded selected/, 'selected node retains selected class');
+// verify-2 is the selected activation's sibling; check that a single-activation
+// render of a selected+running node carries both classes
+const selRunSingle=graphMarkup([{id:'verify-10',nodeId:'verify',scopePath:[...item,'loop:verification:10'],state:'running'}]);
+assert.match(selRunSingle, /node-card running selected|node-card selected running/, 'running+selected node carries both classes');
+
+console.log('heartbeat animation state-transition checks passed');
