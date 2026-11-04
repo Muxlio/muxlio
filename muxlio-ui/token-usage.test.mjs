@@ -74,14 +74,17 @@ console.log('sumRunTokenUsage checks passed');
   const run = { state: 'succeeded', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   const acts = [{ state: 'succeeded' }, { state: 'succeeded' }];
 
-  // Case 1: no attempts at all — stats show '—' (older run, no records)
+  // Case 1: no attempts at all — token rows show '—' (older run, no records)
   const ctxNone = makeCtx([]);
   const { buildWbStats: buildWbStatsNone } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxNone);
   const htmlNone = buildWbStatsNone(run, acts);
-  assert.match(htmlNone, /Tokens in/, 'stat label "Tokens in" present');
-  // With no attempts the values for the three token stats should all be em-dashes.
-  const emDashMatches = (htmlNone.match(/stat-val[^>]*>—</g) || []).length;
-  assert.ok(emDashMatches >= 3, `three token stats show em-dash for no-attempt runs (found ${emDashMatches} em-dash stats)`);
+  // Token rows are rendered vertically as In / Out / Cached inside a single stat block.
+  assert.match(htmlNone, /stat-token-label[^>]*>In</, 'vertical token block has "In" label');
+  assert.match(htmlNone, /stat-token-label[^>]*>Out</, 'vertical token block has "Out" label');
+  assert.match(htmlNone, /stat-token-label[^>]*>Cached</, 'vertical token block has "Cached" label');
+  // With no attempts the values for all three token rows should be em-dashes.
+  const emDashTokenMatches = (htmlNone.match(/stat-token-val[^>]*>—</g) || []).length;
+  assert.ok(emDashTokenMatches >= 3, `three token rows show em-dash for no-attempt runs (found ${emDashTokenMatches} em-dash token vals)`);
 
   // Case 2: attempts present but all have null usage → show "Unavailable"
   const ctxUnavail = makeCtx([
@@ -91,8 +94,8 @@ console.log('sumRunTokenUsage checks passed');
   const { buildWbStats: buildWbStatsUnavail } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxUnavail);
   const htmlUnavail = buildWbStatsUnavail(run, acts);
   assert.match(htmlUnavail, /Unavailable/, 'stat shows "Unavailable" when provider did not report usage');
-  // Token stats must not show a numeric 0 value when usage is unavailable.
-  assert.doesNotMatch(htmlUnavail, />0<\/div><div class="stat-label">Tokens/, 'must not show zero when usage is unavailable');
+  // Token rows must not show a numeric 0 value when usage is unavailable.
+  assert.doesNotMatch(htmlUnavail, /stat-token-val[^>]*>0</, 'must not show zero when usage is unavailable');
 
   // Case 3: reported usage — values shown with correct totals
   const ctxReported = makeCtx([
@@ -104,7 +107,7 @@ console.log('sumRunTokenUsage checks passed');
   const htmlRep = buildWbStatsRep(run, acts);
   // Total input = 500 + 300 + 200 = 1000 → "1.0K"
   assert.match(htmlRep, /1\.0K/, 'input tokens formatted with K suffix and retries included');
-  assert.doesNotMatch(htmlRep, /<div class="stat-val ">Unavailable<\/div><div class="stat-label">Tokens/, 'reported token usage has no unavailable token values');
+  assert.doesNotMatch(htmlRep, /stat-token-val[^>]*>Unavailable</, 'reported token usage has no unavailable token values');
 }
 console.log('buildWbStats token stat checks passed');
 
@@ -141,7 +144,7 @@ console.log('buildWbStats token stat checks passed');
   assert.match(html1, /800/, 'output shown');
   assert.match(html1, /300/, 'cached shown');
 
-  // Retry: second attempt labelled as retry
+  // Retry: second attempt labelled sequentially (no redundant "Retry N (attempt N+1)" text)
   const ctxRetry = makeInspCtx([
     { activationId: 'act-2', retryNumber: 0, state: 'failed',    usage: { input: 500, output: 200, cached: 0 } },
     { activationId: 'act-2', retryNumber: 1, state: 'succeeded', usage: null },
@@ -153,11 +156,12 @@ console.log('buildWbStats token stat checks passed');
   const act2 = { id: 'act-2', nodeId: 'n', state: 'succeeded' };
   const htmlRetry = buRetry(act2);
   assert.match(htmlRetry, /Attempt 1/, 'first attempt label');
-  assert.match(htmlRetry, /Retry 1 \(attempt 2\)/, 'retry labelled with number');
+  assert.match(htmlRetry, /Attempt 2/, 'retry shown as Attempt 2, not "Retry 1 (attempt 2)"');
+  assert.doesNotMatch(htmlRetry, /Retry \d/, 'no redundant Retry N label');
   assert.match(htmlRetry, /Unavailable/, 'null usage attempt shows "Unavailable"');
   assert.match(htmlRetry, /500/, 'first attempt usage shown');
   // The "Unavailable" row must not contain a numeric cell — it uses colspan.
-  assert.doesNotMatch(htmlRetry, /Retry 1[^<]*<\/td><td class="num">/, 'unavailable row must not render as numeric cells');
+  assert.doesNotMatch(htmlRetry, /Attempt 2[^<]*<\/td><td class="num">/, 'unavailable row must not render as numeric cells');
 
   // All attempts have null usage → section exists but all rows say "Unavailable"
   const ctxAllNull = makeInspCtx([

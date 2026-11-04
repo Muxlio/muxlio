@@ -35,6 +35,14 @@ function buildWbStats(r,acts){
   const usage=sumRunTokenUsage(attempts);
   const executionTime=sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
+  const tokIn =attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—';
+  const tokOut=attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—';
+  const tokCached=attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—';
+  const tokenBlock=`<div class="stat"><div class="stat-token-rows" aria-label="Token usage">`+
+    `<div class="stat-token-row"><span class="stat-token-label">In</span><span class="stat-token-val">${esc(tokIn)}</span></div>`+
+    `<div class="stat-token-row"><span class="stat-token-label">Out</span><span class="stat-token-val">${esc(tokOut)}</span></div>`+
+    `<div class="stat-token-row"><span class="stat-token-label">Cached</span><span class="stat-token-val">${esc(tokCached)}</span></div>`+
+    `</div></div>`;
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:failed>0?String(failed):'—',label:'Failed',cls:failed?'red':''},
@@ -42,11 +50,8 @@ function buildWbStats(r,acts){
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
     {val:formatElapsed(r.createdAt,elapsedEnd),label:'Elapsed time',cls:''},
     {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:''},
-    {val:attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—',label:'Tokens in',cls:''},
-    {val:attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—',label:'Tokens out',cls:''},
-    {val:attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—',label:'Tokens cached',cls:''},
   ];
-  return stats.map(s=>`<div class="stat"><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
+  return stats.map(s=>`<div class="stat"><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('')+tokenBlock;
 }
 
 function graphMarkup(acts,scopes){
