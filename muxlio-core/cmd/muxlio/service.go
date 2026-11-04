@@ -22,6 +22,9 @@ var originalArgs = append([]string(nil), os.Args...)
 
 // serviceConfig authorizes native execution within one explicit workspace.
 type serviceConfig struct {
+	// configPath identifies the selected credential file independently of RuntimeDir.
+	configPath string
+
 	AgentHome             string                            `json:"agentHome"`
 	RuntimeDir            string                            `json:"runtimeDir"`
 	Addr                  string                            `json:"addr"`
@@ -33,10 +36,20 @@ type serviceConfig struct {
 	AttemptTimeoutSeconds int                               `json:"attemptTimeoutSeconds"`
 	// Token is an optional bearer token that the coordinator will require on all
 	// API requests (except /healthz). Can also be set via MUXLIO_TOKEN env.
-	Token     string `json:"token,omitempty"`
-	TokenFile string `json:"tokenFile,omitempty"`
-	TLSCert   string `json:"tlsCert,omitempty"`
-	TLSKey    string `json:"tlsKey,omitempty"`
+	Token     string            `json:"token,omitempty"`
+	TokenFile string            `json:"tokenFile,omitempty"`
+	TLSCert   string            `json:"tlsCert,omitempty"`
+	TLSKey    string            `json:"tlsKey,omitempty"`
+	MCP       *serviceMCPConfig `json:"mcp,omitempty"`
+}
+
+// A configured MCP listener is owned by the service, alongside the coordinator.
+type serviceMCPConfig struct {
+	Listen       string   `json:"listen"`
+	TokenFile    string   `json:"tokenFile,omitempty"`
+	TLSCert      string   `json:"tlsCert,omitempty"`
+	TLSKey       string   `json:"tlsKey,omitempty"`
+	AllowOrigins []string `json:"allowOrigins,omitempty"`
 }
 
 func defaultRuntime() string {
@@ -77,9 +90,20 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 		if c.TLSKey != "" && !filepath.IsAbs(c.TLSKey) {
 			c.TLSKey = filepath.Join(configDir, c.TLSKey)
 		}
+		if c.MCP != nil {
+			if strings.TrimSpace(c.MCP.Listen) == "" {
+				return c, fmt.Errorf("mcp.listen is required when mcp is configured")
+			}
+			for _, field := range []*string{&c.MCP.TokenFile, &c.MCP.TLSCert, &c.MCP.TLSKey} {
+				if *field != "" && !filepath.IsAbs(*field) {
+					*field = filepath.Join(configDir, *field)
+				}
+			}
+		}
 	} else if explicit || !os.IsNotExist(err) {
 		return c, err
 	}
+	c.configPath = path
 	for key, dest := range map[string]*string{"MUXLIO_HOME": &c.RuntimeDir, "MUXLIO_ADDR": &c.Addr, "MUXLIO_ADAPTERS": &c.Adapters, "MUXLIO_UI": &c.UI, "MUXLIO_WORKSPACE": &c.Workspace, "MUXLIO_TLS_CERT": &c.TLSCert, "MUXLIO_TLS_KEY": &c.TLSKey} {
 		if v := os.Getenv(key); v != "" {
 			*dest = v
@@ -269,14 +293,7 @@ func cmdServiceStartRun(args []string) int {
 		}
 	}
 	if c.Token == "" {
-		configPath := *path
-		if configPath == "" {
-			configPath = os.Getenv("MUXLIO_CONFIG")
-		}
-		if configPath == "" {
-			configPath = filepath.Join(defaultRuntime(), "config.json")
-		}
-		c.Token, err = ensureAuthToken(configPath)
+		c.Token, err = ensureAuthToken(c.configPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error configuring coordinator token:", err)
 			return 1

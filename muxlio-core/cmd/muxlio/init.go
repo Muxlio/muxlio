@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 )
@@ -13,6 +14,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	agent := fs.String("agent", "", "agent type to configure skill for (codex, cursor, claude, gemini, kiro)")
 	workspace := fs.String("workspace", "", "authorized workspace directory (default: current dir)")
 	dataDir := fs.String("data-dir", globalDataDir, "runtime data directory (default: ~/.muxlio)")
+	mcpListen := fs.String("mcp-listen", "127.0.0.1:7602", "MCP HTTP listen address for setup (existing setting preserved unless this flag is supplied)")
 	starter := fs.Bool("starter", false, "create a starter workflow in the workspace")
 	jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON output")
 
@@ -20,6 +22,16 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 2
 	}
 
+	if _, port, err := net.SplitHostPort(*mcpListen); err != nil || port == "" {
+		fmt.Fprintln(os.Stderr, "error: --mcp-listen must be host:port")
+		return 2
+	}
+	setMCPListen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "mcp-listen" {
+			setMCPListen = true
+		}
+	})
 	root := *dataDir
 	if root == "" {
 		root = defaultRuntime()
@@ -67,10 +79,10 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	configCreated := false
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		cfg := map[string]any{
-			"runtimeDir": root,
-			"addr":       "127.0.0.1:7600",
-			"workspace":  ws,
-			"capabilities": BundledExecutorCapabilities,
+			"runtimeDir":            root,
+			"addr":                  "127.0.0.1:7600",
+			"workspace":             ws,
+			"capabilities":          BundledExecutorCapabilities,
 			"attemptTimeoutSeconds": 600,
 		}
 		raw, _ := json.MarshalIndent(cfg, "", "  ")
@@ -80,8 +92,56 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		}
 		configCreated = true
 	}
+	// Register the service-owned MCP listener without replacing existing settings.
+	configRaw, err := os.ReadFile(configPath)
+	var config map[string]json.RawMessage
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: reading config:", err)
+		return 1
+	}
+	if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
+		fmt.Fprintln(os.Stderr, "error: config must be a JSON object")
+		return 1
+	}
+	if _, exists := config["mcp"]; !exists || setMCPListen {
+		mcpConfig := map[string]json.RawMessage{}
+		if raw := config["mcp"]; len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &mcpConfig); err != nil || mcpConfig == nil {
+				fmt.Fprintln(os.Stderr, "error: mcp config must be an object or null")
+				return 1
+			}
+		}
+		mcpConfig["listen"], _ = json.Marshal(*mcpListen)
+		config["mcp"], _ = json.Marshal(mcpConfig)
+		raw, _ := json.MarshalIndent(config, "", "  ")
+		if err := writeInitConfig(configPath, raw); err != nil {
+			fmt.Fprintln(os.Stderr, "error: configuring MCP:", err)
+			return 1
+		}
+	}
+	var mcpSetup *serviceMCPConfig
+	if err := json.Unmarshal(config["mcp"], &mcpSetup); err != nil {
+		fmt.Fprintln(os.Stderr, "error: invalid MCP configuration:", err)
+		return 1
+	}
+	mcpEndpoint := ""
+	if mcpSetup != nil {
+		if _, port, err := net.SplitHostPort(mcpSetup.Listen); err != nil || port == "" {
+			fmt.Fprintln(os.Stderr, "error: mcp.listen must be host:port")
+			return 1
+		}
+		scheme := "http"
+		if mcpSetup.TLSCert != "" {
+			scheme = "https"
+		}
+		mcpEndpoint = scheme + "://" + mcpSetup.Listen + "/mcp"
+	}
 	if _, err := ensureAuthToken(configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: creating coordinator token: %v\n", err)
+		return 1
+	}
+	if _, err := ensureWorkerToken(configPath); err != nil {
+		fmt.Fprintln(os.Stderr, "error: creating worker token:", err)
 		return 1
 	}
 
@@ -185,6 +245,7 @@ esac
 			"workspace":     ws,
 			"configPath":    configPath,
 			"configCreated": configCreated,
+			"mcpEndpoint":   mcpEndpoint,
 			"envScript":     envScriptPath,
 			"skills":        skillInstalledPaths,
 		}
@@ -214,9 +275,32 @@ esac
 	if starterPlanPath != "" {
 		fmt.Printf("  Starter:     %s\n", starterPlanPath)
 	}
+	if mcpEndpoint != "" {
+		fmt.Printf("  MCP HTTP:    %s (starts with muxlio service start)\n", mcpEndpoint)
+	} else {
+		fmt.Println("  MCP HTTP:    disabled in config")
+	}
+	fmt.Println("  Authentication: persistent client and worker tokens are stored in the protected config or configured token files.")
 	fmt.Println("\nTo configure your shell PATH:")
 	fmt.Printf("  source %s\n", envScriptPath)
 	return 0
+}
+
+// Persist setup changes atomically so service restarts cannot read partial JSON.
+func writeInitConfig(path string, raw []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".muxlio-init-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(raw); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func getSkillContent(root string) []byte {

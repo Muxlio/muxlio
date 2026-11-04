@@ -1,7 +1,8 @@
 # Overnight Mac mini service
 
 The foreground `muxlio service start` command owns the coordinator, one outbound
-local worker, and the static UI on one port. launchd or Homebrew supervises that
+local worker, the static UI, and a configured MCP HTTP listener. The UI and
+coordinator share one port; MCP uses its own configured port. launchd or Homebrew supervises that
 single process. It does not detach, invoke nohup, or launch another daemon.
 The service runs as your login user, never as root. Linux can use the same
 foreground command under a user systemd unit or another supervisor.
@@ -67,12 +68,21 @@ cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
   "capabilities": ["agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
-  "attemptTimeoutSeconds": 600
+  "attemptTimeoutSeconds": 600,
+  "mcp": {"listen": "127.0.0.1:7602"}
 }
 EOF
 chmod 600 "$HOME/.muxlio/config.json"
 muxlio service start
 ```
+
+`muxlio init` also registers the loopback MCP listener and generates persistent
+client and worker tokens. It preserves existing credentials and MCP settings.
+For a LAN listener, use `muxlio init --mcp-listen 0.0.0.0:7602` and restart the
+service. MCP starts, stops, and restarts with the service; no second process is
+needed. Set `mcp` to `null` to disable it. See [MCP configuration](mcp.md#network-transport-streamable-http)
+for TLS, separate listener credentials, and client setup. Treat plain HTTP as
+trusted-network access; use MCP TLS or a trusted TLS proxy for encrypted access.
 
 Native adapters run with `HOME` set to the operator's real home directory by
 default, so provider CLIs reuse existing login state already present there

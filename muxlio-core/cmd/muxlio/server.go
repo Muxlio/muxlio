@@ -18,6 +18,7 @@ import (
 	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
+	"github.com/muxlio/muxlio-core/internal/mcp"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -249,6 +250,11 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	mux := api.NewRouterWithArtifacts(store, runner, artifactDriver, workerProtocol)
 	handler := http.Handler(http.MaxBytesHandler(mux, 8<<20))
 
+	credentialConfigPath := filepath.Join(dataDir, "config.json")
+	if config != nil && config.configPath != "" {
+		credentialConfigPath = config.configPath
+	}
+
 	// Apply bearer token authentication if configured.
 	// Token precedence: MUXLIO_TOKEN env, then the protected runtime config.
 	authToken := loadToken("", "")
@@ -256,7 +262,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		authToken = config.Token
 	}
 	if authToken == "" {
-		token, tokenErr := ensureAuthToken(filepath.Join(dataDir, "config.json"))
+		token, tokenErr := ensureAuthToken(credentialConfigPath)
 		if tokenErr != nil {
 			fmt.Fprintf(os.Stderr, "error: configuring coordinator token: %v\n", tokenErr)
 			return 1
@@ -266,7 +272,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	workerToken := strings.TrimSpace(os.Getenv("MUXLIO_WORKER_TOKEN"))
 	if workerToken == "" {
 		var workerTokenErr error
-		workerToken, workerTokenErr = ensureWorkerToken(filepath.Join(dataDir, "config.json"))
+		workerToken, workerTokenErr = ensureWorkerToken(credentialConfigPath)
 		if workerTokenErr != nil {
 			fmt.Fprintf(os.Stderr, "error: configuring worker token: %v\n", workerTokenErr)
 			return 1
@@ -290,9 +296,30 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	defer servers.loopback.Close()
 	defer servers.httpSrv.Close()
 	if servers.tlsSrv != nil {
+		defer servers.tlsListen.Close()
 		defer servers.tlsSrv.Close()
+	}
+
+	var mcpServer *http.Server
+	var mcpListener net.Listener
+	if config != nil && config.MCP != nil {
+		mcp.Version = CurrentVersion
+		mcpHandler, err := mcp.NewHTTPHandler(servers.loopbackURL(), authToken, config.MCP.TokenFile, config.MCP.AllowOrigins)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: MCP: %v\n", err)
+			return 1
+		}
+		mcpListener, err = mcp.ListenHTTP(config.MCP.Listen, config.MCP.TLSCert, config.MCP.TLSKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: MCP: %v\n", err)
+			return 1
+		}
+		defer mcpListener.Close()
+		mcpServer = mcp.NewHTTPServer(mcpHandler)
+		defer mcpServer.Close()
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -300,7 +327,17 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	defer signal.Stop(quit)
 
 	servers.start()
-	errCh := servers.errCh
+	// Include every listener in the same failure/shutdown path.
+	errCh := make(chan error, 3)
+	go func() { errCh <- <-servers.errCh }()
+	if mcpServer != nil {
+		go func() { errCh <- mcpServer.Serve(mcpListener) }()
+		scheme := "http"
+		if config.MCP.TLSCert != "" {
+			scheme = "https"
+		}
+		fmt.Fprintf(os.Stderr, "muxlio MCP listening on %s://%s/mcp\n", scheme, mcpListener.Addr())
+	}
 	for id, engine := range recovered {
 		engine.Context = ctx
 		runner.mu.Lock()
@@ -331,8 +368,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 			}
 			caps = append(caps, workers.RemoteCapability{Name: name})
 		}
-		_, port, _ := net.SplitHostPort(servers.loopbackAddr())
-		workerURL := "http://127.0.0.1:" + port
+		workerURL := servers.loopbackURL()
 		go func() {
 			defer close(workerDone)
 			backoff := time.Second
@@ -398,6 +434,12 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if mcpServer != nil {
+		if err := mcpServer.Shutdown(shutdownCtx); err != nil {
+			_ = mcpServer.Close()
+			code = 1
+		}
+	}
 	servers.shutdown(shutdownCtx)
 	select {
 	case <-workerDone:

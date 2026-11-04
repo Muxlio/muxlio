@@ -28,6 +28,19 @@ func (s *coordinatorServers) loopbackAddr() string {
 	return s.loopback.Addr().String()
 }
 
+// loopbackURL preserves the listener's address family and any specific loopback
+// address. Wildcard listeners are reached through the matching loopback address.
+func (s *coordinatorServers) loopbackURL() string {
+	host, port, _ := net.SplitHostPort(s.loopbackAddr())
+	switch host {
+	case "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
 func (s *coordinatorServers) tlsAddr() string {
 	if s.tlsListen == nil {
 		return ""

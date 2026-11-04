@@ -305,7 +305,7 @@ Supported first-party executors (one adapter binary each): `agent/claude`, `agen
 
 ## MCP integration
 
-The `muxlio-mcp` binary exposes coordinator operations as MCP tools over stdio. Any MCP-capable assistant can call them to build, check, run, and inspect workflows without leaving its chat:
+The `muxlio-mcp` binary exposes coordinator operations as MCP tools over stdio or authenticated Streamable HTTP. Any MCP-capable assistant can call them to build, check, run, and inspect workflows without leaving its chat:
 
 ```json
 {
@@ -318,7 +318,16 @@ The `muxlio-mcp` binary exposes coordinator operations as MCP tools over stdio. 
 }
 ```
 
-Available tools include `check_plan`, `start_run`, `list_runs`, `get_run`, `get_graph`, `get_events`, `get_activations`, `get_logs`, `cancel_run`, `pause_run`, `resume_run`, `send_signal`, `get_workers`, and `server_health`. See [muxlio-docs/mcp.md](muxlio-docs/mcp.md) for the full reference.
+`muxlio init` registers MCP HTTP at `127.0.0.1:7602` and prepares persistent
+authentication tokens. The service starts and stops MCP with the coordinator.
+For direct network access, run `muxlio init --mcp-listen 0.0.0.0:7602` and
+`muxlio service restart` on the server, then connect the client to
+`http://<server>:7602/mcp`. HTTP requests
+require the listener's bearer token (the coordinator token by default); optional
+TLS is available with `mcp.tlsCert` and `mcp.tlsKey`. No SSH or local MCP process is
+required for this connection. See the [network setup](muxlio-docs/mcp.md#network-transport-streamable-http).
+
+Available tools include `submit_features` (an MCP-constructed workflow, with local commits and no push), `build`, `test`, `check_plan`, `start_run`, `list_runs`, `get_run`, `get_graph`, `get_events`, `get_activations`, `get_attempts`, `get_logs`, `read_artifact`, `get_artifact_metadata`, `cancel_run`, `pause_run`, `resume_run`, `retry_run`, `send_signal`, `get_workers`, and `server_health`. Saved coordinator profiles and bearer authentication are supported; for example, use `muxlio-mcp --server yamini`. See [muxlio-docs/mcp.md](muxlio-docs/mcp.md) for the full reference.
 
 ## Testing with fakes
 
@@ -448,6 +457,7 @@ The coordinator reads `~/.muxlio/config.json` (override with `--config PATH` or 
 | `workspace` | Authorized execution workspace (absolute path; required for service start) |
 | `capabilities` | Executor capabilities the local worker advertises (defaults created by `muxlio init` list all six shipped adapters; edit to restrict them) |
 | `attemptTimeoutSeconds` | Per-attempt timeout (default 600) |
+| `mcp` | Service-owned MCP HTTP listener: `listen`, optional `tokenFile`, `tlsCert`, `tlsKey`, `allowOrigins`; `muxlio init` registers loopback port 7602 |
 | `runtimeDir` | Runtime data directory (default `~/.muxlio`) |
 | `addr` | Listen address (default `127.0.0.1:7600`) |
 | `adapters` | Adapter directory (default beside installed CLI: `libexec/muxlio/adapters`) |

@@ -58,7 +58,14 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	addr := listener.Addr().String()
 	listener.Close()
 	runtimeDir := filepath.Join(root, "runtime")
-	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout"}, AttemptTimeoutSeconds: 5}
+	mcpPort, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpAddr := mcpPort.Addr().String()
+	mcpPort.Close()
+	write(filepath.Join(root, "mcp-token"), "listener-secret", 0600)
+	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout"}, AttemptTimeoutSeconds: 5, MCP: &serviceMCPConfig{Listen: mcpAddr, TokenFile: "mcp-token"}}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
 	write(configPath, string(raw), 0600)
@@ -111,6 +118,11 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 		if out, err := cli.CombinedOutput(); err != nil {
 			t.Fatalf("service stop: %v: %s", err, out)
 		}
+		conn, err := net.DialTimeout("tcp", mcpAddr, time.Second)
+		if err == nil {
+			conn.Close()
+			t.Fatal("MCP listener survived service stop")
+		}
 		if _, err := os.Stat(filepath.Join(runtimeDir, "service.pid")); !os.IsNotExist(err) {
 			t.Fatal("PID metadata survived shutdown")
 		}
@@ -126,6 +138,41 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	if err := json.Unmarshal(configRaw, &authConfig); err != nil || authConfig.Token == "" {
 		t.Fatalf("coordinator token was not generated: %v", err)
 	}
+	checkMCP := func() {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, "http://"+mcpAddr+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_runs","arguments":{}}}`))
+		req.Header.Set("Authorization", "Bearer listener-secret")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var rpc struct {
+			Result struct {
+				IsError bool `json:"isError"`
+			}
+			Error any
+		}
+		if err := json.Unmarshal(body, &rpc); err != nil || resp.StatusCode != 200 || rpc.Error != nil || rpc.Result.IsError {
+			t.Fatalf("MCP did not reach authenticated coordinator: %d %s (%v)", resp.StatusCode, body, err)
+		}
+		req.Body = io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+		req.ContentLength = -1
+		req.Header.Set("Authorization", "Bearer "+authConfig.Token)
+		resp, err = client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Fatalf("MCP accepted upstream token instead of configured listener token: %d", resp.StatusCode)
+		}
+	}
+	checkMCP()
 	duplicate := exec.Command(os.Args[0], "-test.run=TestCLIProcess", "--", "service", "start", "--config", configPath)
 	duplicate.Env = env
 	if out, err := duplicate.CombinedOutput(); err == nil || !bytes.Contains(out, []byte("already running")) {
@@ -202,6 +249,7 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	waitSuccess(id)
 	stop(cmd, logs)
 	cmd, logs = start()
+	checkMCP()
 	if result := check(id); !strings.Contains(result, "persisted overnight") {
 		t.Fatalf("lost persisted result: %s", result)
 	}
@@ -249,7 +297,13 @@ func TestServiceRestart(t *testing.T) {
 	addr := listener.Addr().String()
 	listener.Close()
 	runtimeDir := filepath.Join(root, "runtime")
-	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow"}}
+	mcpPort, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpAddr := mcpPort.Addr().String()
+	mcpPort.Close()
+	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow"}, MCP: &serviceMCPConfig{Listen: mcpAddr}}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
 	write(configPath, string(raw), 0600)
@@ -274,7 +328,18 @@ func TestServiceRestart(t *testing.T) {
 			if e == nil {
 				resp.Body.Close()
 				if resp.StatusCode == 200 {
-					return
+					req, _ := http.NewRequest(http.MethodPost, "http://"+mcpAddr+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+					req.Header.Set("Authorization", "Bearer "+readConfiguredAuthToken(configPath))
+					req.Header.Set("Accept", "application/json, text/event-stream")
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+					mcpResp, err := client.Do(req)
+					if err == nil {
+						mcpResp.Body.Close()
+						if mcpResp.StatusCode == 200 {
+							return
+						}
+					}
 				}
 			}
 			time.Sleep(25 * time.Millisecond)
@@ -349,5 +414,181 @@ func TestServiceRestart(t *testing.T) {
 	rejectOut, _ := reject.CombinedOutput()
 	if !bytes.Contains(rejectOut, []byte("start|stop|restart")) {
 		t.Fatalf("unknown service subcommand should mention restart: %s", rejectOut)
+	}
+}
+
+func TestServiceMCPStartupFailureReleasesCoordinator(t *testing.T) {
+	t.Setenv("MUXLIO_TOKEN", "coordinator-secret")
+	t.Setenv("MUXLIO_WORKER_TOKEN", "worker-secret")
+	t.Setenv("MUXLIO_MCP_HTTP_TOKEN", "")
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	spare, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := spare.Addr().String()
+	spare.Close()
+	for _, tc := range []struct {
+		name string
+		mcp  serviceMCPConfig
+	}{
+		{"port conflict", serviceMCPConfig{Listen: occupied.Addr().String()}},
+		{"missing token", serviceMCPConfig{Listen: "127.0.0.1:0", TokenFile: filepath.Join(t.TempDir(), "missing")}},
+		{"unpaired TLS", serviceMCPConfig{Listen: "127.0.0.1:0", TLSCert: "missing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "data"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			c := serviceConfig{RuntimeDir: root, Addr: addr, Workspace: root, MCP: &tc.mcp}
+			if code := serve(root, addr, false, &c); code != 1 {
+				t.Fatalf("startup succeeded despite invalid MCP: %d", code)
+			}
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				t.Fatalf("coordinator listener leaked after MCP startup failure: %v", err)
+			}
+			ln.Close()
+		})
+	}
+}
+
+func TestServiceMCPAddressAndSetupCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name, host string
+		tokenFile  bool
+	}{
+		{"IPv6 coordinator", "::1", false},
+		{"separate runtime", "127.0.0.1", false},
+		{"relative worker token file", "127.0.0.1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, workspace, runtimeDir := t.TempDir(), t.TempDir(), t.TempDir()
+			if code := cmdInit([]string{"--data-dir", root, "--workspace", workspace, "--json"}, "", true); code != 0 {
+				t.Fatalf("init returned %d", code)
+			}
+			configPath := filepath.Join(root, "config.json")
+			clientToken, workerToken := readConfiguredAuthToken(configPath), readConfiguredWorkerToken(configPath)
+			reserve := func(host string) string {
+				t.Helper()
+				ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ln.Close()
+				return ln.Addr().String()
+			}
+			addr, mcpAddr := reserve(tc.host), reserve("127.0.0.1")
+			adapters := filepath.Join(root, "adapters")
+			if err := os.MkdirAll(adapters, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(adapters, "fake-idle"), []byte("#!/bin/sh\nprintf '{}'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			cfg["runtimeDir"], cfg["addr"], cfg["adapters"] = runtimeDir, addr, adapters
+			cfg["capabilities"] = []string{"fake/idle"}
+			cfg["mcp"] = map[string]string{"listen": mcpAddr}
+			if tc.tokenFile {
+				delete(cfg, "workerToken")
+				cfg["workerTokenFile"] = "worker-token"
+				if err := os.WriteFile(filepath.Join(root, "worker-token"), []byte(workerToken), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			raw, err = json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			log, err := os.Create(filepath.Join(root, "service.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Close()
+			cmd := exec.Command(os.Args[0], "-test.run=TestCLIProcess", "--", "service", "start", "--config", configPath)
+			cmd.Env = append(os.Environ(), "MUXLIO_TEST_CLI=1", "MUXLIO_DAEMON=0", "MUXLIO_CONFIG="+configPath, "MUXLIO_HOME="+runtimeDir, "MUXLIO_TOKEN=", "MUXLIO_WORKER_TOKEN=", "MUXLIO_MCP_HTTP_TOKEN=", "MUXLIO_ADDR=")
+			cmd.Stdout, cmd.Stderr = log, log
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			t.Cleanup(func() {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					_ = cmd.Process.Kill()
+					<-done
+				}
+			})
+			client := &http.Client{Timeout: time.Second}
+			base := "http://" + addr
+			healthy := false
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+				resp, err := client.Get(base + "/healthz")
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						healthy = true
+						break
+					}
+				}
+			}
+			if !healthy {
+				t.Fatal("service did not become healthy")
+			}
+			req, _ := http.NewRequest(http.MethodPost, "http://"+mcpAddr+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_runs","arguments":{}}}`))
+			req.Header.Set("Authorization", "Bearer "+clientToken)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var rpc struct {
+				Result *struct {
+					IsError bool `json:"isError"`
+				}
+				Error any
+			}
+			if err := json.Unmarshal(body, &rpc); err != nil || resp.StatusCode != 200 || rpc.Error != nil || rpc.Result == nil || rpc.Result.IsError {
+				t.Fatalf("MCP could not reach its coordinator: %d %s (%v)", resp.StatusCode, body, err)
+			}
+			req, _ = http.NewRequest(http.MethodPost, base+"/v1/workers/register", strings.NewReader(`{"protocolVersion":"v1","workerId":"setup-credential-check","capacity":1,"capabilities":[{"name":"fake/idle"}]}`))
+			req.Header.Set("Authorization", "Bearer "+workerToken)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err = client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("worker credential from init was rejected: %d %s", resp.StatusCode, body)
+			}
+			if _, err := os.Stat(filepath.Join(runtimeDir, "config.json")); !os.IsNotExist(err) {
+				t.Fatalf("service created another credential config in runtimeDir: %v", err)
+			}
+		})
 	}
 }

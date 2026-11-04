@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"bytes"
@@ -508,8 +508,6 @@ func sendMCPMessage(t *testing.T, srv *mcpServer, msg any) jsonRPCResponse {
 	return resp
 }
 
-
-
 func TestMCPInitialize(t *testing.T) {
 	ts := newTestServer(t, newCoordinatorMux())
 	var buf bytes.Buffer
@@ -537,7 +535,7 @@ func TestMCPInitialize(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected result type: %T", resp.Result)
 	}
-	if result["protocolVersion"] != "2024-11-05" {
+	if result["protocolVersion"] != mcpProtocolVersion {
 		t.Fatalf("unexpected protocolVersion: %v", result["protocolVersion"])
 	}
 	info, _ := result["serverInfo"].(map[string]any)
@@ -578,20 +576,27 @@ func TestMCPToolsList(t *testing.T) {
 	}
 	// Verify expected tools are present.
 	expectedTools := map[string]bool{
-		"check_plan":    false,
-		"start_run":     false,
-		"list_runs":     false,
-		"get_run":       false,
-		"get_graph":     false,
-		"get_events":    false,
-		"get_activations": false,
-		"get_logs":      false,
-		"cancel_run":    false,
-		"pause_run":     false,
-		"resume_run":    false,
-		"send_signal":   false,
-		"get_workers":   false,
-		"server_health": false,
+		"submit_features":       false,
+		"retry_run":             false,
+		"get_attempts":          false,
+		"read_artifact":         false,
+		"build":                 false,
+		"test":                  false,
+		"get_artifact_metadata": false,
+		"check_plan":            false,
+		"start_run":             false,
+		"list_runs":             false,
+		"get_run":               false,
+		"get_graph":             false,
+		"get_events":            false,
+		"get_activations":       false,
+		"get_logs":              false,
+		"cancel_run":            false,
+		"pause_run":             false,
+		"resume_run":            false,
+		"send_signal":           false,
+		"get_workers":           false,
+		"server_health":         false,
 	}
 	for _, item := range toolsList {
 		tool, ok := item.(map[string]any)
@@ -599,6 +604,20 @@ func TestMCPToolsList(t *testing.T) {
 			continue
 		}
 		name, _ := tool["name"].(string)
+		annotations, ok := tool["annotations"].(map[string]any)
+		if !ok {
+			t.Errorf("tool %s missing annotations", name)
+		}
+		if name == "submit_features" || name == "retry_run" {
+			if annotations["readOnlyHint"] != false || annotations["idempotentHint"] != false {
+				t.Errorf("tool %s incorrectly marked read-only or idempotent", name)
+			}
+		}
+		if name == "get_attempts" || name == "read_artifact" {
+			if annotations["readOnlyHint"] != true {
+				t.Errorf("tool %s not marked read-only", name)
+			}
+		}
 		expectedTools[name] = true
 	}
 	for name, found := range expectedTools {
@@ -617,7 +636,7 @@ func TestMCPToolsCall_CheckPlan(t *testing.T) {
 	}
 
 	params, _ := json.Marshal(toolCallParams{
-		Name: "check_plan",
+		Name:      "check_plan",
 		Arguments: json.RawMessage(`{"plan":{"irVersion":"1.0","name":"test","subgraphs":{"root":{"nodes":[]}}}}`),
 	})
 	req := jsonRPCRequest{

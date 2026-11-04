@@ -55,3 +55,68 @@ func TestInitDefaultCapabilitiesIncludeClaude(t *testing.T) {
 		}
 	}
 }
+
+func TestInitRegistersMCPAndPreservesCredentials(t *testing.T) {
+	root, ws := t.TempDir(), t.TempDir()
+	args := []string{"--data-dir", root, "--workspace", ws, "--json"}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	path := filepath.Join(root, "config.json")
+	read := func() map[string]json.RawMessage {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	cfg := read()
+	var listener serviceMCPConfig
+	if err := json.Unmarshal(cfg["mcp"], &listener); err != nil || listener.Listen != "127.0.0.1:7602" {
+		t.Fatalf("MCP not registered: %s", cfg["mcp"])
+	}
+	token, worker := readConfiguredAuthToken(path), readConfiguredWorkerToken(path)
+	if token == "" || worker == "" || token == worker {
+		t.Fatal("missing independent persistent credentials")
+	}
+	cfg["mcp"] = json.RawMessage(`{"listen":"127.0.0.1:9902","allowOrigins":["http://localhost:6274"]}`)
+	cfg["custom"] = json.RawMessage(`{"keep":true}`)
+	raw, _ := json.Marshal(cfg)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	next := read()
+	if string(next["mcp"]) != string(cfg["mcp"]) || string(next["custom"]) != string(cfg["custom"]) {
+		t.Fatal("init replaced existing settings")
+	}
+	if readConfiguredAuthToken(path) != token || readConfiguredWorkerToken(path) != worker {
+		t.Fatal("init rotated credentials")
+	}
+	if code := cmdInit(append(args, "--mcp-listen", "0.0.0.0:7602"), "", true); code != 0 {
+		t.Fatal(code)
+	}
+	next = read()
+	if err := json.Unmarshal(next["mcp"], &listener); err != nil || listener.Listen != "0.0.0.0:7602" || len(listener.AllowOrigins) != 1 {
+		t.Fatalf("explicit address update lost settings: %s", next["mcp"])
+	}
+	cfg = next
+	cfg["mcp"] = json.RawMessage(`null`)
+	raw, _ = json.Marshal(cfg)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	if string(read()["mcp"]) != "null" {
+		t.Fatal("init enabled an explicitly disabled listener")
+	}
+}
