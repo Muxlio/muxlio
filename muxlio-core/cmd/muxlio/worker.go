@@ -16,7 +16,7 @@ import (
 
 // adapterNameToCapability converts an adapter filename to its capability name.
 // The mapping is the inverse of scriptPath: the first "-" becomes "/".
-// e.g. "agent-claude" → "agent/claude", "agent-codex" → "agent/codex", "command-go-test" → "command/go-test".
+// e.g. "agent-claude" → "agent/claude", "agent-codex" → "agent/codex", "command" → "command".
 func adapterNameToCapability(name string) string {
 	idx := strings.Index(name, "-")
 	if idx < 0 {

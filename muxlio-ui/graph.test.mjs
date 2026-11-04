@@ -31,7 +31,8 @@ for (const iteration of [0, 2, 10]) {
   assert.ok(disclosure, `iteration ${iteration} is addressable`);
   assert.equal(/ open>/.test(disclosure), false, 'iterations start closed');
 }
-assert.match(html, /Map · each__0/);
+assert.match(html, /Map · each<\/strong>/);
+assert.match(html, /class="node-name">each<\/div>/);
 assert.match(html, /Map · other/);
 assert.match(html, /Branch · check/);
 assert.match(html, /&lt;unsafe&gt;/);

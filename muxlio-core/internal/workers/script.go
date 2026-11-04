@@ -23,7 +23,7 @@ import (
 //	agent/claude      → <adapterDir>/agent-claude
 //	agent/codex       → <adapterDir>/agent-codex
 //	agent/gemini-cli  → <adapterDir>/agent-gemini-cli
-//	command/go-test   → <adapterDir>/command-go-test
+//	command          → <adapterDir>/command
 //
 // The script receives a JSON object on stdin:
 //

@@ -67,8 +67,16 @@ const { plan } = defineWorkflow({
           then: (thenCtx) => {
             // The scope path already identifies the package; no cross-scope ref needed.
             const verify = thenCtx.execute('verify-tests', {
-              executor: 'command/go-test',
+              executor: 'command',
               task: 'Run go test for this package and report pass/fail.',
+              params: {
+                program: 'go',
+                args: ['-C', '', 'test', '.', '-timeout', '120s'],
+                argTemplates: [null, '{{package.path}}', null, null, null, null],
+                cwd: '.',
+                onNonZero: 'return',
+              },
+              inputs: { package: { expr: thenCtx.item() } },
               outputs: { passed: { mime: 'application/json' } },
             });
             return {

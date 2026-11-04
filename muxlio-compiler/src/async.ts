@@ -127,8 +127,10 @@ class RecordingContext {
   }): any {
     this.requiredExecutors.add(opts.executor);
     const outputDecls = { ...(opts.outputs || {}) };
-    if (opts.executor === 'command' && !outputDecls._result) {
-      outputDecls._result = { mime: 'application/json' };
+    if (opts.executor === 'command') {
+      for (const port of ['passed', 'exitCode', 'signal', 'stdout', 'stderr', 'durationMs']) {
+        outputDecls[port] ??= { mime: 'application/json' };
+      }
     }
     const inputs: Record<string, Binding> = {};
     if (opts.inputs) {

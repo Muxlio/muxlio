@@ -3,6 +3,40 @@ import assert from 'node:assert/strict';
 import { workflow, task, artifact } from '../dist/index.js';
 import { z } from 'zod';
 
+test('command tasks infer process outputs without declarations', () => {
+  const { plan } = workflow('inferred-command', {
+    build: ({ step }) => {
+      const result = step('run', task({ executor: 'command' }), {});
+      return {
+        passed: result.passed, exitCode: result.exitCode, signal: result.signal,
+        stdout: result.stdout, stderr: result.stderr, durationMs: result.durationMs,
+      };
+    },
+  });
+  const root = plan.subgraphs.root;
+  for (const port of ['passed', 'exitCode', 'signal', 'stdout', 'stderr', 'durationMs']) {
+    assert.ok(root.nodes[0].outputs[port].schema, `${port} has runtime validation`);
+    assert.deepEqual(root.output[port], { ref: { node: 'run', port } });
+  }
+  assert.equal(root.nodes[0].outputs._result, undefined);
+});
+
+test('command tasks merge explicit outputs without mutating the definition', () => {
+  const outputs = { notes: artifact.markdown('notes.md'), stdout: z.string().min(1) };
+  const command = task({ executor: 'command', outputs });
+  assert.deepEqual(Object.keys(outputs), ['notes', 'stdout']);
+  const { plan } = workflow('custom-command', {
+    build: ({ step }) => {
+      const result = step('run', command, {});
+      return { passed: result.passed, notes: result.notes, stdout: result.stdout };
+    },
+  });
+  const node = plan.subgraphs.root.nodes[0];
+  assert.equal(node.outputs.notes.path, 'notes.md');
+  assert.deepEqual(node.outputs.stdout.schema, { type: 'string', minLength: 1 });
+  assert.deepEqual(node.outputs.passed.schema, { type: 'boolean' });
+});
+
 test('step after adds control dependency binding', () => {
   const review = task({
     executor: 'agent/codex',

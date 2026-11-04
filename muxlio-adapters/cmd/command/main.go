@@ -177,7 +177,7 @@ func main() {
 	if ctx.Err() != nil {
 		adapter.Fail("command: timed out after %s", timeout)
 	}
-	result := map[string]any{"exitCode": nil, "stdout": out.String(), "stderr": stderr.String(), "durationMs": duration}
+	result := map[string]any{"exitCode": nil, "signal": nil, "stdout": out.String(), "stderr": stderr.String(), "durationMs": duration}
 	if runErr == nil {
 		result["exitCode"] = 0
 	} else if ee, ok := runErr.(*exec.ExitError); ok {
@@ -192,21 +192,20 @@ func main() {
 	}
 	passed := result["exitCode"] == 0
 	result["passed"] = passed
-	outputs := map[string]any{"_result": result}
 	if p.TrimStdout {
 		result["stdout"] = strings.TrimSpace(out.String())
 	}
 	if p.FailOnOutput && out.String() != "" {
-		_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: "command produced output while failOnOutput is enabled"})
+		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: "command produced output while failOnOutput is enabled"})
 		return
 	}
 	if code, ok := result["exitCode"].(int); ok && code != 0 && p.OnNonZero == "fail" {
-		_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: fmt.Sprintf("command exited with status %d", code)})
+		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: fmt.Sprintf("command exited with status %d", code)})
 		return
 	}
 	// Keep full output available through normal Muxlio task logs; the adapter
 	// response holds only the bounded previews.
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: result})
 }
 
 var argPlaceholder = regexp.MustCompile(`\{\{([A-Za-z0-9_.-]+)\}\}`)

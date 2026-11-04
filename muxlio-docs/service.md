@@ -20,9 +20,9 @@ bash scripts/build-release.sh "$HOME/.local/muxlio"
 export PATH="$HOME/.local/muxlio/bin:$PATH"
 ```
 
-The resulting prefix contains `bin/muxlio`, seven compiled adapters under
+The resulting prefix contains `bin/muxlio`, six compiled adapters under
 `libexec/muxlio/adapters` (`agent-claude`, `agent-codex`, `agent-cursor`,
-`agent-gemini-cli`, `agent-kiro`, `command-go-test`, and `command`), and UI assets under
+`agent-gemini-cli`, `agent-kiro`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
 removing or moving the checkout. Relative resource discovery uses the installed
@@ -66,7 +66,7 @@ chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
 cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
-  "capabilities": ["agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command/go-test"],
+  "capabilities": ["agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600
 }
 EOF
@@ -235,7 +235,7 @@ are published on attempt completion, not streamed live. A missed lease or
 coordinator restart can make a real external effect uncertain; the service
 holds that work for manual reconciliation rather than replaying it. Fake
 adapters cover the service contract; this feature has not exercised paid agent
-providers or real provider login flows. `command/go-test` defaults to the
+providers or real provider login flows. `command` defaults to the
 authorized workspace root; set `params.cwd` for a nested Go module.
 
 ## Verification

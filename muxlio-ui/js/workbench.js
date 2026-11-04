@@ -1,5 +1,7 @@
 /* ── workbench ─────────────────────────────────── */
 let activationDisplayNumbers = new Map();
+// each() receives a compiler ID such as each__0; the suffix is not a task name.
+function nodeDisplayName(nodeId){return /^each__\d+$/.test(nodeId||'')?'each':nodeId}
 function stateClass(s){return{succeeded:'succeeded',failed:'failed',running:'running',waiting:'waiting',paused:'paused',queued:'queued',cancelled:'cancelled'}[s]||''}
 function checkIcon(s){if(s==='succeeded')return `<span class="node-card-check succeeded">✓</span>`;if(s==='failed')return `<span class="node-card-check failed">✕</span>`;if(s==='running')return `<span class="node-card-check running">⟳</span>`;return ''}
 
@@ -102,7 +104,7 @@ function graphMarkup(acts,scopes){
       const loop=first.kind==='loop';
       if(loop)group.sort((a,b)=>a.detail.localeCompare(b.detail,undefined,{numeric:true}));
       const stats=scopeStats({activations:[],children:group});
-      const title=`${loop?'Loop':'Map'} · ${first.owner}`;
+      const title=`${loop?'Loop':'Map'} · ${nodeDisplayName(first.owner)}`;
       return `<details class="graph-map-set ${loop?'graph-loop-set':''}" data-preserve-key="control:${esc(JSON.stringify(first.path.slice(0,-1)))}:${esc(first.kind)}:${esc(first.owner)}"><summary class="graph-control-heading"><strong>${esc(title)}</strong><span class="graph-control-count">${group.length} ${loop?(group.length===1?'iteration':'iterations'):(group.length===1?'item':'items')}</span>${statusSummary(stats)}</summary><div class="graph-map-grid">${group.map((child,index)=>{
         const childStats=scopeStats(child);
         const label=loop?child.detail:`Item · ${child.detail||'item'}`;
@@ -123,7 +125,7 @@ function graphMarkup(acts,scopes){
       const nested=childrenByOwner.get(a.nodeId)||[];
       const nodeTypeParts=(a.nodeId||'').split('.');
       let nodeType=nodeTypeParts.length>1?nodeTypeParts[0]:(nested.length&&nested[0].kind?nested[0].kind:knownKinds.get(a.nodeId)||'node');
-      const nodeName=nodeTypeParts.slice(-1)[0]||a.nodeId;
+      const nodeName=nodeDisplayName(nodeTypeParts.slice(-1)[0]||a.nodeId);
       const model=a.executorHint||a.executor||'';
       const skill=a.skill||'';
       html+=`<div class="graph-col${nested.length?' graph-control-stage':''}">

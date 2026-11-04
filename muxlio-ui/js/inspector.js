@@ -111,7 +111,7 @@ function renderInspectorWb(act){
   const labelEl=$('#inspNodeLabel'),nameEl=$('#inspNodeName'),descEl=$('#inspNodeDesc');
   const parts=(act.nodeId||'').split('.');
   const nodeType=parts.length>1?parts[0]:'node';
-  const nodeName=parts.slice(-1)[0]||act.nodeId;
+  const nodeName=nodeDisplayName(parts.slice(-1)[0]||act.nodeId);
   // hide placeholder
   const identity=$('#inspIdentity');
   if(identity)identity.hidden=false;

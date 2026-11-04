@@ -193,7 +193,8 @@ export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSc
   task?: string;
   /** Arbitrary JSON params forwarded to the executor. */
   params?: unknown;
-  /** Output port declarations: Zod types for JSON values, ArtifactDecl for files. */
+  /** Output port declarations: Zod types for JSON values, ArtifactDecl for files.
+   *  Command tasks include standard process outputs automatically. */
   outputs?: TOutputs;
   /** Retry and effect policy. */
   retry?: RetryPolicy;
@@ -205,9 +206,20 @@ export interface TaskDef<TOutputs extends TaskOutputSchema = TaskOutputSchema> {
   readonly def: TaskDefinition<TOutputs>;
 }
 
+const commandOutputs = {
+  passed: z.boolean(),
+  exitCode: z.number().nullable(),
+  signal: z.string().nullable(),
+  stdout: z.string(),
+  stderr: z.string(),
+  durationMs: z.number(),
+};
+
 /**
  * Define a reusable task. Tasks declare executor, prompt, output schema, and
- * retry policy, but do not schedule work. Use `step(id, taskDef, inputs)`
+ * retry policy, but do not schedule work. Command tasks infer their standard
+ * process outputs; explicit outputs add to or override those declarations.
+ * Use `step(id, taskDef, inputs)`
  * inside a `workflow` build function to schedule them.
  *
  * @example
@@ -218,9 +230,16 @@ export interface TaskDef<TOutputs extends TaskOutputSchema = TaskOutputSchema> {
  *   retry: { maxAttempts: 3, effect: 'retryable' },
  * });
  */
-export function task<TOutputs extends TaskOutputSchema>(
+export function task<TOutputs extends TaskOutputSchema = {}>(
+  def: TaskDefinition<TOutputs> & { executor: 'command' },
+): TaskDef<Omit<typeof commandOutputs, keyof TOutputs> & TOutputs>;
+export function task<TOutputs extends TaskOutputSchema = {}>(
   def: TaskDefinition<TOutputs>,
-): TaskDef<TOutputs> {
+): TaskDef<TOutputs>;
+export function task(def: TaskDefinition): TaskDef {
+  if (def.executor === 'command') {
+    return { __isTaskDef: true, def: { ...def, outputs: { ...commandOutputs, ...def.outputs } } };
+  }
   return { __isTaskDef: true, def };
 }
 

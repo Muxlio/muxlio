@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo 'no tests in compiler package; see muxlio-testing'"
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@muxlio/sdk": "*"

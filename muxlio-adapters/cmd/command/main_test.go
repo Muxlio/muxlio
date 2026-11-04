@@ -10,14 +10,15 @@ import (
 	"github.com/muxlio/muxlio-adapters/adapter"
 )
 
-func TestDirectArgvAndReturnedNonzero(t *testing.T) {
+func commandResponse(t *testing.T, params map[string]any) (adapter.Response, string) {
+	t.Helper()
 	workspace, workDir := t.TempDir(), t.TempDir()
 	input, err := os.CreateTemp(t.TempDir(), "request-*.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	arg := `space quote" dollar$ semi; backtick` + "`" + ` sub$(touch nope)`
-	req := map[string]any{"workspace": workspace, "workDir": workDir, "executor": "command", "params": map[string]any{"program": "/bin/echo", "args": []string{arg}, "onNonZero": "return", "timeout": "2s"}, "outputs": map[string]any{"_result": map[string]any{"mime": "application/json"}}}
+	defer input.Close()
+	req := map[string]any{"workspace": workspace, "workDir": workDir, "executor": "command", "params": params, "outputs": map[string]any{"passed": map[string]any{"mime": "application/json"}}}
 	if err = json.NewEncoder(input).Encode(req); err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +30,7 @@ func TestDirectArgvAndReturnedNonzero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer r.Close()
 	os.Stdout = outW
 	main()
 	_ = outW.Close()
@@ -37,9 +39,15 @@ func TestDirectArgvAndReturnedNonzero(t *testing.T) {
 	if err = json.NewDecoder(r).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	result, ok := resp.Outputs["_result"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing command result: %#v", resp)
+	return resp, workspace
+}
+
+func TestDirectArgvAndReturnedNonzero(t *testing.T) {
+	arg := `space quote" dollar$ semi; backtick` + "`" + ` sub$(touch nope)`
+	resp, workspace := commandResponse(t, map[string]any{"program": "/bin/echo", "args": []string{arg}, "onNonZero": "return", "timeout": "2s"})
+	result := resp.Outputs
+	if _, wrapped := result["_result"]; wrapped {
+		t.Fatalf("unexpected wrapper output: %#v", resp)
 	}
 	if got := result["stdout"].(string); strings.TrimSpace(got) != arg {
 		t.Fatalf("argv changed: %q", got)
@@ -47,12 +55,51 @@ func TestDirectArgvAndReturnedNonzero(t *testing.T) {
 	if result["exitCode"] != float64(0) {
 		t.Fatalf("exit code=%v", result["exitCode"])
 	}
+	if signal, exists := result["signal"]; !exists || signal != nil {
+		t.Fatalf("expected null signal: %#v", result)
+	}
 	if result["passed"] != true {
 		t.Fatalf("passed=%v", result["passed"])
 	}
-	if _, err = os.Stat(filepath.Join(workspace, "nope")); !os.IsNotExist(err) {
+	if resp.Outputs["passed"] != true || resp.Error != "" {
+		t.Fatalf("top-level passed/error: %#v", resp)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "nope")); !os.IsNotExist(err) {
 		t.Fatalf("shell interpreted argument: %v", err)
 	}
+}
+
+func TestTopLevelPassedForNonzeroExit(t *testing.T) {
+	for _, policy := range []string{"return", "fail"} {
+		t.Run(policy, func(t *testing.T) {
+			resp, _ := commandResponse(t, map[string]any{"program": "/bin/sh", "args": []string{"-c", "exit 7"}, "onNonZero": policy})
+			result := resp.Outputs
+			if result["passed"] != false || result["exitCode"] != float64(7) {
+				t.Fatalf("failed command outputs: %#v", resp)
+			}
+			if (resp.Error != "") != (policy == "fail") {
+				t.Fatalf("policy %s: error=%q", policy, resp.Error)
+			}
+		})
+	}
+}
+
+func TestFlatCommandDetails(t *testing.T) {
+	t.Run("trimmed stdout", func(t *testing.T) {
+		resp, _ := commandResponse(t, map[string]any{"program": "/bin/echo", "args": []string{"hello"}, "trimStdout": true})
+		if resp.Error != "" || resp.Outputs["stdout"] != "hello" || resp.Outputs["stderr"] != "" {
+			t.Fatalf("flat details: %#v", resp)
+		}
+		if _, ok := resp.Outputs["durationMs"].(float64); !ok {
+			t.Fatalf("missing duration: %#v", resp.Outputs)
+		}
+	})
+	t.Run("signal", func(t *testing.T) {
+		resp, _ := commandResponse(t, map[string]any{"program": "/bin/sh", "args": []string{"-c", "kill -TERM $$"}, "onNonZero": "return"})
+		if resp.Error != "" || resp.Outputs["passed"] != false || resp.Outputs["exitCode"] != nil || resp.Outputs["signal"] == nil {
+			t.Fatalf("signal details: %#v", resp)
+		}
+	})
 }
 
 func TestRenderArgTemplateUsesTaskInput(t *testing.T) {

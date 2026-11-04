@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestValidateNullableCommandOutputs(t *testing.T) {
+	outputs := map[string]OutputDecl{
+		"signal":   {Schema: json.RawMessage(`{"anyOf":[{"type":"string"},{"type":"null"}]}`)},
+		"exitCode": {Schema: json.RawMessage(`{"anyOf":[{"type":"number"},{"type":"null"}]}`)},
+	}
+	for _, tc := range []struct {
+		name   string
+		values map[string]any
+		valid  bool
+	}{
+		{"normal exit", map[string]any{"signal": nil, "exitCode": 0}, true},
+		{"signal termination", map[string]any{"signal": "terminated", "exitCode": nil}, true},
+		{"invalid signal", map[string]any{"signal": false, "exitCode": 0}, false},
+		{"invalid exit code", map[string]any{"signal": nil, "exitCode": "zero"}, false},
+		{"missing signal", map[string]any{"exitCode": 0}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateExecuteOutputs(outputs, tc.values); (err == nil) != tc.valid {
+				t.Fatalf("validation error = %v, want valid = %v", err, tc.valid)
+			}
+		})
+	}
+}
+
 func TestValidateInputEnforcesArrayBoundsAndStringMinLength(t *testing.T) {
 	schema := json.RawMessage(`{
 		"type": "object",

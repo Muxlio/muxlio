@@ -12,7 +12,6 @@ var BundledExecutorCapabilities = []string{
 	"agent/gemini-cli",
 	"agent/kiro",
 	"command",
-	"command/go-test",
 }
 
 func bundledAdapterBasenames() []string {

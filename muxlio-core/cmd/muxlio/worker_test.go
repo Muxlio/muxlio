@@ -19,7 +19,7 @@ func TestAdapterNameToCapability(t *testing.T) {
 		{"agent-codex", "agent/codex"},
 		{"agent-cursor", "agent/cursor"},
 		{"agent-gemini-cli", "agent/gemini-cli"},
-		{"command-go-test", "command/go-test"},
+		{"command", "command"},
 		{"agent-kiro", "agent/kiro"},
 		{"standalone", "standalone"}, // no dash → unchanged
 	}
@@ -44,7 +44,6 @@ func TestDiscoverCapabilities(t *testing.T) {
 	write("agent-cursor", 0o755)
 	write("agent-gemini-cli", 0o755)
 	write("agent-kiro", 0o755)
-	write("command-go-test", 0o755)
 	write("command", 0o755)
 	// Non-executable — must be skipped.
 	write("README.md", 0o644)

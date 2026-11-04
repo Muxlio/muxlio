@@ -130,8 +130,36 @@
         {
           "id": "verify-tests",
           "kind": "execute",
-          "executor": "command/go-test",
+          "executor": "command",
           "task": "Run go test for this package and report pass/fail.",
+          "params": {
+            "program": "go",
+            "args": [
+              "-C",
+              "",
+              "test",
+              ".",
+              "-timeout",
+              "120s"
+            ],
+            "argTemplates": [
+              null,
+              "{{package.path}}",
+              null,
+              null,
+              null,
+              null
+            ],
+            "cwd": ".",
+            "onNonZero": "return"
+          },
+          "inputs": {
+            "package": {
+              "expr": {
+                "op": "item"
+              }
+            }
+          },
           "outputs": {
             "passed": {
               "mime": "application/json"
@@ -174,7 +202,7 @@
   },
   "requiredExecutors": [
     "command/go-list",
-    "command/go-test"
+    "command"
   ],
-  "digest": "sha256:5b72596033973e4d5aa4e74ca45864dfe949fced6812b047ee9cf36147ff9905"
+  "digest": "sha256:8db4ace0beb41049602edcaa1f0ec3becd5883475cef18ede409da0daa2c3ad8"
 }

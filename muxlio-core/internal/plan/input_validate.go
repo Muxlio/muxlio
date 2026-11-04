@@ -46,6 +46,10 @@ func validateInputAgainstSchema(value any, schema map[string]any, path string) e
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("muxlio: input %s must be a boolean", pathLabel(path))
 		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("muxlio: input %s must be null", pathLabel(path))
+		}
 	case "":
 		// unconstrained
 	default:

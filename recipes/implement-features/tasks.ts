@@ -1,5 +1,4 @@
 import { task, artifact } from '@muxlio/sdk';
-import { z } from 'zod';
 
 export const implement = task({
   executor: 'agent/kiro',
@@ -40,20 +39,6 @@ SKILL.md.`,
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
 
-const commandResult = z.object({
-  exitCode: z.number().nullable(), signal: z.string().optional(),
-  stdout: z.string(), stderr: z.string(), durationMs: z.number(),
-});
-
-function verifyCommand(id: string, program: string, args: string[], cwd: string) {
-  return task({
-  executor: 'command',
-  task: `Run ${id}.`,
-  params: { program, args, cwd, onNonZero: 'return', timeout: '10m' },
-  outputs: { _result: commandResult },
-  });
-}
-
 export const verify = task({
   executor: 'command',
   task: 'Run the repository build and test suites; return nonzero if any suite fails.',
@@ -68,7 +53,6 @@ process.exitCode=failed?1:0;`],
     onNonZero: 'return',
     timeout: '10m',
   },
-  outputs: { _result: commandResult.extend({ passed: z.boolean() }) },
 });
 
 export const commit = task({
@@ -81,26 +65,22 @@ export const commit = task({
     cwd: '.',
     onNonZero: 'fail',
   },
-  outputs: { _result: commandResult },
 });
 
-export const readCommitSHA = task({
+export const push = task({
   executor: 'command',
-  task: 'Read the commit SHA.',
-  params: { program: 'git', args: ['rev-parse', 'HEAD'], cwd: '.', onNonZero: 'fail', trimStdout: true },
-  outputs: { _result: commandResult },
+  task: 'Push the completed feature commits to the configured upstream.',
+  params: { program: 'git', args: ['push'], cwd: '.', onNonZero: 'fail' },
 });
 
 export const stageChanges = task({
   executor: 'command',
   task: 'Stage workspace changes for the verified feature commit.',
   params: { program: 'git', args: ['add', '-A'], cwd: '.', onNonZero: 'fail' },
-  outputs: { _result: commandResult },
 });
 
 export const requireCleanWorkspace = task({
   executor: 'command',
   task: 'Require a clean workspace before beginning a feature.',
   params: { program: 'git', args: ['status', '--porcelain'], cwd: '.', onNonZero: 'fail', failOnOutput: true },
-  outputs: { _result: commandResult },
 });

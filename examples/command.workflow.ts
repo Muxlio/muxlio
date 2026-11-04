@@ -29,7 +29,7 @@ const { plan } = await defineAsyncWorkflow({
       },
       outputs: { archive: { mime: 'application/gzip', path: 'results.tar.gz' } },
     });
-    return { processed: processed.outputs._result, archive: archive.outputs._result };
+    return { processed: processed.outputs.file, archive: archive.outputs.archive };
   },
 });
 
