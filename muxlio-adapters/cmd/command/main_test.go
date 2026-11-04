@@ -85,6 +85,13 @@ func TestTopLevelPassedForNonzeroExit(t *testing.T) {
 }
 
 func TestFlatCommandDetails(t *testing.T) {
+	t.Run("worker SSH agent", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "/test/worker-agent.sock")
+		resp, _ := commandResponse(t, map[string]any{"program": "/bin/sh", "args": []string{"-c", `printf '%s' "$SSH_AUTH_SOCK"`}})
+		if resp.Error != "" || resp.Outputs["stdout"] != "/test/worker-agent.sock" {
+			t.Fatalf("worker SSH agent unavailable to command: %#v", resp)
+		}
+	})
 	t.Run("trimmed stdout", func(t *testing.T) {
 		resp, _ := commandResponse(t, map[string]any{"program": "/bin/echo", "args": []string{"hello"}, "trimStdout": true})
 		if resp.Error != "" || resp.Outputs["stdout"] != "hello" || resp.Outputs["stderr"] != "" {

@@ -157,12 +157,15 @@ func main() {
 	cmd := exec.Command(program, p.Args...)
 	cmd.Dir = cwd
 	cmd.Env = []string{"PATH=" + workerPath, "HOME=" + req.WorkDir, "TMPDIR=" + req.WorkDir, "LANG=C.UTF-8", "MUXLIO_OUTPUT_DIR=" + req.WorkDir}
+	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
+		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+socket)
+	}
 	for k, v := range p.Env {
 		if k == "" || strings.ContainsAny(k, "=\x00") || strings.IndexByte(v, 0) >= 0 {
 			adapter.Fail("command: invalid environment entry")
 		}
 		switch k {
-		case "PATH", "HOME", "TMPDIR", "LANG", "MUXLIO_OUTPUT_DIR":
+		case "PATH", "HOME", "TMPDIR", "LANG", "MUXLIO_OUTPUT_DIR", "SSH_AUTH_SOCK":
 			adapter.Fail("command: environment key %q is worker-managed", k)
 		}
 		cmd.Env = append(cmd.Env, k+"="+v)

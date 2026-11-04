@@ -52,6 +52,8 @@ type ScriptExecutor struct {
 	// AllowCommandHost is an administrator-controlled worker setting. Workflow
 	// parameters never enable this capability.
 	AllowCommandHost bool
+	// SSHAgentSocket is the operator-configured agent socket for host commands.
+	SSHAgentSocket string
 }
 
 // isolationPolicy is read from the execute step's params.isolation object.
@@ -475,6 +477,16 @@ func (s *ScriptExecutor) environment(workDir string, isolated bool, executor str
 		}
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + workDir, "LANG=C.UTF-8"}
+	// Authorized host commands can reuse the configured SSH agent for git remotes.
+	// Never expose the host socket to isolated execution or unrelated adapters.
+	if executor == "command" && s.AllowCommandHost && !isolated {
+		if s.SSHAgentSocket != "" {
+			if !filepath.IsAbs(s.SSHAgentSocket) {
+				return nil, fmt.Errorf("sshAgentSocket must be an absolute path")
+			}
+			env = append(env, "SSH_AUTH_SOCK="+s.SSHAgentSocket)
+		}
+	}
 	// Kiro keeps sign-in state under KIRO_HOME rather than HOME. Forward only
 	// this explicit opt-in path for trusted-native adapters; isolated runtimes
 	// must not inherit host credentials.

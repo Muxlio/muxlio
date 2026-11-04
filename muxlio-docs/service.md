@@ -92,6 +92,13 @@ The muxlio worker injects `AGENT_CLI_CREDENTIAL_STORE=file` into every
 `muxlio service` or launchd); values from `~/.zshrc` are not inherited. The
 service does not unlock the keychain or change keychain lock settings.
 
+For Git pushes through the command adapter, configure `sshAgentSocket` in
+`config.json` with the absolute path to the SSH-agent socket, alongside
+`commandHostEnabled: true`, then restart the service. The worker uses only
+this configured path; it does not inherit the shell's `SSH_AUTH_SOCK`.
+Leaving `sshAgentSocket` unset disables forwarding. The socket is available
+only to authorized host commands, not isolated tasks or agent adapters.
+
 To isolate provider credentials in a **dedicated** directory instead, log in
 there once and set its absolute path as `agentHome` in config.json before
 starting the service:

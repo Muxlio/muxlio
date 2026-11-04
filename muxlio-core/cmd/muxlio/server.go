@@ -316,6 +316,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		executor.Workspace = config.Workspace
 		executor.AgentHome = config.AgentHome
 		executor.AllowCommandHost = config.CommandHostEnabled
+		executor.SSHAgentSocket = config.SSHAgentSocket
 		if config.AttemptTimeoutSeconds > 0 {
 			executor.Timeout = time.Duration(config.AttemptTimeoutSeconds) * time.Second
 		}

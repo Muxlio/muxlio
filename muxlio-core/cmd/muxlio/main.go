@@ -597,6 +597,7 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 		// Explicit opt-in is available only to a local-owner CLI invocation.
 		// Service and remote workers stay default-deny.
 		script.AllowCommandHost = localCommandHostEnabled(dataDir)
+		script.SSHAgentSocket = localCommandSettings(dataDir).SSHAgentSocket
 		exec = script
 	} else {
 		fakeExec, err := loadFakeExecutor(fakeConfigPath)
@@ -667,20 +668,19 @@ func localCommandHostEnabled(dataDir string) bool {
 	if value, ok := os.LookupEnv("MUXLIO_COMMAND_HOST_ENABLED"); ok && strings.TrimSpace(value) != "" {
 		return strings.EqualFold(strings.TrimSpace(value), "true")
 	}
-	if dataDir == "" {
-		dataDir = defaultRuntime()
-	}
-	raw, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
+	return localCommandSettings(dataDir).CommandHostEnabled
+}
+
+func localCommandSettings(dataDir string) serviceConfig {
+	raw, err := os.ReadFile(authConfigPath(dataDir))
 	if err != nil {
-		return false
+		return serviceConfig{}
 	}
-	var cfg struct {
-		Enabled bool `json:"commandHostEnabled"`
-	}
+	var cfg serviceConfig
 	if json.Unmarshal(raw, &cfg) != nil {
-		return false
+		return serviceConfig{}
 	}
-	return cfg.Enabled
+	return cfg
 }
 
 func mustEvents(store state.Store, runID string) []state.Event {

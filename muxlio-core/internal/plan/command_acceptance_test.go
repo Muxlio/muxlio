@@ -14,6 +14,7 @@ import (
 // Compile the SDK condition and exercise it with real subprocess results,
 // including capture of passed=false into the fix branch and the final gate.
 func TestCommandPassedRepeatUntilEndToEnd(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/test/ambient-agent.sock")
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable")
 	}
@@ -31,7 +32,7 @@ const command = (args, extra = {}) => task({
   executor: 'command',
   params: { program: process.execPath, args, cwd: '.', onNonZero: 'return', ...extra },
 });
-const verify = command(['-e', "console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
+const verify = command(['-e', "if(process.env.SSH_AUTH_SOCK!=='/test/worker-agent.sock')process.exit(2);console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
 const fix = command(['-e', "if(process.argv[2]!=='false')process.exit(2);if(process.argv[1]==='true')require('fs').writeFileSync('ready','')", '', ''],
   { onNonZero: 'fail', argTemplates: [null, null, '{{repair}}', '{{passed}}'] });
 const finish = command(['-e', "require('fs').writeFileSync('finished','')"]);
@@ -91,6 +92,7 @@ console.log(JSON.stringify(compiled.plan));`)
 			executor := workers.NewScriptExecutor(adapterDir, filepath.Join(t.TempDir(), "work"))
 			executor.Workspace = workspace
 			executor.AllowCommandHost = true
+			executor.SSHAgentSocket = "/test/worker-agent.sock"
 			engine := plan.NewEngine(&p, executor)
 			input, _ := json.Marshal(map[string]bool{"repair": tc.repair})
 			id, err := engine.CreateRun(input)
