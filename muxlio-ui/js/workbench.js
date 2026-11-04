@@ -24,13 +24,28 @@ function sumRunTokenUsage(attempts){
 // fmtTokens formats a token count with a K suffix for readability.
 function fmtTokens(n){if(n>=1000)return `${(n/1000).toFixed(1)}K`;return String(n)}
 
-function sumExecutionTime(attempts){if(!attempts?.length)return null;let total=0,known=false;for(const a of attempts){if(a.executionDurationMs==null){if(a.state!=='running')return null;continue;}known=true;total+=a.executionDurationMs}return known?total:null}
+// Prefer worker measurements; older attempts retain coordinator timestamps.
+// Sum attempt durations individually so parallel work and retries are included.
+function sumExecutionTime(attempts){
+  if(!attempts?.length)return null;
+  let total=0,known=false;
+  for(const a of attempts){
+    if(a.state==='queued')continue;
+    let ms=a.executionDurationMs;
+    if(typeof ms!=='number'||!Number.isFinite(ms)||ms<0){
+      if(a.state==='running')continue;
+      const start=Date.parse(a.startedAt),finish=Date.parse(a.finishedAt);
+      if(!Number.isFinite(start)||!Number.isFinite(finish)||start<=0||finish<start)return null;
+      ms=finish-start;
+    }
+    known=true;total+=ms;
+  }
+  return known?total:null;
+}
 function formatElapsed(start,end){if(!start||!end)return '—';const ms=Math.max(0,new Date(end)-new Date(start));if(ms<1000)return `${ms} ms`;if(ms<60000)return `${(ms/1000).toFixed(1)} s`;return `${Math.floor(ms/60000)}m ${Math.floor(ms%60000/1000)}s`}
 
 function buildWbStats(r,acts){
   const total=acts.length,done=acts.filter(a=>a.state==='succeeded').length;
-  const failed=acts.filter(a=>a.state==='failed').length;
-  const running=acts.filter(a=>a.state==='running').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
   const usage=sumRunTokenUsage(attempts);
   const executionTime=sumExecutionTime(attempts);
@@ -38,20 +53,19 @@ function buildWbStats(r,acts){
   const tokIn =attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—';
   const tokOut=attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—';
   const tokCached=attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—';
-  const tokenBlock=`<div class="stat"><div class="stat-token-rows" aria-label="Token usage">`+
-    `<div class="stat-token-row"><span class="stat-token-label">In</span><span class="stat-token-val">${esc(tokIn)}</span></div>`+
-    `<div class="stat-token-row"><span class="stat-token-label">Out</span><span class="stat-token-val">${esc(tokOut)}</span></div>`+
-    `<div class="stat-token-row"><span class="stat-token-label">Cached</span><span class="stat-token-val">${esc(tokCached)}</span></div>`+
-    `</div></div>`;
+  const tokenStats=[
+    {val:tokIn,label:'Input tokens'},
+    {val:tokOut,label:'Output tokens'},
+    {val:tokCached,label:'Cached tokens'},
+  ];
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
-    {val:failed>0?String(failed):'—',label:'Failed',cls:failed?'red':''},
-    {val:running>0?String(running):'—',label:'Running',cls:running?'amber':''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
     {val:formatElapsed(r.createdAt,elapsedEnd),label:'Elapsed time',cls:''},
-    {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:''},
+    {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:'',title:'Sum across execution attempts, including retries and parallel tasks. Uses worker durations when recorded; older attempts use coordinator start and finish times, which can include dispatch overhead.'},
   ];
-  return stats.map(s=>`<div class="stat"><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('')+tokenBlock;
+  return stats.map(s=>`<div class="stat"${s.title?` title="${esc(s.title)}"`:''}><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('')+
+    tokenStats.map(s=>`<div class="stat"><div class="stat-val">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
 }
 
 function graphMarkup(acts,scopes){
@@ -238,6 +252,7 @@ function renderWorkbench(r,g,events){
   // re-attach inspector click
   $('#runDetail').onclick=null;
   $('#nodeInspector').onclick=inspectorAction;
+  $('#runOutputInspector').onclick=inspectorAction;
 
   if(selectedActivation)renderInspector();
 }

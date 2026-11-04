@@ -363,12 +363,7 @@
       <div>
         <div class="eyebrow">Insights</div>
         <h1>Analytics</h1>
-        <p>Cross-run operational insights: run volume, outcomes, and provider-reported token usage by agent.</p>
       </div>
-      <button class="btn" id="refreshAnalytics">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
     </div>
     <div id="analyticsContent"></div>
   </section>
@@ -409,6 +404,12 @@
         <button class="btn ghost" type="button" id="cancelRunModalConfirm" style="color:var(--red)">Cancel run</button>
       </div>
     </div>
+  </div>
+</div>
+<div id="outputModal" class="modal" hidden>
+  <div class="modal-card output-modal-card" role="dialog" aria-modal="true" aria-labelledby="outputModalTitle">
+    <div class="modal-head"><div><div class="modal-kicker">Task output</div><div class="modal-title" id="outputModalTitle"></div></div><button class="btn ghost" id="closeOutputModal" aria-label="Close output">Close</button></div>
+    <div class="modal-body" id="outputModalBody"></div>
   </div>
 </div>
 

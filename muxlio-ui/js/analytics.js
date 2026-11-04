@@ -112,19 +112,29 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
         stats.running++;
         continue;
       }
+      if(a.state==='queued')continue;
       hasCompletedAttempt = true;
+      let taskDuration=null;
       // Keep worker measurements and coordinator elapsed samples separate.
       if (analyticsNumber(a.executionDurationMs) != null) {
         stats.durationSumMs += a.executionDurationMs;
         stats.durationSamples++;
+        taskDuration=a.executionDurationMs;
       } else {
         const start = Date.parse(a.startedAt), finish = Date.parse(a.finishedAt);
-        if (Number.isFinite(start) && Number.isFinite(finish) && finish >= start) {
+        if (Number.isFinite(start) && Number.isFinite(finish) && start > 0 && finish >= start) {
           stats.elapsedSumMs += finish - start;
           stats.elapsedSamples++;
+          taskDuration=finish-start;
         } else {
           stats.missingTiming++;
         }
+      }
+      if(taskDuration!=null){
+        stats.taskTimeTotal=(stats.taskTimeTotal||0)+taskDuration;
+        stats.taskTimeCount=(stats.taskTimeCount||0)+1;
+        stats.taskTimeMin=Math.min(stats.taskTimeMin??Infinity,taskDuration);
+        stats.taskTimeMax=Math.max(stats.taskTimeMax??0,taskDuration);
       }
 
       // ── token usage ───────────────────────────
@@ -191,6 +201,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
 
   return {
     runs,
+    attemptsByRun,
     attemptErrors,
     stateCounts,
     buckets,
@@ -316,209 +327,52 @@ function fmtDuration(ms) {
 
 // Render the full analytics page from the model.
 function renderAnalytics(model) {
-  const { runs, stateCounts, buckets, tokenBuckets, executorStats, executorUsage, runsWithNoAttempts, runsWithUnavailableUsage, totals } = model;
-
-  const totalRuns = runs.length;
-  const terminal = (stateCounts.succeeded || 0) + (stateCounts.failed || 0) + (stateCounts.cancelled || 0);
-  const successRate = terminal > 0
-    ? `${Math.round((stateCounts.succeeded / terminal) * 100)}%`
-    : '—';
-
-  // ── header summary row ─────────────────────────
-  const summaryHtml = `<div class="summary-grid" style="margin-bottom:26px">
-    <div class="summary"><div class="summary-label">Total runs</div><div class="summary-value">${esc(String(totalRuns))}</div></div>
-    <div class="summary"><div class="summary-label">Succeeded</div><div class="summary-value green">${esc(String(stateCounts.succeeded || 0))}</div></div>
-    <div class="summary"><div class="summary-label">Failed</div><div class="summary-value${(stateCounts.failed || 0) > 0 ? ' red' : ''}">${esc(String(stateCounts.failed || 0))}</div></div>
-    <div class="summary"><div class="summary-label">Cancelled</div><div class="summary-value">${esc(String(stateCounts.cancelled || 0))}</div></div>
-    <div class="summary"><div class="summary-label">Active now</div><div class="summary-value${(stateCounts.running || 0) > 0 ? ' amber' : ''}">${esc(String((stateCounts.running || 0) + (stateCounts.waiting || 0) + (stateCounts.paused || 0) + (stateCounts.created || 0)))}</div></div>
-    <div class="summary"><div class="summary-label">Success rate</div><div class="summary-value${successRate !== '—' && stateCounts.failed > 0 ? '' : ' green'}">${esc(successRate)}</div></div>
-  </div>`;
-
-  // ── run volume chart ───────────────────────────
-  const volumeSection = `<div class="section-head"><div><h2>Run volume · last 30 days</h2><p>Daily run counts in UTC, coloured by outcome.</p></div></div>
-  <div class="analytics-panel">${sparklineMarkup(buckets)}</div>`;
-
-  // ── state breakdown bar chart ──────────────────
-  const stateItems = [
-    { label: 'Succeeded', value: stateCounts.succeeded || 0, colorVar: '--green' },
-    { label: 'Failed',    value: stateCounts.failed    || 0, colorVar: '--red'   },
-    { label: 'Cancelled', value: stateCounts.cancelled || 0, colorVar: '--muted' },
-    { label: 'Created / queued', value: stateCounts.created || 0, colorVar: '--amber' },
-    { label: 'Running',   value: stateCounts.running   || 0, colorVar: '--amber' },
-    { label: 'Waiting',   value: stateCounts.waiting   || 0, colorVar: '--amber' },
-    { label: 'Paused',    value: stateCounts.paused    || 0, colorVar: '--amber' },
-  ].filter(it => it.value > 0);
-  const maxStateCount = Math.max(...stateItems.map(it => it.value), 1);
-  const stateBreakdown = stateItems.length
-    ? `<div class="analytics-bar-chart" role="list">${stateItems.map(it => {
-        const pct = (it.value / maxStateCount) * 100;
-        return `<div class="abc-row" role="listitem">
-          <div class="abc-label">${esc(it.label)}</div>
-          <div class="abc-track">
-            <div class="abc-bar" style="width:${pct.toFixed(1)}%;background:var(${esc(it.colorVar)})"></div>
-          </div>
-          <div class="abc-val">${esc(String(it.value))}</div>
-        </div>`;
-      }).join('')}</div>`
-    : '<p style="color:var(--muted);font-size:12px">No runs recorded yet.</p>';
-
-  const outcomesSection = `<div class="section-head" style="margin-top:28px"><div><h2>Outcomes</h2><p>All-time run counts by state.</p></div></div>
-  <div class="analytics-panel">${stateBreakdown}</div>`;
-
-  // ── executor activity: attempts and timing ─────
-  let executorActivitySection = '';
-  const execStatsRows = [...(executorStats || new Map()).entries()]
-    .sort((a, b) => b[1].attempts - a[1].attempts);
-
-  if (execStatsRows.length > 0) {
-    const execRows = execStatsRows.map(([exec, s]) => {
-      const runCount = s.runIds.size;
-      const runLinks = [...s.runIds].slice(0, 5).map(rid => {
-        const r = runs.find(x => x.id === rid);
-        const label = r ? (r.workflowName || rid.slice(0, 12)) : rid.slice(0, 12);
-        return `<a href="#run/${encodeURIComponent(rid)}" class="analytics-run-link" title="${esc(rid)}">${esc(label)}</a>`;
-      }).join(', ');
-      const moreRuns = runCount > 5 ? ` <span style="color:var(--muted)">+${runCount - 5} more</span>` : '';
-
-      const workerAverage = s.durationSamples ? fmtDuration(Math.round(s.durationSumMs / s.durationSamples)) : 'Unavailable';
-      const elapsedAverage = s.elapsedSamples ? fmtDuration(Math.round(s.elapsedSumMs / s.elapsedSamples)) : 'Unavailable';
-      const timingNote = `${s.missingTiming} missing timing; ${s.running} in progress`;
-
-      return `<tr>
-        <td class="primary-cell"><strong>${esc(exec)}</strong></td>
-        <td class="num">${esc(String(s.attempts))}</td>
-        <td class="num${s.succeeded > 0 ? ' green' : ''}">${esc(String(s.succeeded))}</td>
-        <td class="num${s.failed > 0 ? ' red' : ''}">${esc(String(s.failed))}</td>
-        <td class="num">${esc(workerAverage)} (n=${s.durationSamples})</td>
-        <td class="num">${esc(elapsedAverage)} (n=${s.elapsedSamples})</td>
-        <td style="font-size:11px;color:var(--muted)">${esc(timingNote)}; ${s.usageSamples} usage records; ${s.missingUsage} missing/incomplete usage</td>
-        <td style="font-size:11px">${runLinks}${moreRuns}</td>
-      </tr>`;
-    }).join('');
-
-    executorActivitySection = `<div class="section-head" style="margin-top:28px"><div><h2>Executor activity</h2><p>Attempt counts and average worker execution time per executor. Executors appear dynamically as their attempts are recorded.</p></div></div>
-    <div class="analytics-panel">
-      <div class="tablebox">
-        <table>
-          <thead><tr><th>Executor</th><th>Attempts</th><th>Succeeded</th><th>Failed</th><th>Avg worker execution</th><th>Avg elapsed fallback</th><th>Missing samples</th><th>Contributing runs</th></tr></thead>
-          <tbody>${execRows}</tbody>
-        </table>
-      </div>
-      <p style="font-size:11px;color:var(--muted);margin-top:6px">Worker execution excludes coordinator queue and dispatch overhead. Elapsed fallback includes those delays and uses only completed attempts without worker measurements. The averages use separate samples.</p>
-    </div>`;
-  } else if (runs.length > 0) {
-    executorActivitySection = `<div class="section-head" style="margin-top:28px"><div><h2>Executor activity</h2><p>Attempt counts and average worker execution time per executor.</p></div></div>
-    <div class="analytics-panel">
-      <p style="color:var(--muted);font-size:13px">${
-        runsWithNoAttempts === runs.length
-          ? 'No execution attempt records found. Executor activity will appear once runs reach an executor.'
-          : 'Execution attempt data is unavailable.'
-      }</p>
-    </div>`;
+  const {runs,buckets,tokenBuckets,executorStats,executorUsage}=model;
+  const container=document.getElementById('analyticsContent');
+  if(!container)return;
+  const workflows=new Map();
+  for(const run of runs){
+    if(!['succeeded','failed','cancelled'].includes(run.state))continue;
+    const ms=Date.parse(run.updatedAt)-Date.parse(run.createdAt);
+    if(!Number.isFinite(ms)||ms<0)continue;
+    const name=run.workflowName||'Unnamed workflow';
+    if(!workflows.has(name))workflows.set(name,[]);
+    workflows.get(name).push(ms);
   }
-
-  // ── token usage by executor ────────────────────
-  const inputOutputTotal = usage => usage.input == null || usage.output == null ? null : usage.input + usage.output;
-  const executorRows = [...executorUsage.entries()]
-    .sort((a, b) => (inputOutputTotal(b[1]) ?? -1) - (inputOutputTotal(a[1]) ?? -1));
-
-  let tokenByExecutorSection = '';
-  if (executorRows.length > 0) {
-    const maxTokens = Math.max(...executorRows.map(([, e]) => inputOutputTotal(e) ?? 0), 1);
-    const rows = executorRows.map(([exec, e]) => {
-      const tokenTotal = inputOutputTotal(e);
-      const pct = tokenTotal == null ? null : (tokenTotal / maxTokens) * 100;
-      const runCount = e.runIds.size;
-      // Build a compact list of up to 5 run links with the executor.
-      const runLinks = [...e.runIds].slice(0, 5).map(rid => {
-        const r = runs.find(x => x.id === rid);
-        const label = r ? (r.workflowName || rid.slice(0, 12)) : rid.slice(0, 12);
-        return `<a href="#run/${encodeURIComponent(rid)}" class="analytics-run-link" title="${esc(rid)}">${esc(label)}</a>`;
-      }).join(', ');
-      const moreRuns = runCount > 5 ? ` <span style="color:var(--muted)">+${runCount - 5} more</span>` : '';
-
-      return `<tr>
-        <td class="primary-cell"><strong>${esc(exec)}</strong></td>
-        <td class="num">${esc(fmtTok(e.input))}</td>
-        <td class="num">${esc(fmtTok(e.output))}</td>
-        <td class="num">${esc(fmtTok(e.cached))}</td>
-        <td class="num">${esc(fmtTok(tokenTotal))}</td>
-        <td>${pct == null ? 'Unavailable' : `<div class="abc-track" style="width:120px;display:inline-flex"><div class="abc-bar" style="width:${pct.toFixed(1)}%;background:var(--teal)"></div></div>`}</td>
-        <td style="font-size:11px">${runLinks}${moreRuns}</td>
-      </tr>`;
-    }).join('');
-
-    const incompleteNote = (runsWithUnavailableUsage > 0 || runsWithNoAttempts > 0)
-      ? `<p style="font-size:11px;color:var(--muted);margin-top:8px">` +
-        (runsWithNoAttempts > 0 ? `${runsWithNoAttempts} run${runsWithNoAttempts !== 1 ? 's' : ''} have no attempt records and are excluded. ` : '') +
-        (runsWithUnavailableUsage > 0 ? `${runsWithUnavailableUsage} run${runsWithUnavailableUsage !== 1 ? 's' : ''} have incomplete token data (provider did not report usage).` : '') +
-        `</p>`
-      : '';
-
-    const totalRow = totals
-      ? `<tfoot><tr style="border-top:1px solid var(--border);font-weight:650">
-          <td>Total</td>
-          <td class="num">${esc(fmtTok(totals.input))}</td>
-          <td class="num">${esc(fmtTok(totals.output))}</td>
-          <td class="num">${esc(fmtTok(totals.cached))}</td>
-          <td class="num">${esc(fmtTok(totals.input == null || totals.output == null ? null : totals.input + totals.output))}</td>
-          <td colspan="2"></td>
-        </tr></tfoot>`
-      : '';
-
-    tokenByExecutorSection = `<div class="section-head" style="margin-top:28px"><div><h2>Token usage by agent</h2><p>Provider-reported tokens aggregated across all runs, grouped by executor.</p></div></div>
-    <div class="analytics-panel">
-      <div class="tablebox">
-        <table>
-          <thead><tr><th>Agent / executor</th><th>Input</th><th>Output</th><th>Cached</th><th>Input + output</th><th>Relative volume</th><th>Contributing runs</th></tr></thead>
-          <tbody>${rows}</tbody>
-          ${totalRow}
-        </table>
-      </div>
-      ${incompleteNote}
-    </div>`;
-  } else {
-    // All runs either have no attempts or no reported usage.
-    const reason = model.attemptErrors?.size === totalRuns && totalRuns > 0
-      ? 'Token usage is unavailable because execution attempts could not be loaded.'
-      : totalRuns === 0
-      ? 'No runs recorded yet. Token usage will appear when executors report it for a run.'
-      : runsWithNoAttempts === totalRuns
-      ? 'No execution attempt records found. Some runs may be older or may not have reached an executor yet.'
-      : 'No provider-reported token usage found. Token data is populated when executors report usage after each attempt.';
-    tokenByExecutorSection = `<div class="section-head" style="margin-top:28px"><div><h2>Token usage by agent</h2><p>Provider-reported tokens aggregated across all runs, grouped by executor.</p></div></div>
-    <div class="analytics-panel">
-      <p style="color:var(--muted);font-size:13px">${esc(reason)}</p>
-      ${(runsWithNoAttempts || runsWithUnavailableUsage) ? `<p style="color:var(--muted);font-size:11px">${runsWithNoAttempts ? `${runsWithNoAttempts} run${runsWithNoAttempts !== 1 ? 's' : ''} have no attempt records (often older runs). ` : ''}${runsWithUnavailableUsage ? `${runsWithUnavailableUsage} run${runsWithUnavailableUsage !== 1 ? 's' : ''} have attempts but no provider-reported token usage.` : ''}</p>` : ''}
-    </div>`;
-  }
-
-  // ── token usage over time ──────────────────────
-  const tokenTimeHtml = tokenSparklineMarkup(tokenBuckets);
-  const tokenOverTimeSection = tokenTimeHtml
-    ? `<div class="section-head" style="margin-top:28px"><div><h2>Token usage over time · last 30 days</h2><p>Reported daily input/output/cached token totals in UTC. Missing records are excluded; totals may be partial.</p></div></div>
-      <div class="analytics-panel">
-        ${tokenTimeHtml}
-        <div class="spark-legend" style="margin-top:8px">
-          <span class="spark-legend-item"><span class="spark-swatch tok-in"></span>Input</span>
-          <span class="spark-legend-item"><span class="spark-swatch tok-out"></span>Output</span>
-          <span class="spark-legend-item"><span class="spark-swatch tok-cached"></span>Cached</span>
-        </div>
-      </div>`
-    : '';
-
-  // ── run volume sparkline legend ─────────────────
-  const sparkLegend = `<div class="spark-legend" style="margin-top:6px">
-    <span class="spark-legend-item"><span class="spark-swatch succeeded"></span>Succeeded</span>
-    <span class="spark-legend-item"><span class="spark-swatch failed"></span>Failed</span>
-    <span class="spark-legend-item"><span class="spark-swatch pending"></span>In progress / other</span>
-  </div>`;
-
-  const container = document.getElementById('analyticsContent');
-  if (!container) return;
-  const failures = model.attemptErrors || new Map();
-  const warning = failures.size ? `<div class="notice error" role="alert">Attempt data could not be loaded for ${failures.size} run(s). Attempt, timing and token statistics are partial; run counts include all runs.<ul>${[...failures].map(([id, error]) => `<li><a href="#run/${encodeURIComponent(id)}">${esc(id)}</a>: ${esc(error)}</li>`).join('')}</ul></div>` : '';
-  container.innerHTML = warning + summaryHtml + volumeSection + sparkLegend + outcomesSection + executorActivitySection + tokenByExecutorSection + tokenOverTimeSection;
+  const workflowTime=[...workflows].map(([label,values])=>{
+    values.sort((a,b)=>a-b);
+    const mid=Math.floor(values.length/2);
+    return {label,value:values.length%2?values[mid]:(values[mid-1]+values[mid])/2};
+  }).sort((a,b)=>b.value-a.value).slice(0,10);
+  const agentTiming=[...(executorStats||[])].map(([label,s])=>({label,
+    low:s.taskTimeMin??null,high:s.taskTimeMax??null,
+    average:s.taskTimeCount?s.taskTimeTotal/s.taskTimeCount:null,
+    count:s.taskTimeCount||0,fallback:s.elapsedSamples||0,
+  })).sort((a,b)=>(b.average??-1)-(a.average??-1));
+  const failureRates=[...(executorStats||[])].map(([label,s])=>({label,value:s.failed+s.succeeded?100*s.failed/(s.failed+s.succeeded):null}))
+    .filter(x=>x.value!=null).sort((a,b)=>b.value-a.value).slice(0,10);
+  const empty='<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
+  const bars=(items,opts)=>items.length?barChartMarkup(items,opts):empty;
+  const card=(title,chart,wide=false)=>`<section class="analytics-chart-card${wide?' analytics-chart-wide':''}"><h2>${title}</h2>${chart}</section>`;
+  const legend=(items)=>`<div class="spark-legend">${items.map(([label,cls])=>`<span class="spark-legend-item"><span class="spark-swatch ${cls}"></span>${label}</span>`).join('')}</div>`;
+  const rawMax=Math.max(1,...agentTiming.map(a=>a.high??0));
+  const magnitude=10**Math.floor(Math.log10(rawMax));
+  const maxTiming=([1,2,5,10].find(n=>n*magnitude>=rawMax)||10)*magnitude;
+  const timingChart=agentTiming.length?`<div class="adapter-timing-chart">${agentTiming.map(agent=>{
+    const tooltip=`${agent.count} completed attempts; ${agent.fallback} use timestamp elapsed time, including queue and dispatch delays`;
+    return `<div class="adapter-timing-group"><div class="adapter-timing-identity"><strong>${esc(agent.label)}</strong><span title="Completed attempts">n=${agent.count}</span></div><div class="adapter-timing-bars" title="${esc(tooltip)}">${[['low','Lowest'],['average','Average'],['high','Highest']].map(([field,label])=>{
+      const value=agent[field];
+      return `<div class="adapter-timing-series timing-${field}"><span class="adapter-series-label">${label}</span><div class="adapter-series-track"><span class="adapter-series-bar${value===0?' timing-zero':''}" style="width:${value==null?0:100*value/maxTiming}%"></span></div><span class="adapter-series-value">${value==null?'—':esc(fmtDuration(value))}</span></div>`;
+    }).join('')}</div></div>`;
+  }).join('')}<div class="adapter-timing-axis"><span></span><div><span>0</span><span>${esc(fmtDuration(maxTiming/2))}</span><span>${esc(fmtDuration(maxTiming))}</span></div></div></div>`:empty;
+  const warning=model.attemptErrors?.size?`<div class="analytics-data-status" role="status" title="Some attempt records could not be loaded">Partial data · ${model.attemptErrors.size} runs</div>`:'';
+  container.innerHTML=warning+`<div class="analytics-chart-grid">`+
+    card('Task time by adapter',timingChart,true)+
+    card('Run outcomes · 30 days',sparklineMarkup(buckets)+legend([['Succeeded','succeeded'],['Failed','failed'],['Other','pending']]),true)+
+    card('Median workflow duration',bars(workflowTime,{fmt:fmtDuration}))+
+    card('Agent failure rate',bars(failureRates,{fmt:value=>`${Math.round(value)}%`,maxValue:100,colorVar:'--red'}))+
+    card('Daily tokens · 30 days',tokenSparklineMarkup(tokenBuckets)+legend([['Input','tok-input'],['Output','tok-output'],['Cached','tok-cached']]),true)+
+    '</div>';
 }
 
 let analyticsRequest = 0;

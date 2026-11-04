@@ -256,7 +256,7 @@ function connectionError(err){lastRefresh=lastRefresh||null;}
 
 // ── auto-refresh ──────────────────────────────────────────────────────────
 function stopRefresh(){clearTimeout(refreshTimer);refreshTimer=null;}
-function scheduleRefresh(){stopRefresh();if(!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
+function scheduleRefresh(){stopRefresh();if(location.hash!=='#analytics'&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
 async function refreshWorkspace(){
   if(refreshBusy){scheduleRefresh();return;}
   refreshBusy=true;
@@ -317,7 +317,7 @@ window.addEventListener('hashchange',navigate);
 })();
 
 // ── wire manual refresh buttons ───────────────────────────────────────────
-['refreshOverview','refreshRuns','refreshLive','refreshWorkers','refreshAnalytics'].forEach(id=>{
+['refreshOverview','refreshRuns','refreshLive','refreshWorkers'].forEach(id=>{
   const el=document.getElementById(id);
   if(el)el.onclick=refreshWorkspace;
 });
@@ -554,12 +554,7 @@ refreshWorkspace=async function(){
     finally{scheduleRefresh();}
     return;
   }
-  if(location.hash==='#analytics'){
-    const epoch=refreshEpoch;
-    try{await loadAnalytics();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
-    finally{scheduleRefresh();}
-    return;
-  }
+  if(location.hash==='#analytics'){stopRefresh();return;}
   if(location.hash.startsWith('#transcript/')){
     const epoch=refreshEpoch;
     const parts=location.hash.slice('#transcript/'.length).split('/');

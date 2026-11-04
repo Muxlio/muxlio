@@ -65,6 +65,7 @@ function activationHasTranscript(act){
   return act.state==='running'||hasCached||['succeeded','failed','cancelled'].includes(act.state);
 }
 function transcriptSectionMarkup(act,runId){
+  if(act.state!=='running')return '';
   if(!activationHasTranscript(act))return '';
   const cached=activationTranscripts.get(act.id);
   const transcriptUrl=`#transcript/${encodeURIComponent(runId||current||'')}/${encodeURIComponent(act.id)}`;
@@ -97,16 +98,16 @@ function buildAttemptUsageMarkup(act){
   if(!actAttempts.length)return '';
   const fmtTokens=n=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n||0);
   const rows=actAttempts.map((a,i)=>{
-    const label=`Attempt ${i+1}`;
+    const label=String(i+1);
     if(a.usage==null){
-      return `<tr><td>${esc(label)}</td><td colspan="3" style="color:var(--muted)">Unavailable — no token counts recorded</td></tr>`;
+      return `<tr><td>${esc(label)}</td><td colspan="3" class="num" style="color:var(--muted)">—</td></tr>`;
     }
     return `<tr><td>${esc(label)}</td><td class="num">${esc(fmtTokens(a.usage.input))}</td><td class="num">${esc(fmtTokens(a.usage.output))}</td><td class="num">${esc(fmtTokens(a.usage.cached))}</td></tr>`;
   });
   return `<div class="insp-section">
     <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Token usage</div>
     <div class="tablebox" style="font-size:11px"><table>
-      <thead><tr><th></th><th>In</th><th>Out</th><th>Cached</th></tr></thead>
+      <thead><tr><th>#</th><th>In</th><th>Out</th><th>Cached</th></tr></thead>
       <tbody>${rows.join('')}</tbody>
     </table></div>
   </div>`;
@@ -143,7 +144,7 @@ function renderInspectorWb(act){
         <dt>Inputs</dt><dd>${esc(inRef)}</dd>
         <dt>Output</dt><dd>${esc(outRef)}</dd>
       </dl>
-      ${hasTranscript?`<div style="margin-top:10px"><a href="${transcriptUrl}" class="insp-transcript-link">View transcript ↗</a></div>`:''}
+      ${hasTranscript?`<div class="insp-detail-actions"><a href="${transcriptUrl}" class="btn ghost"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h7l3 3v11H5zM12 3v4h3M8 10h4M8 13h4"/></svg>View transcript<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg></a></div>`:''}
     </div>
     ${evidences.length?`
     <div class="insp-section">
@@ -153,7 +154,7 @@ function renderInspectorWb(act){
     </div>`:''}
     ${act.outputs?`
     <div class="insp-section">
-      <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Outputs</div>
+      <h3 class="insp-output-title">Outputs</h3>
       ${outputMarkup(act.outputs)}
     </div>`:''}
     ${act.error?`<div class="insp-section"><div class="insp-error">${esc(act.error)}</div></div>`:''}
@@ -173,20 +174,59 @@ function inputMarkup(value){if(value===undefined||value===null)return `<div clas
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
 function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
 function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT}}
-function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `<div class="data-tools"><button class="btn ghost" data-copy="run-output">Copy output</button></div>${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data,preview=safePreview(data,mime);let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">Artifact</span></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<div class="data-tools"><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div>${preview?`<details><summary class="data-type">${preview.truncated?'Preview (4 KB)':'Preview'}</summary>${/^text\/markdown(?:;|$)/i.test(mime)?`<div class="preview markdown-body">${renderMarkdown(preview.text)}</div>`:`<pre class="preview">${esc(preview.text)}</pre>`}</details>`:`<div class="data-note" style="color:var(--muted);font-size:10px">Preview unavailable</div>`}</section>`}).join('')}`}
+function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>${esc(path||name)}</strong><div class="artifact-subtitle">${esc(name)}</div></div></div></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="${esc(name)}">View</button><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div></section>`}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
+async function loadArtifactBlob(ref){
+  const mime=ref.mime||ref.mimeType||'application/octet-stream';
+  if(ref.data!=null)return new Blob([typeof ref.data==='string'?ref.data:JSON.stringify(ref.data,null,2)],{type:mime});
+  if(!ref.digest)throw Error('No artifact content or digest recorded.');
+  const response=await uiFetch(`/v1/artifacts/${encodeURIComponent(ref.digest)}`);
+  if(!response.ok)throw Error(`Unable to load artifact (HTTP ${response.status}).`);
+  return new Blob([await response.arrayBuffer()],{type:mime});
+}
+let outputModalOpener,outputModalRequest=0;
+function closeArtifactOutput(){outputModalRequest++;$('#outputModal').hidden=true;outputModalOpener?.focus();}
+async function showArtifactOutput(ref,name,value){
+  const modal=$('#outputModal'),body=$('#outputModalBody'),request=++outputModalRequest;
+  outputModalOpener=document.activeElement;
+  $('#outputModalTitle').textContent=ref?.path||name||'Output';
+  body.textContent='Loading output…';modal.hidden=false;$('#closeOutputModal').focus();
+  try{
+    const blob=ref?await loadArtifactBlob(ref):new Blob([typeof value==='string'?value:JSON.stringify(value,null,2)],{type:'text/plain'});
+    const text=await blob.text();
+    if(request!==outputModalRequest)return;
+    const markdown=/^text\/markdown(?:;|$)/i.test(ref?.mime||ref?.mimeType||'')||/\.md$/i.test(ref?.path||'');
+    body.innerHTML=markdown?`<article class="markdown-body">${renderMarkdown(text)}</article>`:`<pre class="output-raw">${esc(text)}</pre>`;
+  }catch(err){if(request===outputModalRequest)body.innerHTML=`<div class="notice error" role="alert">${esc(err.message)}</div>`;}
+}
+document.getElementById('closeOutputModal')?.addEventListener('click',closeArtifactOutput);
+document.getElementById('outputModal')?.addEventListener('click',e=>{if(e.target.id==='outputModal')closeArtifactOutput();});
+document.addEventListener('keydown',e=>{
+  const modal=$('#outputModal');if(!modal||modal.hidden)return;
+  if(e.key==='Escape'){e.preventDefault();closeArtifactOutput();}
+  if(e.key==='Tab'){
+    const items=[...modal.querySelectorAll('button,a[href],[tabindex="0"]')];
+    const first=items[0],last=items[items.length-1];
+    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}
+  }
+});
 async function inspectorAction(e){
   const copyLogs=e.target.closest('[data-copylogs]');
   if(copyLogs){const out=$('#inspectorContent'),text=out&&out._copyLogsText;if(!text)return;try{await navigator.clipboard.writeText(text);message('Logs copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
+  const view=e.target.closest('[data-view-artifact]');
   const copy=e.target.closest('[data-copy]'),download=e.target.closest('[data-download]');
-  if(!copy&&!download)return;
-  const kind=(copy||download).dataset.copy||(copy||download).dataset.download;
+  if(!copy&&!download&&!view)return;
+  const kind=view?'run-output':(copy||download).dataset.copy||(copy||download).dataset.download;
   let value=kind==='run-input'?currentRunInput:e.target.closest('#inspectorContent')||e.target.closest('#inspBody')?activationData.find(a=>a.id===selectedActivation)?.outputs:currentRunOutput;
-  const name=(copy||download).dataset.name;
+  const name=view?view.dataset.viewArtifact:(copy||download).dataset.name;
   if(name&&value&&typeof value==='object')value=value[name];
-  const ref=artifactData(value),content=ref?(ref.data??ref):value;
+  const ref=artifactData(value);
+  if(view){await showArtifactOutput(ref,name,value);return;}
+  let content=ref?(ref.data??ref):value;
+  if(download&&ref){try{content=await loadArtifactBlob(ref)}catch(err){message('Download failed: '+err.message,true);return;}}
   if(copy&&!download){const text=JSON.stringify(content??null,null,2);try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
-  const blob=new Blob([typeof content==='string'?content:JSON.stringify(content??null,null,2)],{type:ref?.mime||'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  const blob=content instanceof Blob?content:new Blob([typeof content==='string'?content:JSON.stringify(content??null,null,2)],{type:ref?.mime||'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=safeFilename(ref?.path?.split('/').pop()||name||'output.json');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 let currentRunInput,currentRunOutput;
@@ -211,7 +251,7 @@ function renderInspector(){
   if(!out)return;
   $('#inspectorTitle').textContent=`Activation · ${act.nodeId}`;
   $('#inspectorHint').textContent=`${act.state} · ${act.id}`;
-  if(inspectorTab==='outputs'){out.innerHTML=`<dl class="kv"><dt>Scope</dt><dd>${esc((act.scopePath||[]).join(' / ')||'root')}</dd><dt>Occurrence</dt><dd>${esc(act.occurrence)}</dd><dt>State</dt><dd>${esc(act.state)}</dd></dl><h3>Outputs</h3>${outputMarkup(act.outputs)}`;return}
+  if(inspectorTab==='outputs'){out.innerHTML=`<dl class="kv"><dt>Scope</dt><dd>${esc((act.scopePath||[]).join(' / ')||'root')}</dd><dt>Occurrence</dt><dd>${esc(act.occurrence)}</dd><dt>State</dt><dd>${esc(act.state)}</dd></dl><h3 class="insp-output-title">Outputs</h3>${outputMarkup(act.outputs)}`;return}
   out.innerHTML='<p class="inspector-placeholder">Loading…</p>';
   const id=selectedActivation,tab=inspectorTab,run=current,request=++inspectorRequest;
   Promise.all([inspectorTab==='logs'?api(`/v1/runs/${encodeURIComponent(current)}/logs?activationId=${encodeURIComponent(id)}`):Promise.resolve(null),inspectorTab==='attempts'?api(`/v1/runs/${encodeURIComponent(current)}/attempts?activationId=${encodeURIComponent(id)}`):Promise.resolve(null)]).then(([l,a])=>{if(request!==inspectorRequest||id!==selectedActivation||tab!==inspectorTab||run!==current||!out.isConnected)return;if(inspectorTab==='logs'){const logs=l.logs||[];const decoded=logs.length?logs.map(x=>{let data=x.data;try{data=new TextDecoder().decode(Uint8Array.from(atob(data),c=>c.charCodeAt(0)))}catch{}return {ts:date(x.timestamp),stream:x.stream,text:data}}).filter(x=>x):[];if(!decoded.length){out.innerHTML='<p class="inspector-placeholder">No logs.</p>';}else{let allText=decoded.map(x=>x.text).join('\n');out.innerHTML='<div class="data-tools"><button class="btn ghost" data-copylogs>Copy logs</button></div>'+decoded.map(x=>`<h3>${esc(x.ts)} · ${esc(x.stream)}</h3><pre>${esc(x.text)}</pre>`).join('');out._copyLogsText=allText}}else{const attempts=a.attempts||[];out.innerHTML=attempts.length?`<div class="tablebox"><table><thead><tr><th>Retry</th><th>Executor</th><th>State</th><th>Started</th><th>Finished</th></tr></thead><tbody>${attempts.map(x=>`<tr><td>${esc(x.retryNumber)}</td><td>${esc(x.executor)}</td><td>${esc(x.state)}</td><td>${esc(date(x.startedAt))}</td><td>${esc(date(x.finishedAt))}</td></tr>`).join('')}</tbody></table></div>`:'<p class="inspector-placeholder">No attempts.</p>'}}).catch(e=>{if(request!==inspectorRequest||id!==selectedActivation||run!==current)return;if(out.isConnected)out.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`})
