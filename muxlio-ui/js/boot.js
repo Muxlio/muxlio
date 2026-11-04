@@ -16,12 +16,6 @@ const sortOrderEl=get('sortOrder');if(sortOrderEl)sortOrderEl.onchange=()=>{runs
 const artifactSearchEl=get('artifactSearch');if(artifactSearchEl)artifactSearchEl.oninput=renderArtifacts;
 const moreEventsWbEl=get('moreEventsWb');if(moreEventsWbEl)moreEventsWbEl.onclick=loadOlder;
 document.querySelectorAll('[data-wb-tab]').forEach(b=>b.onclick=()=>showWbTab(b.dataset.wbTab));
-document.addEventListener('click',async e=>{
-  const btn=e.target.closest('.copy-id');
-  if(!btn)return;
-  const id=btn.dataset.runid;
-  try{await navigator.clipboard.writeText(id);message('Run ID copied.')}catch(err){message('Copy failed: '+err.message,true)}
-});
 // check connection
 async function checkConnection(){
   try{await api('/v1/runs?limit=0');const el=$('#connection');if(el){el.textContent='Connected';el.className='connection-ok'}}

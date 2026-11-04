@@ -361,8 +361,7 @@ td.primary-cell strong{font-size:14px;font-weight:600;color:#f4fbfb}
 td.primary-cell a:hover{color:var(--teal)}
 td.primary-cell small{display:block;margin-top:3px}
 .row-actions{display:flex;gap:6px;align-items:center;white-space:nowrap}
-.copy-id{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);padding:0;border:0;background:none;text-align:left}
-.copy-id:hover{color:var(--teal)}
+.run-id{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
 .state{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;text-transform:capitalize;white-space:nowrap}
 .state:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted2)}
 .state.succeeded:before{background:var(--green)}
