@@ -197,6 +197,8 @@ export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSc
    *  Command tasks include standard process outputs automatically. */
   outputs?: TOutputs;
   /** Retry and effect policy. */
+  timeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }
 
@@ -391,6 +393,8 @@ interface IRNode {
   params?: unknown;
   inputs?: Record<string, Binding>;
   outputs?: Record<string, OutputDecl>;
+  timeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
   // map
   items?: Expr;
@@ -648,6 +652,8 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     params: def.params !== undefined ? def.params : undefined,
     inputs: Object.keys(inputBindings).length > 0 ? inputBindings : undefined,
     outputs: Object.keys(outputs).length > 0 ? outputs : undefined,
+    timeoutSeconds: def.timeoutSeconds,
+    queueTimeoutSeconds: def.queueTimeoutSeconds,
     retry: def.retry,
   };
   if (def.fallbackExecutors?.length) node.fallbackExecutors = def.fallbackExecutors;
@@ -1038,6 +1044,7 @@ type BuildContextFor<TInput extends z.ZodTypeAny | JSONSchema> =
 
 /** Options for declaring a workflow. */
 export interface WorkflowOptions<TInput extends z.ZodTypeAny | JSONSchema = JSONSchema> {
+  deadlineSeconds?: number;
   /** Input schema: a Zod type (converted automatically) or a plain JSON Schema object. */
   input?: TInput;
   /**
@@ -1112,6 +1119,7 @@ function compileWorkflowPlan<TInput extends z.ZodTypeAny | JSONSchema>(
 
   const plan: Plan = {
     irVersion: '1.0',
+    deadlineSeconds: options.deadlineSeconds,
     name,
     root: 'root',
     inputSchema: inputSchema as any,

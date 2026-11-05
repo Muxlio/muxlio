@@ -19,6 +19,9 @@ const WorkerHeartbeatWindow = 90 * time.Second
 
 // dispatchStore is implemented by durable stores that support worker polling.
 type dispatchStore interface {
+	CancelAttemptWork(string) error
+	ExpireExecutingAttempt(string, time.Time) (bool, error)
+	ExpireQueuedAttempt(string, time.Time) (bool, error)
 	RegisterWorker(state.Worker) error
 	ListWorkers(time.Time) ([]state.Worker, error)
 	EnqueueDispatch(state.Dispatch) error
@@ -251,6 +254,11 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 		return nil
 	}
 	if req.State == "cancelled" {
+		// This receipt confirms executor return, separately from revocation intent.
+		// It makes no claim about completion or rollback of external effects.
+		if err := c.store.RecordWorkerDiagnostic(assignment.AttemptID, raw); err != nil {
+			return err
+		}
 		ok, err = c.store.AckWorkerCompletionWithoutResult(assignment, req.State, req.Generation)
 		if err != nil {
 			return err
@@ -346,6 +354,10 @@ func (c *Coordinator) EnqueueDispatch(d state.Dispatch) error {
 	return c.store.EnqueueDispatch(d)
 }
 
+func (c *Coordinator) ExecuteQueued(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+	return c.Execute(req)
+}
+
 func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
 	if c.initErr != nil {
 		return workers.ExecuteResult{}, c.initErr
@@ -356,6 +368,33 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if req.RunID == "" || req.ActivationID == "" || req.AttemptID == "" {
 		return workers.ExecuteResult{}, errors.New("remote execution requires workflow identity")
 	}
+	ctx := req.Context
+	if ctx == nil {
+		ctx = c.Context
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if req.Deadline != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, *req.Deadline)
+		defer cancel()
+	}
+	if err := ctx.Err(); err != nil {
+		return workers.ExecuteResult{}, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		req.Deadline = &deadline
+	}
+	if req.QueueTimeoutSeconds != nil && *req.QueueTimeoutSeconds > 0 {
+		deadline := time.Now().Add(time.Duration(*req.QueueTimeoutSeconds * float64(time.Second)))
+		req.QueueDeadline = &deadline
+	}
+	defer func() {
+		if ctx.Err() != nil && (req.LifetimeContext == nil || req.LifetimeContext.Err() == nil) {
+			_ = c.store.CancelAttemptWork(req.AttemptID)
+		}
+	}()
 	guarded, err := workers.GuardRequest(req)
 	if err != nil {
 		return workers.ExecuteResult{}, err
@@ -416,18 +455,27 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	ctx := req.Context
-	if ctx == nil {
-		ctx = c.Context
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	for {
 		select {
 		case <-ctx.Done():
 			return workers.ExecuteResult{}, ctx.Err()
 		case <-ticker.C:
+			expired, err := c.store.ExpireExecutingAttempt(req.AttemptID, time.Now())
+			if err != nil {
+				return workers.ExecuteResult{}, err
+			}
+			if expired {
+				return workers.ExecuteResult{}, fmt.Errorf("execution timeout; assignment revoked, termination and external effects unconfirmed: %w", context.DeadlineExceeded)
+			}
+			if req.QueueDeadline != nil {
+				expired, err := c.store.ExpireQueuedAttempt(req.AttemptID, time.Now())
+				if err != nil {
+					return workers.ExecuteResult{}, err
+				}
+				if expired {
+					return workers.ExecuteResult{}, fmt.Errorf("queue timeout: no worker admitted the attempt before %s: %w", req.QueueDeadline.Format(time.RFC3339Nano), context.DeadlineExceeded)
+				}
+			}
 			if r, found, err := read(); found || err != nil {
 				return r, err
 			}

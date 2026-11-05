@@ -150,3 +150,55 @@ func TestRemoteWorkerStaleEpochHeartbeatRevokesAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRemoteWorkerDoesNotInvokeExpiredAssignment(t *testing.T) {
+	for _, field := range []string{"deadline", "executionDeadline"} {
+		t.Run(field, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var calls atomic.Int32
+			var completed atomic.Bool
+			past := time.Now().Add(-time.Second)
+			raw, _ := json.Marshal(map[string]any{"executor": "test", field: past})
+			var polls atomic.Int32
+			client := &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				var body any
+				status := http.StatusOK
+				switch {
+				case strings.HasSuffix(r.URL.Path, "register"):
+					body = remoteRegistrationResult{CoordinatorEpoch: 1}
+				case strings.HasSuffix(r.URL.Path, "heartbeat"):
+					body = remoteHeartbeatResult{CoordinatorEpoch: 1}
+				case strings.HasSuffix(r.URL.Path, "assignments"):
+					if polls.Add(1) == 1 {
+						body = remoteAssignment{AssignmentID: "a", RunID: "r", ActivationID: "act", AttemptID: "attempt", CoordinatorEpoch: 1, Generation: 1, Request: raw}
+					} else {
+						status = http.StatusNoContent
+					}
+				case strings.HasSuffix(r.URL.Path, "complete"):
+					var completion remoteCompletion
+					if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
+						t.Error(err)
+					}
+					if completion.State == "succeeded" || len(completion.Outputs) != 0 {
+						t.Errorf("expired completion=%+v", completion)
+					}
+					completed.Store(true)
+					cancel()
+				}
+				encoded, _ := json.Marshal(body)
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(encoded)))}, nil
+			})}
+			executor := cancellationTestExecutor(func(ExecuteRequest) (ExecuteResult, error) {
+				calls.Add(1)
+				return ExecuteResult{Outputs: map[string]any{"late": true}}, nil
+			})
+			if err := RunRemoteWorker(ctx, RemoteWorkerConfig{CoordinatorURL: "http://coordinator", WorkerID: "worker", HTTPClient: client, PollInterval: time.Millisecond, WorkBase: t.TempDir()}, executor); err != nil {
+				t.Fatal(err)
+			}
+			if !completed.Load() || calls.Load() != 0 {
+				t.Fatalf("completed=%v executor calls=%d", completed.Load(), calls.Load())
+			}
+		})
+	}
+}

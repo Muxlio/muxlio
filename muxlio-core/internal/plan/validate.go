@@ -3,8 +3,10 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ValidationError is a structured validation error with a stable code.
@@ -29,6 +31,9 @@ func hasErrors(errs []ValidationError) bool {
 // of errors; if the slice is empty the plan is valid.
 func Validate(p *Plan) []ValidationError {
 	var errs []ValidationError
+	if !validDuration(p.DeadlineSeconds) {
+		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_DEADLINE", Severity: "error", Phase: "plan", Message: "deadlineSeconds must be finite, nonnegative and fit a duration"})
+	}
 
 	if p.IRVersion == "" {
 		errs = append(errs, ValidationError{
@@ -189,8 +194,15 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 	return errs
 }
 
+func validDuration(v *float64) bool {
+	return v == nil || (!math.IsNaN(*v) && !math.IsInf(*v, 0) && *v >= 0 && *v < float64(math.MaxInt64)/float64(time.Second))
+}
+
 func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []ValidationError {
 	var errs []ValidationError
+	if !validDuration(node.TimeoutSeconds) || !validDuration(node.QueueTimeoutSeconds) {
+		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_TIMEOUT", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "timeoutSeconds and queueTimeoutSeconds must be finite, nonnegative and fit a duration"})
+	}
 	if retry := node.Retry; retry != nil && (retry.MaxAttempts < 0 || retry.MaxAttempts > 100 || retry.BackoffSeconds < 0 || retry.MaxBackoffSeconds < 0) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_RETRY", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "retry requires 0..100 maxAttempts and nonnegative backoff durations"})
 	}

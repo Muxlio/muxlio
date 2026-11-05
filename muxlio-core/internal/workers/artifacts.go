@@ -62,8 +62,16 @@ type ArtifactTransferExecutor struct {
 }
 
 func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
+	if req.Context != nil && req.Context.Err() != nil {
+		return ExecuteResult{}, req.Context.Err()
+	}
 	if err := a.materializeInputs(&req); err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
+	}
+	// Preparation may outlast the assignment deadline. Check again before
+	// invoking an executor that may perform uninterruptible external effects.
+	if req.Context != nil && req.Context.Err() != nil {
+		return ExecuteResult{}, req.Context.Err()
 	}
 	result, err := a.Inner.Execute(req)
 	if err != nil || result.Error != "" {

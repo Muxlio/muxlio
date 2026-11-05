@@ -16,6 +16,18 @@ func (e *Engine) context() context.Context {
 	return e.ctx
 }
 
+// applyRunDeadline uses the persisted creation time, so pause, recovery and
+// explicit retry cannot extend an end-to-end deadline.
+func (e *Engine) applyRunDeadline(deadline time.Time) {
+	e.ctxOnce.Do(func() {
+		parent := e.Context
+		if parent == nil {
+			parent = context.Background()
+		}
+		e.ctx, e.cancel = context.WithDeadline(parent, deadline)
+	})
+}
+
 // Pause stops the interpreter at its next operation boundary. An operation
 // already running is allowed to finish because external effects cannot be
 // suspended safely by the coordinator.
@@ -41,6 +53,9 @@ func (e *Engine) Resume() {
 
 // Cancel interrupts local execution where the executor supports cancellation.
 func (e *Engine) Cancel() {
+	e.controlMu.Lock()
+	e.cancelRequested = true
+	e.controlMu.Unlock()
 	e.context()
 	if e.cancel != nil {
 		e.cancel()
@@ -77,4 +92,13 @@ func (e *Engine) wait(delay time.Duration) error {
 	case <-e.context().Done():
 		return e.context().Err()
 	}
+}
+
+// Parent service shutdown interrupts execution for durable recovery. Explicit
+// scope cancellation and the run's deadline instead commit cancellation intent.
+func (e *Engine) scopeInterrupted() bool {
+	e.controlMu.Lock()
+	requested := e.cancelRequested
+	e.controlMu.Unlock()
+	return requested || e.Context == nil || e.Context.Err() == nil
 }

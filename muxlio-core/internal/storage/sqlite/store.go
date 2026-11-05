@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -279,6 +280,33 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 	if current := time.Now(); current.After(now) {
 		now = current
 	}
+	var requestJSON string
+	requestErr := tx.QueryRow(`SELECT d.request_json FROM dispatches d JOIN assignments a ON a.attempt_id=d.attempt_id WHERE a.attempt_id=? AND a.assignment_id=? AND a.worker_id=? AND a.run_id=? AND a.activation_id=? AND a.generation=? AND a.coordinator_epoch=?`, a.AttemptID, a.AssignmentID, a.WorkerID, a.RunID, a.ActivationID, a.Generation, a.CoordinatorEpoch).Scan(&requestJSON)
+	if requestErr != nil && requestErr != sql.ErrNoRows {
+		return false, requestErr
+	}
+	if requestErr == nil {
+		var req workers.ExecuteRequest
+		if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+			return false, err
+		}
+		if (req.ExecutionDeadline != nil && !now.Before(*req.ExecutionDeadline)) || (req.Deadline != nil && !now.Before(*req.Deadline)) {
+			if _, err := tx.Exec(`UPDATE assignments SET state='cancelled',generation=generation+1 WHERE attempt_id=? AND state='active'`, a.AttemptID); err != nil {
+				return false, err
+			}
+			if _, err := tx.Exec(`UPDATE dispatches SET state='cancelled' WHERE attempt_id=? AND state='assigned'`, a.AttemptID); err != nil {
+				return false, err
+			}
+			return false, tx.Commit()
+		}
+	}
+	var cancelled int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE id=? AND state='cancelled'`, a.RunID).Scan(&cancelled); err != nil {
+		return false, err
+	}
+	if cancelled != 0 {
+		return false, nil
+	}
 	res, err := tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND generation=? AND assignment_id=? AND attempt_id=? AND state='active' AND lease_until>? AND coordinator_epoch=?`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.Generation, a.AssignmentID, a.AttemptID, rfc3339(now), a.CoordinatorEpoch)
 	if err != nil {
 		return false, err
@@ -520,6 +548,15 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 			rows.Close()
 			return nil, 0, err
 		}
+		var envelope workers.ExecuteRequest
+		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		now := time.Now()
+		if (envelope.QueueDeadline != nil && !now.Before(*envelope.QueueDeadline)) || (envelope.Deadline != nil && !now.Before(*envelope.Deadline)) {
+			continue
+		}
 		if !workers.MatchDispatch(d.Executor, []byte(raw), caps, workerLabels) {
 			continue
 		}
@@ -535,6 +572,20 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		}
 		if reason != "" {
 			continue
+		}
+		if envelope.TimeoutSeconds != nil && *envelope.TimeoutSeconds > 0 {
+			deadline := time.Now().Add(time.Duration(*envelope.TimeoutSeconds * float64(time.Second)))
+			envelope.ExecutionDeadline = &deadline
+			encoded, err := json.Marshal(envelope)
+			if err != nil {
+				rows.Close()
+				return nil, 0, err
+			}
+			raw = string(encoded)
+			if _, err := tx.Exec(`UPDATE dispatches SET request_json=? WHERE attempt_id=?`, raw, d.AttemptID); err != nil {
+				rows.Close()
+				return nil, 0, err
+			}
 		}
 		d.Request = []byte(raw)
 		selected = &d
@@ -783,10 +834,39 @@ func (s *Store) CancelRunWork(runID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE assignments SET state='cancelled', generation=generation+1 WHERE run_id=? AND state='active'`, runID); err != nil {
+	if _, err := tx.Exec(`UPDATE assignments SET state='cancelled', generation=generation+1 WHERE run_id=? AND state IN ('active','uncertain')`, runID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE dispatches SET state='cancelled' WHERE run_id=? AND state IN ('pending','assigned')`, runID); err != nil {
+	if _, err := tx.Exec(`UPDATE dispatches SET state='cancelled' WHERE run_id=? AND state IN ('pending','assigned','uncertain')`, runID); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT id FROM activations WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')`, runID)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := tx.Exec(`UPDATE activations SET state='cancelled' WHERE id=?`, id); err != nil {
+			return err
+		}
+		if err := appendEvent(tx, runID, state.EventActivationCancelled, id, map[string]any{"termination": "unconfirmed", "externalEffects": "completion unknown"}); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE timers SET state='cancelled' WHERE run_id=? AND state='pending'`, runID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1095,7 +1175,7 @@ func (s *Store) SetRunOutput(id string, output any) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.db.Exec(`UPDATE runs SET output_json = ?, updated_at = ? WHERE id = ?`, raw, rfc3339(time.Now()), id)
+	res, err := s.db.Exec(`UPDATE runs SET output_json = ?, updated_at = ? WHERE id = ? AND state<>'cancelled'`, raw, rfc3339(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -1134,6 +1214,9 @@ func (s *Store) SetRunError(id string, runErr error) error {
 			return fmt.Errorf("muxlio: run %q not found", id)
 		}
 		return err
+	}
+	if current == "cancelled" || current == "succeeded" {
+		return nil
 	}
 	res, err := tx.Exec(
 		`UPDATE runs SET error = ?, state = 'failed', updated_at = ? WHERE id = ?`,
@@ -1193,6 +1276,14 @@ func (s *Store) CreateActivation(a *state.Activation) error {
 		return err
 	}
 	defer tx.Rollback()
+	var cancelled int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE id=? AND state='cancelled'`, a.RunID).Scan(&cancelled); err != nil {
+		return err
+	}
+	if cancelled != 0 {
+		return context.Canceled
+	}
+
 	_, err = tx.Exec(
 		`INSERT INTO activations (id, run_id, scope_path_json, node_id, occurrence, state, attempt_base, inputs_json, error)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
@@ -1276,6 +1367,13 @@ func (s *Store) SetActivationState(id, st string) error {
 		}
 		return err
 	}
+	var current string
+	if err := tx.QueryRow(`SELECT state FROM activations WHERE id=?`, id).Scan(&current); err != nil {
+		return err
+	}
+	if current == "cancelled" {
+		return nil
+	}
 	if _, err := tx.Exec(`UPDATE activations SET state = ? WHERE id = ?`, st, id); err != nil {
 		return err
 	}
@@ -1308,12 +1406,27 @@ func (s *Store) SetActivationOutputs(id string, outputs map[string]any) error {
 		return err
 	}
 	defer tx.Rollback()
+	var cancelled int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE id=(SELECT run_id FROM activations WHERE id=?) AND state='cancelled'`, id).Scan(&cancelled); err != nil {
+		return err
+	}
+	if cancelled != 0 {
+		return context.Canceled
+	}
+
 	var runID string
 	if err := tx.QueryRow(`SELECT run_id FROM activations WHERE id = ?`, id).Scan(&runID); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("muxlio: activation %q not found", id)
 		}
 		return err
+	}
+	var current string
+	if err := tx.QueryRow(`SELECT state FROM activations WHERE id=?`, id).Scan(&current); err != nil {
+		return err
+	}
+	if current == "cancelled" || current == "succeeded" || current == "failed" {
+		return nil
 	}
 	if _, err := tx.Exec(`UPDATE activations SET outputs_json = ?, state = 'succeeded' WHERE id = ?`, raw, id); err != nil {
 		return err
@@ -1344,6 +1457,13 @@ func (s *Store) SetActivationError(id string, actErr error) error {
 			return fmt.Errorf("muxlio: activation %q not found", id)
 		}
 		return err
+	}
+	var current string
+	if err := tx.QueryRow(`SELECT state FROM activations WHERE id=?`, id).Scan(&current); err != nil {
+		return err
+	}
+	if current == "cancelled" || current == "succeeded" || current == "failed" {
+		return nil
 	}
 	if _, err := tx.Exec(`UPDATE activations SET error = ?, state = 'failed' WHERE id = ?`, actErr.Error(), id); err != nil {
 		return err
@@ -1396,6 +1516,9 @@ func (s *Store) GetEvents(runID string, after int, limit int) ([]state.Event, er
 func (s *Store) AppendEvent(runID, eventType, subjectID string, payload map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.db == nil {
+		return errors.New("store closed")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

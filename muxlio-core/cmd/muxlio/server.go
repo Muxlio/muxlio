@@ -139,9 +139,6 @@ func (r *serverRunner) ControlRun(runID, action string) error {
 			r.mu.Unlock()
 			return fmt.Errorf("cannot cancel run in state %q", run.State)
 		}
-		if engine != nil {
-			engine.Cancel()
-		}
 		changed, err := r.store.TransitionRunState(runID, []string{plan.RunCreated, plan.RunRunning, plan.RunWaiting, plan.RunPaused}, plan.RunCancelled)
 		if err != nil {
 			r.mu.Unlock()
@@ -154,6 +151,9 @@ func (r *serverRunner) ControlRun(runID, action string) error {
 		if err := r.store.CancelRunWork(runID); err != nil {
 			r.mu.Unlock()
 			return fmt.Errorf("run cancelled but worker assignments could not be revoked: %w", err)
+		}
+		if engine != nil {
+			engine.Cancel()
 		}
 	case "retry":
 		if run.State != plan.RunFailed && run.State != plan.RunCancelled {

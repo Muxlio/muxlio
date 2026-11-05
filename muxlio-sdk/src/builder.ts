@@ -66,6 +66,8 @@ export interface ExecuteOptions {
   params?: unknown;
   inputs?: Record<string, Binding>;
   outputs?: Record<string, OutputDecl>;
+  timeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }
 
@@ -221,6 +223,8 @@ class IRBuilder implements BuildContext {
       params: opts.params,
       inputs: opts.inputs,
       outputs: opts.outputs,
+      timeoutSeconds: opts.timeoutSeconds,
+      queueTimeoutSeconds: opts.queueTimeoutSeconds,
       retry: opts.retry,
     };
     this.nodes.push(node);
@@ -363,6 +367,7 @@ class IRBuilder implements BuildContext {
 // --- defineWorkflow ---
 
 export interface WorkflowDefinition {
+  deadlineSeconds?: number;
   name: string;
   input?: JSONSchema;
   output?: JSONSchema;
@@ -383,6 +388,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
   const plan: Plan = {
     irVersion: '1.0',
     name: def.name,
+    deadlineSeconds: def.deadlineSeconds,
     root: 'root',
     inputSchema: def.input,
     outputSchema: def.output,

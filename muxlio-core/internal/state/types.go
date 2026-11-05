@@ -110,6 +110,9 @@ type TokenUsage struct {
 }
 
 // ExecutionAttempt records one interpreter call to an executor.
+// FinishedAt marks the logical attempt outcome. Cancellation does not prove
+// executor termination; execution.returned events and worker diagnostics record
+// later returns separately, without asserting external effect completion.
 type ExecutionAttempt struct {
 	ID                  string      `json:"id"`
 	RunID               string      `json:"runId"`

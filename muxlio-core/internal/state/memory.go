@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -148,6 +149,9 @@ func (s *Memory) SetRunOutput(id string, output any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.runs[id]; ok {
+		if r.State == "cancelled" {
+			return nil
+		}
 		r.Output = output
 		r.UpdatedAt = time.Now()
 		return nil
@@ -172,6 +176,9 @@ func (s *Memory) SetRunError(id string, err error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.runs[id]; ok {
+		if r.State == "cancelled" || r.State == "succeeded" {
+			return nil
+		}
 		r.Error = err.Error()
 		r.State = "failed"
 		r.UpdatedAt = time.Now()
@@ -198,6 +205,9 @@ func (s *Memory) ListRuns() ([]*Run, error) {
 func (s *Memory) CreateActivation(a *Activation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if run := s.runs[a.RunID]; run != nil && run.State == "cancelled" {
+		return context.Canceled
+	}
 	if _, ok := s.activations[a.ID]; ok {
 		return fmt.Errorf("muxlio: activation %q already exists", a.ID)
 	}
@@ -246,6 +256,10 @@ func (s *Memory) SetActivationState(id, state string) error {
 	if !ok {
 		return fmt.Errorf("muxlio: activation %q not found", id)
 	}
+	if a.State == "cancelled" {
+		return nil
+	}
+
 	a.State = state
 	if eventType := EventTypeForActivationState(state); eventType != "" {
 		s.appendEventLocked(a.RunID, eventType, a.ID, nil)
@@ -259,6 +273,13 @@ func (s *Memory) SetActivationOutputs(id string, outputs map[string]any) error {
 	a, ok := s.activations[id]
 	if !ok {
 		return fmt.Errorf("muxlio: activation %q not found", id)
+	}
+	if a.State == "cancelled" || a.State == "succeeded" || a.State == "failed" {
+		return nil
+	}
+
+	if run := s.runs[a.RunID]; run != nil && run.State == "cancelled" {
+		return context.Canceled
 	}
 	snapshot, err := cloneOutputs(outputs)
 	if err != nil {
@@ -279,6 +300,10 @@ func (s *Memory) SetActivationError(id string, err error) error {
 	if !ok {
 		return fmt.Errorf("muxlio: activation %q not found", id)
 	}
+	if a.State == "cancelled" || a.State == "succeeded" || a.State == "failed" {
+		return nil
+	}
+
 	a.Error = err.Error()
 	a.State = "failed"
 	s.appendEventLocked(a.RunID, EventActivationFailed, id, map[string]any{"error": err.Error()})
@@ -466,9 +491,20 @@ func (s *Memory) CancelRunWork(runID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, assignment := range s.assignments {
-		if assignment.RunID == runID && assignment.State == "active" {
+		if assignment.RunID == runID && (assignment.State == "active" || assignment.State == "uncertain") {
 			assignment.State = "cancelled"
 			assignment.Generation++
+		}
+	}
+	for _, act := range s.activations {
+		if act.RunID == runID && act.State != "succeeded" && act.State != "failed" && act.State != "cancelled" {
+			act.State = "cancelled"
+			s.appendEventLocked(runID, EventActivationCancelled, act.ID, map[string]any{"termination": "unconfirmed", "externalEffects": "completion unknown"})
+		}
+	}
+	for _, timer := range s.timers {
+		if timer.RunID == runID && timer.State == "pending" {
+			timer.State = "cancelled"
 		}
 	}
 	return nil

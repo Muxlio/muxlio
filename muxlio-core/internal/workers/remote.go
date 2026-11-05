@@ -345,6 +345,21 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		})
 		executeReq.LogSink = logSink
 		execCtx, execCancel := context.WithCancel(ctx)
+		if executeReq.ExecutionDeadline != nil {
+			deadlineCtx, deadlineCancel := context.WithDeadline(execCtx, *executeReq.ExecutionDeadline)
+			parentCancel := execCancel
+			execCtx, execCancel = deadlineCtx, func() { deadlineCancel(); parentCancel() }
+		}
+		if executeReq.Deadline != nil {
+			deadlineCtx, deadlineCancel := context.WithDeadline(execCtx, *executeReq.Deadline)
+			parentCancel := execCancel
+			execCtx, execCancel = deadlineCtx, func() { deadlineCancel(); parentCancel() }
+		}
+		if executeReq.TimeoutSeconds != nil && *executeReq.TimeoutSeconds > 0 {
+			timeoutCtx, timeoutCancel := context.WithTimeout(execCtx, time.Duration(*executeReq.TimeoutSeconds*float64(time.Second)))
+			parentCancel := execCancel
+			execCtx, execCancel = timeoutCtx, func() { timeoutCancel(); parentCancel() }
+		}
 
 		executeReq.Context = execCtx
 		inner := executor
@@ -371,6 +386,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			defer execCancel()
 			started := time.Now()
 			r, e := runExecutor.Execute(executeReq)
+			if execCtx.Err() != nil {
+				e = execCtx.Err()
+				r.Outputs = nil
+			}
 			elapsed := time.Since(started).Milliseconds()
 			r.ExecutionDurationMS = &elapsed
 			_ = logSink.Close()
@@ -545,7 +564,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil
-				completion.Error = &remoteError{Code: "assignment_revoked", Message: "assignment revoked by coordinator", Retryable: false}
+				completion.Error = &remoteError{Code: "assignment_revoked", Message: "executor returned after assignment revocation; external effects may have completed", Retryable: false}
 			} else if execErr != nil || result.Error != "" {
 				completion.State = "failed"
 				message := result.Error

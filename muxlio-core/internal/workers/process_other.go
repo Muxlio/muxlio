@@ -10,6 +10,9 @@ import (
 
 func configureProcess(cmd *exec.Cmd) { cmd.WaitDelay = time.Second }
 func runProcess(ctx context.Context, cmd *exec.Cmd) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}

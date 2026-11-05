@@ -46,9 +46,16 @@ func recoverLostDispatches(tx *sql.Tx) error {
 			return err
 		}
 		var request struct {
-			Effect string `json:"effect"`
+			Effect            string     `json:"effect"`
+			ExecutionDeadline *time.Time `json:"executionDeadline"`
+			Deadline          *time.Time `json:"deadline"`
 		}
 		if json.Unmarshal([]byte(raw), &request) == nil && request.Effect == "none" {
+			// A lost worker must not restart an already expired attempt.
+			now := time.Now()
+			if (request.ExecutionDeadline != nil && !now.Before(*request.ExecutionDeadline)) || (request.Deadline != nil && !now.Before(*request.Deadline)) {
+				continue
+			}
 			pure = append(pure, id)
 		}
 	}

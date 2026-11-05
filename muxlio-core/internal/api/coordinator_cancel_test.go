@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 func TestHeartbeatDeliversCancelForRevokedAssignment(t *testing.T) {
@@ -190,4 +194,116 @@ func TestRevokedAssignmentAcceptsCancelledCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Millisecond)
+}
+
+func TestLateSuccessAfterCancellationIsDiagnosticOnly(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "late.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: "a", RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", Request: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.NextAssignment("worker")
+	if err != nil || a == nil {
+		t.Fatalf("assignment=%+v %v", a, err)
+	}
+	if err := store.SetRunState("run", "cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CancelRunWork("run"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, Generation: a.Generation, CoordinatorEpoch: a.CoordinatorEpoch, State: "succeeded", Outputs: map[string]any{"value": "late"}}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := store.WorkerResult("attempt"); len(raw) != 0 {
+		t.Fatalf("late result committed: %s", raw)
+	}
+	if raw, _ := store.WorkerDiagnostic("attempt"); len(raw) == 0 {
+		t.Fatal("late external completion not retained")
+	}
+	run, _ := store.GetRun("run")
+	if run.State != "cancelled" || run.Output != nil {
+		t.Fatalf("run=%+v", run)
+	}
+}
+
+func TestCoordinatorExecutionTimeoutReturnsAfterLateCompletionWinsSweepRace(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "timeout-race.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	seconds := 0.01
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Execute(workers.ExecuteRequest{Context: ctx, RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", TimeoutSeconds: &seconds})
+		done <- err
+	}()
+	var a *WorkerAssignment
+	for a == nil {
+		a, err = c.NextAssignment("worker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Err() != nil {
+			t.Fatal("attempt never queued")
+		}
+		if a == nil {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, Generation: a.Generation, CoordinatorEpoch: a.CoordinatorEpoch, State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "execution timeout") {
+			t.Fatalf("err=%v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("coordinator waited indefinitely after late completion")
+	}
+}
+
+func TestCoordinatorQueueTimeoutDoesNotWaitForWorker(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "queue-timeout.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	seconds := 0.001
+	_, err = c.Execute(workers.ExecuteRequest{Context: ctx, RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", QueueTimeoutSeconds: &seconds})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "queue timeout: no worker admitted") {
+		t.Fatalf("err=%v", err)
+	}
+	assignments, err := store.ListAssignments("run")
+	if err != nil || len(assignments) != 0 {
+		t.Fatalf("assignments=%+v err=%v", assignments, err)
+	}
 }

@@ -16,6 +16,17 @@ import (
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	// LifetimeContext is the hosting coordinator lifetime. Its cancellation
+	// suspends durable dispatch for recovery instead of revoking workflow intent.
+	LifetimeContext     context.Context `json:"-"`
+	ExecutionDeadline   *time.Time      `json:"executionDeadline,omitempty"`
+	OnExecutionReturned func()          `json:"-"`
+	// TimeoutSeconds starts when execution begins, excluding dispatch queue time.
+	TimeoutSeconds      *float64 `json:"timeoutSeconds,omitempty"`
+	QueueTimeoutSeconds *float64 `json:"queueTimeoutSeconds,omitempty"`
+	// Deadline survives transport; Context cancellation still revokes assignments.
+	Deadline      *time.Time `json:"deadline,omitempty"`
+	QueueDeadline *time.Time `json:"queueDeadline,omitempty"`
 	// Effect is the declared effect policy; only "none" permits replay after loss.
 	Effect          string            `json:"effect,omitempty"`
 	Context         context.Context   `json:"-"`

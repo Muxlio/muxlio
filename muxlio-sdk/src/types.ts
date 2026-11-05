@@ -85,6 +85,8 @@ export interface Node {
   onExhausted?: 'pause' | 'fail';
 
   // retry
+  timeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }
 
@@ -96,6 +98,8 @@ export interface Subgraph {
 
 /** The immutable compiled workflow plan. */
 export interface Plan {
+  /** Wall-clock limit from persisted run creation, including queueing and pauses. */
+  deadlineSeconds?: number;
   irVersion: string;
   name: string;
   /** Entry subgraph name. Defaults to "root". */

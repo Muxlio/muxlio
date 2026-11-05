@@ -32,6 +32,12 @@ type Plan struct {
 	// OutputSchema is a JSON Schema describing the run output contract.
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 
+	// DeadlineSeconds is the maximum wall-clock duration (in seconds) allowed
+	// for a run from start to finish. When the deadline expires the run is
+	// cancelled with a clear "run deadline exceeded" diagnostic. Zero means no
+	// deadline. The window starts at persisted run creation and includes pauses.
+	DeadlineSeconds *float64 `json:"deadlineSeconds,omitempty"`
+
 	// Subgraphs maps named subgraphs. The root subgraph (key Plan.Root)
 	// is the entry point; its output is the run output.
 	Subgraphs map[string]Subgraph `json:"subgraphs"`
@@ -144,6 +150,15 @@ type Node struct {
 	// --- retry / effect policy ---
 
 	Retry *RetryPolicy `json:"retry,omitempty"`
+
+	// TimeoutSeconds is the maximum wall-clock duration (in seconds) allowed
+	// for a single execution attempt on this node. When the timeout expires
+	// the attempt is cancelled with a diagnostic. External effect completion
+	// remains unknown, so it is not automatically replayed. Zero means no timeout.
+	// This is independent of the ScriptExecutor's global adapter timeout.
+	TimeoutSeconds *float64 `json:"timeoutSeconds,omitempty"`
+	// QueueTimeoutSeconds limits waiting for dispatch independently of execution.
+	QueueTimeoutSeconds *float64 `json:"queueTimeoutSeconds,omitempty"`
 
 	// --- wait ---
 

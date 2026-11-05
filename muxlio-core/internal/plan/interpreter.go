@@ -36,16 +36,17 @@ func activationID(runID string, scope []string, nodeID string) string {
 // Engine interprets a Plan IR against a Store. The default store is
 // in-memory; pass a SQLite store for durable runs.
 type Engine struct {
-	Context   context.Context
-	plan      *Plan
-	store     state.Store
-	executor  workers.Executor
-	ctxOnce   sync.Once
-	ctx       context.Context
-	cancel    context.CancelFunc
-	controlMu sync.Mutex
-	paused    bool
-	resumeCh  chan struct{}
+	Context         context.Context
+	plan            *Plan
+	store           state.Store
+	executor        workers.Executor
+	ctxOnce         sync.Once
+	ctx             context.Context
+	cancel          context.CancelFunc
+	controlMu       sync.Mutex
+	cancelRequested bool
+	paused          bool
+	resumeCh        chan struct{}
 }
 
 // NewEngine creates an interpreter with an in-memory store.
@@ -183,14 +184,12 @@ func (e *Engine) Retry(runID string) error {
 	e.ctxOnce = sync.Once{}
 	e.ctx = nil
 	e.cancel = nil
+	e.cancelRequested = false
 	return nil
 }
 
 // Run executes the run to completion. For M0 this is synchronous.
 func (e *Engine) Run(runID string) error {
-	if err := e.checkpoint(); err != nil {
-		return err
-	}
 	run, err := e.store.GetRun(runID)
 	if err != nil {
 		return err
@@ -213,6 +212,23 @@ func (e *Engine) Run(runID string) error {
 			return fmt.Errorf("muxlio: pinned plan digest mismatch")
 		}
 		e.plan = &pinned
+	}
+	if e.plan.DeadlineSeconds != nil && *e.plan.DeadlineSeconds > 0 {
+		e.applyRunDeadline(run.CreatedAt.Add(time.Duration(*e.plan.DeadlineSeconds * float64(time.Second))))
+	}
+	defer func() {
+		if err := e.context().Err(); err != nil && e.scopeInterrupted() {
+			_, _ = e.store.TransitionRunState(runID, []string{RunCreated, RunRunning, RunWaiting, RunPaused}, RunCancelled)
+			_ = e.store.CancelRunWork(runID)
+			reason := "run cancellation requested"
+			if errors.Is(err, context.DeadlineExceeded) {
+				reason = "run deadline exceeded"
+			}
+			_ = e.store.AppendEvent(runID, "run.interrupted", runID, map[string]any{"reason": reason, "externalEffects": "completion unknown; cancellation does not undo external effects"})
+		}
+	}()
+	if err := e.checkpoint(); err != nil {
+		return err
 	}
 	if run.State != RunPaused && run.State != RunRunning {
 		changed, err := e.store.TransitionRunState(runID, []string{RunCreated, RunWaiting}, RunRunning)
@@ -326,6 +342,9 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 		if run, getErr := e.store.GetRun(runID); getErr == nil && run.State == RunPaused {
 			return nil, errRunPaused
 		}
+		if run, getErr := e.store.GetRun(runID); getErr == nil && run.State == RunCancelled {
+			return nil, context.Canceled
+		}
 		node := &order[i]
 		actID := activationID(runID, scope, node.ID)
 		if existing, err := e.store.GetActivation(actID); err == nil {
@@ -374,6 +393,9 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 				return nil, err
 			}
 			_ = e.store.SetActivationError(actID, err)
+			return nil, err
+		}
+		if err := e.checkpoint(); err != nil {
 			return nil, err
 		}
 		if err := e.store.SetActivationOutputs(actID, nodeOutputs); err != nil {
@@ -498,6 +520,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 
 	req := workers.ExecuteRequest{
 		Context:         e.context(),
+		LifetimeContext: e.Context,
 		Executor:        node.Executor,
 		ExecutorVersion: node.ExecutorVersion,
 		PlacementLabels: node.PlacementLabels,
@@ -583,15 +606,38 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets)
 		guarded.LogSink = logSink
-		result, err := e.executor.Execute(guarded)
+		guarded.TimeoutSeconds = node.TimeoutSeconds
+		guarded.QueueTimeoutSeconds = node.QueueTimeoutSeconds
+		attemptID := req.AttemptID
+		guarded.OnExecutionReturned = func() {
+			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})
+		}
+		result, err := workers.ExecuteAttempt(e.executor, guarded)
+		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			_ = e.store.AppendEvent(runID, "execution.cancellation_requested", req.AttemptID, map[string]any{"reason": err.Error(), "termination": "unconfirmed", "externalEffects": "completion unknown"})
+		}
 		_ = logSink.Close()
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Check engine-level cancellation first: run cancel or run deadline.
+		// These must terminate the retry loop immediately.
+		if ctxErr := e.context().Err(); ctxErr != nil {
+			failureMsg := ctxErr.Error()
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				failureMsg = fmt.Sprintf("run deadline exceeded (node %q, attempt %d)", node.ID, attemptBase+attempt)
+			}
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, ExecutionDurationMS: result.ExecutionDurationMS})
+			return nil, ctxErr
+		}
+		// Per-node execution timeout: record the attempt as cancelled with an
+		// actionable diagnostic. Do not replay while external completion is unknown.
+		if errors.Is(err, context.DeadlineExceeded) {
+			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, ExecutionDurationMS: result.ExecutionDurationMS})
+			lastErr = fmt.Errorf("muxlio: %s", failureMsg)
+			return nil, lastErr
+		}
+		if errors.Is(err, context.Canceled) {
 			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), ExecutionDurationMS: result.ExecutionDurationMS})
 			return nil, err
-		}
-		if ctxErr := e.context().Err(); ctxErr != nil {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: ctxErr.Error(), ExecutionDurationMS: result.ExecutionDurationMS})
-			return nil, ctxErr
 		}
 		if result.Logs != "" {
 			if logErr := workers.AppendBoundedExecutorLog(e.store, runID, actID, attempt, result.Logs, guarded.Secrets); logErr != nil {
