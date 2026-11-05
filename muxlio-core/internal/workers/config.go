@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -18,9 +19,28 @@ func (c ExecutorConfig) ExplicitlyAllowed() bool { return c.Allow != nil && *c.A
 // ValidateExecutorConfigs validates the shared runtime configuration contract.
 func ValidateExecutorConfigs(configs map[string]ExecutorConfig) error {
 	for name, config := range configs {
-		for key, value := range config.Env {
-			if key == "" || strings.ContainsAny(key, "=\x00") || strings.IndexByte(value, 0) >= 0 || strings.HasPrefix(key, "MUXLIO_") {
-				return fmt.Errorf("executor %q has invalid or reserved environment key %q", name, key)
+		if err := ValidateWorkerEnv(config.Env); err != nil {
+			return fmt.Errorf("executor %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// ValidateWorkerEnv validates operator-owned environment settings shared by
+// native executors. Execution identity and scratch paths stay worker-managed.
+func ValidateWorkerEnv(env map[string]string) error {
+	for key, value := range env {
+		if key == "" || strings.ContainsAny(key, "=\x00") || strings.IndexByte(value, 0) >= 0 || strings.HasPrefix(key, "MUXLIO_") || key == "HOME" || key == "TMPDIR" {
+			return fmt.Errorf("invalid or reserved environment key %q", key)
+		}
+		if key == "PATH" {
+			if value == "" {
+				return fmt.Errorf("PATH must contain absolute directories")
+			}
+			for _, dir := range filepath.SplitList(value) {
+				if !filepath.IsAbs(dir) {
+					return fmt.Errorf("PATH must contain only absolute directories (no empty entries or shell variables)")
+				}
 			}
 		}
 	}

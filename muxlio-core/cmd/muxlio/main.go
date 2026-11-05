@@ -594,12 +594,13 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 		script := workers.NewScriptExecutor(adaptersDir, workBase)
 		script.Workspace = workspace
 		script.Context = ctx
-		settings, err := localExecutorSettings(dataDir)
+		settings, err := localWorkerSettings(dataDir)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
-		script.Executors = settings
+		script.Executors = settings.Executors
+		script.WorkerEnv = settings.WorkerEnv
 		exec = script
 	} else {
 		fakeExec, err := loadFakeExecutor(fakeConfigPath)
@@ -666,19 +667,22 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 	return 0
 }
 
-func localExecutorSettings(dataDir string) (map[string]workers.ExecutorConfig, error) {
+func localWorkerSettings(dataDir string) (serviceConfig, error) {
 	raw, err := os.ReadFile(authConfigPath(dataDir))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return serviceConfig{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return serviceConfig{}, err
 	}
 	var cfg serviceConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+		return serviceConfig{}, fmt.Errorf("config: %w", err)
 	}
-	return cfg.Executors, workers.ValidateExecutorConfigs(cfg.Executors)
+	if err := workers.ValidateWorkerEnv(cfg.WorkerEnv); err != nil {
+		return cfg, fmt.Errorf("workerEnv: %w", err)
+	}
+	return cfg, workers.ValidateExecutorConfigs(cfg.Executors)
 }
 
 func mustEvents(store state.Store, runID string) []state.Event {

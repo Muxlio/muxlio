@@ -120,3 +120,56 @@ func TestInitRegistersMCPAndPreservesCredentials(t *testing.T) {
 		t.Fatal("init enabled an explicitly disabled listener")
 	}
 }
+
+func TestInitPersistsWorkerPathAndPreservesOverrides(t *testing.T) {
+	root, ws, initialPath := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("PATH", initialPath)
+	args := []string{"--data-dir", root, "--workspace", ws, "--json"}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	path := filepath.Join(root, "config.json")
+	read := func() serviceConfig {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg serviceConfig
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	if got := read().WorkerEnv["PATH"]; got != initialPath {
+		t.Fatalf("initial PATH not captured: %q", got)
+	}
+	t.Setenv("PATH", "/usr/bin:/bin")
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	if got := read().WorkerEnv["PATH"]; got != initialPath {
+		t.Fatalf("init replaced saved PATH with SSH PATH: %q", got)
+	}
+	updatedPath := t.TempDir()
+	if code := cmdInit(append(args, "--worker-path", updatedPath), "", true); code != 0 {
+		t.Fatal(code)
+	}
+	if got := read().WorkerEnv["PATH"]; got != updatedPath {
+		t.Fatalf("explicit PATH not saved: %q", got)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdInit(append(args, "--worker-path", "relative:/bin"), "", true); code == 0 {
+		t.Fatal("invalid PATH accepted")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("invalid PATH changed existing config")
+	}
+}

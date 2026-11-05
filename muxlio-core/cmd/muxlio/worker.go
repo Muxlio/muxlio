@@ -116,12 +116,13 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 		}
 	}
 	executor := workers.NewScriptExecutor(adaptersDir, filepath.Join(dataDir, "work"))
-	settings, err := localExecutorSettings(dataDir)
+	settings, err := localWorkerSettings(dataDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	executor.Executors = settings
+	executor.Executors = settings.Executors
+	executor.WorkerEnv = settings.WorkerEnv
 	// Advertise only capabilities authorized by local operator policy.
 	filtered := caps[:0]
 	for _, cap := range caps {

@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
@@ -14,6 +16,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	agent := fs.String("agent", "", "agent type to configure skill for (codex, cursor, claude, gemini, kiro)")
 	workspace := fs.String("workspace", "", "authorized workspace directory (default: current dir)")
 	dataDir := fs.String("data-dir", globalDataDir, "runtime data directory (default: ~/.muxlio)")
+	workerPath := fs.String("worker-path", "", "persist this absolute executable search path (default: preserve saved workerEnv.PATH, otherwise capture PATH)")
 	mcpListen := fs.String("mcp-listen", "127.0.0.1:7602", "MCP HTTP listen address for setup (existing setting preserved unless this flag is supplied)")
 	starter := fs.Bool("starter", false, "create a starter workflow in the workspace")
 	jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON output")
@@ -26,10 +29,13 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		fmt.Fprintln(os.Stderr, "error: --mcp-listen must be host:port")
 		return 2
 	}
-	setMCPListen := false
+	setMCPListen, setWorkerPath := false, false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "mcp-listen" {
+		switch f.Name {
+		case "mcp-listen":
 			setMCPListen = true
+		case "worker-path":
+			setWorkerPath = true
 		}
 	})
 	root := *dataDir
@@ -103,6 +109,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		fmt.Fprintln(os.Stderr, "error: config must be a JSON object")
 		return 1
 	}
+	configChanged := false
 	if _, exists := config["mcp"]; !exists || setMCPListen {
 		mcpConfig := map[string]json.RawMessage{}
 		if raw := config["mcp"]; len(raw) > 0 && string(raw) != "null" {
@@ -113,12 +120,32 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		}
 		mcpConfig["listen"], _ = json.Marshal(*mcpListen)
 		config["mcp"], _ = json.Marshal(mcpConfig)
-		raw, _ := json.MarshalIndent(config, "", "  ")
-		if err := writeInitConfig(configPath, raw); err != nil {
-			fmt.Fprintln(os.Stderr, "error: configuring MCP:", err)
+		configChanged = true
+	}
+	workerEnv := map[string]string{}
+	if raw := config["workerEnv"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &workerEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "error: invalid workerEnv:", err)
 			return 1
 		}
+		if workerEnv == nil {
+			workerEnv = map[string]string{}
+		}
 	}
+	if _, hasPath := workerEnv["PATH"]; !hasPath || setWorkerPath {
+		value := os.Getenv("PATH")
+		if setWorkerPath {
+			value = *workerPath
+		}
+		workerEnv["PATH"] = value
+		configChanged = true
+	}
+	if err := workers.ValidateWorkerEnv(workerEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "error: workerEnv:", err)
+		return 1
+	}
+	config["workerEnv"], _ = json.Marshal(workerEnv)
+
 	var mcpSetup *serviceMCPConfig
 	if err := json.Unmarshal(config["mcp"], &mcpSetup); err != nil {
 		fmt.Fprintln(os.Stderr, "error: invalid MCP configuration:", err)
@@ -135,6 +162,13 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 			scheme = "https"
 		}
 		mcpEndpoint = scheme + "://" + mcpSetup.Listen + "/mcp"
+	}
+	if configChanged {
+		raw, _ := json.MarshalIndent(config, "", "  ")
+		if err := writeInitConfig(configPath, raw); err != nil {
+			fmt.Fprintln(os.Stderr, "error: configuring worker environment:", err)
+			return 1
+		}
 	}
 	if _, err := ensureAuthToken(configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: creating coordinator token: %v\n", err)

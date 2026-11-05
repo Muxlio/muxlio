@@ -49,7 +49,12 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 		}
 	}
 	write(filepath.Join(ui, "index.html"), "<html>Installed UI</html>", 0600)
-	write(filepath.Join(adapters, "fake-slow"), "#!/bin/sh\nsleep 1\nprintf '%s' '{\"outputs\":{\"result\":\"persisted overnight\"}}'\n", 0700)
+	tools := filepath.Join(root, "worker-tools")
+	if err := os.MkdirAll(tools, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(tools, "fixture-result"), "#!/bin/sh\nprintf '%s' '{\"outputs\":{\"result\":\"persisted overnight\"}}'\n", 0700)
+	write(filepath.Join(adapters, "fake-slow"), "#!/bin/sh\nsleep 1\nfixture-result\n", 0700)
 	write(filepath.Join(adapters, "fake-timeout"), "#!/bin/sh\nsleep 30\n", 0700)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -65,13 +70,13 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	mcpAddr := mcpPort.Addr().String()
 	mcpPort.Close()
 	write(filepath.Join(root, "mcp-token"), "listener-secret", 0600)
-	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout"}, AttemptTimeoutSeconds: 5, MCP: &serviceMCPConfig{Listen: mcpAddr, TokenFile: "mcp-token"}}
+	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout"}, WorkerEnv: map[string]string{"PATH": tools + ":/usr/bin:/bin"}, AttemptTimeoutSeconds: 5, MCP: &serviceMCPConfig{Listen: mcpAddr, TokenFile: "mcp-token"}}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
 	write(configPath, string(raw), 0600)
 	client := &http.Client{Timeout: time.Second}
 	base := "http://" + addr
-	env := append(os.Environ(), "MUXLIO_TEST_CLI=1", "MUXLIO_CONFIG="+configPath, "MUXLIO_HOME="+runtimeDir)
+	env := append(os.Environ(), "MUXLIO_TEST_CLI=1", "MUXLIO_CONFIG="+configPath, "MUXLIO_HOME="+runtimeDir, "PATH=/usr/bin:/bin")
 	start := func() (*exec.Cmd, *bytes.Buffer) {
 		t.Helper()
 		cmd := exec.Command(os.Args[0], "-test.run=TestCLIProcess", "--", "service", "start", "--config", configPath)

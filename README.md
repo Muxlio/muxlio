@@ -457,6 +457,7 @@ The coordinator reads `~/.muxlio/config.json` (override with `--config PATH` or 
 | `workspace` | Authorized execution workspace (absolute path; required for service start) |
 | `capabilities` | Executor capabilities the local worker advertises (defaults created by `muxlio init` list all six shipped adapters; edit to restrict them) |
 | `attemptTimeoutSeconds` | Per-attempt timeout (default 600) |
+| `workerEnv` | Shared native executor environment; saved by init and overridden by per-executor `env` |
 | `mcp` | Service-owned MCP HTTP listener: `listen`, optional `tokenFile`, `tlsCert`, `tlsKey`, `allowOrigins`; `muxlio init` registers loopback port 7602 |
 | `runtimeDir` | Runtime data directory (default `~/.muxlio`) |
 | `addr` | Listen address (default `127.0.0.1:7600`) |

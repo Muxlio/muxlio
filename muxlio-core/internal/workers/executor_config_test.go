@@ -65,3 +65,65 @@ func TestExplicitDenyOverridesExecutorDefaults(t *testing.T) {
 		t.Fatalf("explicit deny: allowed=%v error=%v", allowed, err)
 	}
 }
+
+func TestSharedWorkerEnvironmentAndExecutorPrecedence(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("AMBIENT_SECRET", "not-forwarded")
+	shared, override := t.TempDir(), t.TempDir()
+	for dir, value := range map[string]string{shared: "shared", override: "executor"} {
+		script := "#!/bin/sh\nprintf '%s' '{\"outputs\":{\"source\":\"" + value + "\"}}'\n"
+		if err := os.WriteFile(filepath.Join(dir, "fixture-tool"), []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := testScript(t, "fixture-tool\n")
+	s.WorkerEnv = map[string]string{"PATH": shared, "SHARED_VALUE": "shared"}
+	result, err := s.Execute(ExecuteRequest{Executor: "test"})
+	if err != nil || result.Error != "" || result.Outputs["source"] != "shared" {
+		t.Fatalf("shared PATH was not used with a minimal launcher PATH: %+v %v", result, err)
+	}
+	s.Executors = map[string]ExecutorConfig{"test": {Env: map[string]string{"PATH": override}}}
+	result, err = s.Execute(ExecuteRequest{Executor: "test"})
+	if err != nil || result.Error != "" || result.Outputs["source"] != "executor" {
+		t.Fatalf("executor PATH did not override shared PATH: %+v %v", result, err)
+	}
+	for _, isolated := range []bool{false, true} {
+		env, err := s.environment(t.TempDir(), isolated, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := map[string]string{}
+		for _, entry := range env {
+			key, value, _ := strings.Cut(entry, "=")
+			if _, duplicate := values[key]; duplicate {
+				t.Fatalf("duplicate environment key %s", key)
+			}
+			values[key] = value
+		}
+		if _, leaked := values["AMBIENT_SECRET"]; leaked {
+			t.Fatal("ambient credentials leaked")
+		}
+		if isolated {
+			if values["PATH"] != "/usr/bin:/bin" || values["SHARED_VALUE"] != "" {
+				t.Fatal("isolated execution inherited native environment settings")
+			}
+		} else if values["PATH"] != override || values["SHARED_VALUE"] != "shared" {
+			t.Fatal("shared values or executor precedence lost")
+		}
+	}
+}
+
+func TestConfiguredEnvironmentRejectsManagedVariablesAndUnsafePaths(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"HOME": "/override"}, {"TMPDIR": "/override"}, {"MUXLIO_LOG_FD": "3"},
+		{"BAD=KEY": "value"}, {"VALUE": "bad\x00value"},
+		{"PATH": ""}, {"PATH": "relative/bin"}, {"PATH": "/bin:"}, {"PATH": "$HOME/bin:/bin"},
+	} {
+		if err := ValidateWorkerEnv(env); err == nil {
+			t.Fatalf("invalid shared environment accepted: %v", env)
+		}
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"custom/tool": {Env: env}}); err == nil {
+			t.Fatalf("invalid executor environment accepted: %v", env)
+		}
+	}
+}

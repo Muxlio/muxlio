@@ -101,6 +101,55 @@ The Cursor adapter sets `AGENT_CLI_CREDENTIAL_STORE=file` for its child CLI (inc
 `muxlio service` or launchd); values from `~/.zshrc` are not inherited. The
 service does not unlock the keychain or change keychain lock settings.
 
+### Shared worker environment
+
+Set `workerEnv` once for all native executors. For example:
+
+```json
+{
+  "workerEnv": {
+    "PATH": "/Users/you/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  },
+  "executors": {
+    "command": {"allow": true}
+  }
+}
+```
+
+The environment starts with the worker defaults (including the launcher's PATH),
+then applies `workerEnv`, then `executors.<capability>.env` overrides. These
+settings apply to service workers, standalone runs, and remote workers on the
+machine where their config is loaded. They are local operator configuration,
+never workflow input or forwarded coordinator settings. The worker does not
+inherit unrelated ambient environment variables. Configured shared values are
+available to every native executor; keep executor-specific credentials in that
+executor's override instead.
+
+`muxlio init` saves the current PATH if `workerEnv.PATH` is missing and preserves
+it on subsequent invocations. Set or update it explicitly with:
+
+```sh
+muxlio init --worker-path "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+muxlio service restart
+```
+
+A configured PATH must be nonempty and contain only absolute directories, with
+no empty entries. Shell variables and `~` are not expanded in config values.
+Capturing an SSH session's minimal PATH does not discover additional CLI install
+locations; pass `--worker-path` when initializing from such a session. Once the
+path is saved, restarting over SSH or under a supervisor preserves worker
+executable lookup. It does not change the launcher environment for coordinator
+or MCP-local commands.
+
+`HOME`, `TMPDIR`, and `MUXLIO_*` remain worker-managed and are rejected in shared
+and executor environments. Use `agentHome` for an authorized alternate native
+HOME. Required isolation receives neither `workerEnv` nor executor environment
+overrides; its existing isolation rules still apply.
+
+When moving an existing repeated PATH to `workerEnv`, remove only per-executor
+PATH entries identical to the shared value. Preserve different overrides,
+other environment values, and permission settings such as `allow`.
+
 ### Feature commits
 
 The implement-features recipe verifies changes and creates local Git commits in

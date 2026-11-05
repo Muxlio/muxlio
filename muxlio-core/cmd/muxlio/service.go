@@ -33,6 +33,7 @@ type serviceConfig struct {
 	Workspace             string                            `json:"workspace"`
 	Capabilities          []string                          `json:"capabilities"`
 	Executors             map[string]workers.ExecutorConfig `json:"executors,omitempty"`
+	WorkerEnv             map[string]string                 `json:"workerEnv,omitempty"`
 	AttemptTimeoutSeconds int                               `json:"attemptTimeoutSeconds"`
 	// Token is an optional bearer token that the coordinator will require on all
 	// API requests (except /healthz). Can also be set via MUXLIO_TOKEN env.
@@ -111,6 +112,9 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	}
 	if v := os.Getenv("MUXLIO_CAPABILITIES"); v != "" {
 		c.Capabilities = strings.Split(v, ",")
+	}
+	if err := workers.ValidateWorkerEnv(c.WorkerEnv); err != nil {
+		return c, fmt.Errorf("workerEnv: %w", err)
 	}
 	if err := workers.ValidateExecutorConfigs(c.Executors); err != nil {
 		return c, err

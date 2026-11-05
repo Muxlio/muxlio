@@ -45,6 +45,8 @@ type ScriptExecutor struct {
 	Context   context.Context
 	// Executors contains local operator permissions and environment settings.
 	Executors map[string]ExecutorConfig
+	// WorkerEnv supplies shared native execution settings, below executor overrides.
+	WorkerEnv map[string]string
 }
 
 // isolationPolicy is read from the execute step's params.isolation object.
@@ -460,11 +462,21 @@ func (s *ScriptExecutor) environment(workDir string, isolated bool, executor str
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + workDir, "LANG=C.UTF-8"}
 	if !isolated {
+		if err := ValidateWorkerEnv(s.WorkerEnv); err != nil {
+			return nil, fmt.Errorf("workerEnv: %w", err)
+		}
 		config := s.Executors[executor]
 		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{executor: config}); err != nil {
 			return nil, err
 		}
+		merged := make(map[string]string, len(s.WorkerEnv)+len(config.Env))
+		for key, value := range s.WorkerEnv {
+			merged[key] = value
+		}
 		for key, value := range config.Env {
+			merged[key] = value
+		}
+		for key, value := range merged {
 			prefix := key + "="
 			for i := 0; i < len(env); i++ {
 				if strings.HasPrefix(env[i], prefix) {
