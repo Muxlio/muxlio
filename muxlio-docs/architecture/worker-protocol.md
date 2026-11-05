@@ -141,3 +141,54 @@ and executes assignments concurrently up to capacity using its local adapters. A
 stderr is returned in the completion `logs` field; stdout remains reserved for
 the adapter's JSON `ExecuteResult`. A completion includes the assignment's
 fencing identity and either outputs or a structured execution error.
+
+
+## Admission budgets and fairness
+
+The coordinator's service config accepts an `admission` object. Limits are
+shared across workers and stored with dispatch state. All concurrency caps count
+slots; each executor costs one slot unless `slots` is configured. Zero or omitted
+caps mean unlimited, except worker capacity zero drains that worker.
+
+```json
+{
+  "admission": {
+    "globalCap": 16,
+    "perRunCap": 4,
+    "executorCaps": {"agent-pool": 8},
+    "keyCaps": {"team-a": 3},
+    "providerCaps": {"external-service": 6},
+    "providerRates": {"external-service": {"burst": 2, "perSecond": 1}},
+    "executors": {
+      "agent/example": {
+        "slots": 2,
+        "executorKey": "agent-pool",
+        "operatorKey": "team-a",
+        "providerKey": "external-service"
+      }
+    }
+  }
+}
+```
+
+Resource keys are explicit opaque names; adapter/provider protocols remain in
+adapters. `executorKey` defaults to the executor capability and can group multiple
+capabilities into one adapter budget. Executors can also share an operator or
+external provider key. Provider rate tokens count dispatch starts, independently
+of slot weights and reported model-token usage. Completing or cancelling work
+releases concurrency capacity without refunding rate tokens. Buckets and
+reservations survive coordinator restarts.
+
+Admission checks and reservations commit in the same transaction as the claim.
+Worker polls claim at most one assignment, with no speculative batch prefetch.
+Ready runs rotate by least-recently-served turn, preserving queue order among
+eligible requests within a run. Blocked runs yield to eligible peers. A newly
+arriving run gets a turn before a previously served fan-out run when capacity
+next opens. Timer and input waits create no dispatch and consume no execution
+capacity. Paused and terminal runs are ineligible.
+
+Activation responses include `queueReason` for pending dispatches. The inspector
+shows the latest observed budget constraint (worker, global, run, executor,
+operator key, provider concurrency, or provider rate); before a matching worker
+polls, it shows "Waiting for worker". Reasons update on subsequent worker polls
+and disappear once the request is claimed.

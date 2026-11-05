@@ -139,7 +139,7 @@ function renderInspectorWb(act){
     <div class="insp-section">
       <dl class="insp-kv">
         <dt>Status</dt><dd class="${stateClass(act.state)||''}">${esc(act.state)} ${act.occurrence?`· iteration ${act.occurrence}`:''}`.trimEnd()+'</dd>'+
-        `<dt>Agent</dt><dd>${esc(agent)}</dd>
+        `${act.queueReason?`<dt>Queue reason</dt><dd>${esc(act.queueReason)}</dd>`:""}<dt>Agent</dt><dd>${esc(agent)}</dd>
         <dt>Skill</dt><dd>${esc(skill)}</dd>
         <dt>Inputs</dt><dd>${esc(inRef)}</dd>
         <dt>Output</dt><dd>${esc(outRef)}</dd>
@@ -251,7 +251,7 @@ function renderInspector(){
   if(!out)return;
   $('#inspectorTitle').textContent=`Activation · ${act.nodeId}`;
   $('#inspectorHint').textContent=`${act.state} · ${act.id}`;
-  if(inspectorTab==='outputs'){out.innerHTML=`<dl class="kv"><dt>Scope</dt><dd>${esc((act.scopePath||[]).join(' / ')||'root')}</dd><dt>Occurrence</dt><dd>${esc(act.occurrence)}</dd><dt>State</dt><dd>${esc(act.state)}</dd></dl><h3 class="insp-output-title">Outputs</h3>${outputMarkup(act.outputs)}`;return}
+  if(inspectorTab==='outputs'){out.innerHTML=`<dl class="kv"><dt>Scope</dt><dd>${esc((act.scopePath||[]).join(' / ')||'root')}</dd><dt>Occurrence</dt><dd>${esc(act.occurrence)}</dd><dt>State</dt><dd>${esc(act.state)}</dd>${act.queueReason?`<dt>Queue reason</dt><dd>${esc(act.queueReason)}</dd>`:""}</dl><h3 class="insp-output-title">Outputs</h3>${outputMarkup(act.outputs)}`;return}
   out.innerHTML='<p class="inspector-placeholder">Loading…</p>';
   const id=selectedActivation,tab=inspectorTab,run=current,request=++inspectorRequest;
   Promise.all([inspectorTab==='logs'?api(`/v1/runs/${encodeURIComponent(current)}/logs?activationId=${encodeURIComponent(id)}`):Promise.resolve(null),inspectorTab==='attempts'?api(`/v1/runs/${encodeURIComponent(current)}/attempts?activationId=${encodeURIComponent(id)}`):Promise.resolve(null)]).then(([l,a])=>{if(request!==inspectorRequest||id!==selectedActivation||tab!==inspectorTab||run!==current||!out.isConnected)return;if(inspectorTab==='logs'){const logs=l.logs||[];const decoded=logs.length?logs.map(x=>{let data=x.data;try{data=new TextDecoder().decode(Uint8Array.from(atob(data),c=>c.charCodeAt(0)))}catch{}return {ts:date(x.timestamp),stream:x.stream,text:data}}).filter(x=>x):[];if(!decoded.length){out.innerHTML='<p class="inspector-placeholder">No logs.</p>';}else{let allText=decoded.map(x=>x.text).join('\n');out.innerHTML='<div class="data-tools"><button class="btn ghost" data-copylogs>Copy logs</button></div>'+decoded.map(x=>`<h3>${esc(x.ts)} · ${esc(x.stream)}</h3><pre>${esc(x.text)}</pre>`).join('');out._copyLogsText=allText}}else{const attempts=a.attempts||[];out.innerHTML=attempts.length?`<div class="tablebox"><table><thead><tr><th>Retry</th><th>Executor</th><th>State</th><th>Started</th><th>Finished</th></tr></thead><tbody>${attempts.map(x=>`<tr><td>${esc(x.retryNumber)}</td><td>${esc(x.executor)}</td><td>${esc(x.state)}</td><td>${esc(date(x.startedAt))}</td><td>${esc(date(x.finishedAt))}</td></tr>`).join('')}</tbody></table></div>`:'<p class="inspector-placeholder">No attempts.</p>'}}).catch(e=>{if(request!==inspectorRequest||id!==selectedActivation||run!==current)return;if(out.isConnected)out.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`})

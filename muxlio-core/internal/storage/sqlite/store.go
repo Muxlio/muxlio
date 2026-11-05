@@ -26,6 +26,11 @@ var schemaStmts = []string{
 	`PRAGMA busy_timeout = 5000`,
 	`PRAGMA foreign_keys = ON`,
 	`PRAGMA synchronous = NORMAL`,
+	`CREATE TABLE IF NOT EXISTS admission_config (id INTEGER PRIMARY KEY CHECK(id=1), config_json TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS admission_reservations (activation_id TEXT PRIMARY KEY, slots INTEGER NOT NULL, executor TEXT NOT NULL, operator_key TEXT NOT NULL, provider_key TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS admission_turns (run_id TEXT PRIMARY KEY, turn INTEGER NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS admission_buckets (provider_key TEXT PRIMARY KEY, tokens REAL NOT NULL, updated_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS admission_queue (activation_id TEXT PRIMARY KEY, reason TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   workflow_name TEXT NOT NULL,
@@ -434,7 +439,9 @@ func (s *Store) ReconcileUncertainDispatch(activationID string) error {
 	return tx.Commit()
 }
 
-// ClaimDispatch atomically removes the oldest matching pending request.
+// ClaimDispatch reserves all budgets and claims one request atomically.
+// Least-recently-served runs rotate fairly; FIFO is used within each run.
+// Only one request is prefetched per worker poll.
 func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -454,7 +461,7 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	// Capacity is a concurrency limit, not merely an advertised hint. Count
 	// only unexpired active leases so a worker can recover after a coordinator
 	// outage without waiting for an explicit cleanup pass.
-	var capacity, active int
+	var capacity int
 	var capRaw, labelsRaw string
 	if err = tx.QueryRow(`SELECT capacity,capabilities_json,labels_json FROM workers WHERE id=?`, workerID).Scan(&capacity, &capRaw, &labelsRaw); err != nil {
 		return nil, 0, err
@@ -467,17 +474,16 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	if err := json.Unmarshal([]byte(labelsRaw), &workerLabels); err != nil {
 		return nil, 0, err
 	}
-	if err = tx.QueryRow(`SELECT COUNT(*) FROM assignments WHERE worker_id=? AND state='active' AND lease_until>=?`, workerID, rfc3339(time.Now())).Scan(&active); err != nil {
+	cfg, err := readAdmissionConfig(tx)
+	if err != nil {
 		return nil, 0, err
 	}
-	if active >= capacity {
-		return nil, 0, tx.Commit()
-	}
-	rows, err := tx.Query(`SELECT assignment_id,run_id,activation_id,attempt_id,executor,request_json FROM dispatches WHERE state='pending' AND run_id IN (SELECT id FROM runs WHERE state IN ('created','running','waiting')) ORDER BY rowid`)
+	rows, err := tx.Query(`SELECT d.assignment_id,d.run_id,d.activation_id,d.attempt_id,d.executor,d.request_json FROM dispatches d LEFT JOIN admission_turns t ON t.run_id=d.run_id WHERE d.state='pending' AND d.run_id IN (SELECT id FROM runs WHERE state IN ('created','running','waiting')) ORDER BY COALESCE(t.turn,0),d.rowid`)
 	if err != nil {
 		return nil, 0, err
 	}
 	var selected *state.Dispatch
+	var demand state.AdmissionDemand
 	for rows.Next() {
 		var d state.Dispatch
 		var raw string
@@ -486,6 +492,19 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 			return nil, 0, err
 		}
 		if !workers.MatchDispatch(d.Executor, []byte(raw), caps, workerLabels) {
+			continue
+		}
+		demand = admissionDemand(cfg, d.Executor)
+		reason, checkErr := admissionReason(tx, cfg, d, demand, workerID, capacity, time.Now())
+		if checkErr != nil {
+			rows.Close()
+			return nil, 0, checkErr
+		}
+		if _, err = tx.Exec(`INSERT INTO admission_queue(activation_id,reason) VALUES(?,?) ON CONFLICT(activation_id) DO UPDATE SET reason=excluded.reason`, d.ActivationID, reason); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		if reason != "" {
 			continue
 		}
 		d.Request = []byte(raw)
@@ -498,6 +517,9 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	}
 	if selected == nil {
 		return nil, 0, tx.Commit()
+	}
+	if err = reserveAdmission(tx, cfg, *selected, demand, time.Now()); err != nil {
+		return nil, 0, err
 	}
 	var generation int64
 	err = tx.QueryRow(`SELECT generation FROM assignments WHERE activation_id=?`, selected.ActivationID).Scan(&generation)
@@ -1181,7 +1203,30 @@ func (s *Store) ListActivations(runID string) ([]state.Activation, error) {
 		}
 		result = append(result, *a)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	reasons, err := s.db.Query(`SELECT d.activation_id, COALESCE(NULLIF(q.reason,''),'Waiting for worker') FROM dispatches d LEFT JOIN admission_queue q ON q.activation_id=d.activation_id WHERE d.run_id=? AND d.state='pending'`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer reasons.Close()
+	byID := make(map[string]string)
+	for reasons.Next() {
+		var id, reason string
+		if err := reasons.Scan(&id, &reason); err != nil {
+			return nil, err
+		}
+		byID[id] = reason
+	}
+	if err := reasons.Err(); err != nil {
+		return nil, err
+	}
+	for i := range result {
+		result[i].QueueReason = byID[result[i].ID]
+	}
+	return result, nil
 }
 
 func (s *Store) SetActivationState(id, st string) error {

@@ -228,6 +228,12 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		return 1
 	}
 	defer store.Close()
+	if config != nil {
+		if err := store.ConfigureAdmission(config.Admission); err != nil {
+			fmt.Fprintf(os.Stderr, "error: admission configuration: %v\n", err)
+			return 1
+		}
+	}
 
 	coordinator := api.NewCoordinator(store)
 	ctx, stop := context.WithCancel(context.Background())

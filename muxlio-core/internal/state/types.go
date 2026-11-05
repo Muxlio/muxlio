@@ -22,6 +22,7 @@ type Run struct {
 
 // Activation is one materialised plan node within a run and structural scope.
 type Activation struct {
+	QueueReason string `json:"queueReason,omitempty"`
 	// Inputs snapshots resolved bindings before execution. Nil denotes a legacy record.
 	Inputs json.RawMessage `json:"inputs,omitempty"`
 	// AttemptBase preserves previous attempts when a failed run is explicitly retried.

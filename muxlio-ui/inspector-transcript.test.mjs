@@ -209,4 +209,8 @@ assert.match(workbenchMarkup, /data-view-artifact="report"/, 'workbench output a
 await context.showArtifactOutput(workbenchOutput.report,'report');
 assert.match(modalElements.get('outputModalBody').innerHTML, /<article class="markdown-body"><h1>Report<\/h1>/, 'workbench artifact viewer uses the shared renderer');
 assert.equal(JSON.stringify(workbenchOutput),workbenchOriginal);
-console.log('Markdown review regression checks passed');
+context.renderInspectorWb({id:'queued',nodeId:'task.queued',state:'running',queueReason:'Waiting for provider rate limit <shared>'});
+assert.match(workbenchMarkup, /<dt>Queue reason<\/dt><dd>Waiting for provider rate limit &lt;shared&gt;<\/dd>/);
+context.renderInspectorWb({id:'done',nodeId:'task.done',state:'succeeded'});
+assert.doesNotMatch(workbenchMarkup, /Queue reason/);
+console.log('Markdown review and admission queue regression checks passed');

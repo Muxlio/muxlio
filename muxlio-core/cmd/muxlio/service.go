@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -22,6 +23,7 @@ var originalArgs = append([]string(nil), os.Args...)
 
 // serviceConfig authorizes native execution within one explicit workspace.
 type serviceConfig struct {
+	Admission state.AdmissionConfig `json:"admission,omitempty"`
 	// configPath identifies the selected credential file independently of RuntimeDir.
 	configPath string
 
