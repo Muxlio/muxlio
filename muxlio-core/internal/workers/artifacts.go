@@ -65,6 +65,11 @@ func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, er
 	if req.Context != nil && req.Context.Err() != nil {
 		return ExecuteResult{}, req.Context.Err()
 	}
+	var err error
+	req.attemptScratch, err = a.workDir(req)
+	if err != nil {
+		return ExecuteResult{}, err
+	}
 	if err := a.materializeInputs(&req); err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
 	}
@@ -223,21 +228,10 @@ func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, de
 }
 
 func (a ArtifactTransferExecutor) workDir(req ExecuteRequest) (string, error) {
-	if req.RunID != "" && req.ActivationID != "" && req.AttemptID != "" {
-		dir := filepath.Join(a.WorkBase, "..", "runs", safePathPart(req.RunID), safePathPart(req.ActivationID), safePathPart(req.AttemptID))
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return "", err
-		}
-		return dir, nil
+	if req.attemptScratch != "" {
+		return req.attemptScratch, nil
 	}
-	if a.WorkBase == "" {
-		return "", fmt.Errorf("muxlio: work base required for artifact transfer")
-	}
-	dir, err := os.MkdirTemp(a.WorkBase, "artifact-transfer-")
-	if err != nil {
-		return "", err
-	}
-	return dir, nil
+	return newAttemptScratch(req, a.WorkBase)
 }
 
 func artifactRefFromValue(value any) (ArtifactRef, bool) {

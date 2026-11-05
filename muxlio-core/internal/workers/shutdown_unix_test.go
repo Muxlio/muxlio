@@ -93,8 +93,13 @@ func TestConcurrentAttemptProcessGroupsAndWorkspaces(t *testing.T) {
 	for i := range children {
 		c := &children[i]
 		dir := filepath.Join(script.workBase, "..", "runs", "run", c.id, c.id)
+		attemptDir := dir
 		deadline := time.Now().Add(3 * time.Second)
 		for {
+			matches, _ := filepath.Glob(filepath.Join(attemptDir, "execution-*"))
+			if len(matches) == 1 {
+				dir = matches[0]
+			}
 			data, err := os.ReadFile(filepath.Join(dir, "pid"))
 			if err == nil {
 				c.pid, err = strconv.Atoi(strings.TrimSpace(string(data)))

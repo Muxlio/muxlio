@@ -318,6 +318,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			return reject(fmt.Errorf("invalid assignment request: %w", err))
 		}
 		executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID = assignment.RunID, assignment.ActivationID, assignment.AttemptID
+		executeReq.resourcesAdmitted = true
 		executeReq, err = ApplyWorkerWorkspace(executeReq, cfg.Workspace)
 		if err != nil {
 			return reject(fmt.Errorf("workspace: %w", err))

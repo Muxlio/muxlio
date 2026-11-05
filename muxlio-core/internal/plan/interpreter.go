@@ -524,6 +524,8 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		Executor:        node.Executor,
 		ExecutorVersion: node.ExecutorVersion,
 		PlacementLabels: node.PlacementLabels,
+		WorkspaceMode:   node.WorkspaceMode,
+		ConcurrencyKeys: node.ConcurrencyKeys,
 		Task:            node.Task,
 		Params:          node.Params,
 		Inputs:          inputs,

@@ -47,10 +47,11 @@ func recoverLostDispatches(tx *sql.Tx) error {
 		}
 		var request struct {
 			Effect            string     `json:"effect"`
+			ConcurrencyKeys   []string   `json:"concurrencyKeys"`
 			ExecutionDeadline *time.Time `json:"executionDeadline"`
 			Deadline          *time.Time `json:"deadline"`
 		}
-		if json.Unmarshal([]byte(raw), &request) == nil && request.Effect == "none" {
+		if json.Unmarshal([]byte(raw), &request) == nil && request.Effect == "none" && len(request.ConcurrencyKeys) == 0 {
 			// A lost worker must not restart an already expired attempt.
 			now := time.Now()
 			if (request.ExecutionDeadline != nil && !now.Before(*request.ExecutionDeadline)) || (request.Deadline != nil && !now.Before(*request.Deadline)) {

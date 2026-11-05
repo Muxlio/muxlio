@@ -2,6 +2,12 @@ package workers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +18,48 @@ import (
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 )
+
+func TestScriptArtifactTransferSharesUniqueInvocationScratch(t *testing.T) {
+	inner := testScript(t, `cat input.txt > result.txt; printf '{}'`)
+	uploads := 0
+	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if strings.HasSuffix(req.URL.Path, "/transfer") {
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{URL: "/bytes", Method: req.URL.Query().Get("method"), Mode: "proxy"})
+		} else if req.Method == http.MethodPut {
+			data, err := io.ReadAll(req.Body)
+			if err != nil || string(data) != "payload" {
+				t.Fatalf("uploaded file: %q %v", data, err)
+			}
+			_ = req.Body.Close()
+			uploads++
+		} else {
+			_, _ = io.WriteString(w, "payload")
+		}
+		return w.Result(), nil
+	})}
+	wrap := ArtifactTransferExecutor{Inner: inner, WorkBase: inner.workBase,
+		Client: artifacts.Client{BaseURL: "http://coordinator", HTTP: client}}
+	req := ExecuteRequest{Executor: "test", RunID: "run", ActivationID: "activation", AttemptID: "attempt",
+		Inputs: map[string]any{"input": map[string]any{
+			"digest": fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("payload"))), "size": float64(7), "path": "input.txt",
+		}},
+		Outputs: map[string]OutputDecl{"result": {Path: "result.txt", Mime: "text/plain"}}}
+	for range 2 {
+		result, err := wrap.Execute(req)
+		if err != nil || result.Error != "" {
+			t.Fatalf("file artifact transfer failed: %+v %v", result, err)
+		}
+		ref, ok := artifactRefFromValue(result.Outputs["result"])
+		if !ok || ref.Path != "result.txt" || ref.Size != 7 {
+			t.Fatalf("missing uploaded artifact: %+v", result)
+		}
+	}
+	paths, err := filepath.Glob(filepath.Join(inner.workBase, "..", "runs", "run", "activation", "attempt", "execution-*", "result.txt"))
+	if err != nil || len(paths) != 2 || uploads != 2 {
+		t.Fatalf("invocations shared scratch or lost output: %v uploads=%d err=%v", paths, uploads, err)
+	}
+}
 
 func TestStripInlineArtifactBytes(t *testing.T) {
 	req := ExecuteRequest{Inputs: map[string]any{

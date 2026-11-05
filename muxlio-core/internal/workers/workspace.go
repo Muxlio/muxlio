@@ -1,0 +1,159 @@
+package workers
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// newAttemptScratch allocates once per invocation, including repeated execution
+// of the same durable attempt. Transfer and script layers must use the same path.
+func newAttemptScratch(req ExecuteRequest, base string) (string, error) {
+	parent := base
+	if base == "" {
+		parent = os.TempDir()
+	} else if req.RunID != "" && req.ActivationID != "" && req.AttemptID != "" {
+		parent = filepath.Join(base, "..", "runs", safePathPart(req.RunID), safePathPart(req.ActivationID), safePathPart(req.AttemptID))
+	}
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(parent, "execution-")
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(dir)
+}
+
+// ValidateWorkspaceContract validates resource declarations before admission.
+func ValidateWorkspaceContract(mode string, keys []string) error {
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("exclusive concurrency key must not be empty")
+		}
+	}
+	switch mode {
+	case "", "snapshot", "read-only":
+	case "shared-write":
+		if len(keys) == 0 {
+			return fmt.Errorf("shared-write workspace requires an exclusive concurrency key")
+		}
+	default:
+		return fmt.Errorf("unknown workspace mode %q", mode)
+	}
+	return nil
+}
+
+// prepareAttemptWorkspace never exposes the source as writable by default.
+// Snapshots contain independent regular files, require no Git repository, and
+// reject symlinks and special files rather than leaking access to host paths.
+func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest, error) {
+	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
+		return req, err
+	}
+	switch req.WorkspaceMode {
+	case "", "snapshot":
+		dst := filepath.Join(scratch, "workspace")
+		if err := os.Mkdir(dst, 0o700); err != nil {
+			return req, err
+		}
+		if req.Workspace != "" {
+			source, err := filepath.EvalSymlinks(req.Workspace)
+			if err != nil {
+				return req, err
+			}
+			resolvedScratch, err := filepath.EvalSymlinks(scratch)
+			if err != nil {
+				return req, err
+			}
+			rel, err := filepath.Rel(source, resolvedScratch)
+			if err != nil || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+				return req, fmt.Errorf("attempt scratch must be outside workspace source")
+			}
+			root, err := os.OpenRoot(source)
+			if err != nil {
+				return req, err
+			}
+			defer root.Close()
+			err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				rel, err := filepath.Rel(source, path)
+				if err != nil {
+					return err
+				}
+				if rel == "." {
+					return nil
+				}
+				// Git metadata can refer to a mutable repository outside a worktree.
+				if entry.Name() == ".git" {
+					if entry.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				target := filepath.Join(dst, rel)
+				if entry.IsDir() {
+					return os.Mkdir(target, 0o700)
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("workspace snapshot rejects non-regular file %q", rel)
+				}
+				input, err := root.Open(rel)
+				if err != nil {
+					return err
+				}
+				output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600|info.Mode().Perm()&0o100)
+				if err != nil {
+					input.Close()
+					return err
+				}
+				_, copyErr := io.Copy(output, input)
+				input.Close()
+				closeErr := output.Close()
+				if copyErr != nil {
+					return copyErr
+				}
+				return closeErr
+			})
+			if err != nil {
+				return req, err
+			}
+		}
+		req.Workspace, req.WorkspaceMode = dst, "snapshot"
+		// Adapters may consume the workspace input directly. Rebind a copy so
+		// no input can redirect them back into the shared source tree.
+		inputs := make(map[string]any, len(req.Inputs)+1)
+		for key, value := range req.Inputs {
+			inputs[key] = value
+		}
+		inputs["workspace"] = dst
+		req.Inputs = inputs
+	case "read-only":
+		var params struct {
+			Isolation *isolationPolicy `json:"isolation"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return req, err
+		}
+		if params.Isolation == nil || params.Isolation.Mode != "required" {
+			return req, fmt.Errorf("read-only workspace requires enforced isolation")
+		}
+	case "shared-write":
+		if len(req.ConcurrencyKeys) == 0 {
+			return req, fmt.Errorf("shared-write workspace requires an exclusive concurrency key")
+		}
+	default:
+		return req, fmt.Errorf("unknown workspace mode %q", req.WorkspaceMode)
+	}
+	return req, nil
+}

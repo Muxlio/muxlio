@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/muxlio/muxlio-core/internal/workers"
 	"time"
 )
 
@@ -155,6 +157,9 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 		seen[id] = true
 	}
 	for _, node := range sg.Nodes {
+		if err := workers.ValidateWorkspaceContract(node.WorkspaceMode, node.ConcurrencyKeys); err != nil {
+			errs = append(errs, ValidationError{Code: "MUXLIO_BAD_WORKSPACE", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: err.Error()})
+		}
 		if node.ID == "" {
 			errs = append(errs, ValidationError{
 				Code: "MUXLIO_MISSING_NODE_ID", Severity: "error", Phase: "plan",

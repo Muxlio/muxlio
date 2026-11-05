@@ -62,6 +62,10 @@ export interface ProjectResult {
 export interface ExecuteOptions {
   executor: string;
   fallbackExecutors?: string[];
+  /** Private snapshot by default; shared writes require exclusive keys. */
+  workspaceMode?: 'snapshot' | 'read-only' | 'shared-write';
+  /** All keys are acquired atomically with a concurrency limit of one. */
+  concurrencyKeys?: string[];
   task?: string;
   params?: unknown;
   inputs?: Record<string, Binding>;
@@ -218,6 +222,8 @@ class IRBuilder implements BuildContext {
       id,
       kind: 'execute',
       executor: opts.executor,
+      workspaceMode: opts.workspaceMode,
+      concurrencyKeys: opts.concurrencyKeys,
       fallbackExecutors: opts.fallbackExecutors,
       task: opts.task,
       params: opts.params,

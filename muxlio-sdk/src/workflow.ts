@@ -189,6 +189,10 @@ export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSc
   executor: string;
   /** Fallback executors tried on retry. */
   fallbackExecutors?: string[];
+  /** Private snapshot by default; shared writes require exclusive keys. */
+  workspaceMode?: 'snapshot' | 'read-only' | 'shared-write';
+  /** All keys are acquired atomically with a concurrency limit of one. */
+  concurrencyKeys?: string[];
   /** Natural-language task description / prompt. */
   task?: string;
   /** Arbitrary JSON params forwarded to the executor. */
@@ -389,6 +393,10 @@ interface IRNode {
   kind: string;
   executor?: string;
   fallbackExecutors?: string[];
+  /** Private snapshot by default; shared writes require exclusive keys. */
+  workspaceMode?: 'snapshot' | 'read-only' | 'shared-write';
+  /** All keys are acquired atomically with a concurrency limit of one. */
+  concurrencyKeys?: string[];
   task?: string;
   params?: unknown;
   inputs?: Record<string, Binding>;
@@ -648,6 +656,8 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     id,
     kind: 'execute',
     executor: def.executor,
+    workspaceMode: def.workspaceMode,
+    concurrencyKeys: def.concurrencyKeys,
     task: def.task,
     params: def.params !== undefined ? def.params : undefined,
     inputs: Object.keys(inputBindings).length > 0 ? inputBindings : undefined,

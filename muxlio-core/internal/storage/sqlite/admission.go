@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 // ConfigureAdmission persists budgets shared by every polling worker. Existing
@@ -101,6 +102,22 @@ func readAdmissionConfig(tx *sql.Tx) (state.AdmissionConfig, error) {
 // Only active assignments consume execution capacity. Timers and human input
 // are interpreter waits, have no dispatch, and never create a reservation.
 func admissionReason(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, demand state.AdmissionDemand, workerID string, workerCap int, now time.Time) (string, error) {
+	var request workers.ExecuteRequest
+	if err := json.Unmarshal(d.Request, &request); err != nil {
+		return "", err
+	}
+	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
+		return "", err
+	}
+	for _, key := range request.ConcurrencyKeys {
+		var held int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM exclusive_resources WHERE resource_key=?`, key).Scan(&held); err != nil {
+			return "", err
+		}
+		if held != 0 {
+			return "Waiting for exclusive resource key", nil
+		}
+	}
 	scopes := []struct {
 		cap       int
 		predicate string
@@ -161,6 +178,22 @@ func admissionTokens(tx *sql.Tx, key string, rate state.AdmissionRate, now time.
 }
 
 func reserveAdmission(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, demand state.AdmissionDemand, now time.Time) error {
+	var request workers.ExecuteRequest
+	if err := json.Unmarshal(d.Request, &request); err != nil {
+		return err
+	}
+	// Reservations outlive revocation and lease expiry. Only confirmed
+	// completion or explicit reconciliation proves the old process stopped.
+	seen := make(map[string]bool)
+	for _, key := range request.ConcurrencyKeys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, err := tx.Exec(`INSERT INTO exclusive_resources(resource_key,attempt_id,activation_id) VALUES(?,?,?)`, key, d.AttemptID, d.ActivationID); err != nil {
+			return err
+		}
+	}
 	if err := reserveSlots(tx, d.ActivationID, demand); err != nil {
 		return err
 	}

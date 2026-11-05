@@ -77,6 +77,8 @@ type Node struct {
 	Executor          string            `json:"executor,omitempty"`
 	ExecutorVersion   string            `json:"executorVersion,omitempty"`
 	PlacementLabels   map[string]string `json:"placementLabels,omitempty"`
+	WorkspaceMode     string            `json:"workspaceMode,omitempty"`
+	ConcurrencyKeys   []string          `json:"concurrencyKeys,omitempty"`
 	FallbackExecutors []string          `json:"fallbackExecutors,omitempty"`
 
 	// Task is the natural-language or structured task description.

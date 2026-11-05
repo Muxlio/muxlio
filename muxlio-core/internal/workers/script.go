@@ -3,6 +3,7 @@ package workers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -122,11 +123,16 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 }
 
 func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
-	req.Workspace = ignoreMissingWorkspace(req.Workspace)
-	if ws := workspaceFromExecuteInputs(req.Inputs); ws != "" {
-		req.Workspace = ignoreMissingWorkspace(ws)
-	} else if s.Workspace != "" {
-		req.Workspace = s.Workspace
+	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
+		return ExecuteResult{Error: err.Error()}, nil
+	}
+	if len(req.ConcurrencyKeys) > 0 && !req.resourcesAdmitted {
+		return ExecuteResult{Error: "exclusive concurrency keys require coordinator worker admission; submit this task to a coordinator"}, nil
+	}
+	var workspaceErr error
+	req, workspaceErr = ApplyWorkerWorkspace(req, s.Workspace)
+	if workspaceErr != nil {
+		return ExecuteResult{Error: workspaceErr.Error()}, nil
 	}
 	var guardErr error
 	req, guardErr = GuardRequest(req)
@@ -149,25 +155,18 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	// Keep each attempt's workspace under the run so incidental agent files
 	// (notes, scratch output, CLI diagnostics) cannot land in the source repo.
 	// Older/direct callers without execution IDs retain an isolated temp dir.
-	var workDir string
-	var err error
-	if req.RunID != "" && req.ActivationID != "" && req.AttemptID != "" {
-		workDir = filepath.Join(s.workBase, "..", "runs", safePathPart(req.RunID), safePathPart(req.ActivationID), safePathPart(req.AttemptID))
-		if err := os.MkdirAll(workDir, 0o700); err != nil {
-			return ExecuteResult{}, fmt.Errorf("muxlio: creating run workspace: %w", err)
-		}
-	} else {
-		if err := os.MkdirAll(s.workBase, 0o755); err != nil {
-			return ExecuteResult{}, fmt.Errorf("muxlio: creating work base: %w", err)
-		}
-		workDir, err = os.MkdirTemp(s.workBase, "exec-")
+	workDir := req.attemptScratch
+	if workDir == "" {
+		var err error
+		workDir, err = newAttemptScratch(req, s.workBase)
 		if err != nil {
-			return ExecuteResult{}, fmt.Errorf("muxlio: creating work dir: %w", err)
+			return ExecuteResult{}, err
 		}
 	}
-	workDir, err = filepath.EvalSymlinks(workDir)
+
+	req, err := prepareAttemptWorkspace(req, workDir)
 	if err != nil {
-		return ExecuteResult{}, fmt.Errorf("muxlio: resolving work dir: %w", err)
+		return ExecuteResult{Error: err.Error()}, nil
 	}
 
 	// Build the stdin payload: ExecuteRequest + workDir.
@@ -241,6 +240,9 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		result.Error = fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr)
 	}
 	result.Logs = boundedLog(RedactSecrets(result.Logs+stderr.String(), req.Secrets))
+	if req.WorkspaceMode == "shared-write" {
+		result.Logs = "[muxlio shared writable workspace: exclusive resource keys required]\n" + result.Logs
+	}
 	if isolated {
 		result.Logs = "[muxlio isolation enforced]\n" + result.Logs
 	}
@@ -314,6 +316,9 @@ func safePathPart(value string) string {
 			cleaned.WriteRune(r)
 		}
 	}
+	if cleaned.String() != value {
+		return fmt.Sprintf("~%x", sha256.Sum256([]byte(value)))
+	}
 	value = cleaned.String()
 	if value == "" {
 		return "unknown"
@@ -360,6 +365,13 @@ func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*e
 		// Keep the host root out of the namespace. Binding / wholesale makes
 		// host credentials and unrelated user data readable by the adapter.
 		args := []string{"--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--dev", "/dev", "--proc", "/proc", "--ro-bind", s.adapterDir, "/muxlio/adapters", "--bind", workDir, workDir, "--chdir", workDir, "/muxlio/adapters/" + filepath.Base(script)}
+		if req.Workspace != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "" {
+			flag := "--ro-bind"
+			if req.WorkspaceMode == "shared-write" {
+				flag = "--bind"
+			}
+			args = append(args[:len(args)-1], flag, req.Workspace, req.Workspace, args[len(args)-1])
+		}
 		return exec.Command(bwrap, args...), true, nil
 	case "oci":
 		if runtime.GOOS != "linux" {
@@ -376,8 +388,8 @@ func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*e
 			return nil, false, fmt.Errorf("required OCI isolation unavailable: podman or docker is required")
 		}
 		adapterMount := s.adapterDir + ":/muxlio/adapters:ro"
-		workMount := workDir + ":/work:rw"
-		args := []string{"run", "--rm", "--network=none", "--read-only", "--tmpfs", "/tmp", "-v", adapterMount, "-v", workMount, "-w", "/work"}
+		workMount := workDir + ":" + workDir + ":rw"
+		args := []string{"run", "--rm", "-i", "--network=none", "--read-only", "--tmpfs", "/tmp", "-v", adapterMount, "-v", workMount, "-w", workDir}
 		if filepath.Base(engine) == "podman" {
 			args = append(args, "--userns=keep-id")
 		} else {
@@ -385,6 +397,13 @@ func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*e
 			// uid/gid explicitly so the writable work mount is usable without
 			// running the adapter as root in the container.
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+		}
+		if req.Workspace != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "" {
+			mode := "ro"
+			if req.WorkspaceMode == "shared-write" {
+				mode = "rw"
+			}
+			args = append(args, "-v", req.Workspace+":"+req.Workspace+":"+mode)
 		}
 		args = append(args, policy.Image, "/muxlio/adapters/"+filepath.Base(script))
 		return exec.Command(engine, args...), true, nil

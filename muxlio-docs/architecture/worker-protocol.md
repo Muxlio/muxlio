@@ -1,5 +1,47 @@
 # Remote worker protocol v1
 
+## Attempt workspace and mutable resources
+
+Execute nodes and envelopes accept `workspaceMode` and `concurrencyKeys`.
+Both SDK authoring APIs preserve these declarations.
+
+* `snapshot` (default): the script executor copies regular files from the selected
+  worker workspace into an attempt-owned writable directory. With no source it
+  creates an empty workspace. No Git repository is required. Git metadata is
+  excluded; symbolic links and special files fail preparation. Workspace inputs
+  are rebound to the private copy. The source remains untouched.
+* `read-only`: mounts the source read-only through a required isolation backend.
+  Native execution rejects this mode because it cannot enforce it.
+* `shared-write`: explicitly exposes the source as writable. Requires at least
+  one exclusive key. Every task accessing the same mutable tree or external
+  resource must declare the same key, including tasks in different runs.
+
+For example, `{ "workspaceMode": "shared-write", "concurrencyKeys":
+["repository:project", "deployment:staging"] }` reserves both resources with
+limit one. Keys are opaque and global within the coordinator. They are checked
+atomically with dispatch admission and survive coordinator restarts. Completion
+releases them. Lost holders stay uncertain until reconciliation, including
+requests declaring `effect: "none"`. Cancelled holders retain their keys until the worker confirms completion;
+lease expiry alone does not prove that a process has stopped.
+
+Keyed execution requires coordinator worker admission. Direct script execution
+(including local `muxlio run --adapters`) rejects concurrency keys because it
+cannot enforce the coordinator's durable reservations. Submit keyed workflows
+to a coordinator with a registered worker instead.
+
+Attempt scratch directories are allocated exclusively beneath the attempt ID;
+restarting an attempt creates a fresh execution directory. Scratch must be outside
+the snapshot source. Snapshots are independent copies, not OS security
+boundaries: untrusted code must request `params.isolation.mode: "required"`.
+
+Required isolation is eligible for admission only on workers advertising
+`muxlio.dev/isolation/bwrap=true` or `muxlio.dev/isolation/oci=true`, matching
+`params.isolation.runtime`. Operators must advertise only installed, enabled
+backends. OCI also requires an image. Without an eligible worker the request
+remains unadmitted; native fallback is forbidden. The executor checks actual
+backend availability again before starting a process. Unimplemented backends
+cannot satisfy admission.
+
 Muxlio remote workers establish outbound HTTP connections to a coordinator.
 They never connect to its database. The wire format is generic execution
 infrastructure: workflow-specific meaning stays inside the opaque execute

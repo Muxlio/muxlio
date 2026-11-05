@@ -1,13 +1,18 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/plan"
+	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -69,6 +74,8 @@ import { workflow, task } from './muxlio-sdk/src/workflow.ts';
 import { z } from 'zod';
 const command = (args, extra = {}) => task({
   executor: 'command',
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['command-verification-workspace'],
   params: { program: process.execPath, args, cwd: '.', onNonZero: 'return', ...extra },
 });
 const verify = command(['-e', "if(process.env.EXAMPLE_EXECUTOR_SETTING!=='configured-value'||process.env.EXAMPLE_UNCONFIGURED_SETTING!==undefined)process.exit(2);console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
@@ -134,7 +141,32 @@ console.log(JSON.stringify(compiled.plan));`)
 			executor.Executors = map[string]workers.ExecutorConfig{
 				"command": {Allow: &allow, Env: map[string]string{"EXAMPLE_EXECUTOR_SETTING": "configured-value"}},
 			}
-			engine := plan.NewEngine(&p, executor)
+			store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			coordinator := api.NewCoordinator(store)
+			server := httptest.NewServer(api.NewWorkerProtocolHandler(coordinator))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			stopped := make(chan error, 1)
+			go func() {
+				stopped <- workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{
+					CoordinatorURL: server.URL, WorkerID: "command-worker", Capacity: 1,
+					Capabilities: []workers.RemoteCapability{{Name: "command"}},
+					Workspace:    workspace, PollInterval: time.Millisecond,
+				}, executor)
+			}()
+			defer func() {
+				cancel()
+				if err := <-stopped; err != nil {
+					t.Errorf("worker stopped: %v", err)
+				}
+			}()
+			engine := plan.NewEngineWithStore(&p, coordinator, store)
+			engine.Context = ctx
 			input, _ := json.Marshal(map[string]bool{"repair": tc.repair})
 			id, err := engine.CreateRun(input)
 			if err != nil {

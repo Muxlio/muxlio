@@ -23,6 +23,7 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS exclusive_resources (resource_key TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, activation_id TEXT NOT NULL)`,
 	`PRAGMA journal_mode = WAL`,
 	`PRAGMA busy_timeout = 5000`,
 	`PRAGMA foreign_keys = ON`,
@@ -342,6 +343,9 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 			return false, err
 		}
 	}
+	if _, err = tx.Exec(`DELETE FROM exclusive_resources WHERE attempt_id=?`, a.AttemptID); err != nil {
+		return false, err
+	}
 	if _, err = tx.Exec(`UPDATE dispatches SET state='completed' WHERE activation_id=?`, a.ActivationID); err != nil {
 		return false, err
 	}
@@ -440,6 +444,13 @@ func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 
 // EnqueueDispatch durably records an execute envelope for worker polling.
 func (s *Store) EnqueueDispatch(d state.Dispatch) error {
+	var request workers.ExecuteRequest
+	if err := json.Unmarshal(d.Request, &request); err != nil {
+		return err
+	}
+	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND dispatches.state='completed'`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
@@ -483,6 +494,9 @@ func (s *Store) ReconcileUncertainDispatch(activationID string) error {
 	if dispatchState == "uncertain" {
 		if assignmentState == "" {
 			return fmt.Errorf("muxlio: activation %q has no reconciled assignment", activationID)
+		}
+		if _, err = tx.Exec(`DELETE FROM exclusive_resources WHERE activation_id=?`, activationID); err != nil {
+			return err
 		}
 		if _, err = tx.Exec(`UPDATE dispatches SET state='pending' WHERE activation_id=? AND state='uncertain'`, activationID); err != nil {
 			return err
@@ -561,6 +575,7 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 			continue
 		}
 		demand = admissionDemand(cfg, d.Executor)
+		d.Request = []byte(raw)
 		reason, checkErr := admissionReason(tx, cfg, d, demand, workerID, capacity, time.Now())
 		if checkErr != nil {
 			rows.Close()
@@ -1734,6 +1749,9 @@ func (s *Store) AckWorkerCompletionWithoutResult(a state.Assignment, terminalSta
 	}
 	if n != 1 {
 		return false, tx.Commit()
+	}
+	if _, err := tx.Exec(`DELETE FROM exclusive_resources WHERE attempt_id=?`, a.AttemptID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err

@@ -28,9 +28,16 @@ type ExecuteRequest struct {
 	Deadline      *time.Time `json:"deadline,omitempty"`
 	QueueDeadline *time.Time `json:"queueDeadline,omitempty"`
 	// Effect is the declared effect policy; only "none" permits replay after loss.
-	Effect          string            `json:"effect,omitempty"`
-	Context         context.Context   `json:"-"`
-	Workspace       string            `json:"workspace,omitempty"`
+	Effect          string          `json:"effect,omitempty"`
+	Context         context.Context `json:"-"`
+	Workspace       string          `json:"workspace,omitempty"`
+	WorkspaceMode   string          `json:"workspaceMode,omitempty"`
+	ConcurrencyKeys []string        `json:"concurrencyKeys,omitempty"`
+	// resourcesAdmitted is set only after receiving a coordinator assignment.
+	// Direct script calls cannot enforce durable, cross-worker reservations.
+	resourcesAdmitted bool
+	// attemptScratch is owned by one invocation and shared with artifact transfer.
+	attemptScratch  string
 	RunID           string            `json:"runId,omitempty"`
 	ActivationID    string            `json:"activationId,omitempty"`
 	AttemptID       string            `json:"attemptId,omitempty"`

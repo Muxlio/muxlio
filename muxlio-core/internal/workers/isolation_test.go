@@ -42,6 +42,9 @@ func TestOCIEngineUsesCompatibleUnprivilegedUserOption(t *testing.T) {
 				t.Fatalf("OCI command should be isolated: cmd=%v isolated=%v err=%v", cmd, isolated, err)
 			}
 			got := strings.Join(cmd.Args, " ")
+			if !strings.Contains(got, " -i ") || !strings.Contains(got, "/tmp/work:/tmp/work:rw") {
+				t.Fatalf("OCI must receive stdin and preserve request scratch paths: %s", got)
+			}
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("%s command missing %q: %s", tc.engine, tc.want, got)
 			}
