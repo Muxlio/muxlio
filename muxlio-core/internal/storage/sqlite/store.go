@@ -113,6 +113,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE assignments ADD COLUMN attempt_id TEXT NOT NULL DEFAULT ''`,
 		// Signal idempotency key: allows callers to deduplicate retried deliveries.
 		`ALTER TABLE signals ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE workers ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE workers ADD COLUMN labels_json TEXT NOT NULL DEFAULT '{}'`,
 		// Attempt-level token usage reported by the executor/adapter.
 		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
@@ -321,15 +322,38 @@ func (s *Store) RegisterWorker(w state.Worker) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err = s.db.Exec(`INSERT INTO workers(id,capacity,capabilities_json,labels_json,last_seen) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET capacity=excluded.capacity,capabilities_json=excluded.capabilities_json,labels_json=excluded.labels_json,last_seen=excluded.last_seen`, w.ID, w.Capacity, string(raw), string(labelsRaw), rfc3339(w.LastSeen))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var previous string
+	err = tx.QueryRow(`SELECT instance_id FROM workers WHERE id=?`, w.ID).Scan(&previous)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	// A new process cannot inherit the old process's leases. Its attempts may
+	// have performed effects, so fence their results and retain uncertainty.
+	if err == nil && previous != w.InstanceID {
+		if _, err = tx.Exec(`UPDATE dispatches SET state='uncertain' WHERE state='assigned' AND assignment_id IN (SELECT assignment_id FROM assignments WHERE worker_id=? AND state='active')`, w.ID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE assignments SET state='uncertain',generation=generation+1 WHERE worker_id=? AND state='active'`, w.ID); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO workers(id,instance_id,capacity,capabilities_json,labels_json,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id,capacity=excluded.capacity,capabilities_json=excluded.capabilities_json,labels_json=excluded.labels_json,last_seen=excluded.last_seen`, w.ID, w.InstanceID, w.Capacity, string(raw), string(labelsRaw), rfc3339(w.LastSeen))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListWorkers returns workers that have sent a heartbeat within the given duration.
 func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id,capacity,capabilities_json,labels_json,last_seen FROM workers WHERE last_seen>=? ORDER BY id`, rfc3339(since))
+	rows, err := s.db.Query(`SELECT id,instance_id,capacity,capabilities_json,labels_json,last_seen FROM workers WHERE last_seen>=? ORDER BY id`, rfc3339(since))
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +362,7 @@ func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 	for rows.Next() {
 		var w state.Worker
 		var raw, labelsRaw, seen string
-		if err := rows.Scan(&w.ID, &w.Capacity, &raw, &labelsRaw, &seen); err != nil {
+		if err := rows.Scan(&w.ID, &w.InstanceID, &w.Capacity, &raw, &labelsRaw, &seen); err != nil {
 			return nil, err
 		}
 		w.Capabilities, err = decodeWorkerCapabilities(raw)

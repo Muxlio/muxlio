@@ -28,6 +28,7 @@ type WorkerProtocolBackend interface {
 type WorkerRegistration struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	WorkerID        string             `json:"workerId"`
+	InstanceID      string             `json:"instanceId,omitempty"`
 	OS              string             `json:"os,omitempty"`
 	Architecture    string             `json:"architecture,omitempty"`
 	Capacity        int                `json:"capacity"`
@@ -46,8 +47,11 @@ type WorkerRegistrationResult struct {
 }
 
 type WorkerHeartbeat struct {
+	InstanceID      string   `json:"instanceId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion"`
 	Active          []string `json:"activeAssignments,omitempty"`
+	Capacity        *int     `json:"capacity,omitempty"`
+	AvailableSlots  int      `json:"availableSlots,omitempty"`
 }
 
 type WorkerHeartbeatResult struct {
@@ -168,6 +172,10 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusBadRequest, CodeUnsupportedProtocol, "protocolVersion must be v1")
 				return
 			}
+			if req.Capacity != nil && *req.Capacity < 0 {
+				writeError(w, http.StatusBadRequest, CodeBadRequest, "capacity must be non-negative")
+				return
+			}
 			result, err := h.backend.Heartbeat(workerID, req)
 			if err != nil {
 				writeWorkerBackendError(w, err)
@@ -182,7 +190,15 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
 				return
 			}
-			assignment, err := h.backend.NextAssignment(workerID)
+			var assignment *WorkerAssignment
+			var err error
+			if backend, ok := h.backend.(interface {
+				NextAssignmentForInstance(string, string) (*WorkerAssignment, error)
+			}); ok {
+				assignment, err = backend.NextAssignmentForInstance(workerID, r.URL.Query().Get("instanceId"))
+			} else {
+				assignment, err = h.backend.NextAssignment(workerID)
+			}
 			if err != nil {
 				writeWorkerBackendError(w, err)
 				return

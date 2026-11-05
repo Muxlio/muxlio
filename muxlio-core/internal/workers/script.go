@@ -99,6 +99,13 @@ func NewScriptExecutor(adapterDir, workBase string) *ScriptExecutor {
 	return &ScriptExecutor{adapterDir: adapterDir, workBase: workBase}
 }
 
+// NewAttempt returns a runner with independent lifecycle settings. Operator
+// configuration is immutable for the lifetime of a worker.
+func (s *ScriptExecutor) NewAttempt() Executor {
+	clone := *s
+	return &clone
+}
+
 // scriptPath converts an executor name to an absolute script path.
 func (s *ScriptExecutor) scriptPath(executor string) string {
 	name := strings.ReplaceAll(executor, "/", "-")

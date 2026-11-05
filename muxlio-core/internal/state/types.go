@@ -67,6 +67,7 @@ type WorkerCapability struct {
 // Worker is a registered remote executor and its advertised capabilities.
 type Worker struct {
 	ID           string             `json:"workerId"`
+	InstanceID   string             `json:"instanceId,omitempty"`
 	Capacity     int                `json:"capacity"`
 	Capabilities []WorkerCapability `json:"capabilities"`
 	Labels       map[string]string  `json:"labels,omitempty"`

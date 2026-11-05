@@ -3,6 +3,7 @@ package workers
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
@@ -25,6 +27,7 @@ type RemoteCapability struct {
 type remoteRegistration struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	WorkerID        string             `json:"workerId"`
+	InstanceID      string             `json:"instanceId,omitempty"`
 	OS              string             `json:"os,omitempty"`
 	Architecture    string             `json:"architecture,omitempty"`
 	Capacity        int                `json:"capacity"`
@@ -36,8 +39,11 @@ type remoteRegistrationResult struct {
 	HeartbeatSeconds int   `json:"heartbeatSeconds"`
 }
 type remoteHeartbeat struct {
+	InstanceID      string   `json:"instanceId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion"`
 	Active          []string `json:"activeAssignments,omitempty"`
+	Capacity        *int     `json:"capacity,omitempty"`
+	AvailableSlots  int      `json:"availableSlots"`
 }
 type remoteHeartbeatResult struct {
 	CoordinatorEpoch int64             `json:"coordinatorEpoch"`
@@ -86,14 +92,24 @@ type RemoteWorkerConfig struct {
 	HTTPClient        *http.Client
 	WorkBase          string
 	Workspace         string
+	// CapacityLimit optionally supplies a live admission limit (zero drains).
+	// It is read by the supervisor, never by executor goroutines.
+	CapacityLimit func() int
+	// ExecutorFactory creates a runner owned by one attempt. Without a factory,
+	// executors must support concurrent Execute calls; attempt-aware executors
+	// can implement NewAttempt instead.
+	ExecutorFactory func() Executor
 }
 
 // RunRemoteWorker registers and polls until ctx is cancelled. Assignments are
 // executed through the same Executor contract used by local workflows.
 func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Executor) error {
-	if cfg.WorkerID == "" || cfg.CoordinatorURL == "" || executor == nil {
+	if cfg.WorkerID == "" || cfg.CoordinatorURL == "" || (executor == nil && cfg.ExecutorFactory == nil) {
 		return fmt.Errorf("worker id, coordinator URL, and executor are required")
 	}
+	ctx, stop := context.WithCancel(ctx)
+	var children sync.WaitGroup
+	defer func() { stop(); children.Wait() }()
 	base, err := url.Parse(strings.TrimRight(cfg.CoordinatorURL, "/"))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return fmt.Errorf("invalid coordinator URL")
@@ -151,10 +167,13 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 		return resp.StatusCode, nil
 	}
-	registration := remoteRegistration{ProtocolVersion: remoteProtocolVersion, WorkerID: cfg.WorkerID, OS: runtime.GOOS, Architecture: runtime.GOARCH, Capacity: cfg.Capacity, Capabilities: cfg.Capabilities, Labels: cfg.Labels}
+	instance := make([]byte, 16)
+	if _, err := rand.Read(instance); err != nil {
+		return err
+	}
+	registration := remoteRegistration{InstanceID: fmt.Sprintf("%x", instance), ProtocolVersion: remoteProtocolVersion, WorkerID: cfg.WorkerID, OS: runtime.GOOS, Architecture: runtime.GOARCH, Capacity: cfg.Capacity, Capabilities: cfg.Capabilities, Labels: cfg.Labels}
 	var registered remoteRegistrationResult
 
-	active := make([]string, 0)
 	// Helper function with retry logic for coordinator calls
 	retryableCall := func(method, path string, body any, target any) (int, error) {
 		backoff := time.Second
@@ -189,7 +208,8 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			}
 
 			if status == 409 && !strings.HasSuffix(path, "/complete") {
-				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &registered)
+				var result remoteRegistrationResult
+				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
 				continue
 			}
 			// 4xx errors are not retryable (except 429)
@@ -208,40 +228,71 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		return err
 	}
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
-		var heartbeat remoteHeartbeatResult
-		if _, err := retryableCall(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", remoteHeartbeat{ProtocolVersion: remoteProtocolVersion, Active: active}, &heartbeat); err != nil {
-			return err
-		}
-		var assignment remoteAssignment
-		status, err := retryableCall(http.MethodGet, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments", nil, &assignment)
-		if err != nil {
-			return err
-		}
-		if status == http.StatusNoContent {
-			t := time.NewTimer(cfg.PollInterval)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return nil
-			case <-t.C:
+	type attempt struct {
+		assignment remoteAssignment
+		cancel     context.CancelFunc
+		revoked    bool
+	}
+	type execution struct {
+		id      string
+		result  ExecuteResult
+		err     error
+		secrets map[string]string
+	}
+	type receipt struct {
+		id     string
+		status int
+		err    error
+	}
+	type pollResult struct {
+		assignment remoteAssignment
+		status     int
+		err        error
+	}
+	active := make(map[string]*attempt)
+	done := make(chan execution, cfg.Capacity)
+	receipts := make(chan receipt, cfg.Capacity)
+	polled := make(chan pollResult, 1)
+	polling := false
+	limit := cfg.Capacity
+	updateLimit := func() {
+		if cfg.CapacityLimit != nil {
+			limit = cfg.CapacityLimit()
+			if limit < 0 {
+				limit = 0
 			}
-			continue
+		}
+	}
+	launch := func(assignment remoteAssignment) error {
+		var err error
+		// Preparation failures belong to this attempt, just like adapter errors.
+		// They must not terminate unrelated children already admitted here.
+		reject := func(err error) error {
+			_, cancel := context.WithCancel(ctx)
+			active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: cancel}
+			children.Add(1)
+			go func() {
+				defer children.Done()
+				defer cancel()
+				select {
+				case done <- execution{id: assignment.AssignmentID, err: err}:
+				case <-ctx.Done():
+				}
+			}()
+			return nil
 		}
 		var executeReq ExecuteRequest
 		if err := json.Unmarshal(assignment.Request, &executeReq); err != nil {
-			return fmt.Errorf("invalid assignment request: %w", err)
+			return reject(fmt.Errorf("invalid assignment request: %w", err))
 		}
+		executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID = assignment.RunID, assignment.ActivationID, assignment.AttemptID
 		executeReq, err = ApplyWorkerWorkspace(executeReq, cfg.Workspace)
 		if err != nil {
-			return fmt.Errorf("workspace: %w", err)
+			return reject(fmt.Errorf("workspace: %w", err))
 		}
 		executeReq, err = GuardRequest(executeReq)
 		if err != nil {
-			return fmt.Errorf("execution policy rejected assignment: %w", err)
+			return reject(fmt.Errorf("execution policy rejected assignment: %w", err))
 		}
 		logSink := NewRemoteLogSink(RemoteLogSinkConfig{
 			Secrets: executeReq.Secrets,
@@ -262,87 +313,164 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		})
 		executeReq.LogSink = logSink
 		execCtx, execCancel := context.WithCancel(ctx)
-		defer execCancel()
+
 		executeReq.Context = execCtx
+		inner := executor
+		if cfg.ExecutorFactory != nil {
+			inner = cfg.ExecutorFactory()
+		} else if factory, ok := executor.(interface{ NewAttempt() Executor }); ok {
+			inner = factory.NewAttempt()
+		}
+		if inner == nil {
+			execCancel()
+			return reject(fmt.Errorf("attempt executor is required"))
+		}
 		runExecutor := ArtifactTransferExecutor{
-			Inner:    executor,
+			Inner:    inner,
 			Client:   artifacts.Client{BaseURL: base.String(), Token: cfg.Token, HTTP: client},
 			WorkBase: cfg.WorkBase,
 		}
-		active = []string{assignment.AssignmentID}
-		type execution struct {
-			result ExecuteResult
-			err    error
-		}
-		done := make(chan execution, 1)
+
+		active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: execCancel}
+		children.Add(1)
 		go func() {
+			defer children.Done()
+			defer execCancel()
 			started := time.Now()
 			r, e := runExecutor.Execute(executeReq)
 			elapsed := time.Since(started).Milliseconds()
 			r.ExecutionDurationMS = &elapsed
 			_ = logSink.Close()
-			done <- execution{r, e}
+			select {
+			case done <- execution{assignment.AssignmentID, r, e, executeReq.Secrets}:
+			case <-ctx.Done():
+			}
 		}()
-		ticker := time.NewTicker(cfg.HeartbeatInterval)
-		var finished execution
-		revoked := false
-		applyHeartbeat := func(hb remoteHeartbeatResult) {
-			if remoteHeartbeatRevokesAssignment(assignment.AssignmentID, assignment.CoordinatorEpoch, hb) {
-				revoked = true
-				execCancel()
+		return nil
+	}
+	heartbeat := func() error {
+		updateLimit()
+		ids := make([]string, 0, len(active))
+		for id := range active {
+			ids = append(ids, id)
+		}
+		slots := limit - len(active)
+		if slots < 0 {
+			slots = 0
+		}
+		var hb remoteHeartbeatResult
+		status, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", remoteHeartbeat{InstanceID: registration.InstanceID, ProtocolVersion: remoteProtocolVersion, Active: ids, Capacity: &limit, AvailableSlots: slots}, &hb)
+		if err != nil {
+			if status == 401 || status == 403 {
+				return err
+			}
+			if status == 409 {
+				var result remoteRegistrationResult
+				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
+			}
+			return nil
+		}
+		for _, child := range active {
+			if remoteHeartbeatRevokesAssignment(child.assignment.AssignmentID, child.assignment.CoordinatorEpoch, hb) {
+				child.revoked = true
+				child.cancel()
 			}
 		}
-	executing:
-		for {
-			select {
-			case finished = <-done:
-				break executing
-			case <-ctx.Done():
-				ticker.Stop()
-				// Wait for the executor goroutine so context-aware adapters can
-				// kill and reap their subprocesses before shutdown returns.
-				<-done
-				return nil
-			case <-ticker.C:
-				var hb remoteHeartbeatResult
-				status, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", remoteHeartbeat{ProtocolVersion: remoteProtocolVersion, Active: active}, &hb)
-				if err != nil && status == 409 {
-					_, _ = call(http.MethodPost, "/v1/workers/register", registration, &registered)
+		return nil
+	}
+	if err := heartbeat(); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(cfg.HeartbeatInterval)
+	defer ticker.Stop()
+	pollTimer := time.NewTimer(0)
+	defer pollTimer.Stop()
+	pollReady := true
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		updateLimit()
+		if pollReady && !polling && len(active) < limit {
+			polling = true
+			pollReady = false
+			children.Add(1)
+			go func() {
+				defer children.Done()
+				var assignment remoteAssignment
+				status, err := retryableCall(http.MethodGet, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments?instanceId="+url.QueryEscape(registration.InstanceID), nil, &assignment)
+				select {
+				case polled <- pollResult{assignment, status, err}:
+				case <-ctx.Done():
 				}
-				if err != nil && (status == 401 || status == 403) {
-					ticker.Stop()
+			}()
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := heartbeat(); err != nil {
+				return err
+			}
+		case <-pollTimer.C:
+			pollReady = true
+		case p := <-polled:
+			polling = false
+			if ctx.Err() != nil {
+				return nil
+			}
+			if p.err != nil {
+				return p.err
+			}
+			if p.status == http.StatusNoContent {
+				pollTimer.Reset(cfg.PollInterval)
+			} else {
+				if _, exists := active[p.assignment.AssignmentID]; exists {
+					return fmt.Errorf("duplicate active assignment %q", p.assignment.AssignmentID)
+				}
+				if err := launch(p.assignment); err != nil {
 					return err
 				}
-				if err == nil {
-					applyHeartbeat(hb)
-					if revoked {
-						finished = <-done
-						break executing
-					}
+				pollReady = true
+			}
+		case finished := <-done:
+			child := active[finished.id]
+			assignment := child.assignment
+			executeReq := ExecuteRequest{Secrets: finished.secrets}
+			result, execErr := finished.result, finished.err
+			result.Logs = boundedLog(RedactSecrets(result.Logs, executeReq.Secrets))
+			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}
+			if child.revoked {
+				completion.State = "cancelled"
+				completion.Outputs = nil
+				completion.Error = &remoteError{Code: "assignment_revoked", Message: "assignment revoked by coordinator", Retryable: false}
+			} else if execErr != nil || result.Error != "" {
+				completion.State = "failed"
+				message := result.Error
+				if execErr != nil {
+					message = execErr.Error()
 				}
+				completion.Error = &remoteError{Code: "execution_failed", Message: RedactSecrets(message, executeReq.Secrets), Retryable: true}
 			}
-		}
-		ticker.Stop()
-		result, execErr := finished.result, finished.err
-		result.Logs = boundedLog(RedactSecrets(result.Logs, executeReq.Secrets))
-		completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}
-		if revoked {
-			completion.State = "cancelled"
-			completion.Outputs = nil
-			completion.Error = &remoteError{Code: "assignment_revoked", Message: "assignment revoked by coordinator", Retryable: false}
-		} else if execErr != nil || result.Error != "" {
-			completion.State = "failed"
-			message := result.Error
-			if execErr != nil {
-				message = execErr.Error()
+
+			children.Add(1)
+			go func() {
+				defer children.Done()
+				status, err := retryableCall(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments/complete", completion, nil)
+				select {
+				case receipts <- receipt{completion.AssignmentID, status, err}:
+				case <-ctx.Done():
+				}
+			}()
+		case r := <-receipts:
+			delete(active, r.id)
+			if ctx.Err() != nil {
+				return nil
 			}
-			completion.Error = &remoteError{Code: "execution_failed", Message: RedactSecrets(message, executeReq.Secrets), Retryable: true}
+			if r.err != nil && r.status != 409 {
+				return r.err
+			}
+			pollReady = true
 		}
-		if status, err := retryableCall(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments/complete", completion, nil); err != nil && status != 409 {
-			// Clear active assignment before returning on completion error
-			active = active[:0]
-			return err
-		}
-		active = active[:0]
 	}
 }

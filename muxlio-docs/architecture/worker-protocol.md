@@ -48,7 +48,13 @@ Registration:
 }
 ```
 
-Heartbeat body is `{"protocolVersion":"v1","activeAssignments":["as-1"]}`.
+Heartbeat body is
+`{"protocolVersion":"v1","activeAssignments":["as-1"],"capacity":4,"availableSlots":3}`.
+`capacity` is an optional live admission limit; zero drains the worker.
+Lowering it preserves admitted attempts and blocks new claims until the active
+count falls below the limit. `availableSlots` advertises the worker's remaining
+local slots. The coordinator independently enforces capacity atomically when
+claiming dispatches.
 The response provides `coordinatorEpoch`, `leaseSeconds`, and optional
 `commands`. Commands are generic control instructions and are not domain
 statuses.
@@ -58,6 +64,26 @@ An assignment carries `assignmentId`, `runId`, `activationId`, `attemptId`,
 `request`. `request` is the generic executor envelope: executor capability,
 task, JSON params and values, artifact references, declared output ports, and
 limits. Workers do not need the parent graph or coordinator database.
+
+Workers supervise up to their configured capacity concurrently across all
+advertised executor kinds (the default remains one). Each child owns a runner,
+cancellation context, process group, attempt scratch directory, and log sink.
+Heartbeats renew every active child, including children awaiting completion
+acknowledgement. Cancelling a child only cancels that child's context. Shutdown
+cancels and reaps all children before returning.
+
+Registration may include `instanceId`, a random identity generated once per
+worker process. Re-registering the same instance is idempotent. A replacement
+instance for an existing worker ID fences all of the previous instance's active
+assignments by advancing their generations and marking their dispatches
+uncertain. Late results may be retained as diagnostics, but cannot become
+successful workflow results or trigger automatic replay of uncertain effects.
+Workers send the same `instanceId` in heartbeat bodies and the assignment
+poll query string. The coordinator rejects mismatched or omitted identities
+with HTTP 403 (`MUXLIO_WORKER_INSTANCE_MISMATCH`) after an identified process
+registers. A replaced worker stops without re-registering. Older registrations
+without an instance identity retain lease-based fencing; switching between an
+identified process and a legacy process also fences existing assignments.
 
 Completion echoes assignment/run/activation/attempt identity, epoch and
 generation, then reports `state` as `succeeded`, `failed`, or `cancelled`, with
@@ -111,7 +137,7 @@ muxlio worker start \
 ```
 
 The worker makes only outbound HTTP requests, registers once, heartbeats and polls until interrupted,
-and executes assignments sequentially using its local adapters. Adapter
+and executes assignments concurrently up to capacity using its local adapters. Adapter
 stderr is returned in the completion `logs` field; stdout remains reserved for
 the adapter's JSON `ExecuteResult`. A completion includes the assignment's
 fencing identity and either outputs or a structured execution error.

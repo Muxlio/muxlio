@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,7 +28,7 @@ func TestRemoteWorkerCancelDuringExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	block := &blockingExecutor{started: make(chan struct{})}
-	sendCancel := false
+	var sendCancel atomic.Bool
 	polls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -35,7 +36,7 @@ func TestRemoteWorkerCancelDuringExecution(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(remoteRegistrationResult{CoordinatorEpoch: 1})
 		case strings.HasSuffix(r.URL.Path, "heartbeat"):
 			var hb remoteHeartbeatResult
-			if sendCancel {
+			if sendCancel.Load() {
 				raw, _ := json.Marshal(map[string]any{"cancel": map[string]any{"assignmentId": "assignment"}})
 				hb = remoteHeartbeatResult{CoordinatorEpoch: 1, LeaseSeconds: 30, Commands: []json.RawMessage{raw}}
 			} else {
@@ -72,7 +73,7 @@ func TestRemoteWorkerCancelDuringExecution(t *testing.T) {
 	go func() {
 		select {
 		case <-block.started:
-			sendCancel = true
+			sendCancel.Store(true)
 		case <-ctx.Done():
 		}
 	}()
@@ -92,7 +93,7 @@ func TestRemoteWorkerStaleEpochHeartbeatRevokesAssignment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	block := &blockingExecutor{started: make(chan struct{})}
-	newEpoch := false
+	var newEpoch atomic.Bool
 	polls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -100,7 +101,7 @@ func TestRemoteWorkerStaleEpochHeartbeatRevokesAssignment(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(remoteRegistrationResult{CoordinatorEpoch: 2})
 		case strings.HasSuffix(r.URL.Path, "heartbeat"):
 			epoch := int64(1)
-			if newEpoch {
+			if newEpoch.Load() {
 				epoch = 2
 			}
 			_ = json.NewEncoder(w).Encode(remoteHeartbeatResult{CoordinatorEpoch: epoch, LeaseSeconds: 30})
@@ -134,7 +135,7 @@ func TestRemoteWorkerStaleEpochHeartbeatRevokesAssignment(t *testing.T) {
 	go func() {
 		select {
 		case <-block.started:
-			newEpoch = true
+			newEpoch.Store(true)
 		case <-ctx.Done():
 		}
 	}()

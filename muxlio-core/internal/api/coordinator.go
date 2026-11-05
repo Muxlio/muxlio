@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
@@ -37,6 +38,9 @@ type dispatchStore interface {
 
 // Coordinator implements the worker protocol over durable worker and dispatch state.
 type Coordinator struct {
+	// Serialize registration with heartbeat snapshots so a late heartbeat cannot
+	// restore a replaced process identity or overwrite its capacity.
+	workerMu  sync.Mutex
 	Workspace string
 	Context   context.Context
 	store     dispatchStore
@@ -57,6 +61,8 @@ func NewCoordinator(store state.Store) *Coordinator {
 }
 
 func (c *Coordinator) Register(req WorkerRegistration) (WorkerRegistrationResult, error) {
+	c.workerMu.Lock()
+	defer c.workerMu.Unlock()
 	if c.store == nil {
 		return WorkerRegistrationResult{}, errors.New("worker dispatch storage unavailable")
 	}
@@ -67,13 +73,15 @@ func (c *Coordinator) Register(req WorkerRegistration) (WorkerRegistrationResult
 	for _, capability := range req.Capabilities {
 		caps = append(caps, state.WorkerCapability{Name: capability.Name, Version: capability.Version})
 	}
-	if err := c.store.RegisterWorker(state.Worker{ID: req.WorkerID, Capacity: req.Capacity, Capabilities: caps, Labels: req.Labels, LastSeen: time.Now()}); err != nil {
+	if err := c.store.RegisterWorker(state.Worker{ID: req.WorkerID, InstanceID: req.InstanceID, Capacity: req.Capacity, Capabilities: caps, Labels: req.Labels, LastSeen: time.Now()}); err != nil {
 		return WorkerRegistrationResult{}, err
 	}
 	return WorkerRegistrationResult{CoordinatorEpoch: c.epoch, HeartbeatSeconds: 10}, nil
 }
 
 func (c *Coordinator) Heartbeat(workerID string, req WorkerHeartbeat) (WorkerHeartbeatResult, error) {
+	c.workerMu.Lock()
+	defer c.workerMu.Unlock()
 	if c.store == nil {
 		return WorkerHeartbeatResult{}, errors.New("worker dispatch storage unavailable")
 	}
@@ -86,6 +94,15 @@ func (c *Coordinator) Heartbeat(workerID string, req WorkerHeartbeat) (WorkerHea
 	}
 	for _, w := range workers {
 		if w.ID == workerID {
+			if w.InstanceID != req.InstanceID {
+				return WorkerHeartbeatResult{}, workerInstanceMismatchError{}
+			}
+			if req.Capacity != nil {
+				if *req.Capacity < 0 {
+					return WorkerHeartbeatResult{}, errors.New("capacity must be non-negative")
+				}
+				w.Capacity = *req.Capacity
+			}
 			w.LastSeen = time.Now()
 			if err := c.store.RenewWorkerAssignments(workerID, req.Active, w.LastSeen, w.LastSeen.Add(c.lease)); err != nil {
 				return WorkerHeartbeatResult{}, err
@@ -133,6 +150,14 @@ func (c *Coordinator) heartbeatCommands(workerID string, active []string) ([]any
 }
 
 func (c *Coordinator) NextAssignment(workerID string) (*WorkerAssignment, error) {
+	return c.NextAssignmentForInstance(workerID, "")
+}
+
+// NextAssignmentForInstance serializes identity validation and admission with
+// replacement registration. Legacy workers use an empty instance identity.
+func (c *Coordinator) NextAssignmentForInstance(workerID, instanceID string) (*WorkerAssignment, error) {
+	c.workerMu.Lock()
+	defer c.workerMu.Unlock()
 	if c.store == nil {
 		return nil, errors.New("worker dispatch storage unavailable")
 	}
@@ -152,6 +177,9 @@ func (c *Coordinator) NextAssignment(workerID string) (*WorkerAssignment, error)
 	}
 	if worker == nil {
 		return nil, workerNotRegisteredError{}
+	}
+	if worker.InstanceID != instanceID {
+		return nil, workerInstanceMismatchError{}
 	}
 	d, generation, err := c.store.ClaimDispatch(workerID, time.Now().Add(c.lease))
 	if err != nil || d == nil {
@@ -287,6 +315,13 @@ func (c *Coordinator) AppendWorkerLog(workerID string, req WorkerLogAppend) erro
 		Data:         req.Data,
 		Timestamp:    time.Now(),
 	})
+}
+
+type workerInstanceMismatchError struct{}
+
+func (workerInstanceMismatchError) Error() string { return "worker process has been replaced" }
+func (workerInstanceMismatchError) ProtocolError() (int, string, string) {
+	return 403, "MUXLIO_WORKER_INSTANCE_MISMATCH", "worker process has been replaced"
 }
 
 type workerNotRegisteredError struct{}
