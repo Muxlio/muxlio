@@ -72,7 +72,7 @@ func TestLoopExhaustedPausesRun(t *testing.T) {
 	}
 }
 
-func TestLoopExhaustedResumeContinuesWithHigherBudget(t *testing.T) {
+func TestLoopExhaustedCannotChangePinnedBudget(t *testing.T) {
 	max := 2
 	p := &plan.Plan{
 		IRVersion: "1.0",
@@ -125,44 +125,20 @@ func TestLoopExhaustedResumeContinuesWithHigherBudget(t *testing.T) {
 
 	max4 := 4
 	p.Subgraphs["root"].Nodes[0].MaxIterations = &max4
-	if err := engine.RepinRunPlan(runID, p); err != nil {
+	// Deliberately compile a new version: a paused run still owns the old version.
+	p.Digest = ""
+	if err := engine.RepinRunPlan(runID, p); err == nil {
+		t.Fatal("changed plan was accepted for a paused run")
+	}
+	pinned, err := store.GetRun(runID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	engine = plan.NewEngineWithStore(p, workers.NewFake(), store)
-
-	if _, err := store.TransitionRunState(runID, []string{plan.RunPaused}, plan.RunRunning); err != nil {
+	var original plan.Plan
+	if err := json.Unmarshal(pinned.PlanJSON, &original); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Run(runID); err != nil {
-		t.Fatalf("resume Run: %v", err)
-	}
-	run, _ = store.GetRun(runID)
-	if run.State != plan.RunPaused {
-		t.Fatalf("expected paused again after 4 iterations, got %q", run.State)
-	}
-	var loopAct *state.Activation
-	acts, _ := store.ListActivations(runID)
-	for i := range acts {
-		if acts[i].NodeID == "loop" {
-			loopAct = &acts[i]
-			break
-		}
-	}
-	if loopAct == nil || loopAct.State != plan.ActWaiting {
-		t.Fatalf("loop activation after resume = %#v", loopAct)
-	}
-	prog, _ := loopAct.Outputs["__muxlioLoopProgress"].(map[string]any)
-	if prog == nil {
-		t.Fatalf("missing loop progress: %#v", loopAct.Outputs)
-	}
-	var gotIter int
-	switch v := prog["iteration"].(type) {
-	case float64:
-		gotIter = int(v)
-	case int:
-		gotIter = v
-	}
-	if gotIter != 4 {
-		t.Fatalf("iteration after resume = %d, want 4", gotIter)
+	if *original.Subgraphs["root"].Nodes[0].MaxIterations != 2 {
+		t.Fatal("paused run lost its original iteration budget")
 	}
 }

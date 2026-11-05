@@ -9,6 +9,7 @@ const inspSource = readFileSync(new URL('./js/inspector.js', import.meta.url), '
 function makeCtx(runAttempts = []) {
   return {
     runAttempts,
+    document: {getElementById: () => null, addEventListener() {}},
     selectedActivation: null,
     activationDisplayNumbers: new Map(),
     activationData: [],
@@ -78,13 +79,12 @@ console.log('sumRunTokenUsage checks passed');
   const ctxNone = makeCtx([]);
   const { buildWbStats: buildWbStatsNone } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxNone);
   const htmlNone = buildWbStatsNone(run, acts);
-  // Token rows are rendered vertically as In / Out / Cached inside a single stat block.
-  assert.match(htmlNone, /stat-token-label[^>]*>In</, 'vertical token block has "In" label');
-  assert.match(htmlNone, /stat-token-label[^>]*>Out</, 'vertical token block has "Out" label');
-  assert.match(htmlNone, /stat-token-label[^>]*>Cached</, 'vertical token block has "Cached" label');
-  // With no attempts the values for all three token rows should be em-dashes.
-  const emDashTokenMatches = (htmlNone.match(/stat-token-val[^>]*>—</g) || []).length;
-  assert.ok(emDashTokenMatches >= 3, `three token rows show em-dash for no-attempt runs (found ${emDashTokenMatches} em-dash token vals)`);
+  // Each token total has its own labelled stat in the current workbench.
+  const tokenValues = html => Object.fromEntries([...html.matchAll(
+    /<div class="stat"><div class="stat-val">([^<]*)<\/div><div class="stat-label">(Input|Output|Cached) tokens<\/div><\/div>/g,
+  )].map(([,value,label]) => [label,value]));
+  assert.deepEqual(tokenValues(htmlNone), {Input:'—',Output:'—',Cached:'—'},
+    'all three labelled token stats show an em-dash when there are no attempts');
 
   // Case 2: attempts present but all have null usage → show "Unavailable"
   const ctxUnavail = makeCtx([
@@ -93,9 +93,8 @@ console.log('sumRunTokenUsage checks passed');
   ]);
   const { buildWbStats: buildWbStatsUnavail } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxUnavail);
   const htmlUnavail = buildWbStatsUnavail(run, acts);
-  assert.match(htmlUnavail, /Unavailable/, 'stat shows "Unavailable" when provider did not report usage');
-  // Token rows must not show a numeric 0 value when usage is unavailable.
-  assert.doesNotMatch(htmlUnavail, /stat-token-val[^>]*>0</, 'must not show zero when usage is unavailable');
+  assert.deepEqual(tokenValues(htmlUnavail), {Input:'Unavailable',Output:'Unavailable',Cached:'Unavailable'},
+    'all token stats must show unavailable rather than zero for missing usage');
 
   // Case 3: reported usage — values shown with correct totals
   const ctxReported = makeCtx([
@@ -105,9 +104,14 @@ console.log('sumRunTokenUsage checks passed');
   ]);
   const { buildWbStats: buildWbStatsRep } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxReported);
   const htmlRep = buildWbStatsRep(run, acts);
-  // Total input = 500 + 300 + 200 = 1000 → "1.0K"
-  assert.match(htmlRep, /1\.0K/, 'input tokens formatted with K suffix and retries included');
-  assert.doesNotMatch(htmlRep, /stat-token-val[^>]*>Unavailable</, 'reported token usage has no unavailable token values');
+  assert.deepEqual(tokenValues(htmlRep), {Input:'1.0K',Output:'450',Cached:'150'},
+    'all three totals include retries and retain their labels');
+  const zeroStats = vm.runInNewContext(`${wbSource}; buildWbStats`, makeCtx([
+    {state:'succeeded',usage:{input:0,output:0,cached:0}},
+  ]))(run,acts);
+  assert.deepEqual(tokenValues(zeroStats), {Input:'0',Output:'0',Cached:'0'},
+    'reported zero is distinct from unavailable in the rendered stats');
+
 }
 console.log('buildWbStats token stat checks passed');
 
@@ -139,7 +143,7 @@ console.log('buildWbStats token stat checks passed');
   const act1 = { id: 'act-1', nodeId: 'n', state: 'succeeded' };
   const html1 = buWith(act1);
   assert.match(html1, /Token usage/, 'section heading present');
-  assert.match(html1, /Attempt 1/, 'first attempt labelled correctly');
+  assert.match(html1, /<tr><td>1<\/td>/, 'first attempt labelled correctly');
   assert.match(html1, /1\.2K/, 'input formatted with K suffix');
   assert.match(html1, /800/, 'output shown');
   assert.match(html1, /300/, 'cached shown');
@@ -155,13 +159,13 @@ console.log('buildWbStats token stat checks passed');
   );
   const act2 = { id: 'act-2', nodeId: 'n', state: 'succeeded' };
   const htmlRetry = buRetry(act2);
-  assert.match(htmlRetry, /Attempt 1/, 'first attempt label');
-  assert.match(htmlRetry, /Attempt 2/, 'retry shown as Attempt 2, not "Retry 1 (attempt 2)"');
+  assert.match(htmlRetry, /<tr><td>1<\/td>/, 'first attempt label');
+  assert.match(htmlRetry, /<tr><td>2<\/td>/, 'retry shown as Attempt 2, not "Retry 1 (attempt 2)"');
   assert.doesNotMatch(htmlRetry, /Retry \d/, 'no redundant Retry N label');
-  assert.match(htmlRetry, /Unavailable/, 'null usage attempt shows "Unavailable"');
+  assert.match(htmlRetry, /<tr><td>2<\/td><td colspan="3"[^>]*>—<\/td><\/tr>/, 'null usage attempt has one unavailable cell spanning all token columns');
   assert.match(htmlRetry, /500/, 'first attempt usage shown');
   // The "Unavailable" row must not contain a numeric cell — it uses colspan.
-  assert.doesNotMatch(htmlRetry, /Attempt 2[^<]*<\/td><td class="num">/, 'unavailable row must not render as numeric cells');
+  assert.doesNotMatch(htmlRetry, /<tr><td>2<\/td><td class="num">/, 'unavailable row must not render as numeric cells');
 
   // All attempts have null usage → section exists but all rows say "Unavailable"
   const ctxAllNull = makeInspCtx([
@@ -173,7 +177,7 @@ console.log('buildWbStats token stat checks passed');
   );
   const htmlAllNull = buAllNull({ id: 'act-3', nodeId: 'n', state: 'succeeded' });
   assert.match(htmlAllNull, /Token usage/, 'section still rendered when all unavailable');
-  assert.match(htmlAllNull, /Unavailable/, 'row shows Unavailable');
+  assert.match(htmlAllNull, /<td colspan="3"[^>]*>—<\/td>/, 'row marks all three token values unavailable');
   // Must NOT include a numeric usage table with zeros
   assert.doesNotMatch(htmlAllNull, /<td class="num">0<\/td>/, 'unavailable must not render as zero');
 
@@ -184,7 +188,7 @@ console.log('buildWbStats token stat checks passed');
     const render = vm.runInNewContext(`${wbSource}; ${inspSource}; buildAttemptUsageMarkup`, context);
     const html = render({ id: 'agent' });
     if (usage === null) {
-      assert.match(html, /Unavailable — no token counts recorded/);
+      assert.match(html, /<td colspan="3"[^>]*>—<\/td>/);
       assert.doesNotMatch(html, /<td class="num">0<\/td>/);
     } else {
       assert.doesNotMatch(html, /Unavailable/);

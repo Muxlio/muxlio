@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// Run is one invocation of a workflow version.
+// Run is one invocation of an immutable compiled workflow version.
+// PlanJSON, PlanDigest, and Input are fixed at creation; events order transitions.
 type Run struct {
 	PlanJSON     json.RawMessage `json:"-"`
 	PlanDigest   string          `json:"planDigest,omitempty"`
@@ -21,6 +22,8 @@ type Run struct {
 
 // Activation is one materialised plan node within a run and structural scope.
 type Activation struct {
+	// Inputs snapshots resolved bindings before execution. Nil denotes a legacy record.
+	Inputs json.RawMessage `json:"inputs,omitempty"`
 	// AttemptBase preserves previous attempts when a failed run is explicitly retried.
 	AttemptBase int            `json:"attemptBase,omitempty"`
 	ID          string         `json:"id"`

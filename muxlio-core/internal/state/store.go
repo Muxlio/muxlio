@@ -23,7 +23,7 @@ type Store interface {
 	RetryRun(id string) error
 	SetRunOutput(id string, output any) error
 	SetRunError(id string, err error) error
-	// UpdateRunPlan replaces the pinned plan bytes for a paused or created run.
+	// UpdateRunPlan only accepts the existing pin; changing a version requires a new run.
 	UpdateRunPlan(id string, planJSON json.RawMessage, digest string) error
 	ListRuns() ([]*Run, error)
 
@@ -39,6 +39,7 @@ type Store interface {
 
 	// Timers: durable deadline/wakeup for an activation.
 	ScheduleTimer(id, runID, activationID string, due time.Time, payload any) error
+	GetTimer(id string) (*Timer, error)
 	DueTimers(now time.Time) ([]Timer, error)
 	CancelTimer(id string) error
 

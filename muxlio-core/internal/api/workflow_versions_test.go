@@ -77,3 +77,51 @@ func TestWorkflowVersionsAPI(t *testing.T) {
 		t.Errorf("expected 404 for missing version, got %d", missingRec.Code)
 	}
 }
+
+// Invalid content must not reserve an immutable version's digest.
+func TestWorkflowVersionRegistrationVerifiesAndNormalizesPin(t *testing.T) {
+	st := state.New()
+	router := NewRouter(st, nil)
+	p := &plan.Plan{Name: "valid", IRVersion: "1.0", Root: "root", Subgraphs: map[string]plan.Subgraph{
+		"root": {Nodes: []plan.Node{{ID: "task", Kind: plan.KindExecute, Executor: "test/echo"}}},
+	}}
+	digest, err := p.ComputeDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(raw []byte, status int) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/workflow-versions", bytes.NewReader(raw)))
+		if rec.Code != status {
+			t.Fatalf("registration: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	p.Name = "tampered"
+	raw, _ := json.Marshal(p)
+	post(raw, http.StatusBadRequest)
+	if _, err := st.GetWorkflowVersion(digest); err == nil {
+		t.Fatal("invalid content reserved a digest")
+	}
+	p.Name = "valid"
+	p.Digest = ""
+	raw, _ = json.Marshal(p)
+	post(raw, http.StatusCreated)
+	stored, err := st.GetWorkflowVersion(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pinned plan.Plan
+	if err := json.Unmarshal(stored, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Digest != digest {
+		t.Fatal("registry omitted the computed digest")
+	}
+	if err := pinned.VerifyDigest(); err != nil {
+		t.Fatal(err)
+	}
+	p.Digest = digest
+	raw, _ = json.MarshalIndent(p, "", "  ")
+	post(raw, http.StatusCreated)
+}

@@ -325,6 +325,29 @@ function fmtDuration(ms) {
   return `${Math.floor(ms / 60000)}m ${Math.floor(ms % 60000 / 1000)}s`;
 }
 
+// Keep provenance and unavailable measurements inspectable alongside the charts.
+function analyticsDetailsMarkup(model) {
+  const runLinks=ids=>[...ids].map(id=>`<a href="#run/${encodeURIComponent(id)}">${esc(id)}</a>`).join(', ');
+  const notes=[];
+  if(model.runsWithNoAttempts)notes.push(`${model.runsWithNoAttempts} runs have no attempt records.`);
+  if(model.runsWithUnavailableUsage)notes.push(`${model.runsWithUnavailableUsage} runs have incomplete token data: no provider-reported token usage for some measurements.`);
+  for(const [id,error] of model.attemptErrors||[])notes.push(`Run ${runLinks([id])}: ${esc(error)}; statistics are partial.`);
+  const sample=(total,count)=>count?`${esc(fmtDuration(total/count))} (n=${count})`:'Unavailable';
+  const rows=[...model.executorStats].map(([name,stats])=>{
+    const usage=model.executorUsage.get(name);
+    const values=['input','output','cached'].map(field=>`<td class="num">${esc(fmtTok(usage?.[field]))}</td>`).join('');
+    const complete=usage&&['input','output','cached'].every(field=>usage[field]!=null);
+    const total=complete?usage.input+usage.output+usage.cached:null;
+    return {name,stats,values,total};
+  });
+  const maxTokens=Math.max(1,...rows.map(row=>row.total??0));
+  return `<details class="analytics-details"><summary>Data details</summary>
+    ${notes.length?`<div role="status">${notes.map(note=>`<p>${note}</p>`).join('')}</div>`:''}
+    <div class="tablebox"><table><thead><tr><th>Agent</th><th>Worker time</th><th>Coordinator elapsed</th><th>Timing availability</th><th>Input tokens</th><th>Output tokens</th><th>Cached tokens</th><th>Relative token volume</th><th>Runs</th></tr></thead><tbody>
+    ${rows.map(({name,stats,values,total})=>`<tr><td><strong>${esc(name)}</strong></td><td>${sample(stats.durationSumMs,stats.durationSamples)}</td><td>${sample(stats.elapsedSumMs,stats.elapsedSamples)}</td><td>${stats.missingTiming} missing timing; ${stats.running} in progress</td>${values}<td>${total==null?'Unavailable':`<span class="abc-bar" style="display:block;width:${(100*total/maxTokens).toFixed(1)}%">${esc(fmtTok(total))}</span>`}</td><td>${runLinks(stats.runIds)}</td></tr>`).join('')}
+    </tbody></table></div></details>`;
+}
+
 // Render the full analytics page from the model.
 function renderAnalytics(model) {
   const {runs,buckets,tokenBuckets,executorStats,executorUsage}=model;
@@ -372,7 +395,7 @@ function renderAnalytics(model) {
     card('Median workflow duration',bars(workflowTime,{fmt:fmtDuration}))+
     card('Agent failure rate',bars(failureRates,{fmt:value=>`${Math.round(value)}%`,maxValue:100,colorVar:'--red'}))+
     card('Daily tokens · 30 days',tokenSparklineMarkup(tokenBuckets)+legend([['Input','tok-input'],['Output','tok-output'],['Cached','tok-cached']]),true)+
-    '</div>';
+    '</div>'+analyticsDetailsMarkup(model);
 }
 
 let analyticsRequest = 0;

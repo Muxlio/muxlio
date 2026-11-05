@@ -2,6 +2,9 @@
 
 Run timing has two definitions: **Elapsed time** is wall-clock time from run creation to completion (or the current time while active), including queueing, pauses, and waits. **Total execution time** is the sum of worker-measured executor durations across attempts, including failures and retries, excluding coordinator dispatch queues, pauses, retry backoff, and external waits. Parallel worker durations add together and can exceed elapsed time. Timing becomes available when an attempt returns; active totals include the measured attempts completed so far. Historical attempts without worker timing make the total unavailable, rather than showing an incomplete sum as a complete total.
 
+The [durable execution contracts](durable-execution.md) define run, activation,
+attempt, plan-version, replay, and waiting semantics.
+
 ## System boundary
 
 Muxlio executes immutable workflow plans against durable state. Workflow

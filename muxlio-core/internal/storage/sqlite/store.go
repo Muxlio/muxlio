@@ -118,6 +118,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
 		`ALTER TABLE execution_attempts ADD COLUMN execution_duration_ms INTEGER`,
 		`ALTER TABLE activations ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE activations ADD COLUMN inputs_json BLOB`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -515,8 +516,31 @@ func (s *Store) ScheduleTimer(id, runID, activationID string, due time.Time, pay
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err = s.db.Exec(`INSERT INTO timers(id,run_id,activation_id,due_at,state,payload_json) VALUES(?,?,?,?,'pending',?)`, id, runID, activationID, rfc3339(due), raw)
+	_, err = s.db.Exec(`INSERT INTO timers(id,run_id,activation_id,due_at,state,payload_json) VALUES(?,?,?,?,'pending',?) ON CONFLICT(id) DO NOTHING`, id, runID, activationID, rfc3339(due), raw)
 	return err
+}
+
+// GetTimer reads a durable deadline without consuming its wakeup.
+func (s *Store) GetTimer(id string) (*state.Timer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var timer state.Timer
+	var due string
+	var payload []byte
+	err := s.db.QueryRow(`SELECT id,run_id,activation_id,due_at,state,payload_json FROM timers WHERE id=?`, id).Scan(&timer.ID, &timer.RunID, &timer.ActivationID, &due, &timer.State, &payload)
+	if err != nil {
+		return nil, err
+	}
+	timer.DueAt, err = time.Parse(time.RFC3339Nano, due)
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &timer.Payload); err != nil {
+			return nil, err
+		}
+	}
+	return &timer, nil
 }
 
 // DueTimers returns pending timers due at now and marks them fired transactionally.
@@ -1007,13 +1031,13 @@ func (s *Store) SetRunOutput(id string, output any) error {
 func (s *Store) UpdateRunPlan(id string, planJSON json.RawMessage, digest string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.Exec(`UPDATE runs SET plan_json = ?, plan_digest = ?, updated_at = ? WHERE id = ?`, string(planJSON), digest, rfc3339(time.Now()), id)
-	if err != nil {
+	var pinned []byte
+	var pinnedDigest string
+	if err := s.db.QueryRow(`SELECT plan_json, plan_digest FROM runs WHERE id=?`, id).Scan(&pinned, &pinnedDigest); err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("muxlio: run %q not found", id)
+	if pinnedDigest != digest || !bytes.Equal(pinned, planJSON) {
+		return fmt.Errorf("muxlio: run %q has an immutable plan; create a new run", id)
 	}
 	return nil
 }
@@ -1092,9 +1116,9 @@ func (s *Store) CreateActivation(a *state.Activation) error {
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(
-		`INSERT INTO activations (id, run_id, scope_path_json, node_id, occurrence, state, attempt_base, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, '')`,
-		a.ID, a.RunID, string(scopeJSON), a.NodeID, a.Occurrence, a.State, a.AttemptBase,
+		`INSERT INTO activations (id, run_id, scope_path_json, node_id, occurrence, state, attempt_base, inputs_json, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
+		a.ID, a.RunID, string(scopeJSON), a.NodeID, a.Occurrence, a.State, a.AttemptBase, []byte(a.Inputs),
 	)
 	if err != nil {
 		return fmt.Errorf("muxlio: inserting activation: %w", err)
@@ -1112,7 +1136,7 @@ func (s *Store) GetActivation(id string) (*state.Activation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.db.QueryRow(
-		`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base
+		`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base, inputs_json
 		 FROM activations WHERE id = ?`, id)
 	return scanActivation(row)
 }
@@ -1120,7 +1144,7 @@ func (s *Store) GetActivation(id string) (*state.Activation, error) {
 func (s *Store) ListActivations(runID string) ([]state.Activation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base FROM activations WHERE run_id=? ORDER BY rowid`, runID)
+	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base, inputs_json FROM activations WHERE run_id=? ORDER BY rowid`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -1337,12 +1361,14 @@ func scanRun(row rowScanner) (*state.Run, error) {
 func scanActivation(row rowScanner) (*state.Activation, error) {
 	var a state.Activation
 	var scope, outputs sql.NullString
-	if err := row.Scan(&a.ID, &a.RunID, &scope, &a.NodeID, &a.Occurrence, &a.State, &outputs, &a.Error, &a.AttemptBase); err != nil {
+	var inputs []byte
+	if err := row.Scan(&a.ID, &a.RunID, &scope, &a.NodeID, &a.Occurrence, &a.State, &outputs, &a.Error, &a.AttemptBase, &inputs); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("muxlio: activation not found")
 		}
 		return nil, err
 	}
+	a.Inputs = inputs
 	if scope.Valid && scope.String != "" {
 		if err := json.Unmarshal([]byte(scope.String), &a.ScopePath); err != nil {
 			return nil, err
@@ -1583,9 +1609,20 @@ func (s *Store) MarkOutboxPublished(id string, publishedAt time.Time) error {
 func (s *Store) SaveWorkflowVersion(digest string, planJSON []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var existing []byte
+	err := s.db.QueryRow(`SELECT plan_json FROM workflow_versions WHERE digest=?`, digest).Scan(&existing)
+	if err == nil {
+		if !bytes.Equal(existing, planJSON) {
+			return fmt.Errorf("muxlio: workflow version %q is immutable", digest)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.Exec(`INSERT INTO workflow_versions (digest, plan_json, created_at) VALUES (?, ?, ?)
-		ON CONFLICT(digest) DO UPDATE SET plan_json = excluded.plan_json`, digest, planJSON, now)
+	_, err = s.db.Exec(`INSERT INTO workflow_versions (digest, plan_json, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(digest) DO NOTHING`, digest, planJSON, now)
 	return err
 }
 

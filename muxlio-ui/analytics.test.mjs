@@ -204,29 +204,25 @@ console.log('daily bucket aggregation passed');
   const model = buildAnalyticsModel(runs, attemptsByRun);
   renderAnalytics(model);
 
-  // Page structure checks
-  assert.match(content, /summary-grid/, 'summary grid rendered');
-  assert.match(content, /Total runs/, 'total runs label present');
-  assert.match(content, /Run volume/, 'run volume section present');
-  assert.match(content, /Outcomes/, 'outcomes section present');
-  assert.match(content, /Token usage by agent/, 'token usage section present');
-
-  // State counts in summary
-  assert.match(content, /summary-value green">1</, 'succeeded count shown');
-  assert.match(content, /summary-value red">1</, 'failed count shown');
-
-  // Success rate: 1 succeeded / (1 succeeded + 1 failed) = 50%
-  assert.match(content, /50%/, 'success rate calculated correctly');
-
-  // Token data for executorA executor
-  assert.match(content, /executorA/, 'executorA executor in table');
-  assert.match(content, /2\.0K/, 'input token count formatted');
-
-  // Incomplete data note should appear (r2 has null usage)
+  // Charts carry the current page's totals, outcomes, timing and usage views.
+  assert.match(content, /analytics-chart-grid/, 'chart grid rendered');
+  assert.match(content, /Task time by adapter/, 'task timing section present');
+  assert.match(content, /Run outcomes · 30 days/, 'run outcomes section present');
+  assert.match(content, /Daily tokens · 30 days/, 'token usage section present');
+  assert.match(content, /Median workflow duration/, 'workflow timing section present');
+  assert.match(content, /Agent failure rate/, 'failure rate section present');
+  assert.equal(model.runs.length,2, 'total runs retained');
+  assert.equal(model.stateCounts.succeeded,1);
+  assert.equal(model.stateCounts.failed,1);
+  assert.match(content, /2 runs \(1 succeeded, 1 failed\)/, 'run volume chart exposes both state counts');
+  assert.match(content, /50%/, 'one failed out of two completed attempts');
+  assert.match(content, /executorA/, 'executor is identified in charts');
+  assert.match(content, /in=2\.0K out=800 cached=200/, 'token chart exposes all reported totals');
   assert.match(content, /incomplete token data|provider did not report/, 'incomplete token data note present');
-
-  // Run link to r1 should be included
-  assert.match(content, /href="#run\/r1"/, 'link to contributing run r1 present');
+  assert.match(content, /href="#run\/r1"/, 'link to contributing run present');
+  assert.equal(model.runsWithUnavailableUsage,1, 'incomplete token records remain tracked');
+  assert.equal(model.executorStats.get('executorA').missingUsage,1);
+  assert.ok(model.executorUsage.get('executorA').runIds.has('r1'), 'contributing run identity retained');
   assert.ok(!content.includes('<script>'), 'no script injection possible');
 }
 console.log('renderAnalytics HTML structure checks passed');
@@ -248,10 +244,11 @@ console.log('renderAnalytics HTML structure checks passed');
   const { buildAnalyticsModel, renderAnalytics } = getHelpers(ctx);
   const model = buildAnalyticsModel([], new Map());
   renderAnalytics(model);
-  assert.match(content, /Total runs/, 'summary grid still rendered for empty state');
-  assert.match(content, /<div class="summary-label">Total runs<\/div><div class="summary-value">0/, 'zero total runs shown');
+  assert.match(content, /analytics-chart-grid/, 'chart grid rendered for empty state');
+  assert.equal(model.runs.length,0, 'zero total runs');
+  assert.match(content, /aria-label="No reported data"/, 'empty charts explicitly mark missing data');
   assert.match(content, /No runs in the last 30 days/, 'empty sparkline message shown');
-  assert.match(content, /Token usage by agent/, 'token section present even with no data');
+  assert.match(content, /Daily tokens · 30 days/, 'token section present even with no data');
 }
 console.log('renderAnalytics empty-state checks passed');
 
@@ -278,6 +275,11 @@ console.log('renderAnalytics empty-state checks passed');
   });
   assert.match(output.value, /no attempt records/);
   assert.match(output.value, /no provider-reported token usage/);
+  assert.equal(emptyModel.runsWithNoAttempts,1, 'missing attempt history remains distinct');
+  assert.equal(emptyModel.runsWithUnavailableUsage,1, 'unreported usage remains distinct');
+  assert.equal(emptyModel.totals,null, 'missing usage cannot become numeric totals');
+  assert.match(output.value, /aria-label="No reported data"/, 'missing measurements are labelled in the charts');
+  assert.doesNotMatch(output.value, /spark-seg tok-/, 'no numeric token bars when usage is unavailable');
 }
 console.log('analytics navigation and incomplete usage checks passed');
 
@@ -345,6 +347,15 @@ console.log('XSS escaping checks passed');
   assert.match(output.innerHTML, /1 missing timing; 0 in progress/);
   assert.match(output.innerHTML, /Unavailable/);
   assert.match(output.innerHTML, /href="#run\/mixed%2Frun"/);
+  assert.equal(a.taskTimeTotal,4400, 'chart timing includes worker and legacy samples');
+  assert.equal(a.taskTimeCount,3);
+  assert.match(output.innerHTML, /1\.5 s/, 'chart shows the combined average');
+  assert.match(output.innerHTML, /100 ms/, 'lowest worker duration shown');
+  assert.match(output.innerHTML, /4\.0 s/, 'highest legacy duration shown');
+  assert.match(output.innerHTML, /3 completed attempts; 1 use timestamp elapsed time/, 'legacy timing fallback is explained');
+  assert.match(output.innerHTML, /adapter-series-value">0 ms</, 'reported zero duration shown');
+  assert.match(output.innerHTML, /adapter-series-value">—</, 'missing timing remains unavailable');
+  assert.ok(a.runIds.has('mixed/run'), 'contributing run identity retained');
   assert.doesNotMatch(output.innerHTML, /NaN/);
 }
 console.log('mixed executor timing, legacy and partial usage checks passed');
@@ -369,7 +380,7 @@ console.log('mixed executor timing, legacy and partial usage checks passed');
   assert.match(output.innerHTML, /Loading analytics/);
   resolveRuns({runs:[{id:'r',state:'succeeded'}]});
   await loading;
-  assert.match(output.innerHTML, /Total runs/);
+  assert.match(output.innerHTML, /Run outcomes · 30 days/);
 }
 console.log('Analytics bootstrap and loading checks passed');
 
@@ -388,19 +399,22 @@ console.log('Analytics bootstrap and loading checks passed');
   assert.equal(model.attemptErrors.size, 1);
   assert.equal(model.runsWithNoAttempts, 0, 'failed fetch is not an empty attempt history');
   await loadAnalytics();
+  assert.match(output.innerHTML, /role="status"[^>]*>Partial data · 1 runs/, 'partial fetch results are announced');
   assert.match(output.innerHTML, /statistics are partial/);
   assert.match(output.innerHTML, /service &lt;offline&gt;/);
-  assert.match(output.innerHTML, /executorZ/);
   assert.match(output.innerHTML, /href="#run\/bad"/);
+  assert.equal(model.attemptErrors.get('bad'),'service <offline>', 'failed fetch reason retained');
+  assert.match(output.innerHTML, /executorZ/);
+  assert.ok(model.attemptErrors.has('bad'), 'failed run identity retained');
 
-  for (const api of [
-    async () => {throw new Error('runs unavailable');},
-    async () => ({}),
-    async path => path === '/v1/runs' ? {runs:[{id:'bad'}]} : {},
+  for (const [api,role] of [
+    [async () => {throw new Error('runs unavailable');},'alert'],
+    [async () => ({}),'alert'],
+    [async path => path === '/v1/runs' ? {runs:[{id:'bad'}]} : {},'status'],
   ]) {
     const helpers = getHelpers(makeCtx({api,document:{getElementById: () => output}}));
     await helpers.loadAnalytics();
-    assert.match(output.innerHTML, /role="alert"/);
+    assert.match(output.innerHTML, new RegExp(`role="${role}"`), 'invalid runs fail the page; invalid attempts mark partial data');
     assert.doesNotMatch(output.innerHTML, /Loading analytics/);
   }
 }
@@ -433,6 +447,25 @@ console.log('Analytics API empty slice checks passed');
   assert.match(row('zeroExecutor'), /width:0\.0%/);
 }
 console.log('Partial token relative-volume checks passed');
+
+// Missing token fields and reported zero retain distinct chart values.
+{
+  const {buildAnalyticsModel, tokenSparklineMarkup} = getHelpers(makeCtx());
+  const now = new Date().toISOString();
+  const renderUsage = usage => {
+    const model = buildAnalyticsModel([{id:'run',state:'succeeded',createdAt:now}], new Map([
+      ['run', [{executor:'generic',state:'succeeded',usage}]],
+    ]));
+    return tokenSparklineMarkup(model.tokenBuckets);
+  };
+  const partial = renderUsage({input:100});
+  assert.match(partial, /in=100 out=Unavailable cached=Unavailable/);
+  assert.doesNotMatch(partial, /spark-seg tok-(out|cached)/, 'unknown fields have no numeric bar');
+  const zero = renderUsage({input:0,output:0,cached:0});
+  assert.match(zero, /in=0 out=0 cached=0/, 'reported zeros stay visible in the chart labels');
+  assert.doesNotMatch(zero, /spark-seg tok-/, 'zero values have zero bar height');
+}
+console.log('Partial token chart checks passed');
 
 // UTC labels must match UTC bucket keys even for viewers on a different day.
 {

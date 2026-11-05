@@ -206,6 +206,10 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeValidationErrors(w, plan.ErrorsOnly(errs))
 			return
 		}
+		if err := p.VerifyDigest(); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
+			return
+		}
 		if p.Digest == "" {
 			d, err := p.ComputeDigest()
 			if err != nil {
@@ -213,6 +217,13 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				return
 			}
 			p.Digest = d
+		}
+		// Persist the verified plan with its digest in a consistent encoding so
+		// whitespace and an omitted digest do not conflict with an existing pin.
+		data, err = json.Marshal(&p)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
+			return
 		}
 		if err := store.SaveWorkflowVersion(p.Digest, data); err != nil {
 			writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())

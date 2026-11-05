@@ -111,12 +111,13 @@ func (e *Engine) CreateRun(input json.RawMessage) (string, error) {
 	return runID, nil
 }
 
-// RepinRunPlan updates the pinned plan JSON for a run (for example extending a
-// paused loop's maxIterations). The run must be paused or resumable; the new
-// plan must verify its digest before persistence.
+// RepinRunPlan accepts only the existing pin. A different plan requires a new run.
 func (e *Engine) RepinRunPlan(runID string, plan *Plan) error {
 	if plan == nil {
 		return fmt.Errorf("muxlio: repin plan: nil plan")
+	}
+	if err := plan.VerifyDigest(); err != nil {
+		return err
 	}
 	if _, err := plan.ComputeDigest(); err != nil {
 		return err
@@ -168,6 +169,9 @@ func (e *Engine) Retry(runID string) error {
 	if err := pinned.VerifyDigest(); err != nil {
 		return fmt.Errorf("muxlio: retry: pinned plan integrity check failed: %w", err)
 	}
+	if pinned.Digest == "" || pinned.Digest != run.PlanDigest {
+		return fmt.Errorf("muxlio: retry: pinned plan digest mismatch")
+	}
 	e.plan = &pinned
 	// Reset incomplete activations and transition the run atomically. This
 	// also clears stale activation errors while preserving successful outputs.
@@ -194,6 +198,9 @@ func (e *Engine) Run(runID string) error {
 	if run.State == RunSucceeded || run.State == RunFailed || run.State == RunCancelled {
 		return fmt.Errorf("muxlio: run %q is terminal", runID)
 	}
+	if len(run.PlanJSON) == 0 {
+		return fmt.Errorf("muxlio: run %q has no pinned plan", runID)
+	}
 	if len(run.PlanJSON) > 0 {
 		var pinned Plan
 		if err := json.Unmarshal(run.PlanJSON, &pinned); err != nil {
@@ -202,7 +209,7 @@ func (e *Engine) Run(runID string) error {
 		if err := pinned.VerifyDigest(); err != nil {
 			return err
 		}
-		if pinned.Digest != run.PlanDigest {
+		if pinned.Digest == "" || pinned.Digest != run.PlanDigest {
 			return fmt.Errorf("muxlio: pinned plan digest mismatch")
 		}
 		e.plan = &pinned
@@ -331,7 +338,16 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 			}
 			// ActWaiting (e.g. exhausted loop): re-execute below.
 		} else {
+			resolved, err := EvalBindings(node.Inputs, ctx)
+			if err != nil {
+				return nil, err
+			}
+			inputs, err := json.Marshal(resolved)
+			if err != nil {
+				return nil, err
+			}
 			act := &state.Activation{
+				Inputs:    inputs,
 				ID:        actID,
 				RunID:     runID,
 				ScopePath: append([]string{}, scope...),
@@ -457,9 +473,17 @@ func unwrapSubgraphOutput(output map[string]any) any {
 // executeExecute resolves inputs, calls the executor, and returns outputs.
 // It honours the node's RetryPolicy for retryable failures.
 func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
-	inputs, err := EvalBindings(node.Inputs, ctx)
-	if err != nil {
-		return nil, err
+	var inputs map[string]any
+	if act, getErr := e.store.GetActivation(activationID(runID, scope, node.ID)); getErr == nil && len(act.Inputs) > 0 {
+		if err := json.Unmarshal(act.Inputs, &inputs); err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		inputs, err = EvalBindings(node.Inputs, ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for key := range inputs {
 		if strings.HasPrefix(key, "__after_") {
@@ -509,6 +533,11 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		maxAttempts = node.Retry.MaxAttempts
 	}
 
+	// Each attempt receives a fresh value; executor mutation cannot alter retries.
+	inputSnapshot, err := json.Marshal(inputs)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
 	actID := activationID(runID, scope, node.ID)
 	attemptBase := 0
@@ -516,6 +545,10 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		attemptBase = act.AttemptBase
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req.Inputs = nil
+		if err := json.Unmarshal(inputSnapshot, &req.Inputs); err != nil {
+			return nil, err
+		}
 		if attempt > 1 {
 			if err := e.wait(retryDelay(node.Retry, attempt-1, lastErr)); err != nil {
 				return nil, err
@@ -1031,11 +1064,27 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 		if err := e.store.ScheduleTimer(timerID, runID, actID, due, nil); err != nil {
 			return nil, fmt.Errorf("muxlio: scheduling timer: %w", err)
 		}
-		// Block synchronously: sleep until the timer is due, then fire it.
-		if dur > 0 {
-			if err := e.wait(dur); err != nil {
+		// A process may stop here: recovery uses the original durable deadline.
+		timer, err := e.store.GetTimer(timerID)
+		if err != nil {
+			return nil, err
+		}
+		if timer.State == "cancelled" {
+			return nil, fmt.Errorf("muxlio: timer %q cancelled", timerID)
+		}
+		if err := e.store.SetActivationState(actID, ActWaiting); err != nil {
+			return nil, err
+		}
+		if _, err := e.store.TransitionRunState(runID, []string{RunRunning}, RunWaiting); err != nil {
+			return nil, err
+		}
+		if remaining := time.Until(timer.DueAt); remaining > 0 && timer.State != "fired" {
+			if err := e.wait(remaining); err != nil {
 				return nil, err
 			}
+		}
+		if _, err := e.store.TransitionRunState(runID, []string{RunWaiting}, RunRunning); err != nil {
+			return nil, err
 		}
 		// Drain the timer from the store.
 		if _, err := e.store.DueTimers(time.Now()); err != nil {

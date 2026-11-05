@@ -84,6 +84,12 @@ const [markdown, inspector, live, transcript, page] = await Promise.all([
   source('js/transcript.js'), source('index.html'),
 ]);
 const classes = new Set();
+const listeners = new Map();
+const modalElements = new Map(['outputModal','outputModalBody','outputModalTitle','closeOutputModal'].map(id=>[id,{
+  hidden:true, innerHTML:'', textContent:'',
+  focus(){},
+  addEventListener:(type,listener)=>listeners.set(`${id}:${type}`,listener),
+}]));
 const scroll = {scrollHeight:500, scrollTop:400, clientHeight:100};
 const body = {
   innerHTML:'', textContent:'', scrollHeight:500, scrollTop:400, clientHeight:100,
@@ -92,11 +98,18 @@ const body = {
 };
 const context = vm.createContext({
   TextEncoder, TextDecoder, Uint8Array, atob, Blob,
-  document:{getElementById:id=>id==='refreshTranscript'?null:body, querySelector:()=>scroll},
-  $:()=>body,
+  document:{
+    getElementById:id=>id==='refreshTranscript'?null:modalElements.get(id)||body,
+    querySelector:()=>scroll,
+    addEventListener:(type,listener)=>listeners.set(`document:${type}`,listener),
+  },
+  $:selector=>modalElements.get(selector.slice(1))||body,
   esc:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
 });
 vm.runInContext(`${markdown}\n${inspector}\n${live}\n${transcript}`, context);
+assert.equal(typeof listeners.get('closeOutputModal:click'),'function');
+assert.equal(typeof listeners.get('outputModal:click'),'function');
+assert.equal(typeof listeners.get('document:keydown'),'function');
 const render = context.renderMarkdown;
 const formatted = '# Report\n\nFirst **bold** and *emphasis*.\n\nSecond paragraph with `a < b` and [docs](https://example.test/?a=1&b=2).\n\n- one\n- two\n  - nested\n\n3. third\n4. fourth\n\n```js\nconst x = "<script>";\n```';
 const rendered = render(formatted);
@@ -149,16 +162,23 @@ const encoded = Buffer.from(formatted).toString('base64');
 context.logs = [{stream:'agent',seq:1,data:encoded}];
 assert.equal(vm.runInContext("mergeActivationLogs('markdown',logs)",context),formatted,'cached output stays raw');
 assert.equal(vm.runInContext("mergeActivationLogs('markdown',logs)",context),formatted,'repeated chunks stay deduplicated');
-assert.match(context.transcriptSectionMarkup({id:'markdown',state:'succeeded'},'run'), /<h1>Report<\/h1>/, 'initial inspector uses Markdown');
+assert.match(context.transcriptSectionMarkup({id:'markdown',state:'running'},'run'), /<h1>Report<\/h1>/, 'initial live inspector uses Markdown');
+assert.equal(context.transcriptSectionMarkup({id:'markdown',state:'succeeded'},'run'), '', 'completed transcripts use the dedicated transcript page');
 for(const id of ['liveTranscriptBody','transcriptPageBody']){
   assert.match(page,new RegExp(`<div class="[^"]*markdown-body" id="${id}">`),'block markup uses a div container');
 }
 assert.ok(page.indexOf('/js/markdown.js')<page.indexOf('/js/inspector.js'),'renderer loads before consumers');
 const artifact = {report:{mime:'text/markdown; charset=utf-8',path:'report.md',data:formatted}};
 const original = JSON.stringify(artifact);
-assert.match(context.outputMarkup(artifact), /<h1>Report<\/h1>/);
+assert.match(context.outputMarkup(artifact), /data-view-artifact="report"/, 'artifact cards expose the output viewer');
+await context.showArtifactOutput(artifact.report,'report');
+assert.equal(modalElements.get('outputModal').hidden,false);
+assert.match(modalElements.get('outputModalBody').innerHTML, /<h1>Report<\/h1>/, 'Markdown artifacts render in the output viewer');
 assert.equal(JSON.stringify(artifact),original,'previews do not mutate output data');
-assert.match(context.outputMarkup({report:{mime:'text/plain',data:'# raw'}}), /<pre class="preview"># raw<\/pre>/);
+await context.showArtifactOutput({mime:'text/plain',data:'# raw'},'report');
+assert.match(modalElements.get('outputModalBody').innerHTML, /<pre class="output-raw"># raw<\/pre>/, 'plain text remains raw in the output viewer');
+listeners.get('closeOutputModal:click')();
+assert.equal(modalElements.get('outputModal').hidden,true);
 console.log('safe Markdown and production output view checks passed');
 
 // Review regressions: preserve literal heading suffixes and bound incomplete links.
@@ -185,6 +205,8 @@ Object.assign(context, {
   replaceHTMLPreservingDetails:(_element,html)=>{workbenchMarkup=html},
 });
 context.renderInspectorWb({id:'review-output',nodeId:'task.review',state:'succeeded',outputs:workbenchOutput});
-assert.match(workbenchMarkup, /<div class="preview markdown-body"><h1>Report<\/h1>/, 'workbench output artifacts use the shared renderer');
+assert.match(workbenchMarkup, /data-view-artifact="report"/, 'workbench output artifacts expose the shared output viewer');
+await context.showArtifactOutput(workbenchOutput.report,'report');
+assert.match(modalElements.get('outputModalBody').innerHTML, /<article class="markdown-body"><h1>Report<\/h1>/, 'workbench artifact viewer uses the shared renderer');
 assert.equal(JSON.stringify(workbenchOutput),workbenchOriginal);
 console.log('Markdown review regression checks passed');

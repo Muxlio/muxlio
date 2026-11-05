@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -53,7 +54,11 @@ func (s *Memory) CreateRun(run *Run) error {
 	}
 	run.UpdatedAt = run.CreatedAt
 	run.State = "created"
-	s.runs[run.ID] = run
+	snapshot, err := cloneRun(run)
+	if err != nil {
+		return err
+	}
+	s.runs[run.ID] = snapshot
 	s.eventSeq[run.ID] = 0
 	s.appendEventLocked(run.ID, EventRunCreated, run.ID, nil)
 	return nil
@@ -66,7 +71,7 @@ func (s *Memory) GetRun(id string) (*Run, error) {
 	if !ok {
 		return nil, fmt.Errorf("muxlio: run %q not found", id)
 	}
-	return r, nil
+	return cloneRun(r)
 }
 
 func (s *Memory) SetRunState(id, state string) error {
@@ -157,9 +162,9 @@ func (s *Memory) UpdateRunPlan(id string, planJSON json.RawMessage, digest strin
 	if !ok {
 		return fmt.Errorf("muxlio: run %q not found", id)
 	}
-	r.PlanJSON = append(json.RawMessage(nil), planJSON...)
-	r.PlanDigest = digest
-	r.UpdatedAt = time.Now()
+	if r.PlanDigest != digest || !bytes.Equal(r.PlanJSON, planJSON) {
+		return fmt.Errorf("muxlio: run %q has an immutable plan; create a new run", id)
+	}
 	return nil
 }
 
@@ -181,7 +186,11 @@ func (s *Memory) ListRuns() ([]*Run, error) {
 	defer s.mu.RUnlock()
 	runs := make([]*Run, 0, len(s.runs))
 	for _, r := range s.runs {
-		runs = append(runs, r)
+		snapshot, err := cloneRun(r)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, snapshot)
 	}
 	return runs, nil
 }
@@ -192,7 +201,11 @@ func (s *Memory) CreateActivation(a *Activation) error {
 	if _, ok := s.activations[a.ID]; ok {
 		return fmt.Errorf("muxlio: activation %q already exists", a.ID)
 	}
-	s.activations[a.ID] = a
+	snapshot, err := cloneActivation(a)
+	if err != nil {
+		return err
+	}
+	s.activations[a.ID] = snapshot
 	s.appendEventLocked(a.RunID, EventActivationQueued, a.ID, map[string]any{
 		"nodeId":    a.NodeID,
 		"scopePath": a.ScopePath,
@@ -207,7 +220,7 @@ func (s *Memory) GetActivation(id string) (*Activation, error) {
 	if !ok {
 		return nil, fmt.Errorf("muxlio: activation %q not found", id)
 	}
-	return a, nil
+	return cloneActivation(a)
 }
 
 func (s *Memory) ListActivations(runID string) ([]Activation, error) {
@@ -216,9 +229,11 @@ func (s *Memory) ListActivations(runID string) ([]Activation, error) {
 	result := make([]Activation, 0)
 	for _, a := range s.activations {
 		if a.RunID == runID {
-			copy := *a
-			copy.ScopePath = append([]string(nil), a.ScopePath...)
-			result = append(result, copy)
+			copy, err := cloneActivation(a)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, *copy)
 		}
 	}
 	return result, nil
@@ -245,7 +260,11 @@ func (s *Memory) SetActivationOutputs(id string, outputs map[string]any) error {
 	if !ok {
 		return fmt.Errorf("muxlio: activation %q not found", id)
 	}
-	a.Outputs = outputs
+	snapshot, err := cloneOutputs(outputs)
+	if err != nil {
+		return err
+	}
+	a.Outputs = snapshot
 	a.State = "succeeded"
 	s.appendEventLocked(a.RunID, EventActivationSucceeded, id, map[string]any{
 		"ports": outputKeys(outputs),
@@ -308,6 +327,11 @@ func (s *Memory) appendEventLocked(runID, eventType, subjectID string, payload m
 func (s *Memory) ScheduleTimer(id, runID, activationID string, due time.Time, payload any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, timer := range s.timers {
+		if timer.ID == id {
+			return nil
+		}
+	}
 	raw, _ := marshalPayload(payload)
 	s.timers = append(s.timers, &Timer{
 		ID:           id,
@@ -318,6 +342,19 @@ func (s *Memory) ScheduleTimer(id, runID, activationID string, due time.Time, pa
 		Payload:      raw,
 	})
 	return nil
+}
+
+// GetTimer returns the original deadline, including after it has fired.
+func (s *Memory) GetTimer(id string) (*Timer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, timer := range s.timers {
+		if timer.ID == id {
+			snapshot := *timer
+			return &snapshot, nil
+		}
+	}
+	return nil, fmt.Errorf("muxlio: timer %q not found", id)
 }
 
 func (s *Memory) DueTimers(now time.Time) ([]Timer, error) {
@@ -565,6 +602,9 @@ func marshalPayload(v any) (map[string]any, error) {
 func (s *Memory) SaveWorkflowVersion(digest string, planJSON []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existing, ok := s.workflowVersions[digest]; ok && !bytes.Equal(existing, planJSON) {
+		return fmt.Errorf("muxlio: workflow version %q is immutable", digest)
+	}
 	cp := make([]byte, len(planJSON))
 	copy(cp, planJSON)
 	s.workflowVersions[digest] = cp
@@ -599,4 +639,46 @@ func (s *Memory) ListWorkflowVersions() ([]WorkflowVersionSummary, error) {
 		})
 	}
 	return summaries, nil
+}
+
+// cloneRun prevents callers from changing pinned bytes or input through aliases.
+func cloneRun(run *Run) (*Run, error) {
+	raw, err := json.Marshal(run)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot Run
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, err
+	}
+	snapshot.PlanJSON = append(json.RawMessage(nil), run.PlanJSON...)
+	return &snapshot, nil
+}
+
+// cloneOutputs isolates successful checkpoints from executor and caller mutation.
+func cloneOutputs(outputs map[string]any) (map[string]any, error) {
+	if outputs == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(outputs)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func cloneActivation(a *Activation) (*Activation, error) {
+	snapshot := *a
+	snapshot.ScopePath = append([]string(nil), a.ScopePath...)
+	snapshot.Inputs = append(json.RawMessage(nil), a.Inputs...)
+	outputs, err := cloneOutputs(a.Outputs)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.Outputs = outputs
+	return &snapshot, nil
 }
