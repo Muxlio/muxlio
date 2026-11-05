@@ -67,7 +67,7 @@ var schemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_activations_run ON activations(run_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq)`,
 	`CREATE TABLE IF NOT EXISTS assignments (activation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, worker_id TEXT NOT NULL, generation INTEGER NOT NULL, lease_until TEXT NOT NULL, state TEXT NOT NULL, assignment_id TEXT NOT NULL DEFAULT '', attempt_id TEXT NOT NULL DEFAULT '', FOREIGN KEY(run_id) REFERENCES runs(id))`,
-	`CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, capacity INTEGER NOT NULL, capabilities_json TEXT NOT NULL, labels_json TEXT NOT NULL DEFAULT '{}', last_seen TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, capacity INTEGER NOT NULL, capabilities_json TEXT NOT NULL, labels_json TEXT NOT NULL DEFAULT '{}', last_seen TEXT NOT NULL, draining INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS dispatches (assignment_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL UNIQUE, attempt_id TEXT NOT NULL, executor TEXT NOT NULL, request_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS worker_results (attempt_id TEXT PRIMARY KEY, result_json BLOB NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS worker_diagnostics (id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, payload_json BLOB NOT NULL, recorded_at TEXT NOT NULL)`,
@@ -125,6 +125,9 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE execution_attempts ADD COLUMN execution_duration_ms INTEGER`,
 		`ALTER TABLE activations ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE activations ADD COLUMN inputs_json BLOB`,
+		// Drain mode: worker is finishing current assignments but takes no new ones.
+		`ALTER TABLE workers ADD COLUMN draining INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN coordinator_epoch INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -173,8 +176,8 @@ func (s *Store) CoordinatorEpoch() (int64, error) {
 }
 
 // StartCoordinator advances the fencing epoch and reconciles leases from the
-// previous process. Their side effects are unknowable, so assignments become
-// uncertain and their requests are held for manual reconciliation.
+// previous process. Pure requests can replay; all other requests remain held
+// for manual reconciliation because their side effects are unknowable.
 func (s *Store) StartCoordinator() (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,6 +193,9 @@ func (s *Store) StartCoordinator() (int64, error) {
 		return 0, err
 	}
 	if _, err = tx.Exec(`UPDATE dispatches SET state='uncertain' WHERE state='assigned' AND activation_id IN (SELECT activation_id FROM assignments WHERE state='uncertain')`); err != nil {
+		return 0, err
+	}
+	if err = recoverLostDispatches(tx); err != nil {
 		return 0, err
 	}
 	var epoch int64
@@ -229,6 +235,12 @@ func (s *Store) ClaimAssignment(a state.Assignment) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if err := checkCoordinatorEpoch(tx, a.CoordinatorEpoch); err != nil {
+		return 0, err
+	}
+	if _, err = tx.Exec(`UPDATE assignments SET coordinator_epoch=? WHERE activation_id=?`, a.CoordinatorEpoch, a.ActivationID); err != nil {
+		return 0, err
+	}
 	if err := registerWorkerTiming(tx, a, generation); err != nil {
 		return 0, err
 	}
@@ -260,7 +272,14 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 	if terminalState != "succeeded" && terminalState != "failed" && terminalState != "cancelled" {
 		return false, fmt.Errorf("invalid worker completion state %q", terminalState)
 	}
-	res, err := tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND generation=? AND assignment_id=? AND attempt_id=? AND state='active' AND lease_until>?`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.Generation, a.AssignmentID, a.AttemptID, rfc3339(now))
+	if err := checkCoordinatorEpoch(tx, a.CoordinatorEpoch); err != nil {
+		return false, err
+	}
+	// Use storage admission time if the caller waited behind another writer.
+	if current := time.Now(); current.After(now) {
+		now = current
+	}
+	res, err := tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND generation=? AND assignment_id=? AND attempt_id=? AND state='active' AND lease_until>? AND coordinator_epoch=?`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.Generation, a.AssignmentID, a.AttemptID, rfc3339(now), a.CoordinatorEpoch)
 	if err != nil {
 		return false, err
 	}
@@ -347,7 +366,10 @@ func (s *Store) RegisterWorker(w state.Worker) error {
 			return err
 		}
 	}
-	_, err = tx.Exec(`INSERT INTO workers(id,instance_id,capacity,capabilities_json,labels_json,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id,capacity=excluded.capacity,capabilities_json=excluded.capabilities_json,labels_json=excluded.labels_json,last_seen=excluded.last_seen`, w.ID, w.InstanceID, w.Capacity, string(raw), string(labelsRaw), rfc3339(w.LastSeen))
+	if err = recoverLostDispatches(tx); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO workers(id,instance_id,capacity,capabilities_json,labels_json,last_seen,draining) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id,capacity=excluded.capacity,capabilities_json=excluded.capabilities_json,labels_json=excluded.labels_json,last_seen=excluded.last_seen,draining=excluded.draining`, w.ID, w.InstanceID, w.Capacity, string(raw), string(labelsRaw), rfc3339(w.LastSeen), boolToInt(w.Draining))
 	if err != nil {
 		return err
 	}
@@ -358,7 +380,7 @@ func (s *Store) RegisterWorker(w state.Worker) error {
 func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id,instance_id,capacity,capabilities_json,labels_json,last_seen FROM workers WHERE last_seen>=? ORDER BY id`, rfc3339(since))
+	rows, err := s.db.Query(`SELECT id,instance_id,capacity,capabilities_json,labels_json,last_seen,draining FROM workers WHERE last_seen>=? ORDER BY id`, rfc3339(since))
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +389,8 @@ func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 	for rows.Next() {
 		var w state.Worker
 		var raw, labelsRaw, seen string
-		if err := rows.Scan(&w.ID, &w.InstanceID, &w.Capacity, &raw, &labelsRaw, &seen); err != nil {
+		var draining int
+		if err := rows.Scan(&w.ID, &w.InstanceID, &w.Capacity, &raw, &labelsRaw, &seen, &draining); err != nil {
 			return nil, err
 		}
 		w.Capabilities, err = decodeWorkerCapabilities(raw)
@@ -381,6 +404,7 @@ func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 		if err != nil {
 			return nil, err
 		}
+		w.Draining = draining != 0
 		result = append(result, w)
 	}
 	return result, rows.Err()
@@ -443,6 +467,10 @@ func (s *Store) ReconcileUncertainDispatch(activationID string) error {
 // Least-recently-served runs rotate fairly; FIFO is used within each run.
 // Only one request is prefetched per worker poll.
 func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch, int64, error) {
+	return s.ClaimDispatchForEpoch(workerID, lease, 0)
+}
+
+func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch int64) (*state.Dispatch, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -450,12 +478,10 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 		return nil, 0, err
 	}
 	defer tx.Rollback()
-	// Expired executions may have performed external side effects. Record that
-	// uncertainty and hold the request for manual reconciliation.
-	if _, err = tx.Exec(`UPDATE assignments SET state='uncertain' WHERE state='active' AND lease_until<?`, rfc3339(time.Now())); err != nil {
+	if err = checkCoordinatorEpoch(tx, epoch); err != nil {
 		return nil, 0, err
 	}
-	if _, err = tx.Exec(`UPDATE dispatches SET state='uncertain' WHERE state='assigned' AND activation_id IN (SELECT activation_id FROM assignments WHERE state='uncertain')`); err != nil {
+	if err = recoverLostDispatches(tx); err != nil {
 		return nil, 0, err
 	}
 	// Capacity is a concurrency limit, not merely an advertised hint. Count
@@ -463,7 +489,10 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	// outage without waiting for an explicit cleanup pass.
 	var capacity int
 	var capRaw, labelsRaw string
-	if err = tx.QueryRow(`SELECT capacity,capabilities_json,labels_json FROM workers WHERE id=?`, workerID).Scan(&capacity, &capRaw, &labelsRaw); err != nil {
+	if err = tx.QueryRow(`SELECT capacity,capabilities_json,labels_json FROM workers WHERE id=? AND draining=0`, workerID).Scan(&capacity, &capRaw, &labelsRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, tx.Commit()
+		}
 		return nil, 0, err
 	}
 	caps, err := decodeWorkerCapabilities(capRaw)
@@ -528,6 +557,9 @@ func (s *Store) ClaimDispatch(workerID string, lease time.Time) (*state.Dispatch
 	}
 	generation++
 	if _, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, selected.ActivationID, selected.RunID, workerID, generation, rfc3339(lease), selected.AssignmentID, selected.AttemptID); err != nil {
+		return nil, 0, err
+	}
+	if _, err = tx.Exec(`UPDATE assignments SET coordinator_epoch=? WHERE activation_id=?`, epoch, selected.ActivationID); err != nil {
 		return nil, 0, err
 	}
 	if err := registerWorkerTiming(tx, state.Assignment{AttemptID: selected.AttemptID, AssignmentID: selected.AssignmentID, RunID: selected.RunID, ActivationID: selected.ActivationID, WorkerID: workerID}, generation); err != nil {
@@ -725,7 +757,7 @@ func (s *Store) GetLogChunks(runID, activationID string) ([]state.LogChunk, erro
 func (s *Store) ListAssignments(runID string) ([]state.Assignment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT run_id, activation_id, worker_id, generation, lease_until, state, assignment_id, attempt_id FROM assignments WHERE run_id=? ORDER BY activation_id`, runID)
+	rows, err := s.db.Query(`SELECT run_id, activation_id, worker_id, generation, lease_until, state, assignment_id, attempt_id, coordinator_epoch FROM assignments WHERE run_id=? ORDER BY activation_id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -734,7 +766,7 @@ func (s *Store) ListAssignments(runID string) ([]state.Assignment, error) {
 	for rows.Next() {
 		var a state.Assignment
 		var lease string
-		if err := rows.Scan(&a.RunID, &a.ActivationID, &a.WorkerID, &a.Generation, &lease, &a.State, &a.AssignmentID, &a.AttemptID); err != nil {
+		if err := rows.Scan(&a.RunID, &a.ActivationID, &a.WorkerID, &a.Generation, &lease, &a.State, &a.AssignmentID, &a.AttemptID, &a.CoordinatorEpoch); err != nil {
 			return nil, err
 		}
 		a.LeaseUntil, _ = time.Parse(time.RFC3339Nano, lease)
@@ -1462,6 +1494,13 @@ func rfc3339(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // marshalUsage serialises attempt token usage to a JSON column value. A nil
 // pointer (provider did not report usage) is stored as NULL so that it can be
 // distinguished from a reported zero on read-back.
@@ -1494,21 +1533,6 @@ func stateKeys(m map[string]any) []string {
 	return ks
 }
 
-func (s *Store) RenewWorkerAssignments(workerID string, ids []string, now, until time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, id := range ids {
-		if _, err = tx.Exec(`UPDATE assignments SET lease_until=? WHERE assignment_id=? AND worker_id=? AND state='active' AND lease_until>?`, rfc3339(until), id, workerID, rfc3339(now)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
 func (s *Store) WorkerResult(id string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1525,7 +1549,7 @@ func (s *Store) LookupWorkerAssignment(workerID, assignmentID string) (*state.As
 	defer s.mu.Unlock()
 	var a state.Assignment
 	var lease string
-	err := s.db.QueryRow(`SELECT run_id, activation_id, worker_id, generation, lease_until, state, assignment_id, attempt_id FROM assignments WHERE assignment_id=? AND worker_id=?`, assignmentID, workerID).Scan(&a.RunID, &a.ActivationID, &a.WorkerID, &a.Generation, &lease, &a.State, &a.AssignmentID, &a.AttemptID)
+	err := s.db.QueryRow(`SELECT run_id, activation_id, worker_id, generation, lease_until, state, assignment_id, attempt_id, coordinator_epoch FROM assignments WHERE assignment_id=? AND worker_id=?`, assignmentID, workerID).Scan(&a.RunID, &a.ActivationID, &a.WorkerID, &a.Generation, &lease, &a.State, &a.AssignmentID, &a.AttemptID, &a.CoordinatorEpoch)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1576,7 +1600,7 @@ func (s *Store) AckWorkerCompletionWithoutResult(a state.Assignment, terminalSta
 		return false, err
 	}
 	if n == 0 {
-		res, err = tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND state IN ('cancelled','uncertain')`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.AssignmentID, a.AttemptID, workerGeneration)
+		res, err = tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND state='cancelled'`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.AssignmentID, a.AttemptID, workerGeneration)
 		if err != nil {
 			return false, err
 		}

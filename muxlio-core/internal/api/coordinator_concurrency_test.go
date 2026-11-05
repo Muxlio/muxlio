@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/workers"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -167,5 +169,84 @@ func TestReplacementWorkerRejectsOldAdmissionsAndHeartbeats(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/workers/worker/assignments?instanceId=new", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("replacement poll: %d %s", response.Code, response.Body.String())
+	}
+}
+
+// Pure work recovers on the coordinator's execution loop even without another
+// worker poll triggering expiry cleanup. A diagnostic must never release unsafe
+// work; the corresponding unsafe recovery cases live in the storage suite.
+func TestCoordinatorPureExecutionRecoversAfterLeaseLoss(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	c.lease = 20 * time.Millisecond
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	type outcome struct {
+		result workers.ExecuteResult
+		err    error
+	}
+	results := make(chan outcome, 1)
+	go func() {
+		r, e := c.Execute(workers.ExecuteRequest{Context: ctx, RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", Effect: "none"})
+		results <- outcome{r, e}
+	}()
+	claim := func() *WorkerAssignment {
+		t.Helper()
+		for ctx.Err() == nil {
+			a, err := c.NextAssignment("worker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a != nil {
+				return a
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("assignment did not become eligible")
+		return nil
+	}
+	old := claim()
+	// No polling during this interval: Execute's recovery tick must expire it.
+	for ctx.Err() == nil {
+		known, err := store.LookupWorkerAssignment("worker", old.AssignmentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if known.State == "cancelled" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("pure lease was not recovered by execution loop")
+	}
+	fresh := claim()
+	if fresh.Generation <= old.Generation {
+		t.Fatal("replay did not advance fencing generation")
+	}
+	completion := func(a *WorkerAssignment, value string) WorkerCompletion {
+		return WorkerCompletion{AssignmentID: a.AssignmentID, AttemptID: a.AttemptID, ActivationID: a.ActivationID, RunID: a.RunID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"value": value}}
+	}
+	if err := c.Complete("worker", completion(fresh, "fresh")); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Complete("worker", completion(old, "stale"))
+	select {
+	case o := <-results:
+		if o.err != nil || o.result.Outputs["value"] != "fresh" {
+			t.Fatalf("recovery result: %+v %v", o.result, o.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("pure result not delivered")
 	}
 }

@@ -24,7 +24,7 @@ All paths are rooted at `/v1/workers`.
 | Method and path | Purpose | Success |
 |---|---|---|
 | `POST /register` | Register identity, protocol version, runtime, capacity, capability/version pairs, and optional labels. Capability names must be unique. | `200` with coordinator epoch and heartbeat interval. |
-| `POST /{workerId}/heartbeat` | Renew liveness and report active assignment IDs. | `200` with coordinator epoch, lease interval, and optional generic commands. |
+| `POST /{workerId}/heartbeat` | Renew liveness and individual fenced slot leases; report drain mode. | `200` with coordinator epoch, lease interval, and optional generic commands. |
 | `GET /{workerId}/assignments` | Long-poll or poll for the next eligible assignment. | `200` with assignment; `204` when none is available. |
 | `POST /{workerId}/assignments/complete` | Report a terminal result for an assignment. | `202` when accepted for reconciliation. |
 
@@ -49,7 +49,10 @@ Registration:
 ```
 
 Heartbeat body is
-`{"protocolVersion":"v1","activeAssignments":["as-1"],"capacity":4,"availableSlots":3}`.
+`{"protocolVersion":"v1","instanceId":"process-1","activeAssignments":["as-1"],"leases":[{"assignmentId":"as-1","generation":1,"coordinatorEpoch":2}],"capacity":4,"availableSlots":3,"draining":false}`.
+Each entry in `leases` renews only that assignment's current generation and
+coordinator epoch. Assignment IDs alone do not renew leases. Expired leases
+cannot be resurrected. A slot missing from the heartbeat expires independently.
 `capacity` is an optional live admission limit; zero drains the worker.
 Lowering it preserves admitted attempts and blocks new claims until the active
 count falls below the limit. `availableSlots` advertises the worker's remaining
@@ -70,7 +73,12 @@ advertised executor kinds (the default remains one). Each child owns a runner,
 cancellation context, process group, attempt scratch directory, and log sink.
 Heartbeats renew every active child, including children awaiting completion
 acknowledgement. Cancelling a child only cancels that child's context. Shutdown
-cancels and reaps all children before returning.
+on SIGINT or SIGTERM first enters drain mode: it stops polling, advertises
+`draining: true`, and continues heartbeats and completion delivery for up to
+30 seconds. At the deadline it cancels and reaps remaining children.
+Embedded workers can use `RemoteWorkerConfig.Drain` to drain explicitly and
+`ShutdownGracePeriod` to configure cancellation grace (zero cancels immediately).
+Drain prevents new claims even when advertised capacity is positive.
 
 Registration may include `instanceId`, a random identity generated once per
 worker process. Re-registering the same instance is idempotent. A replacement
@@ -93,6 +101,23 @@ with the current lease before accepting a result. A stale generation or epoch
 must not overwrite current state. Completion is safe to retry: the coordinator
 should acknowledge an already-recorded identical completion and reject a
 conflicting or stale one with a protocol error.
+
+## Lease loss and recovery
+
+Assignment generations and coordinator epochs are persisted with claims.
+Completion and log publication validate the full identity and unexpired lease
+atomically with the write. A coordinator restart fences previous leases; a
+worker process replacement fences that process's assignments. Identical
+committed completions remain durable across restarts.
+
+Lease expiry, coordinator restart, and worker replacement release reservations.
+Only requests declaring `effect: "none"` are automatically eligible for replay
+under a newer generation. The interpreter propagates the execute node's
+`retry.effect` policy into this envelope. Missing or other effect policies
+remain uncertain and require explicit reconciliation. A stale completion may
+be retained as a diagnostic; it cannot reconcile uncertainty or authorize an
+unsafe replay. Workers cancel a slot locally when its lease expires, even if
+heartbeat I/O is blocked.
 
 ## Errors
 

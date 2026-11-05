@@ -101,7 +101,7 @@ func TestStaleEpochCompletionStoredAsDiagnostic(t *testing.T) {
 	if err != nil || len(assignments) != 1 {
 		t.Fatal(err)
 	}
-	if assignments[0].State != "cancelled" {
+	if assignments[0].State != "uncertain" {
 		t.Fatalf("assignment state = %q", assignments[0].State)
 	}
 }

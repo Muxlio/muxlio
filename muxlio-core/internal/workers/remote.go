@@ -39,11 +39,13 @@ type remoteRegistrationResult struct {
 	HeartbeatSeconds int   `json:"heartbeatSeconds"`
 }
 type remoteHeartbeat struct {
-	InstanceID      string   `json:"instanceId,omitempty"`
-	ProtocolVersion string   `json:"protocolVersion"`
-	Active          []string `json:"activeAssignments,omitempty"`
-	Capacity        *int     `json:"capacity,omitempty"`
-	AvailableSlots  int      `json:"availableSlots"`
+	Leases          []state.AssignmentLease `json:"leases,omitempty"`
+	Draining        bool                    `json:"draining,omitempty"`
+	InstanceID      string                  `json:"instanceId,omitempty"`
+	ProtocolVersion string                  `json:"protocolVersion"`
+	Active          []string                `json:"activeAssignments,omitempty"`
+	Capacity        *int                    `json:"capacity,omitempty"`
+	AvailableSlots  int                     `json:"availableSlots"`
 }
 type remoteHeartbeatResult struct {
 	CoordinatorEpoch int64             `json:"coordinatorEpoch"`
@@ -57,6 +59,7 @@ type remoteAssignment struct {
 	AttemptID        string          `json:"attemptId"`
 	CoordinatorEpoch int64           `json:"coordinatorEpoch"`
 	Generation       int64           `json:"generation"`
+	LeaseUntil       string          `json:"leaseUntil"`
 	Request          json.RawMessage `json:"request"`
 }
 type remoteError struct {
@@ -95,18 +98,24 @@ type RemoteWorkerConfig struct {
 	// CapacityLimit optionally supplies a live admission limit (zero drains).
 	// It is read by the supervisor, never by executor goroutines.
 	CapacityLimit func() int
+	// Drain stops admission, renews occupied slots, and exits after receipts.
+	Drain <-chan struct{}
+	// ShutdownGracePeriod allows committed work to finish after ctx cancellation.
+	ShutdownGracePeriod time.Duration
 	// ExecutorFactory creates a runner owned by one attempt. Without a factory,
 	// executors must support concurrent Execute calls; attempt-aware executors
 	// can implement NewAttempt instead.
 	ExecutorFactory func() Executor
 }
 
-// RunRemoteWorker registers and polls until ctx is cancelled. Assignments are
-// executed through the same Executor contract used by local workflows.
+// RunRemoteWorker registers and polls until cancellation or drain. With a
+// shutdown grace period, cancellation drains admitted assignments first.
 func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Executor) error {
 	if cfg.WorkerID == "" || cfg.CoordinatorURL == "" || (executor == nil && cfg.ExecutorFactory == nil) {
 		return fmt.Errorf("worker id, coordinator URL, and executor are required")
 	}
+	parent := ctx
+	shutdown := parent.Done()
 	ctx, stop := context.WithCancel(ctx)
 	var children sync.WaitGroup
 	defer func() { stop(); children.Wait() }()
@@ -227,11 +236,20 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	if _, err := retryableCall(http.MethodPost, "/v1/workers/register", registration, &registered); err != nil {
 		return err
 	}
+	// Registration remains cancellable. Once registered, signal cancellation
+	// initiates drain while requests and children retain a live grace context.
+	if cfg.ShutdownGracePeriod > 0 {
+		stop()
+		graceCtx, graceStop := context.WithCancel(context.WithoutCancel(parent))
+		defer graceStop()
+		ctx = graceCtx
+	}
 
 	type attempt struct {
 		assignment remoteAssignment
 		cancel     context.CancelFunc
 		revoked    bool
+		leaseUntil time.Time
 	}
 	type execution struct {
 		id      string
@@ -255,7 +273,20 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	polled := make(chan pollResult, 1)
 	polling := false
 	limit := cfg.Capacity
+	draining := false
+	drain := cfg.Drain
+	var shutdownDeadline <-chan time.Time
+	var shutdownTimer *time.Timer
+	defer func() {
+		if shutdownTimer != nil {
+			shutdownTimer.Stop()
+		}
+	}()
 	updateLimit := func() {
+		if draining {
+			limit = 0
+			return
+		}
 		if cfg.CapacityLimit != nil {
 			limit = cfg.CapacityLimit()
 			if limit < 0 {
@@ -269,7 +300,8 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		// They must not terminate unrelated children already admitted here.
 		reject := func(err error) error {
 			_, cancel := context.WithCancel(ctx)
-			active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: cancel}
+			leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)
+			active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: cancel, leaseUntil: leaseUntil}
 			children.Add(1)
 			go func() {
 				defer children.Done()
@@ -331,7 +363,8 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			WorkBase: cfg.WorkBase,
 		}
 
-		active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: execCancel}
+		leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)
+		active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: execCancel, leaseUntil: leaseUntil}
 		children.Add(1)
 		go func() {
 			defer children.Done()
@@ -348,39 +381,53 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}()
 		return nil
 	}
-	heartbeat := func() error {
+	type heartbeatResult struct {
+		leases   []state.AssignmentLease
+		sentAt   time.Time
+		draining bool
+		response remoteHeartbeatResult
+		status   int
+		err      error
+	}
+	heartbeats := make(chan heartbeatResult, 1)
+	heartbeating := false
+	drainReported := false
+	heartbeat := func() {
+		if heartbeating {
+			return
+		}
+		heartbeating = true
 		updateLimit()
 		ids := make([]string, 0, len(active))
-		for id := range active {
+		leases := make([]state.AssignmentLease, 0, len(active))
+		for id, child := range active {
 			ids = append(ids, id)
+			leases = append(leases, state.AssignmentLease{AssignmentID: id, Generation: child.assignment.Generation, CoordinatorEpoch: child.assignment.CoordinatorEpoch})
 		}
 		slots := limit - len(active)
 		if slots < 0 {
 			slots = 0
 		}
-		var hb remoteHeartbeatResult
-		status, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", remoteHeartbeat{InstanceID: registration.InstanceID, ProtocolVersion: remoteProtocolVersion, Active: ids, Capacity: &limit, AvailableSlots: slots}, &hb)
-		if err != nil {
-			if status == 401 || status == 403 {
-				return err
-			}
+		// Capture the snapshot before starting I/O; only the supervisor owns active.
+		capacity := limit
+		body := remoteHeartbeat{InstanceID: registration.InstanceID, ProtocolVersion: remoteProtocolVersion, Active: ids, Leases: leases, Capacity: &capacity, AvailableSlots: slots, Draining: draining}
+		sentAt := time.Now()
+		children.Add(1)
+		go func() {
+			defer children.Done()
+			var hb remoteHeartbeatResult
+			status, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", body, &hb)
 			if status == 409 {
 				var result remoteRegistrationResult
 				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
 			}
-			return nil
-		}
-		for _, child := range active {
-			if remoteHeartbeatRevokesAssignment(child.assignment.AssignmentID, child.assignment.CoordinatorEpoch, hb) {
-				child.revoked = true
-				child.cancel()
+			select {
+			case heartbeats <- heartbeatResult{response: hb, status: status, err: err, leases: leases, sentAt: sentAt, draining: body.Draining}:
+			case <-ctx.Done():
 			}
-		}
-		return nil
+		}()
 	}
-	if err := heartbeat(); err != nil {
-		return err
-	}
+	heartbeat()
 	ticker := time.NewTicker(cfg.HeartbeatInterval)
 	defer ticker.Stop()
 	pollTimer := time.NewTimer(0)
@@ -390,7 +437,17 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		if ctx.Err() != nil {
 			return nil
 		}
+		if !draining && cfg.ShutdownGracePeriod > 0 && parent.Err() != nil {
+			shutdown = nil
+			draining = true
+			shutdownTimer = time.NewTimer(cfg.ShutdownGracePeriod)
+			shutdownDeadline = shutdownTimer.C
+			heartbeat()
+		}
 		updateLimit()
+		if draining && drainReported && len(active) == 0 && !polling && !heartbeating {
+			return nil
+		}
 		if pollReady && !polling && len(active) < limit {
 			polling = true
 			pollReady = false
@@ -408,10 +465,55 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			if err := heartbeat(); err != nil {
-				return err
+		case <-shutdown:
+			if cfg.ShutdownGracePeriod <= 0 {
+				return nil
 			}
+			shutdown = nil
+			draining = true
+			shutdownTimer = time.NewTimer(cfg.ShutdownGracePeriod)
+			shutdownDeadline = shutdownTimer.C
+			heartbeat()
+		case <-shutdownDeadline:
+			return nil
+		case <-drain:
+			drain = nil
+			draining = true
+			heartbeat()
+		case h := <-heartbeats:
+			heartbeating = false
+			if h.err != nil {
+				if h.status == 401 || h.status == 403 {
+					return h.err
+				}
+				continue
+			}
+			if h.draining {
+				drainReported = true
+			}
+			for _, lease := range h.leases {
+				child := active[lease.AssignmentID]
+				if child == nil || child.assignment.Generation != lease.Generation {
+					continue
+				}
+				if remoteHeartbeatRevokesAssignment(child.assignment.AssignmentID, child.assignment.CoordinatorEpoch, h.response) {
+					child.revoked = true
+					child.cancel()
+				} else if h.response.LeaseSeconds > 0 && !child.revoked {
+					child.leaseUntil = h.sentAt.Add(time.Duration(h.response.LeaseSeconds) * time.Second)
+				}
+			}
+			if draining && !drainReported {
+				heartbeat()
+			}
+		case <-ticker.C:
+			for _, child := range active {
+				if !child.leaseUntil.IsZero() && !child.leaseUntil.After(time.Now()) {
+					child.revoked = true
+					child.cancel()
+				}
+			}
+			heartbeat()
 		case <-pollTimer.C:
 			pollReady = true
 		case p := <-polled:

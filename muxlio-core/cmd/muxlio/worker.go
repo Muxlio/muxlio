@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
@@ -162,9 +163,9 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(os.Stderr, "muxlio worker %s connecting to %s (%s/%s, capacity=%d)\n", workerID, coordinator, runtime.GOOS, runtime.GOARCH, capacity)
-	executor.Context = ctx
+	executor.Context = context.Background()
 	executor.Workspace = workspace
-	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace}, executor)
+	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, ShutdownGracePeriod: 30 * time.Second}, executor)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "worker stopped:", err)
 		return 1

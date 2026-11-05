@@ -16,6 +16,8 @@ import (
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	// Effect is the declared effect policy; only "none" permits replay after loss.
+	Effect          string            `json:"effect,omitempty"`
 	Context         context.Context   `json:"-"`
 	Workspace       string            `json:"workspace,omitempty"`
 	RunID           string            `json:"runId,omitempty"`

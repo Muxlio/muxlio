@@ -388,7 +388,7 @@ func TestCoordinatorAppendWorkerLogRequiresActiveAssignment(t *testing.T) {
 	if _, err := c.Register(WorkerRegistration{WorkerID: "worker-log", Capacity: 1, Capabilities: []WorkerCapability{{Name: "agent/test"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimAssignment(state.Assignment{RunID: "run-log", ActivationID: "act-log", WorkerID: "worker-log", AssignmentID: "as-log", AttemptID: "attempt-log", LeaseUntil: time.Now().Add(time.Minute)}); err != nil {
+	if _, err := store.ClaimAssignment(state.Assignment{CoordinatorEpoch: c.epoch, RunID: "run-log", ActivationID: "act-log", WorkerID: "worker-log", AssignmentID: "as-log", AttemptID: "attempt-log", LeaseUntil: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	assignments, _ := store.ListAssignments("run-log")

@@ -47,11 +47,13 @@ type WorkerRegistrationResult struct {
 }
 
 type WorkerHeartbeat struct {
-	InstanceID      string   `json:"instanceId,omitempty"`
-	ProtocolVersion string   `json:"protocolVersion"`
-	Active          []string `json:"activeAssignments,omitempty"`
-	Capacity        *int     `json:"capacity,omitempty"`
-	AvailableSlots  int      `json:"availableSlots,omitempty"`
+	Leases          []state.AssignmentLease `json:"leases,omitempty"`
+	Draining        bool                    `json:"draining,omitempty"`
+	InstanceID      string                  `json:"instanceId,omitempty"`
+	ProtocolVersion string                  `json:"protocolVersion"`
+	Active          []string                `json:"activeAssignments,omitempty"`
+	Capacity        *int                    `json:"capacity,omitempty"`
+	AvailableSlots  int                     `json:"availableSlots,omitempty"`
 }
 
 type WorkerHeartbeatResult struct {

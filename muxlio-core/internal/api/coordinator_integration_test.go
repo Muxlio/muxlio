@@ -108,7 +108,7 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if _, err = c.Heartbeat("worker", WorkerHeartbeat{Active: []string{a.AssignmentID}}); err != nil {
+	if _, err = c.Heartbeat("worker", WorkerHeartbeat{Active: []string{a.AssignmentID}, Leases: []state.AssignmentLease{{AssignmentID: a.AssignmentID, Generation: a.Generation, CoordinatorEpoch: a.CoordinatorEpoch}}}); err != nil {
 		t.Fatal(err)
 	}
 	after, err := store.ListAssignments("run")

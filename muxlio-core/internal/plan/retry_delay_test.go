@@ -44,5 +44,8 @@ func TestEffectPoliciesDoNotPretendToEnforceReconciliation(t *testing.T) {
 		if err == nil || len(executor.Calls()) != 1 {
 			t.Fatalf("effect %s retried: calls=%d err=%v", effect, len(executor.Calls()), err)
 		}
+		if got := executor.Calls()[0].Effect; got != effect {
+			t.Fatalf("executor effect = %q, want %q", got, effect)
+		}
 	}
 }

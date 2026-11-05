@@ -508,6 +508,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		ScopePath:       scope,
 		NodeID:          node.ID,
 	}
+	if node.Retry != nil {
+		req.Effect = node.Retry.Effect
+	}
 	if ws := workspaceFromInputs(inputs); ws != "" {
 		req.Workspace = ws
 		if req.PlacementLabels == nil {

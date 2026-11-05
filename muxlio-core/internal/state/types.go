@@ -49,14 +49,22 @@ type Event struct {
 
 // Assignment records a fenced worker attempt. A newer generation invalidates older workers.
 type Assignment struct {
-	AssignmentID string    `json:"assignmentId,omitempty"`
-	AttemptID    string    `json:"attemptId,omitempty"`
-	RunID        string    `json:"runId"`
-	ActivationID string    `json:"activationId"`
-	WorkerID     string    `json:"workerId"`
-	Generation   int64     `json:"generation"`
-	LeaseUntil   time.Time `json:"leaseUntil"`
-	State        string    `json:"state"`
+	CoordinatorEpoch int64     `json:"coordinatorEpoch"`
+	AssignmentID     string    `json:"assignmentId,omitempty"`
+	AttemptID        string    `json:"attemptId,omitempty"`
+	RunID            string    `json:"runId"`
+	ActivationID     string    `json:"activationId"`
+	WorkerID         string    `json:"workerId"`
+	Generation       int64     `json:"generation"`
+	LeaseUntil       time.Time `json:"leaseUntil"`
+	State            string    `json:"state"`
+}
+
+// AssignmentLease identifies one independently renewed execution slot.
+type AssignmentLease struct {
+	AssignmentID     string `json:"assignmentId"`
+	Generation       int64  `json:"generation"`
+	CoordinatorEpoch int64  `json:"coordinatorEpoch"`
 }
 
 // WorkerCapability is one executor contract advertised by a worker.
@@ -73,6 +81,10 @@ type Worker struct {
 	Capabilities []WorkerCapability `json:"capabilities"`
 	Labels       map[string]string  `json:"labels,omitempty"`
 	LastSeen     time.Time          `json:"lastSeen"`
+	// Draining indicates the worker is finishing its current assignments but
+	// must not receive any new ones. The coordinator skips draining workers
+	// during dispatch. Existing leases continue to be renewed.
+	Draining bool `json:"draining,omitempty"`
 }
 
 // Dispatch is a durable execute request waiting for a capable worker.

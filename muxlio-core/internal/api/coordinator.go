@@ -22,12 +22,14 @@ type dispatchStore interface {
 	RegisterWorker(state.Worker) error
 	ListWorkers(time.Time) ([]state.Worker, error)
 	EnqueueDispatch(state.Dispatch) error
-	ClaimDispatch(string, time.Time) (*state.Dispatch, int64, error)
+	ClaimDispatchForEpoch(string, time.Time, int64) (*state.Dispatch, int64, error)
 	CompleteWorkerAssignment(state.Assignment, string, time.Time, ...[]byte) (bool, error)
 	ListAssignments(string) ([]state.Assignment, error)
 	ReconcileUncertainDispatch(string) error
 	StartCoordinator() (int64, error)
-	RenewWorkerAssignments(string, []string, time.Time, time.Time) error
+	RenewWorkerLeases(string, []state.AssignmentLease, time.Time, time.Time) error
+	RecoverWorkerLeases() error
+	AppendWorkerLogChunk(state.Assignment, state.LogChunk) (bool, error)
 	WorkerResult(string) ([]byte, error)
 	LookupWorkerAssignment(string, string) (*state.Assignment, error)
 	RecordWorkerDiagnostic(string, []byte) error
@@ -103,14 +105,15 @@ func (c *Coordinator) Heartbeat(workerID string, req WorkerHeartbeat) (WorkerHea
 				}
 				w.Capacity = *req.Capacity
 			}
+			w.Draining = req.Draining
 			w.LastSeen = time.Now()
-			if err := c.store.RenewWorkerAssignments(workerID, req.Active, w.LastSeen, w.LastSeen.Add(c.lease)); err != nil {
+			if err := c.store.RenewWorkerLeases(workerID, req.Leases, w.LastSeen, w.LastSeen.Add(c.lease)); err != nil {
 				return WorkerHeartbeatResult{}, err
 			}
 			if err = c.store.RegisterWorker(w); err != nil {
 				return WorkerHeartbeatResult{}, err
 			}
-			commands, err := c.heartbeatCommands(workerID, req.Active)
+			commands, err := c.heartbeatCommands(workerID, req.Active, req.Leases)
 			if err != nil {
 				return WorkerHeartbeatResult{}, err
 			}
@@ -120,7 +123,7 @@ func (c *Coordinator) Heartbeat(workerID string, req WorkerHeartbeat) (WorkerHea
 	return WorkerHeartbeatResult{}, workerNotRegisteredError{}
 }
 
-func (c *Coordinator) heartbeatCommands(workerID string, active []string) ([]any, error) {
+func (c *Coordinator) heartbeatCommands(workerID string, active []string, leases []state.AssignmentLease) ([]any, error) {
 	if len(active) == 0 {
 		return nil, nil
 	}
@@ -130,7 +133,13 @@ func (c *Coordinator) heartbeatCommands(workerID string, active []string) ([]any
 		if err != nil {
 			return nil, err
 		}
-		if a == nil || a.State != "active" {
+		mismatched := false
+		for _, lease := range leases {
+			if lease.AssignmentID == assignmentID && (a == nil || lease.Generation != a.Generation || lease.CoordinatorEpoch != a.CoordinatorEpoch) {
+				mismatched = true
+			}
+		}
+		if mismatched || a == nil || a.State != "active" || !a.LeaseUntil.After(time.Now()) || a.CoordinatorEpoch != c.epoch {
 			commands = append(commands, map[string]any{"cancel": map[string]any{"assignmentId": assignmentID}})
 			continue
 		}
@@ -181,7 +190,7 @@ func (c *Coordinator) NextAssignmentForInstance(workerID, instanceID string) (*W
 	if worker.InstanceID != instanceID {
 		return nil, workerInstanceMismatchError{}
 	}
-	d, generation, err := c.store.ClaimDispatch(workerID, time.Now().Add(c.lease))
+	d, generation, err := c.store.ClaimDispatchForEpoch(workerID, time.Now().Add(c.lease), c.epoch)
 	if err != nil || d == nil {
 		return nil, err
 	}
@@ -214,7 +223,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if err != nil {
 		return err
 	}
-	assignment := state.Assignment{RunID: req.RunID, ActivationID: req.ActivationID, WorkerID: workerID, Generation: req.Generation, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID}
+	assignment := state.Assignment{CoordinatorEpoch: req.CoordinatorEpoch, RunID: req.RunID, ActivationID: req.ActivationID, WorkerID: workerID, Generation: req.Generation, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID}
 	if req.State != "succeeded" && req.State != "failed" && req.State != "cancelled" {
 		return invalidCompletionError{message: "invalid worker completion state"}
 	}
@@ -287,34 +296,18 @@ func (c *Coordinator) AppendWorkerLog(workerID string, req WorkerLogAppend) erro
 	if req.CoordinatorEpoch != c.epoch {
 		return staleAssignmentError{}
 	}
-	chunks, ok := c.store.(interface {
-		AppendLogChunk(state.LogChunk) error
-	})
-	if !ok {
-		return errors.New("log storage unavailable")
-	}
-	assignments, err := c.store.ListAssignments(req.RunID)
+	ok, err := c.store.AppendWorkerLogChunk(state.Assignment{
+		CoordinatorEpoch: req.CoordinatorEpoch, RunID: req.RunID, ActivationID: req.ActivationID,
+		WorkerID: workerID, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID, Generation: req.Generation,
+	}, state.LogChunk{RunID: req.RunID, ActivationID: req.ActivationID, Stream: req.Stream,
+		Seq: req.Seq, Data: req.Data, Timestamp: time.Now()})
 	if err != nil {
 		return err
 	}
-	active := false
-	for _, a := range assignments {
-		if a.WorkerID == workerID && a.AssignmentID == req.AssignmentID && a.AttemptID == req.AttemptID && a.Generation == req.Generation && a.State == "active" {
-			active = true
-			break
-		}
-	}
-	if !active {
+	if !ok {
 		return staleAssignmentError{}
 	}
-	return chunks.AppendLogChunk(state.LogChunk{
-		RunID:        req.RunID,
-		ActivationID: req.ActivationID,
-		Stream:       req.Stream,
-		Seq:          req.Seq,
-		Data:         req.Data,
-		Timestamp:    time.Now(),
-	})
+	return nil
 }
 
 type workerInstanceMismatchError struct{}
@@ -377,6 +370,9 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	// isUncertain reports whether req.AttemptID has an uncertain or expired
 	// active assignment, meaning a worker may already have executed the step.
 	isUncertain := func() (bool, error) {
+		if err := c.store.RecoverWorkerLeases(); err != nil {
+			return false, err
+		}
 		assignments, listErr := c.store.ListAssignments(req.RunID)
 		if listErr != nil {
 			return false, listErr
