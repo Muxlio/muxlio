@@ -55,6 +55,8 @@ Usage:
   muxlio submit [--server URL] plan.json input.json    Submit a durable run
   muxlio status [--server URL] [run-id]                Query remote run status
   muxlio pause|resume|cancel [--server URL] run-id      Control a remote run
+  muxlio test-event --server URL --secret-file FILE [--idempotency-key KEY] trigger-id payload.json
+                                                   Send a signed webhook (creates a real run)
   muxlio version                                      Print version info
 
 Options:
@@ -78,6 +80,8 @@ Options:
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "test-event":
+			os.Exit(cmdTestEvent(os.Args[2:]))
 		case "service":
 			os.Exit(cmdService(os.Args[2:]))
 		case "submit", "status", "pause", "resume", "cancel":

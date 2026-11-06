@@ -43,14 +43,14 @@ func TestScheduledRunLaunchAndRecovery(t *testing.T) {
 	if err != nil || len(ready) != 1 || ready[0] != ids[0] {
 		t.Fatalf("lost unlaunched run=%v %v", ready, err)
 	}
-	if err := r.startScheduled(ids[0]); err != nil {
+	if err := r.StartPersistedRun(ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.startScheduled(ids[0]); err != nil {
+	if err := r.StartPersistedRun(ids[0]); err != nil {
 		t.Fatal(err)
 	}
 	r.wg.Wait()
-	if err := r.startScheduled(ids[0]); err != nil {
+	if err := r.StartPersistedRun(ids[0]); err != nil {
 		t.Fatal(err)
 	}
 	run, err := s.GetRun(ids[0])

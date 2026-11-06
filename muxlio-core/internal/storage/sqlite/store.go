@@ -92,6 +92,10 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, created_at)`,
 	`CREATE TABLE IF NOT EXISTS workflow_versions (digest TEXT PRIMARY KEY, plan_json BLOB NOT NULL, created_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS triggers (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, secret TEXT NOT NULL, created_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS trigger_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_id TEXT NOT NULL, idempotency_key TEXT NOT NULL DEFAULT '', run_id TEXT, workflow_digest TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL, FOREIGN KEY(trigger_id) REFERENCES triggers(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_dedup ON trigger_deliveries(trigger_id, idempotency_key, state, timestamp)`,
+	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_run ON trigger_deliveries(run_id)`,
 }
 
 var _ state.Store = (*Store)(nil)

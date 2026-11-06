@@ -563,3 +563,64 @@ MCP exposes `get_input_requests` and `respond_input_request` (arguments:
 each request with schema-driven controls and a JSON editor for complex schemas.
 Existing `waitFor: "signal"` waits retain name-based delivery; CLI
 `--idempotency-key` and MCP `send_signal.idempotencyKey` deduplicate retries.
+
+## Inbound webhook triggers
+
+Register a validated plan with `POST /v1/workflow-versions`, then create an
+immutable trigger with `POST /v1/triggers` using the administrator credential:
+
+```json
+{
+  "id": "incoming-task",
+  "workflowDigest": "sha256:<registered-plan-digest>",
+  "secret": "<at-least-16-bytes-of-random-secret>",
+  "inputMapping": {"title": "{{/event/title}}", "count": "{{/event/count}}"},
+  "payloadLimitBytes": 1048576,
+  "deduplicationSeconds": 86400
+}
+```
+
+Send raw JSON with `POST /webhooks/incoming-task`. This route requires the
+trigger's HMAC-SHA256 signature on every request, including local requests;
+a coordinator bearer token cannot replace it. The default signature is the
+hex-encoded HMAC of the exact request body in `X-Muxlio-Signature`. Configure
+`signatureHeader`, `signaturePrefix` (for example `sha256=`), and
+`signatureEncoding` (`hex` or `base64`) for another generic signing convention.
+Provider-specific event translation belongs in the sender or an adapter.
+Secrets are write-only in the API and stored in the coordinator database;
+protect the database and use HTTPS for remote delivery.
+
+`Idempotency-Key` (up to 256 bytes) scopes retries to a trigger. Within the
+configured window, concurrent or repeated valid deliveries return the same run
+(`200`, `duplicate: true`); the first delivery returns `201`. The window starts
+at the first accepted delivery and survives coordinator restarts. After expiry,
+the key can create a new run. Without a key each accepted delivery creates a run.
+HMAC covers the body; senders must keep the idempotency header stable on retries.
+
+Mapping strings use RFC 6901 JSON pointers in `{{/path}}`. A whole reference
+preserves the source JSON type; embedded references interpolate scalar values.
+With no mapping, the payload itself is the input. Invalid signatures, oversized
+or malformed JSON, missing references, and inputs that fail the pinned plan's
+input schema never create runs. The default payload limit is 1 MiB (maximum
+8 MiB). Mapped input is also capped at 8 MiB, including repeated references
+and JSON escaping. The default deduplication window is 24 hours (maximum 30 days).
+Triggers default to enabled; `enabled: false` creates an inactive trigger.
+Definitions are immutable: use a new trigger ID to change a pin or secret.
+
+Inspect definitions with `GET /v1/triggers` or `GET /v1/triggers/:id` and audit
+delivered, duplicate, and rejected attempts with
+`GET /v1/triggers/:id/deliveries`, all under administrator authentication.
+Each delivery records its workflow digest; each run stores the same digest and
+immutable plan bytes, independent of subsequently registered versions.
+
+The test-event command sends a real signed delivery and creates a real run:
+
+```sh
+muxlio test-event --server https://coordinator.example \
+  --secret-file /secure/trigger-secret --idempotency-key test-001 \
+  incoming-task event.json
+```
+
+Use `--signature-header`, `--signature-prefix`, and `--signature-encoding` when
+the trigger uses custom signing settings. Repeating the command with the same
+key exercises deduplication.

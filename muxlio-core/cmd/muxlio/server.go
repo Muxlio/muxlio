@@ -56,8 +56,8 @@ func (r *serverRunner) CreatePlanRun(p *plan.Plan, input json.RawMessage) (strin
 	return runID, nil
 }
 
-// startScheduled attaches an engine to an already atomically persisted run.
-func (r *serverRunner) startScheduled(id string) error {
+// StartPersistedRun attaches an engine to an already atomically persisted run.
+func (r *serverRunner) StartPersistedRun(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.engines[id] != nil || r.ctx.Err() != nil {
@@ -99,7 +99,7 @@ func (r *serverRunner) runSchedules() {
 			fmt.Fprintln(os.Stderr, "schedule tick:", err)
 		}
 		for _, id := range ids {
-			if err := r.startScheduled(id); err != nil {
+			if err := r.StartPersistedRun(id); err != nil {
 				fmt.Fprintln(os.Stderr, "schedule launch:", err)
 			}
 		}
