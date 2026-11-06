@@ -167,7 +167,7 @@ muxlio build examples/batch.workflow.ts --out examples/batch.plan.json
 muxlio check examples/batch.workflow.ts
 ```
 
-`muxlio build`, `check`, `test`, and `run` use the same workflow loading path for `.ts`, `.js`, and `.mjs` files. The CLI executes the module with `npx tsx` from the workflow file's directory, so workflow code and its side effects run during compilation. The module can default-export an object with a `plan` property or a plan-shaped object; alternatively, it can write a sibling `*.plan.json` or `plan.json` (the `examples/batch.workflow.ts` example writes `examples/batch.plan.json`). Pass an existing `.json` file to skip workflow execution. `muxlio build` validates and prints canonical Plan IR on stdout by default; use `--out` to write it and `--json` for a structured summary. You can also run `npx tsx examples/batch.workflow.ts` directly when iterating on the SDK.
+`muxlio build`, `check`, `test`, and `run` use the same workflow loading path for `.ts`, `.js`, and `.mjs` files. The CLI executes the module with `npx tsx` from the workflow file's directory, so workflow code and its side effects run during compilation. The module must default-export an object with a `plan` property or a plan-shaped object. Pass an existing `.json` file to skip workflow execution. `muxlio build` validates and prints canonical Plan IR on stdout by default; use `--out` to write it and `--json` for a structured summary. You can also run `npx tsx examples/batch.workflow.ts` directly when iterating on the SDK.
 
 ### Validate and fake-run
 
@@ -179,6 +179,37 @@ muxlio run examples/batch.plan.json examples/batch.input.json --json
 ```
 
 With no `--adapters`, `run` uses the fake executor, which generates placeholder artifact references for declared output ports. This exercises the full execution engine and dataflow without invoking agents. Supply `--fake-config` to control fake outputs by node ID or executor name.
+
+### A small local authoring loop
+
+`examples/local.workflow.ts` mixes an inline command task with an inline agent
+summary task. From a built checkout, check the bindings, fake-run the same plan,
+and inspect its persisted result:
+
+```sh
+muxlio check examples/local.workflow.ts --json
+muxlio build examples/local.workflow.ts --out /tmp/local.plan.json --json
+muxlio test /tmp/local.plan.json --input examples/local.input.json --fake-config examples/local.fake.json --json
+muxlio run /tmp/local.plan.json examples/local.input.json --fake-config examples/local.fake.json --json
+muxlio inspect RUN_ID --json
+muxlio graph RUN_ID --json
+muxlio artifacts RUN_ID --json
+```
+
+Replace `RUN_ID` with the `runId` from `run`. Fake execution needs no provider
+credentials; `local.fake.json` supplies the command's typed process outputs.
+Check/build validate binding shapes, node references (including
+nested expressions), declared execute output ports, and dependency cycles before
+execution starts. Warnings remain advisory for local and remote runs.
+
+For real execution with a coordinator and one local worker, initialize your
+workspace as above, authorize the command executor, and start `muxlio service
+start`. Then use `muxlio run examples/local.workflow.ts examples/local.input.json
+--server http://127.0.0.1:7600 --json`. This compiles locally and uses the same
+worker assignment contract as distributed execution. Inspect the run in the UI
+for its graph, queue reason, attempts, and artifacts. `muxlio cancel RUN_ID
+--server http://127.0.0.1:7600` cancels it; `muxlio resume RUN_ID --server
+http://127.0.0.1:7600` continues a paused run.
 
 ### Run with real adapters
 

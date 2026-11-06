@@ -126,23 +126,37 @@ func WarningsOnly(issues []ValidationError) []ValidationError {
 // body subgraph may reference (e.g. prepare before a map in the root).
 func visibleOuterNodes(p *Plan, bodySG string) map[string]bool {
 	vis := map[string]bool{}
-	for sgName, sg := range p.Subgraphs {
+	for id := range visibleOuterNodeDefinitions(p, bodySG, map[string]bool{}) {
+		vis[id] = true
+	}
+	return vis
+}
+
+func visibleOuterNodeDefinitions(p *Plan, bodySG string, visiting map[string]bool) map[string]Node {
+	vis := map[string]Node{}
+	if visiting[bodySG] {
+		return vis
+	}
+	visiting[bodySG] = true
+	defer delete(visiting, bodySG)
+	for _, sgName := range sortedKeys(p.Subgraphs) {
+		sg := p.Subgraphs[sgName]
 		for i := range sg.Nodes {
 			node := &sg.Nodes[i]
-			if node.BodyRef == bodySG {
+			// Nested bodies inherit only outputs completed before invocation.
+			// A branch cannot see its own result or later parent nodes either.
+			if node.BodyRef == bodySG || node.ThenRef == bodySG || node.ElseRef == bodySG {
+				before := map[string]bool{}
 				for _, id := range nodeIDsBefore(sg.Nodes, node.ID) {
-					vis[id] = true
+					before[id] = true
 				}
-				for id := range visibleOuterNodes(p, sgName) {
-					vis[id] = true
-				}
-			}
-			if node.ThenRef == bodySG || node.ElseRef == bodySG {
 				for _, n := range sg.Nodes {
-					vis[n.ID] = true
+					if before[n.ID] {
+						vis[n.ID] = n
+					}
 				}
-				for id := range visibleOuterNodes(p, sgName) {
-					vis[id] = true
+				for id, n := range visibleOuterNodeDefinitions(p, sgName, visiting) {
+					vis[id] = n
 				}
 			}
 		}
@@ -198,24 +212,10 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 		}
 		seen[node.ID] = true
 
-		errs = append(errs, validateNode(p, sgName, node, seen)...)
+		errs = append(errs, validateNode(p, sgName, node)...)
 	}
 
-	// Validate output bindings reference existing nodes.
-	for port, b := range sg.Output {
-		if b.Ref != nil {
-			if !seen[b.Ref.Node] {
-				errs = append(errs, ValidationError{
-					Code: "MUXLIO_BAD_REF", Severity: "error", Phase: "plan",
-					Subgraph: sgName,
-					Message:  fmt.Sprintf("output port %q references unknown node %q", port, b.Ref.Node),
-					Source:   &diagnostic.Source{Pointer: "/subgraphs/" + pointerPart(sgName) + "/output/" + pointerPart(port) + "/ref/node"},
-					Expected: "an existing node reference", Actual: b.Ref.Node,
-					Fix: "Ensure output bindings reference existing nodes in this subgraph.",
-				})
-			}
-		}
-	}
+	errs = append(errs, validateBindings(p, sgName, sg)...)
 
 	return errs
 }
@@ -224,7 +224,7 @@ func validDuration(v *float64) bool {
 	return v == nil || (!math.IsNaN(*v) && !math.IsInf(*v, 0) && *v >= 0 && *v < float64(math.MaxInt64)/float64(time.Second))
 }
 
-func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []ValidationError {
+func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 	var errs []ValidationError
 	if !validDuration(node.TimeoutSeconds) || !validDuration(node.QueueTimeoutSeconds) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_TIMEOUT", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "timeoutSeconds and queueTimeoutSeconds must be finite, nonnegative and fit a duration"})
@@ -276,19 +276,6 @@ func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []Val
 					Subgraph: sgName, NodeID: node.ID,
 					Message: fmt.Sprintf("fallback executor %q is the same as the primary executor; it will never add value", fb),
 					Fix:     "Remove the duplicate from fallbackExecutors.",
-				})
-			}
-		}
-		// Validate input refs.
-		for name, b := range node.Inputs {
-			if b.Ref != nil && !seen[b.Ref.Node] {
-				errs = append(errs, ValidationError{
-					Code: "MUXLIO_BAD_REF", Severity: "error", Phase: "plan",
-					Subgraph: sgName, NodeID: node.ID,
-					Message:  fmt.Sprintf("input %q references unknown node %q", name, b.Ref.Node),
-					Source:   &diagnostic.Source{Pointer: inputPointer(p, sgName, node.ID, name)},
-					Expected: "an existing node reference", Actual: b.Ref.Node,
-					Fix: "Ensure input bindings reference earlier nodes in this subgraph.",
 				})
 			}
 		}

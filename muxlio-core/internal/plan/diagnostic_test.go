@@ -38,7 +38,7 @@ func TestBadBindingDiagnosticRepair(t *testing.T) {
 			t.Fatal("missing binding error")
 		}
 	}
-	fixed := strings.Replace(raw, `"inputs":{"request":{"ref":{"node":"missing","port":"value"}}}`, `"inputs":{"request":{"value":"repaired"}}`, 1)
+	fixed := strings.Replace(raw, `"inputs":{"request":{"ref":{"node":"missing","port":"value"}}}`, `"inputs":{"request":{"expr":{"op":"literal","value":"repaired"}}}`, 1)
 	if err := json.Unmarshal([]byte(fixed), &p); err != nil {
 		t.Fatal(err)
 	}

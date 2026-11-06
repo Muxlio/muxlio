@@ -139,8 +139,8 @@ function renderInspectorWb(act){
     <div class="insp-section">
       <dl class="insp-kv">
         <dt>Status</dt><dd class="${stateClass(act.state)||''}">${esc(act.state)} ${act.occurrence?`· iteration ${act.occurrence}`:''}`.trimEnd()+'</dd>'+
-        `${act.queueReason?`<dt>Queue reason</dt><dd>${esc(act.queueReason)}</dd>`:""}<dt>Agent</dt><dd>${esc(agent)}</dd>
-        <dt>Skill</dt><dd>${esc(skill)}</dd>
+        `${act.queueReason?`<dt>Queue reason</dt><dd>${esc(act.queueReason)}</dd>`:""}<dt>Executor</dt><dd>${esc(agent)}</dd>
+        ${act.skill?`<dt>Skill</dt><dd>${esc(skill)}</dd>`:""}
         <dt>Inputs</dt><dd>${esc(inRef)}</dd>
         <dt>Output</dt><dd>${esc(outRef)}</dd>
       </dl>

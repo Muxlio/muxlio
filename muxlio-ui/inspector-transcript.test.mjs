@@ -215,3 +215,8 @@ assert.match(workbenchMarkup, /<dt>Queue reason<\/dt><dd>Waiting for provider ra
 context.renderInspectorWb({id:'done',nodeId:'task.done',state:'succeeded'});
 assert.doesNotMatch(workbenchMarkup, /Queue reason/);
 console.log('Markdown review and admission queue regression checks passed');
+
+context.renderInspectorWb({id:'command',nodeId:'prepare',executor:'command',state:'queued',queueReason:'Waiting for capacity'});
+assert.match(workbenchMarkup, /<dt>Executor<\/dt><dd>command<\/dd>/);
+assert.doesNotMatch(workbenchMarkup, /<dt>Agent<\/dt>|<dt>Skill<\/dt>/);
+assert.match(workbenchMarkup, /Waiting for capacity/);

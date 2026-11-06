@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -126,6 +127,12 @@ func collectArtifactsFromActivations(activations []state.Activation) []artifactE
 			inspectValue(act.ID, act.NodeID, key, val, &results)
 		}
 	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].ActivationID != results[j].ActivationID {
+			return results[i].ActivationID < results[j].ActivationID
+		}
+		return results[i].Name < results[j].Name
+	})
 	return results
 }
 
@@ -152,10 +159,17 @@ func inspectValue(actID, nodeID, key string, val any, out *[]artifactEntry) {
 				entry.Digest = digest
 			}
 			*out = append(*out, entry)
+		} else if digest, ok := v["digest"].(string); ok && strings.HasPrefix(digest, "sha256:") {
+			// The shared executor contract uses digest references without a URL.
+			*out = append(*out, artifactEntry{ActivationID: actID, NodeID: nodeID, Name: key, Digest: digest, Ref: digest})
 		} else {
 			for subK, subV := range v {
 				inspectValue(actID, nodeID, key+"."+subK, subV, out)
 			}
+		}
+	case []any:
+		for i, item := range v {
+			inspectValue(actID, nodeID, fmt.Sprintf("%s[%d]", key, i), item, out)
 		}
 	}
 }

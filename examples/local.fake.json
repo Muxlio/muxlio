@@ -1,0 +1,14 @@
+{
+  "byNode": {
+    "prepare": {
+      "outputs": {
+        "passed": true,
+        "exitCode": 0,
+        "signal": null,
+        "stdout": "Ready to summarize\n",
+        "stderr": "",
+        "durationMs": 0
+      }
+    }
+  }
+}

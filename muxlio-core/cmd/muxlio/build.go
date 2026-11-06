@@ -190,8 +190,9 @@ import { pathToFileURL } from 'node:url';
 
 const target = %q;
 import(pathToFileURL(target).href).then((mod) => {
-  const def = mod.default || mod;
-  const plan = def?.plan;
+  // tsx wraps default exports of TS/JS in CommonJS packages one level deeper.
+  const def = mod.default?.default || mod.default || mod;
+  const plan = def?.plan || (def?.subgraphs ? def : null);
   if (!plan || !plan.subgraphs) {
     process.exit(1);
   }

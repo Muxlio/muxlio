@@ -44,7 +44,7 @@ func TestCheckJSONRepairAndLoadFailure(t *testing.T) {
 	if issues[0].ID != again[0].ID {
 		t.Fatal("unstable check identifier")
 	}
-	fixed := strings.Replace(raw, `"ref":{"node":"missing","port":"x"}`, `"value":"fixed"`, 1)
+	fixed := strings.Replace(raw, `"ref":{"node":"missing","port":"x"}`, `"expr":{"op":"literal","value":"fixed"}`, 1)
 	if err := os.WriteFile(path, []byte(fixed), 0600); err != nil {
 		t.Fatal(err)
 	}

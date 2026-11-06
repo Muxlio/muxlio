@@ -43,7 +43,7 @@ func TestCheckPlanDiagnosticRepair(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &body); err != nil || body.Errors[0].ID != id {
 		t.Fatal("unstable check ID")
 	}
-	repaired := strings.Replace(raw, `"ref":{"node":"missing","port":"x"}`, `"value":"repaired"`, 1)
+	repaired := strings.Replace(raw, `"ref":{"node":"missing","port":"x"}`, `"expr":{"op":"literal","value":"repaired"}`, 1)
 	result = s.toolCheckPlan(json.RawMessage(repaired))
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &body); err != nil || result.IsError || !body.Valid {
 		t.Fatalf("repair failed: %+v err=%v", result, err)

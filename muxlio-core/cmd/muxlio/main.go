@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
@@ -195,6 +196,10 @@ func main() {
 	}
 
 	cmd := args[0]
+	if jsonOut && (cmd == "run" || cmd == "test") {
+		// Keep stdout a single JSON result for callers of the local CLI.
+		coordinatorlog.SetOutput(os.Stderr)
+	}
 	switch cmd {
 	case "init":
 		os.Exit(cmdInit(args[1:], dataDir, jsonOut))
@@ -209,7 +214,12 @@ func main() {
 		os.Exit(cmdCheck(args[1], jsonOut))
 
 	case "test":
-		os.Exit(cmdTest(args[1:], jsonOut))
+		testArgs := args[1:]
+		// Global parsing consumes this shared flag; preserve it for fake tests.
+		if fakeConfig != "" {
+			testArgs = append(testArgs, "--fake-config", fakeConfig)
+		}
+		os.Exit(cmdTest(testArgs, jsonOut))
 
 	case "run":
 		if len(args) < 2 {
@@ -577,7 +587,7 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	verrs := plan.Validate(p)
+	verrs := plan.ErrorsOnly(plan.Validate(p))
 	if len(verrs) > 0 {
 		fmt.Fprintf(os.Stderr, "error: plan has %d validation error(s)\n", len(verrs))
 		for _, ve := range verrs {
@@ -754,7 +764,7 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, 
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if verrs := plan.Validate(p); len(verrs) > 0 {
+	if verrs := plan.ErrorsOnly(plan.Validate(p)); len(verrs) > 0 {
 		fmt.Fprintf(os.Stderr, "error: plan has %d validation error(s)\n", len(verrs))
 		for _, ve := range verrs {
 			fmt.Fprintf(os.Stderr, "  %s: %s\n", ve.Code, ve.Message)
