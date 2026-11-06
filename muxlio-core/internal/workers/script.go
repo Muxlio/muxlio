@@ -39,9 +39,11 @@ import (
 // Non-zero exit or invalid stdout JSON is treated as an executor error
 // (returned in ExecuteResult.Error, not as a Go error).
 type ScriptExecutor struct {
-	adapterDir string
-	workBase   string
-	Workspace  string
+	WorkerID        string
+	sessionInstance string
+	adapterDir      string
+	workBase        string
+	Workspace       string
 	// AgentHome sets HOME for native executor processes. Isolated processes
 	// always keep their scratch HOME.
 	AgentHome string
@@ -100,7 +102,7 @@ func NewScriptExecutor(adapterDir, workBase string) *ScriptExecutor {
 	if abs, err := filepath.Abs(workBase); err == nil {
 		workBase = abs
 	}
-	return &ScriptExecutor{adapterDir: adapterDir, workBase: workBase}
+	return &ScriptExecutor{adapterDir: adapterDir, workBase: workBase, sessionInstance: newSessionInstance()}
 }
 
 // NewAttempt returns a runner with independent lifecycle settings. Operator
@@ -123,7 +125,7 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	if resolveErr != nil {
 		return ExecuteResult{Error: resolveErr.Error()}, nil
 	}
-	result, err := s.execute(req)
+	result, err := s.executeSession(req)
 	result, err = sanitizeExecution(result, err, executionSecrets(req))
 	elapsed := time.Since(started).Milliseconds()
 	result.ExecutionDurationMS = &elapsed
@@ -199,7 +201,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
-		SessionID: req.SessionID, RemoteTask: req.RemoteTask,
+		Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,
 		Workspace: req.Workspace, WorkDir: workDir,
 		HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed(),
 		RunID:                req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID,

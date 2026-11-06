@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
@@ -46,13 +47,14 @@ func recoverLostDispatches(tx *sql.Tx) error {
 			return err
 		}
 		var request struct {
-			Effect            string     `json:"effect"`
-			IdempotencyKey    string     `json:"idempotencyKey"`
-			ConcurrencyKeys   []string   `json:"concurrencyKeys"`
-			ExecutionDeadline *time.Time `json:"executionDeadline"`
-			Deadline          *time.Time `json:"deadline"`
+			Effect            string                   `json:"effect"`
+			IdempotencyKey    string                   `json:"idempotencyKey"`
+			Session           *contract.SessionRequest `json:"session"`
+			ConcurrencyKeys   []string                 `json:"concurrencyKeys"`
+			ExecutionDeadline *time.Time               `json:"executionDeadline"`
+			Deadline          *time.Time               `json:"deadline"`
 		}
-		if json.Unmarshal([]byte(raw), &request) == nil && (request.Effect == "none" || request.Effect == "pure" || ((request.Effect == "idempotency-key" || request.Effect == "idempotent-with-key") && request.IdempotencyKey != "")) && len(request.ConcurrencyKeys) == 0 {
+		if json.Unmarshal([]byte(raw), &request) == nil && (request.Effect == "none" || request.Effect == "pure" || ((request.Effect == "idempotency-key" || request.Effect == "idempotent-with-key") && request.IdempotencyKey != "")) && len(request.ConcurrencyKeys) == 0 && request.Session == nil {
 			// A lost worker must not restart an already expired attempt.
 			now := time.Now()
 			if (request.ExecutionDeadline != nil && !now.Before(*request.ExecutionDeadline)) || (request.Deadline != nil && !now.Before(*request.Deadline)) {

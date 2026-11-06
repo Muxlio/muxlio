@@ -133,6 +133,7 @@ func (f *ValueValidationFailure) Error() string {
 // AttemptResult separates executor completion from semantic result validity and
 // retains returned ports (including artifact references) on validation failure.
 type AttemptResult struct {
+	Session            *contract.SessionHandle `json:"session,omitempty"`
 	Diagnostic         *diagnostic.Diagnostic  `json:"diagnostic,omitempty"`
 	ExecutionSucceeded bool                    `json:"executionSucceeded"`
 	Outputs            map[string]any          `json:"outputs,omitempty"`

@@ -660,6 +660,7 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     executorVersion: def.executorVersion,
     contractVersion: def.contractVersion,
     requiredCapabilities: def.requiredCapabilities,
+    session: def.session,
     sessionId: def.sessionId,
     remoteTask: def.remoteTask,
     workspaceMode: def.workspaceMode,

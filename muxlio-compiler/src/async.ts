@@ -146,6 +146,7 @@ class RecordingContext {
       executorVersion: opts.executorVersion,
       contractVersion: opts.contractVersion,
       requiredCapabilities: opts.requiredCapabilities,
+      session: opts.session,
       sessionId: opts.sessionId,
       remoteTask: opts.remoteTask,
       task: opts.task,

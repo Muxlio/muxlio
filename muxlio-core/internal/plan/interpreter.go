@@ -552,6 +552,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		ExecutorVersion:      node.ExecutorVersion,
 		ContractVersion:      node.ContractVersion,
 		RequiredCapabilities: node.RequiredCapabilities,
+		Session:              node.Session,
 		SessionID:            node.SessionID,
 		RemoteTask:           node.RemoteTask,
 		PlacementLabels:      node.PlacementLabels,
@@ -636,7 +637,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			}
 			// A direct replay is a fresh invocation even when its effect is safe.
 			// Preserve the logical idempotency key but charge a new attempt slot.
-			if a.Effect == "none" || a.Effect == "pure" || ((a.Effect == "idempotency-key" || a.Effect == "idempotent-with-key") && a.IdempotencyKey != "") {
+			if req.Session == nil && (a.Effect == "none" || a.Effect == "pure" || ((a.Effect == "idempotency-key" || a.Effect == "idempotent-with-key") && a.IdempotencyKey != "")) {
 				if a.IdempotencyKey != "" {
 					idempotencyKey = a.IdempotencyKey
 					req.IdempotencyKey = idempotencyKey
@@ -680,7 +681,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			}
 		}
 		executor := node.Executor
-		if attempt > 1 && len(node.FallbackExecutors) > 0 && (req.Effect == "" || req.Effect == "retryable" || req.Effect == "pure" || req.Effect == "none") {
+		if req.Session == nil && attempt > 1 && len(node.FallbackExecutors) > 0 && (req.Effect == "" || req.Effect == "retryable" || req.Effect == "pure" || req.Effect == "none") {
 			fallbackIndex := attempt - 2
 			if fallbackIndex >= len(node.FallbackExecutors) {
 				fallbackIndex = len(node.FallbackExecutors) - 1
@@ -715,7 +716,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		safeRedispatch := false
 		var uncertain workers.UncertainExecutionError
 		if errors.As(err, &uncertain) {
-			if req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key")) {
+			if req.Session == nil && (req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key"))) {
 				safeRedispatch = true
 			} else {
 				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Usage: result.Usage, Measurements: result.Measurements}
@@ -776,7 +777,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		} else if result.Error != "" {
 			failure = diagnostic.Redact(workers.RedactSecrets(result.Error, guarded.Secrets))
 		}
-		attemptResult := &state.AttemptResult{ExecutionSucceeded: failure == "", Outputs: result.Outputs}
+		attemptResult := &state.AttemptResult{Session: result.Session, ExecutionSucceeded: failure == "", Outputs: result.Outputs}
 		var validationErr error
 		if failure == "" {
 			validationErr = ValidateExecuteResult(node.Outputs, result)
@@ -882,21 +883,23 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 
 		if err != nil {
 			lastErr = fmt.Errorf("muxlio: executor %q attempt %d failed: %s", executor, attempt, diagnostic.Redact(workers.RedactSecrets(err.Error(), guarded.Secrets)))
-			if attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
+			if req.Session != nil || attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
 				return nil, lastErr
 			}
 			continue
 		}
 		if result.Error != "" {
 			lastErr = fmt.Errorf("muxlio: executor %q attempt %d returned error: %s", executor, attempt, diagnostic.Redact(workers.RedactSecrets(result.Error, guarded.Secrets)))
-			if attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
+			if req.Session != nil || attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
 				return nil, lastErr
 			}
 			continue
 		}
 		if validationErr != nil {
 			lastErr = fmt.Errorf("muxlio: executor %q output validation: %w", executor, validationErr)
-			if attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
+			// A successful mutable turn must not be repeated just because its
+			// returned output failed consumer validation.
+			if req.Session != nil || attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {
 				return nil, lastErr
 			}
 			continue

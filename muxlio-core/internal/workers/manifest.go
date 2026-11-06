@@ -34,7 +34,7 @@ func CheckAdapterCapabilities(req ExecuteRequest, manifest *adapterManifest) err
 		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
-		SessionID: req.SessionID, RemoteTask: req.RemoteTask, Params: req.Params, Outputs: req.Outputs,
+		Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask, Params: req.Params, Outputs: req.Outputs,
 	}).Check(manifest)
 }
 

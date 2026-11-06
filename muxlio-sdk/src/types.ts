@@ -57,10 +57,22 @@ export type NodeKind =
  * Optional capability values are exact revisions, e.g. { progress: '1' }.
  * Output schemas alone request consumer validation, not native typed generation.
  */
+export interface ProviderSession {
+  id: string;
+  executor: string;
+  runnerVersion: string;
+  ownerWorker: string;
+  ownerEnvironment: string;
+  expiresAt: string;
+  recoverable: boolean;
+}
+
 export interface ExecutorRequirements {
   executorVersion?: string;
   contractVersion?: string;
   requiredCapabilities?: Record<string, string>;
+  /** Omit for one-shot execution. Resume requires the exact returned handle. */
+  session?: { mode: 'create' } | { mode: 'resume'; handle: ProviderSession };
   sessionId?: string;
   remoteTask?: { id: string; url?: string };
 }

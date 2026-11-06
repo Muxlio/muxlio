@@ -227,6 +227,7 @@ class IRBuilder implements BuildContext {
       executorVersion: opts.executorVersion,
       contractVersion: opts.contractVersion,
       requiredCapabilities: opts.requiredCapabilities,
+      session: opts.session,
       sessionId: opts.sessionId,
       remoteTask: opts.remoteTask,
       workspaceMode: opts.workspaceMode,

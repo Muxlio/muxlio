@@ -11,6 +11,7 @@ export type {
   Node,
   NodeKind,
   ExecutorRequirements,
+  ProviderSession,
   ExecutionSecurityParams,
   Binding,
   ValueRef,

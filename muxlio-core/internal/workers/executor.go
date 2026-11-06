@@ -21,6 +21,7 @@ type ExecuteRequest struct {
 	IdempotencyKey       string                        `json:"idempotencyKey,omitempty"`
 	ContractVersion      string                        `json:"contractVersion,omitempty"`
 	RequiredCapabilities map[string]string             `json:"requiredCapabilities,omitempty"`
+	Session              *contract.SessionRequest      `json:"session,omitempty"`
 	SessionID            string                        `json:"sessionId,omitempty"`
 	RemoteTask           *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
 	// LifetimeContext is the hosting coordinator lifetime. Its cancellation
@@ -82,6 +83,9 @@ type ExecutionPolicy struct {
 // copy safe to pass to an executor. A required policy must name the selected
 // executor and every secret being propagated.
 func GuardRequest(req ExecuteRequest) (ExecuteRequest, error) {
+	if err := (&contract.Request{Executor: req.Executor, Session: req.Session, SessionID: req.SessionID, Params: req.Params}).CheckSession(); err != nil {
+		return ExecuteRequest{}, err
+	}
 	var configErr error
 	req, configErr = executionSecurityConfig(req)
 	if configErr != nil {

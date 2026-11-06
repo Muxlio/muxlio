@@ -64,6 +64,7 @@ type Reconciliation struct {
 }
 
 type Result struct {
+	Session        *SessionHandle  `json:"session,omitempty"`
 	Measurements   *Measurements   `json:"measurements,omitempty"`
 	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
@@ -93,6 +94,11 @@ func ParseResult(raw []byte) (Result, error) {
 	if u := result.Usage; u != nil && (u.Input < 0 || u.Output < 0 || u.Cached < 0) {
 		return Result{}, fmt.Errorf("executor usage must be non-negative")
 	}
+	if result.Session != nil {
+		if err := result.Session.Validate(); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := result.Measurements.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -113,6 +119,7 @@ type Progress struct {
 // Request starts one invocation. Optional feature requirements are exact
 // capability revisions. Session and remote references must never be emulated.
 type Request struct {
+	Session              *SessionRequest       `json:"session,omitempty"`
 	Action               string                `json:"action,omitempty"` // empty starts work; reconcile only queries it
 	OperationAttemptID   string                `json:"operationAttemptId,omitempty"`
 	Effect               string                `json:"effect,omitempty"`
@@ -142,6 +149,9 @@ type Request struct {
 // describes consumer validation; native typed generation must be requested
 // explicitly through the typedResult capability.
 func (r *Request) Check(m *AdapterManifest) error {
+	if err := r.CheckSession(); err != nil {
+		return err
+	}
 	required := make(map[string]string, len(r.RequiredCapabilities))
 	for name, version := range r.RequiredCapabilities {
 		required[name] = version
@@ -165,6 +175,12 @@ func (r *Request) Check(m *AdapterManifest) error {
 	}
 	if r.SessionID != "" {
 		require(CapabilitySession)
+	}
+	if r.Session != nil {
+		if version, explicit := required[CapabilitySession]; explicit && version != SessionVersion {
+			return fmt.Errorf("persistent sessions require session capability version %s", SessionVersion)
+		}
+		required[CapabilitySession] = SessionVersion
 	}
 	if r.RemoteTask != nil && r.Action != "reconcile" {
 		require(CapabilityRemoteTask)

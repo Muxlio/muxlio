@@ -51,10 +51,11 @@ const (
 	CapabilityTypedResult = "typedResult"
 	CapabilityUsage       = "usage"
 
-	// CapabilitySession indicates the adapter supports resuming an existing
-	// provider session across invocations using a stable session identifier
-	// carried in Request.SessionID (legacy Params.sessionId is also checked).
+	// CapabilitySession revision 2 supports structured persistent sessions in
+	// Request.Session. Revision 1 uses legacy SessionID/Params.sessionId.
 	CapabilitySession = "session"
+	// SessionMultiplex permits concurrent prompts against the same session.
+	CapabilitySessionMultiplex = "sessionMultiplex"
 
 	// CapabilityRemoteTask indicates the adapter can submit work to a remote
 	// provider task queue and return a task reference for later polling, rather

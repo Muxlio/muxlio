@@ -87,6 +87,7 @@ type WorkerCompletion struct {
 	Logs                string                        `json:"logs,omitempty"`
 	Measurements        *contract.Measurements        `json:"measurements,omitempty"`
 	Usage               *state.TokenUsage             `json:"usage,omitempty"`
+	Session             *contract.SessionHandle       `json:"session,omitempty"`
 	SessionID           string                        `json:"sessionId,omitempty"`
 	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`
 	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`

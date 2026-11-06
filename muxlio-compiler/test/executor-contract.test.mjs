@@ -5,7 +5,7 @@ import { defineAsyncWorkflow } from '../dist/async.js';
 test('async compilation preserves executor contract requirements', async () => {
   const requirements = {
     executorVersion: '2', contractVersion: '1', requiredCapabilities: { progress: '1' },
-    sessionId: 'session', remoteTask: { id: 'task', url: 'https://example.test/task' },
+    session: { mode: 'create' }, remoteTask: { id: 'task', url: 'https://example.test/task' },
   };
   const { plan } = await defineAsyncWorkflow({
     name: 'contract', run: async ctx => {

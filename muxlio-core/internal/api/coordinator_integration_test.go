@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,43 @@ import (
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
+
+func TestLostSessionReportsUncertaintyWhenOwnerIsOffline(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	manifest := &contract.AdapterManifest{Executor: "test", Capabilities: map[string]bool{contract.CapabilitySession: true}, CapabilityVersions: map[string]string{contract.CapabilitySession: contract.SessionVersion}}
+	worker := state.Worker{ID: "owner", Capacity: 1, LastSeen: time.Now(), Capabilities: []state.WorkerCapability{{Name: "test", Contract: manifest}}, Labels: map[string]string{workers.SessionEnvironmentLabel: "env"}}
+	if err := store.RegisterWorker(worker); err != nil {
+		t.Fatal(err)
+	}
+	req := workers.ExecuteRequest{RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test", Session: &contract.SessionRequest{Mode: "create"}}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: "attempt", RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test", Request: raw}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _, err := store.ClaimDispatchForEpoch("owner", time.Now().Add(-time.Second), c.epoch); err != nil || d == nil {
+		t.Fatalf("claim: %+v %v", d, err)
+	}
+	worker.LastSeen = time.Now().Add(-2 * WorkerHeartbeatWindow)
+	if err := store.RegisterWorker(worker); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Execute(req)
+	var uncertain workers.UncertainExecutionError
+	if !errors.As(err, &uncertain) {
+		t.Fatalf("lost session must require explicit resolution, got %v", err)
+	}
+}
 
 func TestDisconnectedWorkerLeaseBecomesUncertainWithoutAnotherPoll(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
@@ -119,8 +157,9 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 	if !after[0].LeaseUntil.After(before[0].LeaseUntil) {
 		t.Fatal("heartbeat did not renew lease")
 	}
+	session := &contract.SessionHandle{ID: "opaque", Executor: "test", RunnerVersion: "runner-1", OwnerWorker: "worker", OwnerEnvironment: "env", ExpiresAt: time.Now().Add(time.Hour).UTC(), Recoverable: true}
 	cost := 0.25
-	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs", SessionID: "session", RemoteTask: &contract.RemoteTaskReference{ID: "task", URL: "https://example.test/task"}, Usage: &state.TokenUsage{Input: 9, Output: 4, Cached: 2}, Measurements: &contract.Measurements{CostUSD: &cost}})
+	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs", Session: session, SessionID: "session", RemoteTask: &contract.RemoteTaskReference{ID: "task", URL: "https://example.test/task"}, Usage: &state.TokenUsage{Input: 9, Output: 4, Cached: 2}, Measurements: &contract.Measurements{CostUSD: &cost}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +168,7 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
-		if result.SessionID != "session" || result.RemoteTask == nil || result.RemoteTask.ID != "task" || result.RemoteTask.URL != "https://example.test/task" || result.Outputs["answer"] != "ok" || result.Logs != "worker logs" || result.Usage == nil || result.Usage.Input != 9 || result.Usage.Output != 4 || result.Usage.Cached != 2 || result.Measurements == nil || result.Measurements.CostUSD == nil || *result.Measurements.CostUSD != cost {
+		if result.Session == nil || *result.Session != *session || result.SessionID != "session" || result.RemoteTask == nil || result.RemoteTask.ID != "task" || result.RemoteTask.URL != "https://example.test/task" || result.Outputs["answer"] != "ok" || result.Logs != "worker logs" || result.Usage == nil || result.Usage.Input != 9 || result.Usage.Output != 4 || result.Usage.Cached != 2 || result.Measurements == nil || result.Measurements.CostUSD == nil || *result.Measurements.CostUSD != cost {
 			t.Fatalf("lost completion: %#v", result)
 		}
 	case <-time.After(3 * time.Second):

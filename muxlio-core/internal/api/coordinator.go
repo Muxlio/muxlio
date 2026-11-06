@@ -219,7 +219,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}
@@ -442,22 +442,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if err != nil {
 		return workers.ExecuteResult{}, err
 	}
-	if req.Action == "reconcile" {
-		candidates, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
-		if err != nil {
-			return workers.ExecuteResult{}, err
-		}
-		supported := false
-		for _, worker := range candidates {
-			if workers.MatchDispatch(req.Executor, raw, worker.Capabilities, worker.Labels) {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			return workers.ExecuteResult{}, fmt.Errorf("no available worker supports adapter reconciliation")
-		}
-	}
+
 	// isUncertain reports whether req.AttemptID has an uncertain or expired
 	// active assignment, meaning a worker may already have executed the step.
 	isUncertain := func() (bool, error) {
@@ -499,17 +484,35 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if r, found, err := read(); found || err != nil {
 		return r, err
 	}
+	// Recover uncertain execution before checking current worker availability.
+	// An offline owner does not prove that its previous session turn never ran.
+	uncertain, err := isUncertain()
+	if err != nil {
+		return workers.ExecuteResult{}, err
+	}
+	if uncertain && (req.Effect != "" || req.Session != nil) && req.Action != "reconcile" {
+		return workers.ExecuteResult{}, workers.UncertainExecutionError{}
+	}
 	// If the previous attempt has an uncertain or expired assignment, do NOT
 	// enqueue a new dispatch — the worker may have already performed the side
 	// effect. Instead, poll until the worker reconnects and delivers its result
 	// or the context is cancelled. This satisfies the durable-resume contract:
 	// the engine waits for reconciliation without replaying effectful work.
-	uncertain, err := isUncertain()
-	if err != nil {
-		return workers.ExecuteResult{}, err
-	}
-	if uncertain && req.Effect != "" && req.Action != "reconcile" {
-		return workers.ExecuteResult{}, workers.UncertainExecutionError{}
+	if req.Action == "reconcile" || req.Session != nil {
+		candidates, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
+		if err != nil {
+			return workers.ExecuteResult{}, err
+		}
+		supported := false
+		for _, worker := range candidates {
+			if workers.MatchWorkerDispatch(worker.ID, req.Executor, raw, worker.Capabilities, worker.Labels) {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return workers.ExecuteResult{}, fmt.Errorf("no available compatible worker supports the requested session or reconciliation")
+		}
 	}
 	if !uncertain {
 		if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: req.AttemptID, RunID: req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID, Executor: req.Executor, Request: raw}); err != nil {
@@ -523,6 +526,15 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 		case <-ctx.Done():
 			return workers.ExecuteResult{}, ctx.Err()
 		case <-ticker.C:
+			if req.Session != nil && req.Session.Mode == "resume" && !time.Now().Before(req.Session.Handle.ExpiresAt) {
+				if r, found, err := read(); found || err != nil {
+					return r, err
+				}
+				if err := c.store.CancelAttemptWork(req.AttemptID); err != nil {
+					return workers.ExecuteResult{}, err
+				}
+				return workers.ExecuteResult{}, fmt.Errorf("session expired while awaiting completion; conversation continuity unavailable")
+			}
 			expired, err := c.store.ExpireExecutingAttempt(req.AttemptID, time.Now())
 			if err != nil {
 				return workers.ExecuteResult{}, err
@@ -547,7 +559,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 				return workers.ExecuteResult{}, err
 			}
 			if stillUncertain {
-				if req.Effect != "" && req.Action != "reconcile" {
+				if (req.Effect != "" || req.Session != nil) && req.Action != "reconcile" {
 					return workers.ExecuteResult{}, workers.UncertainExecutionError{}
 				}
 				// Worker may already have run the step; wait for reconciliation.

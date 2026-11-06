@@ -79,6 +79,7 @@ type Node struct {
 	Executor             string                        `json:"executor,omitempty"`
 	ContractVersion      string                        `json:"contractVersion,omitempty"`
 	RequiredCapabilities map[string]string             `json:"requiredCapabilities,omitempty"`
+	Session              *contract.SessionRequest      `json:"session,omitempty"`
 	SessionID            string                        `json:"sessionId,omitempty"`
 	RemoteTask           *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
 	ExecutorVersion      string                        `json:"executorVersion,omitempty"`

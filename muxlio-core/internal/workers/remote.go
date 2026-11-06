@@ -81,6 +81,7 @@ type remoteCompletion struct {
 	Logs                string                        `json:"logs,omitempty"`
 	Measurements        *contract.Measurements        `json:"measurements,omitempty"`
 	Usage               *state.TokenUsage             `json:"usage,omitempty"`
+	Session             *contract.SessionHandle       `json:"session,omitempty"`
 	SessionID           string                        `json:"sessionId,omitempty"`
 	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`
 	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
@@ -184,6 +185,15 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	instance := make([]byte, 16)
 	if _, err := rand.Read(instance); err != nil {
 		return err
+	}
+	if script, ok := executor.(*ScriptExecutor); ok {
+		script.WorkerID = cfg.WorkerID
+		labels := make(map[string]string, len(cfg.Labels)+1)
+		for key, value := range cfg.Labels {
+			labels[key] = value
+		}
+		labels[SessionEnvironmentLabel] = script.SessionEnvironment()
+		cfg.Labels = labels
 	}
 	registration := remoteRegistration{InstanceID: fmt.Sprintf("%x", instance), ProtocolVersion: remoteProtocolVersion, WorkerID: cfg.WorkerID, OS: runtime.GOOS, Architecture: runtime.GOARCH, Capacity: cfg.Capacity, Capabilities: cfg.Capabilities, Labels: cfg.Labels}
 	var registered remoteRegistrationResult
@@ -580,7 +590,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
 				result.Reconciliation = &reconciliation
 			}
-			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

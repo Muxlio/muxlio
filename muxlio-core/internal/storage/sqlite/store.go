@@ -585,7 +585,7 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		if (envelope.QueueDeadline != nil && !now.Before(*envelope.QueueDeadline)) || (envelope.Deadline != nil && !now.Before(*envelope.Deadline)) {
 			continue
 		}
-		if !workers.MatchDispatch(d.Executor, []byte(raw), caps, workerLabels) {
+		if !workers.MatchWorkerDispatch(workerID, d.Executor, []byte(raw), caps, workerLabels) {
 			continue
 		}
 		demand = admissionDemand(cfg, d.Executor)

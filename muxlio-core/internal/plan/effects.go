@@ -32,7 +32,7 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	if err := e.store.RecordExecutionAttempt(a); err != nil {
 		return workers.ExecuteResult{}, false, err
 	}
-	if a.Effect != "reconcile" && a.Effect != "reconcilable" {
+	if req.Session != nil || (a.Effect != "reconcile" && a.Effect != "reconcilable") {
 		return workers.ExecuteResult{}, false, workers.UncertainExecutionError{}
 	}
 	req.Action = "reconcile"

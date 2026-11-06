@@ -109,7 +109,7 @@ func admissionReason(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, de
 	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
 		return "", err
 	}
-	for _, key := range request.ConcurrencyKeys {
+	for _, key := range workers.ExclusiveDispatchKeys(request) {
 		var held int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM exclusive_resources WHERE resource_key=?`, key).Scan(&held); err != nil {
 			return "", err
@@ -185,7 +185,7 @@ func reserveAdmission(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, d
 	// Reservations outlive revocation and lease expiry. Only confirmed
 	// completion or explicit reconciliation proves the old process stopped.
 	seen := make(map[string]bool)
-	for _, key := range request.ConcurrencyKeys {
+	for _, key := range workers.ExclusiveDispatchKeys(request) {
 		if seen[key] {
 			continue
 		}

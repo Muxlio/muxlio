@@ -328,3 +328,50 @@ resolve one using `POST /v1/runs/{runId}/attempts/{attemptId}/resolve` with
 or `{"outcome":"completed","reason":"verified externally","result":{"executionSucceeded":true,"outputs":{}}}`.
 Resolution fences stale workers and records an audit event. The operator may
 then retry the failed run; completed operations reuse their verified outputs.
+
+## Persistent provider sessions
+
+One-shot calls remain the default. An execute node can opt in with
+`session: {"mode":"create"}`. A successful completion returns `session` with an
+opaque provider `id`, `executor`, provider `runnerVersion`, `ownerWorker`,
+`ownerEnvironment`, `expiresAt` (RFC 3339), and `recoverable`. The coordinator
+persists this handle in the worker result and the execution attempt's `result`.
+To continue, supply `session: {"mode":"resume","handle": <returned session>}`
+on a subsequent execute node. Use the exact handle; it is mutable provider
+state, not a portable transcript. Bare `sessionId` remains a legacy protocol
+and cannot be combined with the structured session request.
+
+Adapters must advertise `session` capability **revision 2** for this protocol.
+They create a distinct provider session only in create mode. On resume they
+must verify the underlying runner version and provider state, fail explicitly
+if either is missing or incompatible, and return the same handle. They must
+never substitute a new conversation. The worker supplies ownership metadata;
+the adapter supplies the opaque ID, executor, runner version, expiration, and
+recoverability. Bundled adapters currently do not advertise session support.
+
+Resume dispatch matches only the original worker and environment. The environment
+fingerprint covers the host, local storage, adapter directory, agent home,
+workspace and configured execution environment. The local checkpoint also
+checks adapter revision and workspace. Recoverability permits an idle session
+to survive a worker restart in that environment; it never permits migration.
+Nonrecoverable handles fail after restart. Expired, missing, incompatible or
+failed session state produces an error, without automatic creation or fallback.
+
+The coordinator reserves an implicit exclusive resource for each resumed
+session, including across runs and coordinator restarts. Reservations survive
+worker loss until confirmed completion or explicit reconciliation. Workers
+also use process-shared file locks, with cancellable waits, for direct calls
+and independent runner instances. A nonmultiplexed turn removes its checkpoint
+before starting and restores it only after a successful, matching response.
+An interrupted turn therefore cannot silently resume from an unknown state.
+Adapters may explicitly advertise `sessionMultiplex` revision 1 to permit
+shared local locks; coordinator dispatch remains conservatively serialized.
+Persistent session locking currently requires Unix; other platforms fail closed.
+
+Session prompts carry mutable effects even when the task is marked pure or
+idempotent. Lost session assignments require explicit resolution rather than
+automatic replay, reconciliation prompts or executor fallback. Recovery of a
+known idle session and recovery of an interrupted turn are distinct operations.
+Session invocations are not automatically retried after execution or output
+validation failure, even under a pure or idempotent retry policy. The provider
+may already have advanced the conversation before the failure was observed.
