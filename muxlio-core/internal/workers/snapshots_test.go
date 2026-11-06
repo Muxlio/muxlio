@@ -26,7 +26,7 @@ func TestIntermediateSnapshotsSurviveWorkerScratchLossWithoutFinalPublication(t 
 	client := artifacts.Client{BaseURL: "http://coordinator", HTTP: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 		w := httptest.NewRecorder()
 		if strings.HasSuffix(r.URL.Path, "/transfer") {
-			json.NewEncoder(w).Encode(artifacts.TransferPlan{Mode: "proxy", URL: strings.TrimSuffix(r.URL.Path, "/transfer")})
+			json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/artifacts/"), "/transfer"), Method: r.URL.Query().Get("method"), Mode: "proxy", URL: strings.TrimSuffix(r.URL.Path, "/transfer")})
 		} else if r.Method == http.MethodPut {
 			_, err := driver.PutStream(r.Context(), r.Body, "text/plain", r.Header.Get("X-Artifact-SHA256"))
 			if err != nil {

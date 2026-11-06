@@ -25,7 +25,7 @@ func TestScriptArtifactTransferSharesUniqueInvocationScratch(t *testing.T) {
 	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
 		w := httptest.NewRecorder()
 		if strings.HasSuffix(req.URL.Path, "/transfer") {
-			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{URL: "/bytes", Method: req.URL.Query().Get("method"), Mode: "proxy"})
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/v1/artifacts/"), "/transfer"), URL: "/bytes", Method: req.URL.Query().Get("method"), Mode: "proxy"})
 		} else if req.Method == http.MethodPut {
 			data, err := io.ReadAll(req.Body)
 			if err != nil || string(data) != "payload" {

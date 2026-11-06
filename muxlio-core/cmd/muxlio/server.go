@@ -255,7 +255,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	runner.engines = recovered
 	workerProtocol := api.NewWorkerProtocolHandler(coordinator)
 	mux := api.NewRouterWithArtifacts(store, runner, artifactDriver, workerProtocol)
-	handler := http.Handler(http.MaxBytesHandler(mux, 8<<20))
+	handler := http.Handler(withRequestBodyLimit(mux))
 
 	credentialConfigPath := filepath.Join(dataDir, "config.json")
 	if config != nil && config.configPath != "" {
@@ -285,12 +285,19 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 			return 1
 		}
 	}
-	grants, grantErr := readAccessGrants(credentialConfigPath)
+	_, grantErr := readAccessGrants(credentialConfigPath)
 	if grantErr != nil {
 		fmt.Fprintln(os.Stderr, "error: configuring scoped credentials:", grantErr)
 		return 1
 	}
-	handler = api.WithAuth(handler, authToken, workerToken, grants...)
+	handler = api.WithReloadingAuth(handler, authToken, func() (string, []api.AccessGrant, error) {
+		grants, err := readAccessGrants(credentialConfigPath)
+		currentWorkerToken := strings.TrimSpace(os.Getenv("MUXLIO_WORKER_TOKEN"))
+		if currentWorkerToken == "" {
+			currentWorkerToken = readConfiguredWorkerToken(credentialConfigPath)
+		}
+		return currentWorkerToken, grants, err
+	})
 
 	if config != nil {
 		handler = serviceUI(handler, config.UI, authToken)
@@ -546,4 +553,16 @@ func localUIRequest(r *http.Request) bool {
 		}
 	}
 	return true
+}
+
+// Artifact bodies use the transport limit; control requests retain the smaller
+// limit so increasing artifact capacity does not expand control-plane inputs.
+func withRequestBodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := int64(8 << 20)
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/artifacts/") {
+			limit = artifacts.MaxTransferBytes
+		}
+		http.MaxBytesHandler(next, limit).ServeHTTP(w, r)
+	})
 }

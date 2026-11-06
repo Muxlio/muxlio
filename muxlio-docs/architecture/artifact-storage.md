@@ -1,5 +1,24 @@
 # Artifact storage configuration
 
+Remote artifact transfers are limited to 256 MiB per object. Uploads are staged
+and checked against their SHA-256 digest and declared nonzero size before sending;
+the coordinator's proxy also bounds request bodies and verifies content before
+committing it to the CAS. Interrupted uploads do not publish partial objects and
+can be retried under the same digest.
+
+Downloads stage bytes privately and publish to the destination only after digest
+and length verification. A transfer makes at most three attempts, retaining the
+contiguous prefix and requesting `Range: bytes=<offset>-` after interruption.
+The proxy supports these ranges, and direct storage must return a matching
+`Content-Range` for a partial response. Servers ignoring ranges cause a bounded
+restart. Exhausted retries return an `IncompleteTransfer` with the expected
+digest, received prefix length, expected size (zero when unknown), and cause.
+Temporary prefixes are removed when the call returns; resumption occurs within
+the call, not across worker process restarts. A default HTTP attempt times out
+after 30 seconds. Transfer plans must match the requested digest and method.
+Direct plans also carry the headers required by the storage signature; clients
+apply those headers to every request, including resumed downloads.
+
 The coordinator uses its local content-addressed artifact directory by default.
 To enable direct S3-compatible object transfers, set these environment variables
 before starting `muxlio server start`:

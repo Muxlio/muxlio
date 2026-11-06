@@ -61,6 +61,25 @@ func withCaller(r *http.Request, c Caller) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), callerContextKey{}, c))
 }
 
+// WithReloadingAuth reads the current credential snapshot for every API request.
+// Operators can atomically replace credential files to rotate or revoke access
+// without restarting the coordinator or changing any assignment fencing fields.
+// A failed reload denies access instead of retaining a stale authorization.
+func WithReloadingAuth(handler http.Handler, clientToken string, load func() (string, []AccessGrant, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		workerToken, grants, err := load()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, CodeUnauthorized, "credential configuration unavailable")
+			return
+		}
+		WithAuth(handler, clientToken, workerToken, grants...).ServeHTTP(w, r)
+	})
+}
+
 // WithAuth wraps handler to validate Bearer tokens for /v1/* routes.
 // clientToken authorizes the control plane; workerToken authorizes worker
 // protocol and artifact transfer used during remote execution.

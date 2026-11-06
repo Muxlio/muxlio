@@ -28,21 +28,23 @@ type WorkerProtocolBackend interface {
 
 // WorkerRegistration describes the runtime and capabilities of a worker.
 type WorkerRegistration struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	WorkerID        string             `json:"workerId"`
-	InstanceID      string             `json:"instanceId,omitempty"`
-	OS              string             `json:"os,omitempty"`
-	Architecture    string             `json:"architecture,omitempty"`
-	Capacity        int                `json:"capacity"`
-	Capabilities    []WorkerCapability `json:"capabilities"`
-	Labels          map[string]string  `json:"labels,omitempty"`
+	SupportedProtocolVersions []string           `json:"supportedProtocolVersions,omitempty"`
+	ProtocolVersion           string             `json:"protocolVersion"`
+	WorkerID                  string             `json:"workerId"`
+	InstanceID                string             `json:"instanceId,omitempty"`
+	OS                        string             `json:"os,omitempty"`
+	Architecture              string             `json:"architecture,omitempty"`
+	Capacity                  int                `json:"capacity"`
+	Capabilities              []WorkerCapability `json:"capabilities"`
+	Labels                    map[string]string  `json:"labels,omitempty"`
 }
 
 type WorkerCapability = state.WorkerCapability
 
 type WorkerRegistrationResult struct {
-	CoordinatorEpoch int64 `json:"coordinatorEpoch"`
-	HeartbeatSeconds int   `json:"heartbeatSeconds"`
+	ProtocolVersion  string `json:"protocolVersion,omitempty"`
+	CoordinatorEpoch int64  `json:"coordinatorEpoch"`
+	HeartbeatSeconds int    `json:"heartbeatSeconds"`
 }
 
 type WorkerHeartbeat struct {
@@ -142,6 +144,15 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 		if !decodeWorkerJSON(w, r, &req) {
 			return
 		}
+		if len(req.SupportedProtocolVersions) > 0 {
+			req.ProtocolVersion = ""
+			for _, version := range req.SupportedProtocolVersions {
+				if version == WorkerProtocolVersion {
+					req.ProtocolVersion = version
+					break
+				}
+			}
+		}
 		if req.ProtocolVersion != WorkerProtocolVersion {
 			writeError(w, http.StatusBadRequest, CodeUnsupportedProtocol, "protocolVersion must be v1")
 			return
@@ -159,6 +170,7 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 			writeWorkerBackendError(w, err)
 			return
 		}
+		result.ProtocolVersion = req.ProtocolVersion
 		writeJSON(w, http.StatusOK, result)
 		return
 	}

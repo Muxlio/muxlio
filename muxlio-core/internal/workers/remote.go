@@ -25,18 +25,20 @@ const remoteProtocolVersion = "v1"
 
 type RemoteCapability = state.WorkerCapability
 type remoteRegistration struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	WorkerID        string             `json:"workerId"`
-	InstanceID      string             `json:"instanceId,omitempty"`
-	OS              string             `json:"os,omitempty"`
-	Architecture    string             `json:"architecture,omitempty"`
-	Capacity        int                `json:"capacity"`
-	Capabilities    []RemoteCapability `json:"capabilities"`
-	Labels          map[string]string  `json:"labels,omitempty"`
+	SupportedProtocolVersions []string           `json:"supportedProtocolVersions,omitempty"`
+	ProtocolVersion           string             `json:"protocolVersion"`
+	WorkerID                  string             `json:"workerId"`
+	InstanceID                string             `json:"instanceId,omitempty"`
+	OS                        string             `json:"os,omitempty"`
+	Architecture              string             `json:"architecture,omitempty"`
+	Capacity                  int                `json:"capacity"`
+	Capabilities              []RemoteCapability `json:"capabilities"`
+	Labels                    map[string]string  `json:"labels,omitempty"`
 }
 type remoteRegistrationResult struct {
-	CoordinatorEpoch int64 `json:"coordinatorEpoch"`
-	HeartbeatSeconds int   `json:"heartbeatSeconds"`
+	ProtocolVersion  string `json:"protocolVersion,omitempty"`
+	CoordinatorEpoch int64  `json:"coordinatorEpoch"`
+	HeartbeatSeconds int    `json:"heartbeatSeconds"`
 }
 type remoteInputReceipt struct {
 	AssignmentID       string   `json:"assignmentId"`
@@ -205,6 +207,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		cfg.Labels = labels
 	}
 	registration := remoteRegistration{InstanceID: fmt.Sprintf("%x", instance), ProtocolVersion: remoteProtocolVersion, WorkerID: cfg.WorkerID, OS: runtime.GOOS, Architecture: runtime.GOARCH, Capacity: cfg.Capacity, Capabilities: cfg.Capabilities, Labels: cfg.Labels}
+	registration.SupportedProtocolVersions = []string{remoteProtocolVersion}
 	var registered remoteRegistrationResult
 
 	// Helper function with retry logic for coordinator calls
@@ -259,6 +262,9 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 
 	if _, err := retryableCall(http.MethodPost, "/v1/workers/register", registration, &registered); err != nil {
 		return err
+	}
+	if registered.ProtocolVersion != "" && registered.ProtocolVersion != remoteProtocolVersion {
+		return fmt.Errorf("coordinator selected unsupported worker protocol %q", registered.ProtocolVersion)
 	}
 	// Registration remains cancellable. Once registered, signal cancellation
 	// initiates drain while requests and children retain a live grace context.

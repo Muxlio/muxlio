@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 
@@ -35,6 +37,45 @@ func TestReadAccessGrantsUsesCredentialFiles(t *testing.T) {
 	if _, err := readAccessGrants(path); err == nil {
 		t.Fatal("missing credential file accepted")
 	}
+}
+
+func TestWorkerCredentialFilesReloadWithoutCoordinatorRestart(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config.json")
+	tokenFile := filepath.Join(dir, "worker-token")
+	write := func(path, value string) {
+		t.Helper()
+		if err := os.WriteFile(path+".tmp", []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(path+".tmp", path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(tokenFile, "old")
+	write(config, `{"accessGrants":[{"tokenFile":"worker-token","workerId":"one","permissions":["worker"]}]}`)
+	h := api.WithReloadingAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), "admin", func() (string, []api.AccessGrant, error) {
+		grants, err := readAccessGrants(config)
+		return "", grants, err
+	})
+	check := func(token string, want int) {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/v1/workers/one/assignments", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("credential %q: %d, want %d", token, w.Code, want)
+		}
+	}
+	check("old", 204)
+	write(tokenFile, "new")
+	check("old", 401)
+	check("new", 204)
+	write(config, `{"accessGrants":[{"tokenFile":"worker-token","workerId":"one","permissions":["worker"],"revoked":true}]}`)
+	check("new", 403)
+	write(config, `{`)
+	check("new", 503)
 }
 
 func TestServiceUIRespectsAuthorizationScopes(t *testing.T) {
@@ -83,6 +124,27 @@ func TestServiceUIRespectsAuthorizationScopes(t *testing.T) {
 			if resp.Code != tc.want {
 				t.Fatalf("status=%d want=%d", resp.Code, tc.want)
 			}
+		})
+	}
+}
+
+func TestServerBodyLimitAllowsLargeArtifacts(t *testing.T) {
+	for _, path := range []string{"/v1/artifacts/sha256:test", "/v1/runs"} {
+		t.Run(path, func(t *testing.T) {
+			h := withRequestBodyLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				n, err := io.Copy(io.Discard, r.Body)
+				if strings.HasPrefix(path, "/v1/artifacts/") {
+					if err != nil || n != 9<<20 {
+						t.Errorf("artifact body: %d %v", n, err)
+					}
+				} else {
+					var limitErr *http.MaxBytesError
+					if !errors.As(err, &limitErr) {
+						t.Errorf("control body not bounded: %v", err)
+					}
+				}
+			}))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, path, strings.NewReader(strings.Repeat("x", 9<<20))))
 		})
 	}
 }

@@ -91,6 +91,22 @@ func TestDisconnectedWorkerLeaseBecomesUncertainWithoutAnotherPoll(t *testing.T)
 	// After the lease expires Execute must keep polling for reconciliation rather
 	// than enqueueing another dispatch.
 	time.Sleep(c.lease + 5*time.Millisecond)
+	// Reconnection does not restore authority, even if the process registers
+	// again and reports its old lease and a successful result.
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Heartbeat("worker", WorkerHeartbeat{Leases: []state.AssignmentLease{{AssignmentID: assignment.AssignmentID, Generation: assignment.Generation, CoordinatorEpoch: assignment.CoordinatorEpoch}}}); err != nil {
+		t.Fatal(err)
+	}
+	// Late completions may be acknowledged as diagnostics, but cannot publish
+	// the worker result that the interpreter consumes.
+	if err := c.Complete("worker", WorkerCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := store.WorkerResult(assignment.AssignmentID); err != nil || len(raw) != 0 {
+		t.Fatalf("stale result became authoritative: %s %v", raw, err)
+	}
 	select {
 	case err := <-done:
 		t.Fatalf("Execute returned before reconciliation wait ended: %v", err)

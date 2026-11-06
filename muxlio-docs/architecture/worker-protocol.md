@@ -84,7 +84,41 @@ request, capability names, JSON values, and artifact references.
 
 ## Versioning
 
-The worker protocol has no authentication. Run it only on a trusted network.
+Worker registration, heartbeats, polling, completions, logs and artifact
+transfers require a bearer credential. Use HTTPS for remote coordinators; the
+worker opens outbound connections only and needs no public inbound port.
+
+The coordinator reloads worker credentials and `accessGrants` from its selected
+configuration on every API request. Provision an identity-scoped credential by
+writing a protected token file and adding a grant such as:
+
+```json
+{
+  "accessGrants": [{
+    "tokenFile": "worker-a-token",
+    "workerId": "worker-a",
+    "permissions": ["worker", "artifacts:read", "artifacts:write"],
+    "artifactDigests": ["sha256:<64 hex digits>"],
+    "expiresAt": "2027-01-01T00:00:00Z"
+  }]
+}
+```
+
+Token paths are relative to the configuration file. Artifact access is restricted
+to the listed digests. The existing cluster worker token remains a trusted role
+with access to every worker and artifact; distribute scoped credentials when
+workers must have separate authorization.
+
+Rotate by atomically replacing the token file and restarting the worker with
+the new credential. For an overlap period, add a second grant for the same worker
+identity before removing the old one. Revoke a grant by setting `revoked: true`
+or removing it. Invalid or expired expiration timestamps deny access; a reload
+failure fails closed. Revocation blocks subsequent assignment claims and lease
+renewals; existing leases expire normally. Revocation does not prove an external
+process stopped or authorize replay. Credential changes survive coordinator
+restart because the configuration and protected token files remain the source
+of authority. The cluster token can also be rotated through its configuration;
+an explicit `MUXLIO_WORKER_TOKEN` environment override lasts for the server process.
 
 The protocol version is `v1`, supplied as `protocolVersion` during registration
 and heartbeat. A coordinator rejects unsupported major versions instead of
@@ -93,6 +127,12 @@ guessing. JSON uses UTF-8 and `application/json`; request bodies are limited to
 `{"code":"...","message":"..."}`. Workers may retry 5xx and transport
 failures with backoff. They must treat 4xx as a request/configuration issue
 unless the error code documents a recoverable condition.
+
+Registration may advertise `supportedProtocolVersions`, for example
+`["v2", "v1"]`. The coordinator selects a supported version and returns it as
+`protocolVersion`; no intersection is rejected before registration changes
+identity or leases. Legacy clients may continue supplying only `protocolVersion`.
+Workers verify the selected version and use it for subsequent heartbeats.
 
 ## Endpoints
 

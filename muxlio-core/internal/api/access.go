@@ -6,12 +6,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // AccessGrant is an operator-issued credential with independent authorization
 // for a run, worker identity and content-addressed artifacts. Empty scope denies
 // access. The administrator and cluster worker credentials remain trusted roles.
 type AccessGrant struct {
+	Revoked         bool     `json:"revoked,omitempty"`
+	ExpiresAt       string   `json:"expiresAt,omitempty"`
 	Token           string   `json:"-"`
 	TokenFile       string   `json:"tokenFile"`
 	RunID           string   `json:"runId,omitempty"`
@@ -30,6 +33,15 @@ func (g AccessGrant) permits(permission string) bool {
 }
 
 func (g AccessGrant) authorize(r *http.Request) bool {
+	if g.Revoked {
+		return false
+	}
+	if g.ExpiresAt != "" {
+		expires, err := time.Parse(time.RFC3339, g.ExpiresAt)
+		if err != nil || !time.Now().Before(expires) {
+			return false
+		}
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
 	if len(parts) < 2 {
 		return false

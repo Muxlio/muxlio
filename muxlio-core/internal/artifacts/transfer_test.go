@@ -128,6 +128,19 @@ func TestTransferLargeObjectDirectPath(t *testing.T) {
 		if !strings.Contains(r.URL.RawQuery, "X-Amz-Algorithm") {
 			return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
 		}
+		q := r.URL.Query()
+		for _, header := range strings.Split(q.Get("X-Amz-SignedHeaders"), ";") {
+			if header != "host" && r.Header.Get(header) == "" {
+				t.Errorf("missing signed header %s", header)
+			}
+		}
+		expectedHash := "UNSIGNED-PAYLOAD"
+		if r.Method == http.MethodPut {
+			expectedHash = strings.TrimPrefix(r.URL.Path, "/bucket/")
+		}
+		if r.Header.Get("X-Amz-Content-Sha256") != expectedHash || r.Header.Get("X-Amz-Date") != q.Get("X-Amz-Date") || r.Header.Get("X-Amz-Security-Token") != "session-token" {
+			t.Error("signed header values do not match signature inputs")
+		}
 		key := strings.TrimPrefix(r.URL.Path, "/bucket/")
 		mu.Lock()
 		defer mu.Unlock()
@@ -141,11 +154,11 @@ func TestTransferLargeObjectDirectPath(t *testing.T) {
 			if !ok {
 				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
 			}
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data))), Header: make(http.Header), Request: r}, nil
+			return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(data)), Body: io.NopCloser(strings.NewReader(string(data))), Header: make(http.Header), Request: r}, nil
 		}
 		return nil, errors.New("unexpected presigned request")
 	})}
-	s3, err := NewS3(S3Config{Endpoint: srv.URL, Bucket: "bucket", AccessKey: "test-key", SecretKey: "test-secret", Client: s3Client})
+	s3, err := NewS3(S3Config{Endpoint: srv.URL, Bucket: "bucket", AccessKey: "test-key", SecretKey: "test-secret", SessionToken: "session-token", Client: s3Client})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +194,11 @@ func TestTransferLargeObjectDirectPath(t *testing.T) {
 	if string(stored) != payload || ref.Size != int64(len(payload)) {
 		t.Fatalf("stored=%q ref=%+v", stored, ref)
 	}
+	var downloaded strings.Builder
+	if err := client.Download(t.Context(), digest, ref.Size, &downloaded); err != nil || downloaded.String() != payload {
+		t.Fatalf("direct download: %v %q", err, downloaded.String())
+	}
+
 }
 
 func TestPlannerFromTieredDriver(t *testing.T) {

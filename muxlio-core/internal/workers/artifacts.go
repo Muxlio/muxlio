@@ -261,7 +261,8 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output %q: %v", port, err)}, nil
 		}
 		// Stage the exact scanned bytes so concurrent adapter writes cannot swap
-		// credentials into the upload after validation. Do not cap artifact size.
+		// credentials into the upload after validation. Bound staging as well as
+		// the transport so oversized outputs cannot exhaust the worker disk.
 		staged, err := os.CreateTemp(workDir, ".publish-*")
 		if err != nil {
 			f.Close()
@@ -271,10 +272,13 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		defer staged.Close()
 		h := sha256.New()
 		scanner := &credentialWriter{dst: io.MultiWriter(staged, h), secrets: executionSecrets(req)}
-		size, err := io.Copy(scanner, f)
+		size, err := io.Copy(scanner, io.LimitReader(f, artifacts.MaxTransferBytes+1))
 		_ = f.Close()
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: read output %q: %v", port, err)}, nil
+		}
+		if size > artifacts.MaxTransferBytes {
+			return ExecuteResult{Error: fmt.Sprintf("muxlio: output %q exceeds artifact transfer limit", port)}, nil
 		}
 		digest := "sha256:" + hex.EncodeToString(h.Sum(nil))
 		mime := decl.Mime

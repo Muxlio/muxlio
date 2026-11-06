@@ -112,6 +112,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					writeError(w, http.StatusUnprocessableEntity, CodeDigestMismatch, "header digest does not match URL digest")
 					return
 				}
+				r.Body = http.MaxBytesReader(w, r.Body, artifacts.MaxTransferBytes)
 				ref, err := artifactDriver.PutStream(r.Context(), r.Body, r.Header.Get("Content-Type"), digest)
 				if err != nil {
 					status := http.StatusBadRequest
@@ -135,12 +136,39 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					return
 				}
 				defer stream.Close()
-				w.Header().Set("Content-Length", strconv.FormatInt(ref.Size, 10))
+				if ref.Size > artifacts.MaxTransferBytes {
+					writeError(w, http.StatusRequestEntityTooLarge, CodeArtifactDownloadFailed, "artifact exceeds transfer limit")
+					return
+				}
+				var offset int64
+				if value := r.Header.Get("Range"); value != "" {
+					var err error
+					if strings.HasPrefix(value, "bytes=") && strings.HasSuffix(value, "-") {
+						offset, err = strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(value, "bytes="), "-"), 10, 64)
+					} else {
+						err = fmt.Errorf("unsupported range")
+					}
+					if err != nil || offset < 0 || offset >= ref.Size {
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", ref.Size))
+						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+						return
+					}
+					if _, err := io.CopyN(io.Discard, stream, offset); err != nil {
+						writeError(w, http.StatusInternalServerError, CodeArtifactDownloadFailed, "artifact range unavailable")
+						return
+					}
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, ref.Size-1, ref.Size))
+				}
+				w.Header().Set("Accept-Ranges", "bytes")
+				w.Header().Set("Content-Length", strconv.FormatInt(ref.Size-offset, 10))
 				w.Header().Set("X-Artifact-SHA256", ref.Digest)
 				if ref.Mime != "" {
 					w.Header().Set("Content-Type", ref.Mime)
 				}
-				_, _ = io.Copy(w, stream)
+				if r.Header.Get("Range") != "" {
+					w.WriteHeader(http.StatusPartialContent)
+				}
+				_, _ = io.CopyN(w, stream, ref.Size-offset)
 			case http.MethodHead:
 				stream, ref, err := artifactDriver.GetStream(r.Context(), digest)
 				if err != nil {
