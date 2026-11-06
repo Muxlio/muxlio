@@ -24,6 +24,10 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, secret TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS subscription_deliveries (id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, state TEXT NOT NULL, due INTEGER NOT NULL, record_json BLOB NOT NULL)`,
+	`CREATE INDEX IF NOT EXISTS idx_subscription_due ON subscription_deliveries(state, due)`,
+	`CREATE TABLE IF NOT EXISTS subscription_cursors (id TEXT PRIMARY KEY, seq INTEGER NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, plan_json BLOB NOT NULL, next_fire TEXT)`,
 	`CREATE TABLE IF NOT EXISTS schedule_fires (schedule_id TEXT NOT NULL, due_at TEXT NOT NULL, through_at TEXT, state TEXT NOT NULL, run_id TEXT, PRIMARY KEY(schedule_id, due_at), FOREIGN KEY(schedule_id) REFERENCES schedules(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS session_input_queues (run_id TEXT NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL, queue_json BLOB NOT NULL, PRIMARY KEY(run_id, session_id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
@@ -1792,7 +1796,9 @@ func (s *Store) GetEvents(runID string, after int, limit int) ([]state.Event, er
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
 		if payload.Valid && payload.String != "" {
 			payloadMap := map[string]any{}
-			if err := json.Unmarshal([]byte(payload.String), &payloadMap); err != nil {
+			dec := json.NewDecoder(strings.NewReader(payload.String))
+			dec.UseNumber()
+			if err := dec.Decode(&payloadMap); err != nil {
 				return nil, err
 			}
 			e.Payload = payloadMap

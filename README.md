@@ -564,6 +564,71 @@ each request with schema-driven controls and a JSON editor for complex schemas.
 Existing `waitFor: "signal"` waits retain name-based delivery; CLI
 `--idempotency-key` and MCP `send_signal.idempotencyKey` deduplicate retries.
 
+## Outbound lifecycle subscriptions
+
+Subscriptions are optional and deliver persisted lifecycle events independently
+of workflow execution. Create an immutable subscription with the administrator
+credential using `POST /v1/subscriptions`:
+
+```json
+{
+  "id": "workflow-notifications",
+  "target": "https://receiver.example.com/muxlio",
+  "secret": "replace-with-at-least-16-secret-bytes",
+  "eventTypes": ["run.succeeded", "run.failed", "run.waiting", "worker.*"],
+  "redactFields": ["input", "output"],
+  "maxRetries": 5
+}
+```
+
+Filters accept exact event names, category prefixes such as `run.*`, or `*`.
+`worker.activity` reports worker assignment lifecycle activity; execution attempt
+outcomes can also be selected with `execution.attempt`. New subscriptions replay
+matching retained events, then follow new events. Disabled subscriptions do not
+fan out or deliver. Definitions default to enabled; secrets are write-only.
+
+Each POST contains `eventId`, `eventType`, `runId`, `seq`, `timestamp`,
+`subscriptionId`, `subjectId`, and `payload`. Deduplicate by `eventId`: delivery
+is at least once, and IDs remain stable across retries and coordinator restarts.
+Verify `X-Muxlio-Signature` as `sha256=` plus the hex HMAC-SHA256 of the exact raw
+body using the subscription secret. Verification must use a constant-time
+comparison. `X-Muxlio-Event-ID` also carries the event ID. Optional
+`signatureHeader`, `signaturePrefix`, and `signatureEncoding` (`hex` or `base64`)
+customize signing. Signature headers cannot use transport headers or
+`Content-Type` / `X-Muxlio-Event-ID`; prefixes must use printable ASCII and
+cannot start with whitespace.
+Redirects are rejected.
+
+Credential fields and embedded credentials are scrubbed automatically.
+`redactFields` removes additional field names recursively, including within
+arrays, before delivery records are persisted and bodies are signed. Choose
+these fields to exclude sensitive workflow data specific to your application.
+The envelope is capped at 1 MiB. Delivery records expose generic failure reasons,
+never receiver response bodies or errors containing payloads or credentials.
+
+Delivery runs in the background with a five-second request timeout and bounded
+exponential backoff (one to 256 seconds after an attempt finishes).
+`maxRetries` defaults to five, accepts
+zero to fifty, and counts retries after the first attempt. An outage never
+changes the workflow outcome. Pending deliveries and retry counts survive
+restarts. Coordinator shutdown leaves interrupted deliveries pending without
+consuming retries. Embedded coordinators may register in-process hooks on
+`subscription.Dispatcher.Hooks` and target them with `local:hook-name`; hooks
+receive the same signed, redacted bytes. API definitions cannot execute shell
+commands. Hook invocations are bounded to one outstanding call per dispatcher;
+a hook that ignores cancellation cannot block coordinator shutdown.
+
+Administrator-only inspection and controls:
+
+- `GET /v1/subscriptions` and `GET /v1/subscriptions/:id`: definitions without secrets.
+- `GET /v1/subscriptions/:id/deliveries`: up to 1,000 recent delivery records.
+- `GET /v1/subscriptions/deadletters`: up to 1,000 exhausted deliveries.
+- `POST /v1/subscriptions/deliveries/:deliveryId/requeue`: start a new bounded
+  retry cycle for a dead letter, preserving its event ID.
+- `DELETE /v1/subscriptions/:id`: permanently disable fanout and delivery while
+  retaining history. IDs cannot be reused; create a new ID to change a receiver
+  or signing key.
+
 ## Inbound webhook triggers
 
 Register a validated plan with `POST /v1/workflow-versions`, then create an

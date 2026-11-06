@@ -22,6 +22,7 @@ import (
 	"github.com/muxlio/muxlio-core/internal/mcp"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
+	"github.com/muxlio/muxlio-core/internal/subscription"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -420,6 +421,11 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		runner.wg.Add(1)
 		go func(id string) { _ = runner.Run(id) }(id)
 	}
+	subscriptionsDone := make(chan struct{})
+	go func() {
+		defer close(subscriptionsDone)
+		(&subscription.Dispatcher{Store: store, Events: store}).Run(ctx)
+	}()
 	schedulesDone := make(chan struct{})
 	go func() { defer close(schedulesDone); runner.runSchedules() }()
 	workerDone := make(chan struct{})
@@ -511,6 +517,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	}
 	stop()
 	<-schedulesDone
+	<-subscriptionsDone
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if mcpServer != nil {

@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"path/filepath"
@@ -182,7 +183,7 @@ func TestLateWorkerTimingEmitsEventOnce(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("expected one timing event, got %+v err=%v", events, err)
 	}
-	if events[0].Type != state.EventExecutionAttempt || events[0].Payload["executionDurationMs"] != float64(75) || events[0].Payload["state"] != "cancelled" {
+	if events[0].Type != state.EventExecutionAttempt || events[0].Payload["executionDurationMs"] != json.Number("75") || events[0].Payload["state"] != "cancelled" {
 		t.Fatalf("incorrect timing event: %+v", events[0])
 	}
 }
