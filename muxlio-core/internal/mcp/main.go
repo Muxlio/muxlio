@@ -102,6 +102,7 @@ type jsonRPCResponse struct {
 type jsonRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // MCP protocol object types.
@@ -1229,9 +1230,10 @@ func apiResultOrError(r *apiResponse) toolCallResult {
 // ---------------------------------------------------------------------------
 
 type mcpServer struct {
-	tools  *server
-	enc    *json.Encoder
-	logger *json.Encoder // writes to stderr for MCP debug logging
+	tools            *server
+	enc              *json.Encoder
+	logger           *json.Encoder // writes to stderr for MCP debug logging
+	transportVersion string        // HTTP version; stdio uses per-request metadata
 }
 
 func (s *mcpServer) send(resp jsonRPCResponse) {
@@ -1239,7 +1241,23 @@ func (s *mcpServer) send(resp jsonRPCResponse) {
 }
 
 func (s *mcpServer) handle(msg jsonRPCRequest) {
+	meta, rpcErr := requestMetadata(msg.Params, s.transportVersion)
+	if rpcErr != nil {
+		s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Error: rpcErr})
+		return
+	}
+	modern := meta.Version == tasksProtocolVersion
 	switch msg.Method {
+	case "server/discover":
+		s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{
+			"resultType": "complete", "supportedVersions": []string{tasksProtocolVersion, mcpProtocolVersion},
+			"capabilities": map[string]any{"tools": toolsCapability{}, "extensions": map[string]any{tasksExtension: map[string]any{}}},
+			"_meta":        map[string]any{"io.modelcontextprotocol/serverInfo": serverInfo{Name: "muxlio", Version: Version}},
+		}})
+
+	case "tasks/get", "tasks/update", "tasks/cancel":
+		result, err := s.tools.handleTask(msg.Method, msg.Params, meta)
+		s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: result, Error: err})
 	case "initialize":
 		s.send(jsonRPCResponse{
 			JSONRPC: "2.0",
@@ -1256,6 +1274,10 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 		// No response needed for notifications.
 
 	case "tools/list":
+		if modern {
+			s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"resultType": "complete", "tools": tools}})
+			return
+		}
 		s.send(jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
@@ -1273,6 +1295,16 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 			return
 		}
 		result := s.tools.dispatchTool(params.Name, params.Arguments)
+		if modern {
+			if meta.Tasks && (params.Name == "start_run" || params.Name == "submit_features") && !result.IsError {
+				if task := s.tools.taskForSubmission(result, meta); task != nil {
+					s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: task})
+					return
+				}
+			}
+			s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"resultType": "complete", "content": result.Content, "isError": result.IsError}})
+			return
+		}
 		s.send(jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
@@ -1280,6 +1312,10 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 		})
 
 	case "ping":
+		if modern {
+			s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"resultType": "complete"}})
+			return
+		}
 		s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
 
 	default:

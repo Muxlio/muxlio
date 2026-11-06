@@ -226,14 +226,15 @@ Ensure `muxlio-mcp` is on `PATH` or use its absolute path.
 
 ## Protocol
 
-Both transports support MCP 2025-11-25 only. Stdio uses newline-delimited
-JSON-RPC 2.0. Startup diagnostics go to stderr in both modes.
+Both transports support legacy MCP 2025-11-25 and per-request MCP 2026-07-28.
+Stdio uses newline-delimited JSON-RPC 2.0. Startup diagnostics go to stderr
+in both modes.
 
 HTTP implements the stateless JSON-response form of
 [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports):
 POST `/mcp` accepts one JSON-RPC message and returns a JSON response, or HTTP 202
 with no body for notifications and client responses. Send `Content-Type:
-application/json` and `Accept: application/json, text/event-stream`. Subsequent
+application/json` and `Accept: application/json, text/event-stream`. Legacy
 POSTs after initialization must include `MCP-Protocol-Version: 2025-11-25`.
 The initial `initialize` request can omit that header; its response advertises
 2025-11-25. Missing subsequent headers and unsupported versions are rejected.
@@ -243,8 +244,77 @@ No session IDs or server-push SSE streams are created. GET and DELETE return
 HTTP 405, as permitted for servers without those features. Disconnection does
 not cancel submitted workflows; use `cancel_run` to stop one.
 
-Supported methods: `initialize`, `tools/list`, `tools/call`, `ping`.
+Legacy methods: `initialize`, `tools/list`, `tools/call`, `ping`.
 Notifications (`notifications/initialized`) are accepted without response bodies.
+
+### Negotiated Tasks extension (2026-07-28)
+
+Modern clients use `server/discover` and include these fields in every request's
+`params._meta` (HTTP also uses `MCP-Protocol-Version: 2026-07-28`):
+
+```json
+{
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": {"name": "example", "version": "1"},
+  "io.modelcontextprotocol/clientCapabilities": {
+    "extensions": {"io.modelcontextprotocol/tasks": {}},
+    "elicitation": {"form": {}}
+  }
+}
+```
+
+Modern HTTP requests must also include `Mcp-Method` matching the body method,
+and `tools/call` must include `Mcp-Name` matching the tool name. Missing or
+conflicting routing headers return HTTP 400 with JSON-RPC code `-32020`
+before execution. Unknown modern methods return HTTP 404 with code `-32601`.
+
+Discovery advertises `io.modelcontextprotocol/tasks`. With that extension on
+the calling request, `start_run` and `submit_features` can return a flat
+`{resultType: "task", taskId, status, createdAt, lastUpdatedAt, ttlMs,
+pollIntervalMs}` result after the coordinator commits the run and read-back
+succeeds. The opaque handle identifies a run invocation, not a Muxlio task
+definition. It survives MCP restarts while the run remains retained.
+
+Poll `tasks/get` with `{taskId, _meta}`. It returns `resultType: "complete"`
+and task state. A successful or failed workflow becomes `completed` with a
+final tool `result`; failed workflows have `result.isError: true`. Cancelled
+runs become `cancelled`. Created, running, and paused runs remain `working`
+unless outstanding input makes them `input_required`.
+
+Outstanding input appears as an `inputRequests` map keyed by durable request
+IDs, with `elicitation/create` form requests. Form capability must be declared
+on requests that retrieve or answer outstanding input. Each form has a `json`
+string field containing JSON text, preserving arbitrary input schemas within
+MCP's flat form schema. Its description supplies the original JSON Schema.
+Respond through `tasks/update`:
+
+```json
+{
+  "taskId": "<returned handle>",
+  "inputResponses": {
+    "<input request ID>": {"action": "accept", "content": {"json": "false"}}
+  },
+  "_meta": {"...": "same per-request metadata as above"}
+}
+```
+
+Updates use the coordinator's authenticated input endpoint, schema validation,
+request-specific permissions, and idempotent delivery. Partial responses leave
+other requests outstanding. Unknown or already answered keys are ignored;
+declined or cancelled forms leave the input outstanding. `tasks/cancel` with
+`{taskId, _meta}` requests run cancellation without requiring form capability.
+Update and cancel return `{resultType: "complete"}` acknowledgements; poll
+again to observe state. On HTTP, send `Mcp-Method` with the method name and
+`Mcp-Name` with the task handle for these three operations.
+
+All task operations recheck coordinator authorization for the run and operation
+using the configured upstream credential. HTTP listener authentication also
+applies to every request; task handles grant no permissions. No task list,
+blocking result method, or 2025 experimental Tasks wire format is implemented.
+Clients without the per-request extension, including legacy clients, keep
+receiving ordinary tool results containing `{runId, state}`. If read-back is
+unavailable after successful submission, the server also returns that ordinary
+result, preserving the committed run ID without encouraging duplicate work.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,7 +61,7 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 			w.Header().Set("Access-Control-Expose-Headers", "MCP-Protocol-Version")
 			if r.Method == http.MethodOptions {
 				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, Mcp-Method, Mcp-Name")
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -72,10 +73,6 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 			return
 		}
 		version := r.Header.Get("MCP-Protocol-Version")
-		if version != "" && version != mcpProtocolVersion {
-			http.Error(w, "unsupported MCP-Protocol-Version", http.StatusBadRequest)
-			return
-		}
 		if r.Method != http.MethodPost {
 			// Streamable HTTP permits 405 when GET streams or DELETE sessions
 			// are not provided. This server is stateless and replies with JSON.
@@ -107,6 +104,28 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 			writeHTTPRPCError(w, http.StatusBadRequest, nil, code, detail)
 			return
 		}
+		var metadata struct {
+			Meta map[string]json.RawMessage `json:"_meta"`
+		}
+		_ = json.Unmarshal(message.Params, &metadata)
+		var bodyVersion string
+		_ = json.Unmarshal(metadata.Meta["io.modelcontextprotocol/protocolVersion"], &bodyVersion)
+		modern := version == tasksProtocolVersion || bodyVersion == tasksProtocolVersion
+		if modern && !response && len(message.ID) > 0 {
+			if detail := validateModernHeaders(r.Header, message, bodyVersion); detail != "" {
+				writeHTTPRPCError(w, http.StatusBadRequest, message.ID, -32020, detail)
+				return
+			}
+		}
+		if version != "" && version != mcpProtocolVersion && version != tasksProtocolVersion {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: message.ID, Error: &jsonRPCError{
+				Code: -32022, Message: "Unsupported protocol version",
+				Data: map[string]any{"supported": []string{tasksProtocolVersion, mcpProtocolVersion}, "requested": version},
+			}})
+			return
+		}
 		if version == "" && message.Method != "initialize" {
 			http.Error(w, "MCP-Protocol-Version is required after initialization", http.StatusBadRequest)
 			return
@@ -126,12 +145,69 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 			}
 		}
 		var out bytes.Buffer
-		rpc := &mcpServer{tools: tools, enc: json.NewEncoder(&out)}
+		rpc := &mcpServer{tools: tools, enc: json.NewEncoder(&out), transportVersion: version}
 		rpc.handle(message)
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("MCP-Protocol-Version", mcpProtocolVersion)
+		responseVersion := version
+		if responseVersion == "" {
+			responseVersion = mcpProtocolVersion
+		}
+		w.Header().Set("MCP-Protocol-Version", responseVersion)
+		if modern {
+			var reply jsonRPCResponse
+			_ = json.Unmarshal(out.Bytes(), &reply)
+			if reply.Error != nil {
+				switch reply.Error.Code {
+				case -32601:
+					w.WriteHeader(http.StatusNotFound)
+				case -32602, -32021, -32022:
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}
+		}
 		_, _ = w.Write(out.Bytes())
 	}), nil
+}
+
+// Validate the mirrored routing fields before dispatch, so intermediaries and
+// the server cannot act on different operations or task identities.
+func validateModernHeaders(headers http.Header, message jsonRPCRequest, bodyVersion string) string {
+	if values := headers.Values("MCP-Protocol-Version"); len(values) != 1 || values[0] == "" || values[0] != bodyVersion {
+		return "Header mismatch: MCP-Protocol-Version"
+	}
+	if values := headers.Values("Mcp-Method"); len(values) != 1 || values[0] != message.Method {
+		return "Header mismatch: Mcp-Method"
+	}
+	var params struct {
+		Name   string `json:"name"`
+		TaskID string `json:"taskId"`
+	}
+	_ = json.Unmarshal(message.Params, &params)
+	var name string
+	switch message.Method {
+	case "tools/call":
+		name = params.Name
+	case "tasks/get", "tasks/update", "tasks/cancel":
+		name = params.TaskID
+	default:
+		return ""
+	}
+	values := headers.Values("Mcp-Name")
+	if len(values) != 1 || values[0] == "" {
+		return "Header mismatch: Mcp-Name"
+	}
+	value := values[0]
+	if strings.HasPrefix(value, "=?base64?") && strings.HasSuffix(value, "?=") {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(value, "=?base64?"), "?="))
+		if err != nil || !utf8.Valid(decoded) {
+			return "Header mismatch: invalid encoded Mcp-Name"
+		}
+		value = string(decoded)
+	}
+	if value != name {
+		return "Header mismatch: Mcp-Name"
+	}
+	return ""
 }
 
 func acceptsMedia(header, wanted string) bool {
