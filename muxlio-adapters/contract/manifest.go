@@ -60,6 +60,9 @@ const (
 	// CapabilityRemoteTask indicates the adapter can submit work to a remote
 	// provider task queue and return a task reference for later polling, rather
 	// than blocking until completion.
+	// Pending results end local supervision only after process exit. Poll is a
+	// bounded read-only action; reconcile can locate an ambiguous submission by
+	// its idempotency key and return status pending with the remote identity.
 	CapabilityRemoteTask = "remoteTask"
 	// Reconcile is a read-only lookup by operation reference, key, or attempt ID.
 	CapabilityReconcile = "reconcile"

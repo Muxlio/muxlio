@@ -27,6 +27,15 @@ func TestPrepareRemoteDispatchOmitsWorkspace(t *testing.T) {
 	}
 }
 
+func TestRemotePollDoesNotBindWorkerOrInputWorkspace(t *testing.T) {
+	for _, inputs := range []map[string]any{nil, {"workspace": "/missing/remote/worktree"}} {
+		got, err := ApplyWorkerWorkspace(ExecuteRequest{Action: "poll", Workspace: "/original/worktree", Inputs: inputs}, t.TempDir())
+		if err != nil || got.Workspace != "" {
+			t.Fatalf("poll rebound workspace: %+v %v", got, err)
+		}
+	}
+}
+
 func TestApplyWorkerWorkspaceIgnoresMissingCoordinatorPath(t *testing.T) {
 	coordinatorPath := filepath.Join(t.TempDir(), "only-on-coordinator")
 	workerPath := t.TempDir()

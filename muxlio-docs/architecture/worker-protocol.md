@@ -1,5 +1,37 @@
 # Remote worker protocol v1
 
+## Detached remote operations
+
+An execute node opts into asynchronous handoff with
+`requiredCapabilities: {"remoteTask": "1"}`. Its adapter must support
+`remoteTask`, `reconcile`, and `idempotencyKey`. The coordinator persists a stable
+idempotency key before submission and treats an ambiguous submission as
+reconcilable, regardless of the node's retry policy. A failed submission response
+never authorizes blind resubmission: a read-only `action: "reconcile"` lookup
+receives the original `operationAttemptId` and key. Only `not-applied` authorizes
+a fresh submission within the retry budget.
+
+After submitting remote work, an adapter exits with a result such as
+`{"remoteTask":{"id":"job-123","pending":true,"pollAt":"2026-11-06T17:00:00Z"}}`.
+The worker persists this result before releasing the assignment and its slots.
+The interpreter checkpoints the task identity, key, and next poll time in a
+`detached` execution attempt. The wait consumes no worker subprocess slot. A
+missing poll time defaults to 30 seconds. Restart resumes the stored schedule
+and task identity, without submitting the job again.
+
+Each follow-up is a separate bounded `action: "poll"` invocation with the remote
+reference, key, and original operation attempt identity. Polling is read-only,
+has a 30-second execution and queue timeout, and acquires no original workspace
+or concurrency keys. Return another pending reference to keep waiting, or a
+normal result with final outputs when complete. Failed lookups retry the lookup,
+never the submission. Reconciliation can also return
+`{"reconciliation":{"status":"pending"},"remoteTask":{"id":"job-123","pending":true}}`
+to recover a job whose submission response was lost.
+
+Handoff is restricted to remote work. Local sessions cannot detach. Adapter
+processes are supervised until they exit, even if they emit pending JSON early;
+a local CLI process that is still running continues to occupy its worker slot.
+
 ## Attempt workspace and mutable resources
 
 Execute nodes and envelopes accept `workspaceMode` and `concurrencyKeys`.

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 )
 
 const Version = "1"
@@ -54,12 +55,16 @@ func (m *Measurements) Validate() error {
 type RemoteTaskReference struct {
 	ID  string `json:"id"`
 	URL string `json:"url,omitempty"`
+	// Pending hands off a remote operation after the adapter process exits.
+	// PollAt schedules a read-only poll; zero uses the coordinator's interval.
+	Pending bool      `json:"pending,omitempty"`
+	PollAt  time.Time `json:"pollAt,omitempty"`
 }
 
 // Reconciliation is supplied by the adapter after a read-only outcome lookup.
 // not-applied promises the old operation cannot later take effect.
 type Reconciliation struct {
-	Status string `json:"status"` // completed, not-applied, inconclusive
+	Status string `json:"status"` // completed, not-applied, inconclusive, pending (with RemoteTask)
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -106,6 +111,9 @@ func ParseResult(raw []byte) (Result, error) {
 	if result.ExecutionDurationMS != nil && *result.ExecutionDurationMS < 0 {
 		return Result{}, fmt.Errorf("executor duration must be non-negative")
 	}
+	if result.RemoteTask != nil && result.RemoteTask.Pending && (result.RemoteTask.ID == "" || result.Error != "" || result.Session != nil) {
+		return Result{}, fmt.Errorf("pending remote task requires an identity and cannot contain an error or local session")
+	}
 	return result, nil
 }
 
@@ -122,7 +130,7 @@ type Progress struct {
 type Request struct {
 	SessionInputs        []SessionInput        `json:"sessionInputs,omitempty"`
 	Session              *SessionRequest       `json:"session,omitempty"`
-	Action               string                `json:"action,omitempty"` // empty starts work; reconcile queries; steer delivers live input
+	Action               string                `json:"action,omitempty"` // empty starts work; reconcile/poll query; steer delivers live input
 	OperationAttemptID   string                `json:"operationAttemptId,omitempty"`
 	Effect               string                `json:"effect,omitempty"`
 	IdempotencyKey       string                `json:"idempotencyKey,omitempty"`
@@ -166,7 +174,7 @@ func (r *Request) Check(m *AdapterManifest) error {
 			required[name] = Version
 		}
 	}
-	if r.Action != "" && r.Action != "reconcile" && r.Action != "steer" {
+	if r.Action != "" && r.Action != "reconcile" && r.Action != "steer" && r.Action != "poll" {
 		return fmt.Errorf("unsupported executor action %q", r.Action)
 	}
 	if len(r.SessionInputs) > 0 {
@@ -182,6 +190,23 @@ func (r *Request) Check(m *AdapterManifest) error {
 		required[CapabilityLiveInput] = SessionInputVersion
 	}
 	if r.Action == "reconcile" {
+		require(CapabilityReconcile)
+	}
+	if r.Action == "poll" {
+		if r.RemoteTask == nil || r.RemoteTask.ID == "" {
+			return fmt.Errorf("poll requires a remote task identity")
+		}
+		require(CapabilityRemoteTask)
+	}
+	if _, async := required[CapabilityRemoteTask]; async {
+		if r.Session != nil || r.SessionID != "" {
+			return fmt.Errorf("remote handoff cannot detach a local session")
+		}
+		// Report the requested feature before its implied prerequisites. Map
+		// iteration must not randomly hide remoteTask behind reconcile.
+		if err := m.Check(r.Executor, r.ExecutorVersion, r.ContractVersion, map[string]string{CapabilityRemoteTask: required[CapabilityRemoteTask]}); err != nil {
+			return err
+		}
 		require(CapabilityReconcile)
 	}
 	if (r.Effect == "idempotency-key" || r.Effect == "idempotent-with-key") && r.IdempotencyKey == "" {
@@ -210,6 +235,9 @@ func (r *Request) Check(m *AdapterManifest) error {
 			return fmt.Errorf("invalid execute params: %w", err)
 		}
 		if params.SessionID != "" {
+			if _, async := required[CapabilityRemoteTask]; async {
+				return fmt.Errorf("remote handoff cannot detach a local session")
+			}
 			require(CapabilitySession)
 		}
 	}

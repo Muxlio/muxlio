@@ -284,6 +284,11 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		result.Logs = "[muxlio trusted native execution; network=host; filesystem=host; agent tool calls are not intercepted]\n" + result.Logs
 	}
 	result.Logs = boundedLog(result.Logs)
+	if result.RemoteTask != nil && result.RemoteTask.Pending {
+		// cmd.Run has returned: the local process is fully supervised through
+		// exit. Remote output files do not exist until a later completed poll.
+		return result, nil
+	}
 
 	// Auto-populate any declared output port whose file the script wrote to workDir.
 	if result.Outputs == nil {

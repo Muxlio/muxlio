@@ -8,12 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
@@ -604,6 +605,15 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	}
 	req.IdempotencyKey = idempotencyKey
 	actID := activationID(runID, scope, node.ID)
+	if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" {
+		// Remote submission is reconciled by its durable logical identity even
+		// when the transport loses the submission response.
+		req.Effect = "reconcilable"
+		if idempotencyKey == "" {
+			idempotencyKey = actID
+		}
+		req.IdempotencyKey = idempotencyKey
+	}
 	recoveredBase := 0
 	prior, priorErr := e.store.ListExecutionAttempts(runID, actID)
 	if priorErr != nil {
@@ -630,6 +640,11 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			recoveredBase = a.RetryNumber
 			break
 		}
+		if a.State == "detached" {
+			req.RunID, req.ActivationID, req.AttemptID, req.Executor = runID, actID, a.ID, a.Executor
+			result, err := e.pollRemote(req, a, node)
+			return result.Outputs, err
+		}
 		if a.AwaitReconciliationReason != "" || a.State == "running" || a.State == "awaiting_reconciliation" {
 			if _, queued := e.executor.(workers.QueuedExecutor); queued && a.State == "running" && a.AwaitReconciliationReason == "" {
 				recoveredBase = a.RetryNumber - 1
@@ -651,6 +666,13 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 				return nil, err
 			}
 			if !safe {
+				if remotePending(result) {
+					a.OperationRef = result.RemoteTask
+					result, err = e.pollRemote(req, a, node)
+				}
+				if err != nil {
+					return nil, err
+				}
 				return result.Outputs, nil
 			}
 			recoveredBase = a.RetryNumber
@@ -713,6 +735,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})
 		}
 		result, err := workers.ExecuteAttempt(e.executor, guarded)
+		if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || result.Error != "") && e.context().Err() == nil {
+			err = workers.UncertainExecutionError{}
+		}
 		safeRedispatch := false
 		var uncertain workers.UncertainExecutionError
 		if errors.As(err, &uncertain) {
@@ -732,6 +757,12 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 					err = fmt.Errorf("previous operation confirmed not applied")
 				}
 			}
+		}
+		if err == nil && remotePending(result) {
+			_ = logSink.Close()
+			a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS}
+			result, err = e.pollRemote(guarded, a, node)
+			return result.Outputs, err
 		}
 
 		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {

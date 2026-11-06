@@ -90,6 +90,9 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	}
 	if err == nil && result.Error == "" && result.Reconciliation != nil {
 		status := result.Reconciliation.Status
+		if status == "pending" && remotePending(result) {
+			return result, false, nil
+		}
 		if status == "completed" || status == "not-applied" {
 			resolution := state.AttemptResolution{Outcome: status, Reason: diagnostic.Redact(workers.RedactSecrets(result.Reconciliation.Reason, req.Secrets))}
 			if resolution.Reason == "" {
