@@ -58,8 +58,8 @@ func TestLocalDispatchReprobesPinnedRunnerBeforeWork(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	entries, err := os.ReadDir(s.workBase)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("incompatible execution created scratch: %v %v", entries, err)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one private probe scratch directory: %v %v", entries, err)
 	}
 }
 

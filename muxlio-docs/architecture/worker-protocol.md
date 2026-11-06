@@ -67,9 +67,12 @@ the snapshot source. Snapshots are independent copies, not OS security
 boundaries: untrusted code must request `params.isolation.mode: "required"`.
 
 Required isolation is eligible for admission only on workers advertising
-`muxlio.dev/isolation/bwrap=true` or `muxlio.dev/isolation/oci=true`, matching
+`muxlio.dev/isolation/bwrap=true`, `muxlio.dev/isolation/oci=true`, or
+`muxlio.dev/isolation/docker-vm=true` (`macos-vm` is a legacy alias), matching
 `params.isolation.runtime`. Operators must advertise only installed, enabled
-backends. OCI also requires an image. Without an eligible worker the request
+backends that have passed the [boundary conformance suite](execution-security.md).
+OCI and Docker VM also require an image; VM execution requires `enabled:true`.
+Without an eligible worker the request
 remains unadmitted; native fallback is forbidden. The executor checks actual
 backend availability again before starting a process. Unimplemented backends
 cannot satisfy admission.

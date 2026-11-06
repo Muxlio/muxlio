@@ -3,10 +3,12 @@ package workers
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/sandbox"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
@@ -94,5 +96,20 @@ func TestProbeCancellationAndMissingReportPreventMatching(t *testing.T) {
 	caps := []state.WorkerCapability{{Name: "test", Contract: &contract.AdapterManifest{ProbeVersion: "1"}}}
 	if MatchDispatch("test", nil, caps, nil) {
 		t.Fatal("missing probe evidence matched")
+	}
+}
+
+func TestTaskProbeUsesLaunchAndCleanup(t *testing.T) {
+	s := testScript(t, "exit 91") // The native adapter must never be invoked.
+	if err := os.WriteFile(s.scriptPath("test")+".json", []byte(`{"contractVersion":"1","probeVersion":"1"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleaned := false
+	report := s.probe(context.Background(), "test", func() (sandbox.Launch, error) {
+		cmd := exec.Command("/bin/sh", "-c", `printf '%s' '{"ready":true,"checks":[{"name":"version","passed":true,"runner":"runner","version":"3.2.1"}]}'`)
+		return sandbox.Launch{Command: cmd, Cleanup: func() error { cleaned = true; return nil }}, nil
+	})
+	if !report.Ready || report.RunnerVersions()["runner"] != "3.2.1" || !cleaned {
+		t.Fatalf("task probe did not use launch lifecycle: %+v cleaned=%v", report, cleaned)
 	}
 }

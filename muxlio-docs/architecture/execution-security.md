@@ -30,9 +30,65 @@ Host workspace access must be declared separately using `workspace-read-only`
 with `workspaceMode: "read-only"`, or `workspace-write` with
 `workspaceMode: "shared-write"` and exclusive concurrency keys. An omitted
 filesystem declaration on a restricted attempt grants scratch access only.
-OCI also requires an image; the macOS VM driver is not implemented and refuses
-execution. These are process boundaries, not interception of agent tool calls.
+OCI also requires an operator-approved Linux image. macOS can opt into Docker
+Desktop with `{"mode":"required","runtime":"docker-vm","enabled":true,
+"image":"your-approved-image"}`. The legacy `macos-vm` runtime selects the same
+backend. It explicitly uses the `desktop-linux` Docker context; missing Docker
+Desktop, images or permissions fail execution without native fallback. There is
+no bespoke hypervisor to install or maintain. These are process boundaries, not interception of agent tool calls.
 They do not constrain execution performed by a remote provider's service.
+
+The backend interface lives in `muxlio-core/internal/sandbox`; workers dispatch
+it independently of agent adapters. Successful execution logs include structured
+boundary capabilities:
+
+| Backend | Network | Filesystem | Processes | Host credentials |
+| --- | --- | --- | --- | --- |
+| `native-trusted` | Host | Host | Host | Accessible through host files |
+| `bwrap` (Linux) | None | Scratch, system binaries/libraries and declared mounts | Linux namespaces | Only explicitly supplied credentials |
+| `oci` (Linux Podman/Docker) | None | Image, scratch and declared mounts | Linux namespaces | Only explicitly supplied credentials |
+| `docker-vm` (macOS Docker Desktop) | None | Image, scratch and declared mounts | Namespaces inside a shared Linux VM | Only explicitly supplied credentials |
+
+Docker Desktop containers share the VM kernel; they are not a dedicated microVM
+per agent. Docker Sandboxes (`sbx`) is a separate product with its own workspace,
+network and credential policies; it is not automatically selected or treated as
+equivalent to an offline backend. New integrations must implement the backend
+contract and pass conformance before operators advertise them.
+
+Workspace capabilities distinguish `private-clone` (an independent regular-file
+snapshot in scratch), `read-only-host`, and `writable-host`. A private clone
+prevents accidental concurrent workspace edits from colliding but provides no
+OS containment under native execution. Shared writes deliberately change the
+host source and still require exclusive resource admission. Isolation does not
+remove secrets already present in a supplied workspace, image or adapter bundle.
+Containers run without Linux capabilities, with no-new-privileges, a process
+limit and a read-only image filesystem; their guest HOME and TMPDIR are scratch.
+Container cleanup removes the named container after execution or cancellation.
+The container CLI retains the operator's host runtime configuration; it does not
+inherit the guest's scratch HOME. The pinned environment allowlist filters values
+passed to the guest, and ambient host environment variables are never implicitly
+forwarded there. Images run the selected adapter as their explicit entrypoint. Pinned task
+readiness probes run through the same backend and environment filter before
+work starts; they do not execute natively when required isolation is unavailable.
+Worker registration probes still inspect the operator-managed host environment.
+
+Before advertising a backend, run its real boundary conformance on the worker:
+
+```sh
+cd muxlio-core
+MUXLIO_SANDBOX_CONFORMANCE=bwrap go test ./internal/sandbox -run TestBackendConformance -v
+MUXLIO_SANDBOX_CONFORMANCE=oci MUXLIO_SANDBOX_IMAGE=your-approved-image go test ./internal/sandbox -run TestBackendConformance -v
+# macOS, with Docker Desktop running:
+MUXLIO_SANDBOX_CONFORMANCE=docker-vm MUXLIO_SANDBOX_IMAGE=your-approved-image go test ./internal/sandbox -run TestBackendConformance -v
+```
+
+The image must already be available and match the host CPU architecture. Tests
+compile a static Linux probe and exercise actual filesystem reads/writes, network
+interfaces and host socket access, process visibility, credential inheritance,
+read-only versus writable mounts, and simultaneous independent scratch trees.
+An explicitly selected unavailable backend fails the test. Without explicit
+selection, the suite tests installed Linux bubblewrap or skips with a reason;
+a skipped test does not qualify a backend. Re-run after runtime/config changes.
 
 The operator configures each worker executor with handle-to-environment-name
 mappings, for example:

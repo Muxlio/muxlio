@@ -5,18 +5,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/sandbox"
 )
 
 // ScriptExecutor dispatches execute requests to per-executor shell scripts.
@@ -55,41 +56,8 @@ type ScriptExecutor struct {
 	WorkerEnv map[string]string
 }
 
-// isolationPolicy is read from the execute step's params.isolation object.
-type isolationPolicy struct {
-	Mode    string `json:"mode"`              // required or trusted-native
-	Runtime string `json:"runtime,omitempty"` // bwrap, oci, or macos-vm
-	Image   string `json:"image,omitempty"`   // required for oci
-	Enabled bool   `json:"enabled,omitempty"` // explicit opt-in for optional drivers
-}
-
-// isolationDriver describes a platform isolation backend. A backend is only
-// considered usable when it can build an enforced command for the request.
-type isolationDriver interface {
-	Compatibility() error
-	Command(*ScriptExecutor, string, string, isolationPolicy) (*exec.Cmd, error)
-}
-
-// macOSVMDriver is an extension point for a future Virtualization.framework
-// implementation. Compatibility checks intentionally do not imply that VM
-// execution is available or secure.
-type macOSVMDriver struct {
-	goos string
-}
-
-func (d macOSVMDriver) Compatibility() error {
-	if d.goos != "darwin" {
-		return fmt.Errorf("macOS VM isolation requires macOS")
-	}
-	return nil
-}
-
-func (d macOSVMDriver) Command(_ *ScriptExecutor, _, _ string, _ isolationPolicy) (*exec.Cmd, error) {
-	if err := d.Compatibility(); err != nil {
-		return nil, err
-	}
-	return nil, fmt.Errorf("macOS VM isolation is not implemented; no secure VM driver is available")
-}
+// isolationPolicy uses the shared sandbox contract.
+type isolationPolicy = sandbox.Policy
 
 // NewScriptExecutor creates a ScriptExecutor.
 //   - adapterDir: directory containing adapter scripts (e.g. ~/.muxlio/adapters)
@@ -180,23 +148,6 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		return ExecuteResult{}, &d
 	}
 
-	if req.Environment != nil {
-		probeContext := req.Context
-		if probeContext == nil {
-			probeContext = s.Context
-		}
-		if probeContext == nil {
-			probeContext = context.Background()
-		}
-		report := s.Probe(probeContext, req.Executor)
-		if !report.Ready {
-			return ExecuteResult{Error: "pinned environment readiness failed"}, nil
-		}
-		if err := req.Environment.CheckRunners(report.RunnerVersions()); err != nil {
-			return ExecuteResult{Error: err.Error()}, nil
-		}
-	}
-
 	// Keep each attempt's workspace under the run so incidental agent files
 	// (notes, scratch output, CLI diagnostics) cannot land in the source repo.
 	// Older/direct callers without execution IDs retain an isolated temp dir.
@@ -212,6 +163,25 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	req, err := prepareAttemptWorkspace(req, workDir)
 	if err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
+	}
+
+	if req.Environment != nil {
+		probeContext := req.Context
+		if probeContext == nil {
+			probeContext = s.Context
+		}
+		if probeContext == nil {
+			probeContext = context.Background()
+		}
+		report := s.probe(probeContext, req.Executor, func() (sandbox.Launch, error) {
+			return s.launch(req, script, workDir, "--muxlio-probe")
+		})
+		if !report.Ready {
+			return ExecuteResult{Error: "pinned environment readiness failed"}, nil
+		}
+		if err := req.Environment.CheckRunners(report.RunnerVersions()); err != nil {
+			return ExecuteResult{Error: err.Error()}, nil
+		}
 	}
 
 	// Use the shared wire envelope; worker scheduling and policy stay local.
@@ -230,10 +200,18 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		return ExecuteResult{}, fmt.Errorf("muxlio: marshalling script input: %w", err)
 	}
 
-	cmd, isolated, err := s.command(req, script, workDir)
+	launch, err := s.launch(req, script, workDir)
 	if err != nil {
+		var envErr *executorEnvironmentError
+		if errors.As(err, &envErr) {
+			return ExecuteResult{}, envErr.Err
+		}
 		return ExecuteResult{Error: err.Error()}, nil
 	}
+	if launch.Cleanup != nil {
+		defer launch.Cleanup()
+	}
+	cmd := launch.Command
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
@@ -248,11 +226,6 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	configureProcess(cmd)
-	cmd.Env, err = s.environment(workDir, isolated, req.Executor)
-	if err != nil {
-		return ExecuteResult{}, err
-	}
-	cmd.Env = req.Environment.FilterEnvironment(cmd.Env)
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Dir = workDir
 
@@ -297,11 +270,8 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if req.WorkspaceMode == "shared-write" {
 		result.Logs = "[muxlio shared writable workspace: exclusive resource keys required]\n" + result.Logs
 	}
-	if isolated {
-		result.Logs = "[muxlio isolation enforced; network=none; filesystem=scratch plus declared workspace mounts]\n" + result.Logs
-	} else {
-		result.Logs = "[muxlio trusted native execution; network=host; filesystem=host; agent tool calls are not intercepted]\n" + result.Logs
-	}
+	boundaries, _ := json.Marshal(launch.Capabilities)
+	result.Logs = "[muxlio sandbox boundaries: " + string(boundaries) + "]\n" + result.Logs
 	result.Logs = boundedLog(result.Logs)
 	if result.RemoteTask != nil && result.RemoteTask.Pending {
 		// cmd.Run has returned: the local process is fully supervised through
@@ -384,93 +354,46 @@ func safePathPart(value string) string {
 	return value
 }
 
-func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*exec.Cmd, bool, error) {
+// launch delegates all runtime protocols and boundary descriptions to sandbox.
+func (s *ScriptExecutor) launch(req ExecuteRequest, script, workDir string, arguments ...string) (sandbox.Launch, error) {
 	if err := ValidatePermissions(req); err != nil {
-		return nil, false, err
+		return sandbox.Launch{}, err
 	}
 	var params struct {
 		Isolation *isolationPolicy `json:"isolation"`
 	}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return nil, false, fmt.Errorf("invalid execute params: %w", err)
+			return sandbox.Launch{}, fmt.Errorf("invalid execute params: %w", err)
 		}
 	}
-	policy := params.Isolation
-	if policy == nil {
-		return exec.Command(script), false, nil
+	policy := isolationPolicy{Mode: "trusted-native"}
+	if params.Isolation != nil {
+		policy = *params.Isolation
 	}
-	switch policy.Mode {
-	case "trusted-native":
-		return exec.Command(script), false, nil
-	case "required":
-	default:
-		return nil, false, fmt.Errorf("isolation mode must be required or trusted-native")
+	env, err := s.environment(workDir, policy.Mode == "required", req.Executor)
+	if err != nil {
+		return sandbox.Launch{}, &executorEnvironmentError{Err: err}
 	}
-	switch policy.Runtime {
-	case "macos-vm":
-		if !policy.Enabled {
-			return nil, false, fmt.Errorf("macOS VM isolation requires params.isolation.enabled=true")
-		}
-		driver := macOSVMDriver{goos: runtime.GOOS}
-		cmd, err := driver.Command(s, script, workDir, *policy)
-		return cmd, false, err
-	case "bwrap":
-		if runtime.GOOS != "linux" {
-			return nil, false, fmt.Errorf("required bwrap isolation unavailable: Linux is required")
-		}
-		bwrap, err := exec.LookPath("bwrap")
-		if err != nil {
-			return nil, false, fmt.Errorf("required bwrap isolation unavailable: %w", err)
-		}
-		// Keep the host root out of the namespace. Binding / wholesale makes
-		// host credentials and unrelated user data readable by the adapter.
-		args := []string{"--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--dev", "/dev", "--proc", "/proc", "--ro-bind", s.adapterDir, "/muxlio/adapters", "--bind", workDir, workDir, "--chdir", workDir, "/muxlio/adapters/" + filepath.Base(script)}
-		if req.Workspace != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "" {
-			flag := "--ro-bind"
-			if req.WorkspaceMode == "shared-write" {
-				flag = "--bind"
-			}
-			args = append(args[:len(args)-1], flag, req.Workspace, req.Workspace, args[len(args)-1])
-		}
-		return exec.Command(bwrap, args...), true, nil
-	case "oci":
-		if runtime.GOOS != "linux" {
-			return nil, false, fmt.Errorf("required OCI isolation unavailable: Linux is required")
-		}
-		if policy.Image == "" {
-			return nil, false, fmt.Errorf("required OCI isolation needs params.isolation.image")
-		}
-		engine, err := exec.LookPath("podman")
-		if err != nil {
-			engine, err = exec.LookPath("docker")
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("required OCI isolation unavailable: podman or docker is required")
-		}
-		adapterMount := s.adapterDir + ":/muxlio/adapters:ro"
-		workMount := workDir + ":" + workDir + ":rw"
-		args := []string{"run", "--rm", "-i", "--network=none", "--read-only", "--tmpfs", "/tmp", "-v", adapterMount, "-v", workMount, "-w", workDir}
-		if filepath.Base(engine) == "podman" {
-			args = append(args, "--userns=keep-id")
-		} else {
-			// Docker does not implement Podman's keep-id value. Use the host
-			// uid/gid explicitly so the writable work mount is usable without
-			// running the adapter as root in the container.
-			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
-		}
-		if req.Workspace != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "" {
-			mode := "ro"
-			if req.WorkspaceMode == "shared-write" {
-				mode = "rw"
-			}
-			args = append(args, "-v", req.Workspace+":"+req.Workspace+":"+mode)
-		}
-		args = append(args, policy.Image, "/muxlio/adapters/"+filepath.Base(script))
-		return exec.Command(engine, args...), true, nil
-	default:
-		return nil, false, fmt.Errorf("required isolation runtime must be bwrap, oci, or macos-vm")
+	env = req.Environment.FilterEnvironment(env)
+	launch, err := sandbox.Start(sandbox.Config{Script: script, AdapterDir: s.adapterDir, Scratch: workDir,
+		Workspace: req.Workspace, WorkspaceMode: req.WorkspaceMode, Environment: env, Arguments: arguments}, policy)
+	if err == nil {
+		launch.Command.Dir = workDir
 	}
+	return launch, err
+}
+
+// Invalid operator configuration remains a runner error, distinct from a
+// request that cannot be satisfied by an isolation backend.
+type executorEnvironmentError struct{ Err error }
+
+func (e *executorEnvironmentError) Error() string { return e.Err.Error() }
+func (e *executorEnvironmentError) Unwrap() error { return e.Err }
+
+func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*exec.Cmd, bool, error) {
+	launch, err := s.launch(req, script, workDir)
+	return launch.Command, launch.Capabilities.Isolated(), err
 }
 
 func RedactSecrets(value string, secrets map[string]string) string {

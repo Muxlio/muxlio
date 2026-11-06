@@ -107,8 +107,10 @@ export interface ExecutionSecurityParams {
   };
   isolation?: {
     mode: 'required' | 'trusted-native';
-    runtime?: 'bwrap' | 'oci' | 'macos-vm';
+    runtime?: 'bwrap' | 'oci' | 'docker-vm' | 'macos-vm';
+    /** Required for OCI and Docker VM. Use an operator-approved image. */
     image?: string;
+    /** Explicit opt-in for Docker Desktop VM execution on macOS. */
     enabled?: boolean;
   };
 }

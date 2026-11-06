@@ -104,6 +104,24 @@ func TestRequiredIsolationAdmissionNeedsEligibleBackend(t *testing.T) {
 	}
 }
 
+func TestOptionalVMAdmissionRequiresImageOptInAndLabel(t *testing.T) {
+	caps := []state.WorkerCapability{{Name: "test"}}
+	for _, backend := range []string{"docker-vm", "macos-vm"} {
+		labels := map[string]string{IsolationLabelPrefix + backend: "true"}
+		for _, enabled := range []bool{false, true} {
+			for _, image := range []string{"", "approved-image"} {
+				raw, _ := json.Marshal(map[string]any{"params": map[string]any{"isolation": map[string]any{"mode": "required", "runtime": backend, "enabled": enabled, "image": image}}})
+				if got := MatchDispatch("test", raw, caps, labels); got != (enabled && image != "") {
+					t.Fatalf("VM admission: enabled=%v image=%q matched=%v", enabled, image, got)
+				}
+				if MatchDispatch("test", raw, caps, nil) {
+					t.Fatal("VM admitted without eligible worker")
+				}
+			}
+		}
+	}
+}
+
 func TestAttemptPathPartsDoNotAlias(t *testing.T) {
 	if safePathPart("a/b") == safePathPart("ab") || safePathPart("a.b") == safePathPart("a/b") {
 		t.Fatal("attempt identities alias")

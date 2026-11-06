@@ -305,7 +305,10 @@ request secret policy filters propagated secrets; there is no automatic host
 secret lookup or secret forwarding from environment values. Providers using OS
 keychains or environment-only credentials may require an audited custom
 adapter. This feature does not claim automatic desktop credential forwarding.
-Required unsupported macOS VM isolation fails closed. Native trusted execution
+Optional macOS VM isolation uses Docker Desktop with explicit opt-in, an approved
+Linux image and the `desktop-linux` context; unavailable backends fail closed.
+See [sandbox boundaries and conformance](architecture/execution-security.md).
+Native trusted execution
 does not promise network/filesystem containment. Back up the SQLite database
 using SQLite-aware tooling; retention, quotas, multi-tenant authorization and
 automatic side-effect reconciliation remain outside this scope.

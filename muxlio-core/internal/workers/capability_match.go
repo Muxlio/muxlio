@@ -3,6 +3,7 @@ package workers
 import (
 	"encoding/json"
 
+	"github.com/muxlio/muxlio-core/internal/sandbox"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
@@ -54,10 +55,10 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 		return false
 	}
 	if p := params.Isolation; p != nil && p.Mode != "trusted-native" {
-		if p.Mode != "required" || (p.Runtime != "bwrap" && p.Runtime != "oci") || labels[IsolationLabelPrefix+p.Runtime] != "true" {
+		if p.Mode != "required" || !sandbox.Supported(p.Runtime) || labels[IsolationLabelPrefix+p.Runtime] != "true" {
 			return false
 		}
-		if p.Runtime == "oci" && p.Image == "" {
+		if (sandbox.NeedsImage(p.Runtime) && p.Image == "") || (sandbox.NeedsOptIn(p.Runtime) && !p.Enabled) {
 			return false
 		}
 	}
