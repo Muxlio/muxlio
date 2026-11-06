@@ -60,3 +60,19 @@ func logWriter() *os.File {
 	}
 	return os.NewFile(uintptr(fd), "muxlio-log")
 }
+
+// AppendOperationReference publishes the external operation identity as soon as
+// it is known, before the adapter waits for completion. Missing delivery still
+// leaves the coordinator conservative; it never proves that no effect occurred.
+func AppendOperationReference(ref contract.RemoteTaskReference) error {
+	file := logWriter()
+	if file == nil {
+		return nil
+	}
+	raw, err := json.Marshal(contract.Progress{OperationRef: &ref})
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(append(raw, '\n'))
+	return err
+}

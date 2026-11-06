@@ -40,6 +40,8 @@ func TestCompatibilityRejectsBeforeProcessLaunch(t *testing.T) {
 	}{
 		{"contract", func(r *ExecuteRequest) { r.ContractVersion = "99" }, "contract version"},
 		{"executor_version", func(r *ExecuteRequest) { r.ExecutorVersion = "99" }, "version"},
+		{"reconcile", func(r *ExecuteRequest) { r.Action = "reconcile" }, "reconcile"},
+		{"idempotency", func(r *ExecuteRequest) { r.IdempotencyKey = "stable" }, "idempotencyKey"},
 		{"session", func(r *ExecuteRequest) { r.SessionID = "existing" }, "session"},
 		{"legacy_session", func(r *ExecuteRequest) { r.Params = json.RawMessage(`{"sessionId":"existing"}`) }, "session"},
 		{"remote", func(r *ExecuteRequest) { r.RemoteTask = &contract.RemoteTaskReference{ID: "task"} }, "remoteTask"},

@@ -193,6 +193,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	stdin, err := json.Marshal(contract.Request{
 		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
+		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
 		SessionID: req.SessionID, RemoteTask: req.RemoteTask,
 		Workspace: req.Workspace, WorkDir: workDir,
 		HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed(),
@@ -260,6 +261,9 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		}, nil
 	}
 	result.Error = RedactSecrets(result.Error, req.Secrets)
+	if result.Reconciliation != nil {
+		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, req.Secrets))
+	}
 	if runErr != nil {
 		result.Error = fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr)
 	}

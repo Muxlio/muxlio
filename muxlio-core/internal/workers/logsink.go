@@ -56,6 +56,15 @@ func (s *storeLogSink) Append(stream string, data []byte) error {
 	if s == nil || s.store == nil || len(data) == 0 {
 		return nil
 	}
+	if stream == "operation" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return nil
+		}
+		s.seq[stream]++
+		return s.store.AppendLogChunk(state.LogChunk{RunID: s.runID, ActivationID: s.activationID, AttemptID: s.attemptID, Stream: stream, Seq: s.seq[stream], Data: data, Timestamp: time.Now()})
+	}
 	stream = normalizeLogStream(stream)
 	redacted := []byte(RedactSecrets(string(data), s.secrets))
 	s.mu.Lock()

@@ -60,6 +60,10 @@ const (
 	// provider task queue and return a task reference for later polling, rather
 	// than blocking until completion.
 	CapabilityRemoteTask = "remoteTask"
+	// Reconcile is a read-only lookup by operation reference, key, or attempt ID.
+	CapabilityReconcile = "reconcile"
+	// IdempotencyKey promises provider-side deduplication of the supplied key.
+	CapabilityIdempotencyKey = "idempotencyKey"
 )
 
 // AdapterManifest is the contents of an adapter's optional JSON descriptor

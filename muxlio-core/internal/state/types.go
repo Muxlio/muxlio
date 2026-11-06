@@ -156,6 +156,32 @@ type ExecutionAttempt struct {
 	Result              *AttemptResult `json:"result,omitempty"`
 	Usage               *TokenUsage    `json:"usage,omitempty"`
 	ExecutionDurationMS *int64         `json:"executionDurationMs,omitempty"`
+
+	// Effect is the declared policy: pure, idempotent-with-key, reconcilable,
+	// nonretryable, or a legacy alias. It is
+	// stored so operators can determine the safety classification of any
+	// attempt whose state requires reconciliation.
+	Effect string `json:"effect,omitempty"`
+
+	// IdempotencyKey is the stable key associated with this attempt under the
+	// "idempotency-key" effect policy. A non-empty key means the coordinator
+	// passes it unchanged to a capable adapter for external deduplication.
+	// A stored key alone does not establish completion.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+
+	// OperationRef is the external provider-assigned reference returned by the
+	// executor for this attempt (e.g. a remote job ID or task URL). Recorded
+	// when the executor returns a RemoteTask reference so that adapter-supplied
+	// reconciliation can locate and query the operation after a worker crash.
+	// Nil means the executor did not return an operation reference.
+	OperationRef *contract.RemoteTaskReference `json:"operationRef,omitempty"`
+
+	// AwaitReconciliationReason is set when this attempt is held for explicit
+	// operator resolution because the external effect cannot be automatically
+	// reconciled. A non-empty value means re-dispatch is blocked and the reason
+	// is surfaced verbatim to the operator so they know why the attempt is
+	// pending reconciliation.
+	AwaitReconciliationReason string `json:"awaitReconciliationReason,omitempty"`
 }
 
 // LogChunk is an append-only chunk of worker output.
@@ -204,6 +230,13 @@ func ProgressEvent(c LogChunk) (string, string, map[string]any) {
 	if c.Snapshot != nil {
 		payload["snapshot"] = *c.Snapshot
 		return EventArtifactSnapshot, subject, payload
+	}
+	if c.Stream == "operation" {
+		var ref contract.RemoteTaskReference
+		if json.Unmarshal(c.Data, &ref) == nil && ref.ID != "" {
+			payload["operationRef"] = ref
+		}
+		return "execution.operation", subject, payload
 	}
 	payload["text"] = string(c.Data)
 	return EventProgress, subject, payload

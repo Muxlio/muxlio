@@ -47,11 +47,12 @@ func recoverLostDispatches(tx *sql.Tx) error {
 		}
 		var request struct {
 			Effect            string     `json:"effect"`
+			IdempotencyKey    string     `json:"idempotencyKey"`
 			ConcurrencyKeys   []string   `json:"concurrencyKeys"`
 			ExecutionDeadline *time.Time `json:"executionDeadline"`
 			Deadline          *time.Time `json:"deadline"`
 		}
-		if json.Unmarshal([]byte(raw), &request) == nil && request.Effect == "none" && len(request.ConcurrencyKeys) == 0 {
+		if json.Unmarshal([]byte(raw), &request) == nil && (request.Effect == "none" || request.Effect == "pure" || ((request.Effect == "idempotency-key" || request.Effect == "idempotent-with-key") && request.IdempotencyKey != "")) && len(request.ConcurrencyKeys) == 0 {
 			// A lost worker must not restart an already expired attempt.
 			now := time.Now()
 			if (request.ExecutionDeadline != nil && !now.Before(*request.ExecutionDeadline)) || (request.Deadline != nil && !now.Before(*request.Deadline)) {
@@ -166,6 +167,17 @@ func persistProgress(tx *sql.Tx, c state.LogChunk) error {
 	}
 	if err := appendEvent(tx, c.RunID, kind, subject, payload); err != nil {
 		return err
+	}
+	if c.Stream == "operation" {
+		if ref, ok := payload["operationRef"]; ok {
+			raw, err := json.Marshal(ref)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(`UPDATE execution_attempts SET operation_ref_json=? WHERE id=? AND run_id=?`, string(raw), c.AttemptID, c.RunID)
+			return err
+		}
+		return fmt.Errorf("invalid operation reference")
 	}
 	if c.Snapshot != nil {
 		return nil

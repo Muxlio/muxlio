@@ -37,7 +37,7 @@ func TestUncertainExecutionNeverRetriesOrFallsBack(t *testing.T) {
 }
 
 func TestEffectPoliciesDoNotPretendToEnforceReconciliation(t *testing.T) {
-	for _, effect := range []string{"manual", "none", "reconcile", "idempotency-key"} {
+	for _, effect := range []string{"manual", "none", "reconcile"} {
 		executor := workers.NewFake().ByExecutor("primary", workers.ExecuteResult{Error: "failed"})
 		engine := NewEngine(&Plan{}, executor)
 		_, err := engine.executeExecute("run", &Node{ID: "node", Executor: "primary", FallbackExecutors: []string{"fallback"}, Retry: &RetryPolicy{MaxAttempts: 3, Effect: effect}}, nil, &EvalContext{})

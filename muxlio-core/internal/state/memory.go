@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"sync"
 	"time"
 )
@@ -125,6 +126,11 @@ func (s *Memory) RetryRun(id string) error {
 	}
 	if run.State != "failed" && run.State != "cancelled" {
 		return fmt.Errorf("muxlio: run %q cannot be retried from state %q", id, run.State)
+	}
+	for _, attempt := range s.attempts {
+		if attempt.RunID == id && attempt.AwaitReconciliationReason != "" {
+			return fmt.Errorf("attempt %s awaits reconciliation: %s", attempt.ID, attempt.AwaitReconciliationReason)
+		}
 	}
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
@@ -460,6 +466,7 @@ func (s *Memory) AppendLogChunk(c LogChunk) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kind, subject, payload := ProgressEvent(c)
+
 	count, size := 0, 0
 	for _, event := range s.events[c.RunID] {
 		if event.Type == kind && event.SubjectID == subject {
@@ -483,6 +490,18 @@ func (s *Memory) AppendLogChunk(c LogChunk) error {
 		return nil
 	}
 	s.appendEventLocked(c.RunID, kind, subject, payload)
+	if c.Stream == "operation" {
+		ref, ok := payload["operationRef"].(contract.RemoteTaskReference)
+		if !ok {
+			return fmt.Errorf("invalid operation reference")
+		}
+		for i := range s.attempts {
+			if s.attempts[i].ID == c.AttemptID {
+				s.attempts[i].OperationRef = &ref
+			}
+		}
+		return nil
+	}
 	if c.Snapshot != nil {
 		return nil
 	}
@@ -550,6 +569,15 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	found := false
 	for i := range s.attempts {
 		if s.attempts[i].ID == a.ID {
+			if s.attempts[i].IdempotencyKey != "" {
+				a.IdempotencyKey = s.attempts[i].IdempotencyKey
+			}
+			if s.attempts[i].Effect != "" {
+				a.Effect = s.attempts[i].Effect
+			}
+			if a.OperationRef == nil {
+				a.OperationRef = s.attempts[i].OperationRef
+			}
 			if a.ExecutionDurationMS == nil {
 				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
 			}
@@ -571,6 +599,10 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
+	payload["effect"] = a.Effect
+	payload["idempotencyKey"] = a.IdempotencyKey
+	payload["operationRef"] = a.OperationRef
+	payload["awaitReconciliationReason"] = a.AwaitReconciliationReason
 	s.appendEventLocked(a.RunID, EventExecutionAttempt, a.ActivationID, payload)
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -132,6 +133,14 @@ func Open(path string) (*Store, error) {
 		// Drain mode: worker is finishing current assignments but takes no new ones.
 		`ALTER TABLE workers ADD COLUMN draining INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN coordinator_epoch INTEGER NOT NULL DEFAULT 0`,
+		// Effect policy classification for each attempt; empty means unclassified.
+		`ALTER TABLE execution_attempts ADD COLUMN effect TEXT NOT NULL DEFAULT ''`,
+		// Stable idempotency key for idempotency-key effect attempts.
+		`ALTER TABLE execution_attempts ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''`,
+		// Adapter-returned operation reference (JSON), for reconciliation.
+		`ALTER TABLE execution_attempts ADD COLUMN operation_ref_json TEXT`,
+		// Reason an attempt is held pending explicit operator reconciliation.
+		`ALTER TABLE execution_attempts ADD COLUMN await_reconciliation_reason TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -916,7 +925,15 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		}
 		resultJSON = string(raw)
 	}
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?)) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json,result_json=excluded.result_json,execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, resultJSON, a.ID, a.ExecutionDurationMS)
+	var operationRefJSON any
+	if a.OperationRef != nil {
+		raw, marshalErr := json.Marshal(a.OperationRef)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		operationRefJSON = string(raw)
+	}
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?),?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json,result_json=excluded.result_json,execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms),effect=COALESCE(NULLIF(execution_attempts.effect,''),excluded.effect),idempotency_key=COALESCE(NULLIF(execution_attempts.idempotency_key,''),excluded.idempotency_key),operation_ref_json=COALESCE(excluded.operation_ref_json,execution_attempts.operation_ref_json),await_reconciliation_reason=excluded.await_reconciliation_reason`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, resultJSON, a.ID, a.ExecutionDurationMS, a.Effect, a.IdempotencyKey, operationRefJSON, a.AwaitReconciliationReason)
 	if err != nil {
 		return err
 	}
@@ -937,6 +954,18 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
+	if a.Effect != "" {
+		payload["effect"] = a.Effect
+	}
+	if a.IdempotencyKey != "" {
+		payload["idempotencyKey"] = a.IdempotencyKey
+	}
+	if a.OperationRef != nil {
+		payload["operationRef"] = a.OperationRef
+	}
+	if a.AwaitReconciliationReason != "" {
+		payload["awaitReconciliationReason"] = a.AwaitReconciliationReason
+	}
 	if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, payload); err != nil {
 		return err
 	}
@@ -955,7 +984,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -973,7 +1002,8 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 		var started, finished string
 		var usageJSON, resultJSON sql.NullString
 		var execDuration sql.NullInt64
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &resultJSON, &execDuration); err != nil {
+		var operationRefJSON, effect, idempotencyKey, awaitReconciliation sql.NullString
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -993,6 +1023,22 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 		if execDuration.Valid {
 			value := execDuration.Int64
 			a.ExecutionDurationMS = &value
+		}
+		if effect.Valid {
+			a.Effect = effect.String
+		}
+		if idempotencyKey.Valid {
+			a.IdempotencyKey = idempotencyKey.String
+		}
+		if operationRefJSON.Valid && operationRefJSON.String != "" {
+			var ref contract.RemoteTaskReference
+			if err := json.Unmarshal([]byte(operationRefJSON.String), &ref); err != nil {
+				return nil, err
+			}
+			a.OperationRef = &ref
+		}
+		if awaitReconciliation.Valid {
+			a.AwaitReconciliationReason = awaitReconciliation.String
 		}
 		if err != nil {
 			return nil, err
@@ -1131,6 +1177,13 @@ func (s *Store) RetryRun(id string) error {
 	}
 	if current != "failed" && current != "cancelled" {
 		return fmt.Errorf("muxlio: run %q cannot be retried from state %q", id, current)
+	}
+	var held int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM execution_attempts WHERE run_id=? AND await_reconciliation_reason<>''`, id).Scan(&held); err != nil {
+		return err
+	}
+	if held > 0 {
+		return fmt.Errorf("run has attempts awaiting reconciliation; resolve their external outcomes before retrying")
 	}
 	rows, err := tx.Query(`SELECT id, node_id, scope_path_json FROM activations WHERE run_id=? AND state!='succeeded'`, id)
 	if err != nil {

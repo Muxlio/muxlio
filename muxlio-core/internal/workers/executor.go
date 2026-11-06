@@ -16,6 +16,9 @@ import (
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	Action               string                        `json:"action,omitempty"`
+	OperationAttemptID   string                        `json:"operationAttemptId,omitempty"`
+	IdempotencyKey       string                        `json:"idempotencyKey,omitempty"`
 	ContractVersion      string                        `json:"contractVersion,omitempty"`
 	RequiredCapabilities map[string]string             `json:"requiredCapabilities,omitempty"`
 	SessionID            string                        `json:"sessionId,omitempty"`
@@ -31,7 +34,7 @@ type ExecuteRequest struct {
 	// Deadline survives transport; Context cancellation still revokes assignments.
 	Deadline      *time.Time `json:"deadline,omitempty"`
 	QueueDeadline *time.Time `json:"queueDeadline,omitempty"`
-	// Effect is the declared effect policy; only "none" permits replay after loss.
+	// Effect classifies replay safety; unknown policies fail closed after loss.
 	Effect          string          `json:"effect,omitempty"`
 	Context         context.Context `json:"-"`
 	Workspace       string          `json:"workspace,omitempty"`

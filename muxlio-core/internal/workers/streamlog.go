@@ -35,10 +35,15 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 		sc.Buffer(make([]byte, 64*1024), logChunkMaxBytes)
 		for sc.Scan() {
 			var line muxlioLogLine
-			if json.Unmarshal(sc.Bytes(), &line) != nil || line.Text == "" {
+			if json.Unmarshal(sc.Bytes(), &line) != nil {
 				continue
 			}
-			_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(line.Text))
+			if line.OperationRef != nil {
+				raw, _ := json.Marshal(line.OperationRef)
+				_ = req.LogSink.Append("operation", raw)
+			} else {
+				_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(line.Text))
+			}
 		}
 	}()
 	return func() {
@@ -69,10 +74,15 @@ func ReadAdapterLogLines(r io.Reader, sink LogSink) error {
 	sc.Buffer(make([]byte, 64*1024), logChunkMaxBytes)
 	for sc.Scan() {
 		var line muxlioLogLine
-		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Text == "" {
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
 			continue
 		}
-		if err := sink.Append(normalizeLogStream(line.Stream), []byte(line.Text)); err != nil {
+		stream, data := normalizeLogStream(line.Stream), []byte(line.Text)
+		if line.OperationRef != nil {
+			stream = "operation"
+			data, _ = json.Marshal(line.OperationRef)
+		}
+		if err := sink.Append(stream, data); err != nil {
 			return err
 		}
 	}

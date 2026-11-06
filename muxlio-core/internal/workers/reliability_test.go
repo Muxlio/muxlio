@@ -149,3 +149,14 @@ func TestAdapterExplicitAgentHome(t *testing.T) {
 type testTransport func(*http.Request) (*http.Response, error)
 
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestAdapterReconciliationReasonRedactedBeforePersistence(t *testing.T) {
+	s := testScript(t, `printf '{"reconciliation":{"status":"completed","reason":"ledger checked with secret-value"}}'`)
+	r, err := s.Execute(ExecuteRequest{Executor: "test", Secrets: map[string]string{"token": "secret-value"}, Policy: &ExecutionPolicy{AllowedSecrets: []string{"token"}}})
+	if err != nil || r.Error != "" || r.Reconciliation == nil || r.Reconciliation.Status != "completed" {
+		t.Fatalf("reconciliation lost: %+v %v", r, err)
+	}
+	if strings.Contains(r.Reconciliation.Reason, "secret-value") || !strings.Contains(r.Reconciliation.Reason, "ledger checked") {
+		t.Fatalf("unsafe reconciliation reason: %q", r.Reconciliation.Reason)
+	}
+}

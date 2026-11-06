@@ -214,6 +214,13 @@ func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []Val
 	if !validDuration(node.TimeoutSeconds) || !validDuration(node.QueueTimeoutSeconds) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_TIMEOUT", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "timeoutSeconds and queueTimeoutSeconds must be finite, nonnegative and fit a duration"})
 	}
+	if node.Retry != nil {
+		switch node.Retry.Effect {
+		case "", "retryable", "none", "pure", "idempotency-key", "idempotent-with-key", "reconcile", "reconcilable", "manual", "nonretryable":
+		default:
+			errs = append(errs, ValidationError{Code: "MUXLIO_BAD_EFFECT", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "unknown retry effect policy"})
+		}
+	}
 	if retry := node.Retry; retry != nil && (retry.MaxAttempts < 0 || retry.MaxAttempts > 100 || retry.BackoffSeconds < 0 || retry.MaxBackoffSeconds < 0) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_RETRY", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "retry requires 0..100 maxAttempts and nonnegative backoff durations"})
 	}

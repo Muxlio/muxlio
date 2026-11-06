@@ -382,6 +382,23 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			handleGetActivations(w, store, runID)
 			return
 		}
+		if len(parts) == 3 && parts[1] == "attempts" && strings.HasSuffix(parts[2], "/resolve") {
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use POST")
+				return
+			}
+			var resolution state.AttemptResolution
+			if err := json.NewDecoder(r.Body).Decode(&resolution); err != nil {
+				writeError(w, http.StatusBadRequest, "MUXLIO_BAD_RESOLUTION", err.Error())
+				return
+			}
+			if err := store.ResolveExecutionAttempt(runID, strings.TrimSuffix(parts[2], "/resolve"), resolution); err != nil {
+				writeError(w, http.StatusConflict, "MUXLIO_RECONCILIATION_REQUIRED", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"resolved": true})
+			return
+		}
 		if len(parts) == 2 && parts[1] == "attempts" {
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")

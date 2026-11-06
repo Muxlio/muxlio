@@ -6,6 +6,7 @@ test('authoring APIs preserve versioned executor requirements through JSON', () 
   const requirements = {
     executorVersion: '2', contractVersion: '1',
     requiredCapabilities: { progress: '1', typedResult: '1', session: '1', remoteTask: '1' },
+    retry: { effect: 'idempotent-with-key', idempotencyKey: 'invoice-123', maxAttempts: 3 },
     sessionId: 'existing', remoteTask: { id: 'task', url: 'https://example.test/task' },
   };
   const opts = { executor: 'test', ...requirements };

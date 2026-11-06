@@ -188,6 +188,13 @@ type RetryPolicy struct {
 	Effect            string  `json:"effect,omitempty"` // retryable, idempotency-key, reconcile, manual, none
 	BackoffSeconds    float64 `json:"backoffSeconds,omitempty"`
 	MaxBackoffSeconds float64 `json:"maxBackoffSeconds,omitempty"`
+
+	// IdempotencyKey is a stable, plan-author-supplied key for the "idempotency-key"
+	// effect policy. When set, the coordinator persists it alongside every attempt
+	// record and sends it to adapters that support provider-side deduplication.
+	// The key must be stable across retries; dynamic values must be embedded in
+	// the node inputs rather than here.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 // Binding is either a reference to another node's output port or a

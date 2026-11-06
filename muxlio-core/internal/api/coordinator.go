@@ -219,7 +219,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, SessionID: req.SessionID, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}
@@ -436,6 +436,22 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if err != nil {
 		return workers.ExecuteResult{}, err
 	}
+	if req.Action == "reconcile" {
+		candidates, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
+		if err != nil {
+			return workers.ExecuteResult{}, err
+		}
+		supported := false
+		for _, worker := range candidates {
+			if workers.MatchDispatch(req.Executor, raw, worker.Capabilities, worker.Labels) {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return workers.ExecuteResult{}, fmt.Errorf("no available worker supports adapter reconciliation")
+		}
+	}
 	// isUncertain reports whether req.AttemptID has an uncertain or expired
 	// active assignment, meaning a worker may already have executed the step.
 	isUncertain := func() (bool, error) {
@@ -486,6 +502,9 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if err != nil {
 		return workers.ExecuteResult{}, err
 	}
+	if uncertain && req.Effect != "" && req.Action != "reconcile" {
+		return workers.ExecuteResult{}, workers.UncertainExecutionError{}
+	}
 	if !uncertain {
 		if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: req.AttemptID, RunID: req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID, Executor: req.Executor, Request: raw}); err != nil {
 			return workers.ExecuteResult{}, err
@@ -522,6 +541,9 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 				return workers.ExecuteResult{}, err
 			}
 			if stillUncertain {
+				if req.Effect != "" && req.Action != "reconcile" {
+					return workers.ExecuteResult{}, workers.UncertainExecutionError{}
+				}
 				// Worker may already have run the step; wait for reconciliation.
 				uncertain = true
 				continue

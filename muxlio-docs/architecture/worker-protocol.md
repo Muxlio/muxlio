@@ -284,3 +284,47 @@ are a startup snapshot; restarting the worker refreshes them after login or
 configuration changes. Gemini's probe currently verifies configured API-key
 availability; interactive login is unverified and fails closed. Readiness does
 not guarantee a credential remains valid or that a remote service is reachable.
+
+## Retry safety and uncertain external effects
+
+An execute node's `retry.effect` classifies its operations:
+
+| Policy | After worker loss |
+| --- | --- |
+| `pure` (legacy `none`) | Safe to replay, subject to deadlines and resource fencing. |
+| `idempotent-with-key` (legacy `idempotency-key`) | Replay carries the same `idempotencyKey`; the adapter must advertise `idempotencyKey` revision 1 and implement external deduplication. |
+| `reconcilable` (legacy `reconcile`) | Invoke adapter reconciliation before another operation can start. |
+| `nonretryable` (legacy `manual`) | Hold for explicit operator resolution. |
+
+Legacy `retryable` allows retries of reported failures, but does not establish
+safe replay after worker loss. Unknown or undeclared effects fail closed after
+uncertain execution. These policies do not provide universal exactly-once
+semantics: a worker can disappear after an external commit and before its durable
+completion checkpoint.
+
+Keys default to the activation identity, including run and scope, and survive
+attempt and run retries. An explicit `retry.idempotencyKey` must identify one
+logical operation within the external system's deduplication domain. Fallback
+adapters are not used for keyed operations, since they may use another domain.
+
+An adapter can publish `{"operationRef":{"id":"external-id","url":"..."}}`
+on `MUXLIO_LOG_FD` immediately after submission. Workers forward this shared
+record through the fenced progress channel. The coordinator persists the
+reference separately from completion; a missing reference is never evidence
+that no effect occurred. Adapters may also return `remoteTask` on completion.
+
+Adapters advertising `reconcile` revision 1 accept `action: "reconcile"` with
+the original operation reference, `operationAttemptId`, and inputs. This action is a
+read-only lookup and must never submit work. It returns `reconciliation` with
+`status` and an optional `reason`. `completed` includes the ordinary output
+result, which is validated before reuse. `not-applied` is affirmative evidence
+that the original operation cannot subsequently commit, permitting redispatch.
+Missing support, errors, malformed results, and `inconclusive` hold the attempt.
+
+`GET /v1/runs/{runId}/attempts` exposes `effect`, `idempotencyKey`, `operationRef`,
+and `awaitReconciliationReason`. Held attempts block run retry. An operator can
+resolve one using `POST /v1/runs/{runId}/attempts/{attemptId}/resolve` with
+`{"outcome":"not-applied","reason":"evidence that the old operation cannot commit"}`,
+or `{"outcome":"completed","reason":"verified externally","result":{"executionSucceeded":true,"outputs":{}}}`.
+Resolution fences stale workers and records an audit event. The operator may
+then retry the failed run; completed operations reuse their verified outputs.

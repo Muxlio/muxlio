@@ -32,7 +32,15 @@ type RemoteTaskReference struct {
 	URL string `json:"url,omitempty"`
 }
 
+// Reconciliation is supplied by the adapter after a read-only outcome lookup.
+// not-applied promises the old operation cannot later take effect.
+type Reconciliation struct {
+	Status string `json:"status"` // completed, not-applied, inconclusive
+	Reason string `json:"reason,omitempty"`
+}
+
 type Result struct {
+	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
 	// executor completion. Outputs may retain rejected text for diagnostics.
 	OutputErrors map[string]string `json:"outputErrors,omitempty"`
@@ -69,13 +77,18 @@ func ParseResult(raw []byte) (Result, error) {
 // Progress uses the existing live log channel. Providers normalize their events
 // into these records; consumers never parse provider protocols.
 type Progress struct {
-	Stream string `json:"stream"`
-	Text   string `json:"text"`
+	OperationRef *RemoteTaskReference `json:"operationRef,omitempty"`
+	Stream       string               `json:"stream"`
+	Text         string               `json:"text"`
 }
 
 // Request starts one invocation. Optional feature requirements are exact
 // capability revisions. Session and remote references must never be emulated.
 type Request struct {
+	Action               string                `json:"action,omitempty"` // empty starts work; reconcile only queries it
+	OperationAttemptID   string                `json:"operationAttemptId,omitempty"`
+	Effect               string                `json:"effect,omitempty"`
+	IdempotencyKey       string                `json:"idempotencyKey,omitempty"`
 	ContractVersion      string                `json:"contractVersion,omitempty"`
 	RequiredCapabilities map[string]string     `json:"requiredCapabilities,omitempty"`
 	SessionID            string                `json:"sessionId,omitempty"`
@@ -110,10 +123,22 @@ func (r *Request) Check(m *AdapterManifest) error {
 			required[name] = Version
 		}
 	}
+	if r.Action != "" && r.Action != "reconcile" {
+		return fmt.Errorf("unsupported executor action %q", r.Action)
+	}
+	if r.Action == "reconcile" {
+		require(CapabilityReconcile)
+	}
+	if (r.Effect == "idempotency-key" || r.Effect == "idempotent-with-key") && r.IdempotencyKey == "" {
+		return fmt.Errorf("idempotent effect requires an idempotency key")
+	}
+	if r.IdempotencyKey != "" {
+		require(CapabilityIdempotencyKey)
+	}
 	if r.SessionID != "" {
 		require(CapabilitySession)
 	}
-	if r.RemoteTask != nil {
+	if r.RemoteTask != nil && r.Action != "reconcile" {
 		require(CapabilityRemoteTask)
 	}
 	var params struct {

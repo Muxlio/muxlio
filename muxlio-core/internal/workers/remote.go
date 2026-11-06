@@ -81,6 +81,7 @@ type remoteCompletion struct {
 	Logs                string                        `json:"logs,omitempty"`
 	Usage               *state.TokenUsage             `json:"usage,omitempty"`
 	SessionID           string                        `json:"sessionId,omitempty"`
+	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`
 	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
 	ExecutionDurationMS *int64                        `json:"executionDurationMs,omitempty"`
 }
@@ -573,7 +574,12 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			executeReq := ExecuteRequest{Secrets: finished.secrets}
 			result, execErr := finished.result, finished.err
 			result.Logs = boundedLog(RedactSecrets(result.Logs, executeReq.Secrets))
-			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, SessionID: result.SessionID, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			if result.Reconciliation != nil {
+				reconciliation := *result.Reconciliation
+				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
+				result.Reconciliation = &reconciliation
+			}
+			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

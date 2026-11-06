@@ -7,6 +7,36 @@ import (
 	"testing"
 )
 
+func TestEffectCapabilitiesFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		request    Request
+		capability string
+	}{
+		{"key", Request{Effect: "idempotent-with-key", IdempotencyKey: "operation-1"}, CapabilityIdempotencyKey},
+		{"reconciliation", Request{Action: "reconcile", OperationAttemptID: "attempt-1", RemoteTask: &RemoteTaskReference{ID: "external-1"}}, CapabilityReconcile},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := &AdapterManifest{}
+			if err := tc.request.Check(manifest); err == nil {
+				t.Fatal("unsupported effect contract accepted")
+			}
+			manifest.Capabilities = map[string]bool{tc.capability: true}
+			if err := tc.request.Check(manifest); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for _, effect := range []string{"idempotency-key", "idempotent-with-key"} {
+		if err := (&Request{Effect: effect}).Check(&AdapterManifest{Capabilities: map[string]bool{CapabilityIdempotencyKey: true}}); err == nil {
+			t.Fatal("keyed effect accepted without a key")
+		}
+	}
+	if err := (&Request{Action: "submit-again"}).Check(&AdapterManifest{}); err == nil {
+		t.Fatal("unknown action accepted")
+	}
+}
+
 func TestParseResultRejectsMalformedCompletion(t *testing.T) {
 	for _, raw := range []string{
 		``, `null`, `[]`, `true`, `{broken`, `{} {}`, `{} trailing`,

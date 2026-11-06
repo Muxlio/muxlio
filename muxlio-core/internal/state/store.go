@@ -61,6 +61,7 @@ type Store interface {
 	CancelRunWork(runID string) error
 	RecordExecutionAttempt(a ExecutionAttempt) error
 	ListExecutionAttempts(runID, activationID string) ([]ExecutionAttempt, error)
+	ResolveExecutionAttempt(runID, attemptID string, resolution AttemptResolution) error
 
 	// Assignments: fenced worker attempts.
 	ClaimAssignment(a Assignment) (int64, error)

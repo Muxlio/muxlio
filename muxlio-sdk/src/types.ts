@@ -36,8 +36,10 @@ export interface RetryPolicy {
   maxAttempts?: number;
   backoffSeconds?: number;
   maxBackoffSeconds?: number;
-  /** retryable | idempotency-key | reconcile | manual | none */
+  /** pure | idempotent-with-key | reconcilable | nonretryable; legacy aliases are supported. */
   effect?: string;
+  /** Stable provider deduplication key; defaults to the activation ID. */
+  idempotencyKey?: string;
 }
 
 /** The set of supported node kinds. */
