@@ -73,9 +73,10 @@ type AssignmentLease struct {
 
 // WorkerCapability is one executor contract advertised by a worker.
 type WorkerCapability struct {
-	Contract *contract.AdapterManifest `json:"contract,omitempty"`
-	Name     string                    `json:"name"`
-	Version  string                    `json:"version,omitempty"`
+	Readiness *contract.ProbeResult     `json:"readiness,omitempty"`
+	Contract  *contract.AdapterManifest `json:"contract,omitempty"`
+	Name      string                    `json:"name"`
+	Version   string                    `json:"version,omitempty"`
 }
 
 // Worker is a registered remote executor and its advertised capabilities.

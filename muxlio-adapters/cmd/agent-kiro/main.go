@@ -34,6 +34,10 @@ import (
 )
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		adapter.RunProbe(adapter.RunnerChecks(resolveKiroCLI(), "whoami")...)
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-kiro: %v", err)

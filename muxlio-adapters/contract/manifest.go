@@ -71,6 +71,9 @@ const (
 // name and leave all capability flags false (absent), which is equivalent to a
 // missing descriptor: every optional capability is unsupported.
 type AdapterManifest struct {
+	// ProbeVersion opts into the non-destructive --muxlio-probe protocol.
+	ProbeVersion string `json:"probeVersion,omitempty"`
+
 	// ManifestVersion is the schema version of this descriptor. Must be "1"
 	// for the current schema; unknown versions must be rejected.
 	ManifestVersion string `json:"manifestVersion,omitempty"`

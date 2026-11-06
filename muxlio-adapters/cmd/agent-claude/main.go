@@ -35,6 +35,10 @@ import (
 )
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		adapter.RunProbe(adapter.RunnerChecks(resolveClaudeCLI(), "auth", "status")...)
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-claude: %v", err)

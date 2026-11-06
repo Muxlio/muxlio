@@ -85,7 +85,7 @@ func (c *Coordinator) Register(req WorkerRegistration) (WorkerRegistrationResult
 				capability.Version = capability.Contract.ExecutorVersion
 			}
 		}
-		caps = append(caps, state.WorkerCapability{Name: capability.Name, Version: capability.Version, Contract: capability.Contract})
+		caps = append(caps, state.WorkerCapability{Name: capability.Name, Version: capability.Version, Contract: capability.Contract, Readiness: capability.Readiness})
 	}
 	if err := c.store.RegisterWorker(state.Worker{ID: req.WorkerID, InstanceID: req.InstanceID, Capacity: req.Capacity, Capabilities: caps, Labels: req.Labels, LastSeen: time.Now()}); err != nil {
 		return WorkerRegistrationResult{}, err

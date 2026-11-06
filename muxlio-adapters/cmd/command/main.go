@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"io"
 	"os"
 	"os/exec"
@@ -65,6 +66,10 @@ func (p *preview) String() string {
 }
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		adapter.RunProbe(contract.ProbeCheck{Name: contract.ProbeVersion, Passed: true, Message: "direct process runner version 1"}, contract.ProbeCheck{Name: contract.ProbeBackend, Passed: true, Message: "host process execution; sandbox backend unavailable"})
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("command: %v", err)

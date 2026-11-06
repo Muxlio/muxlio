@@ -259,3 +259,28 @@ shows the latest observed budget constraint (worker, global, run, executor,
 operator key, provider concurrency, or provider rate); before a matching worker
 polls, it shows "Waiting for worker". Reasons update on subsequent worker polls
 and disappear once the request is claimed.
+
+### Executable readiness
+
+Adapters opt into readiness with `probeVersion: "1"` in their descriptor and
+implement `<adapter> --muxlio-probe`. This mode must perform only bounded,
+non-destructive checks and emit `{ "ready": boolean, "checks": [...] }`.
+Each check carries a name, a passed flag, and a secret-free diagnostic message.
+Provider authentication, runner version, binary and tool checks belong to the
+adapter. The worker checks local permission and protocol compatibility and uses
+the same configured native environment as execution. Raw CLI diagnostics are
+never forwarded by the bundled probes.
+
+Worker registration preserves these reports under each capability's `readiness`
+field. Failed reports and missing reports for probe-enabled contracts prevent
+matching before an assignment is leased. Legacy adapters without probe support
+are unverified by current workers. Isolation requirements still require an
+explicit supported backend label before matching; installing a runtime binary
+alone does not advertise an enforced isolation backend.
+
+`muxlio worker status [--adapters DIR] [--data-dir DIR] [--json]` runs local
+readiness checks. `muxlio doctor` includes the same checks. Registration probes
+are a startup snapshot; restarting the worker refreshes them after login or
+configuration changes. Gemini's probe currently verifies configured API-key
+availability; interactive login is unverified and fails closed. Readiness does
+not guarantee a credential remains valid or that a remote service is reachable.

@@ -365,20 +365,16 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		}
 		caps := make([]workers.RemoteCapability, 0, len(config.Capabilities))
 		for _, name := range config.Capabilities {
-			allowed, err := executor.CanExecute(name)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "executor %q: %v\n", name, err)
-				return 2
+			report := executor.Probe(ctx, name)
+			descriptor, _ := executor.Descriptor(name)
+			capability := workers.RemoteCapability{Name: name, Contract: descriptor, Readiness: &report}
+			if descriptor != nil {
+				capability.Version = descriptor.ExecutorVersion
 			}
-			if !allowed {
-				continue
+			caps = append(caps, capability)
+			for _, c := range report.Failed() {
+				fmt.Fprintf(os.Stderr, "executor %s: %s: %s\n", name, c.Name, c.Message)
 			}
-			descriptor, err := executor.Descriptor(name)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 2
-			}
-			caps = append(caps, workers.RemoteCapability{Name: name, Version: descriptor.ExecutorVersion, Contract: descriptor})
 		}
 		workerURL := servers.loopbackURL()
 		go func() {

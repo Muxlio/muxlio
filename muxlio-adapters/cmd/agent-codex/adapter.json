@@ -11,5 +11,6 @@
     "session": false,
     "remoteTask": false,
     "typedResult": false
-  }
+  },
+  "probeVersion": "1"
 }

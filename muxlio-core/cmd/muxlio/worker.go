@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -124,35 +125,18 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	}
 	executor.Executors = settings.Executors
 	executor.WorkerEnv = settings.WorkerEnv
-	// Advertise only capabilities authorized by local operator policy.
-	filtered := caps[:0]
-	for _, cap := range caps {
-		allowed, err := executor.CanExecute(cap.Name)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
+	executor.AgentHome = settings.AgentHome
+	// Retain blocked reports for status, while matching excludes them before lease.
+	for i := range caps {
+		report := executor.Probe(context.Background(), caps[i].Name)
+		caps[i].Readiness = &report
+		descriptor, err := executor.Descriptor(caps[i].Name)
+		if err == nil {
+			caps[i].Version, caps[i].Contract = descriptor.ExecutorVersion, descriptor
 		}
-		if allowed {
-			descriptor, err := executor.Descriptor(cap.Name)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 2
-			}
-			if cap.Version != "" && cap.Version != descriptor.ExecutorVersion {
-				fmt.Fprintln(os.Stderr, "executor version does not match descriptor")
-				return 2
-			}
-			cap.Version, cap.Contract = descriptor.ExecutorVersion, descriptor
-			filtered = append(filtered, cap)
+		for _, c := range report.Failed() {
+			fmt.Fprintf(os.Stderr, "executor %s: %s: %s\n", caps[i].Name, c.Name, c.Message)
 		}
-	}
-	if len(filtered) != len(caps) {
-		fmt.Fprintln(os.Stderr, "capabilities omitted by local executor policy")
-	}
-	caps = filtered
-	if len(caps) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no remotely authorized capabilities remain")
-		return 2
 	}
 
 	// Parse capacity from the CLI, then the environment, or use the default.
@@ -178,6 +162,64 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, ShutdownGracePeriod: 30 * time.Second}, executor)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "worker stopped:", err)
+		return 1
+	}
+	return 0
+}
+
+// workerReadiness is shared by local status and doctor diagnostics.
+func workerReadiness(dataDir, adaptersDir string) ([]workers.RemoteCapability, error) {
+	if dataDir == "" {
+		dataDir = defaultRuntime()
+	}
+	settings, err := localWorkerSettings(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if adaptersDir == "" {
+		adaptersDir = settings.Adapters
+	}
+	if adaptersDir == "" {
+		adaptersDir = filepath.Join(dataDir, "libexec", "muxlio", "adapters")
+	}
+	caps, err := discoverCapabilities(adaptersDir)
+	if err != nil {
+		return nil, err
+	}
+	executor := workers.NewScriptExecutor(adaptersDir, filepath.Join(dataDir, "work"))
+	executor.Executors = settings.Executors
+	executor.WorkerEnv = settings.WorkerEnv
+	executor.AgentHome = settings.AgentHome
+	for i := range caps {
+		report := executor.Probe(context.Background(), caps[i].Name)
+		caps[i].Readiness = &report
+	}
+	return caps, nil
+}
+
+func cmdWorkerStatus(dataDir, adaptersDir string, jsonOut bool) int {
+	caps, err := workerReadiness(dataDir, adaptersDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ok := len(caps) > 0
+	for _, cap := range caps {
+		if !cap.Readiness.Ready {
+			ok = false
+		}
+	}
+	if jsonOut {
+		_ = json.NewEncoder(os.Stdout).Encode(caps)
+	} else {
+		for _, cap := range caps {
+			fmt.Printf("%s ready=%t\n", cap.Name, cap.Readiness.Ready)
+			for _, c := range cap.Readiness.Failed() {
+				fmt.Printf("  %s: %s\n", c.Name, c.Message)
+			}
+		}
+	}
+	if !ok {
 		return 1
 	}
 	return 0

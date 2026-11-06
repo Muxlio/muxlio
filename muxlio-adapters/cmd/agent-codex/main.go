@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -18,6 +19,10 @@ import (
 )
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		adapter.RunProbe(adapter.RunnerChecks("codex", "login", "status")...)
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-codex: %v", err)

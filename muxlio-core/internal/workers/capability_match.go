@@ -19,7 +19,7 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 			break
 		}
 	}
-	if cap == nil {
+	if cap == nil || (cap.Readiness != nil && (!cap.Readiness.Ready || len(cap.Readiness.Checks) == 0 || len(cap.Readiness.Failed()) > 0)) || (cap.Contract != nil && cap.Contract.ProbeVersion != "" && cap.Readiness == nil) {
 		return false
 	}
 	var req ExecuteRequest

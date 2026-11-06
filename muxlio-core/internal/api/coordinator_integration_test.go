@@ -139,3 +139,51 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 		t.Fatalf("result not durable: %s %v", raw, err)
 	}
 }
+
+func TestReadinessSurvivesRegistrationAndHeartbeatBeforeLease(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCoordinator(store)
+	report := &contract.ProbeResult{Ready: false, Checks: []contract.ProbeCheck{{Name: contract.ProbeAuthentication, Passed: false, Message: "login required"}}}
+	registration := WorkerRegistration{WorkerID: "worker", InstanceID: "process", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test", Contract: &contract.AdapterManifest{ContractVersion: "1", ProbeVersion: "1"}, Readiness: report}}}
+	if _, err := c.Register(registration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Heartbeat("worker", WorkerHeartbeat{InstanceID: "process"}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := store.ListWorkers(time.Time{})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("workers: %v %v", listed, err)
+	}
+	got := listed[0].Capabilities[0].Readiness
+	if got == nil || got.Ready || len(got.Checks) != 1 || got.Checks[0].Message != "login required" {
+		t.Fatalf("lost readiness: %+v", got)
+	}
+	if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: "assignment", RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test", Request: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := c.NextAssignmentForInstance("worker", "process"); err != nil || a != nil {
+		t.Fatalf("unready worker leased work: %v %v", a, err)
+	}
+	registration.Capabilities[0].Readiness = nil
+	if _, err := c.Register(registration); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := c.NextAssignmentForInstance("worker", "process"); err != nil || a != nil {
+		t.Fatalf("unverified worker leased work: %v %v", a, err)
+	}
+	registration.Capabilities[0].Readiness = &contract.ProbeResult{Ready: true, Checks: []contract.ProbeCheck{{Name: contract.ProbeAuthentication, Passed: true}}}
+	if _, err := c.Register(registration); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := c.NextAssignmentForInstance("worker", "process"); err != nil || a == nil || a.Generation != 1 {
+		t.Fatalf("ready worker could not claim first lease: %v %v", a, err)
+	}
+}

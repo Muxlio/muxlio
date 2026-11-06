@@ -44,6 +44,9 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	}
 	write := func(path, raw string, mode os.FileMode) {
 		t.Helper()
+		if filepath.Dir(path) == adapters {
+			raw = readyFixtureAdapter(t, path, raw)
+		}
 		if err := os.WriteFile(path, []byte(raw), mode); err != nil {
 			t.Fatal(err)
 		}
@@ -289,6 +292,9 @@ func TestServiceRestart(t *testing.T) {
 	}
 	write := func(path, raw string, mode os.FileMode) {
 		t.Helper()
+		if filepath.Dir(path) == adapters {
+			raw = readyFixtureAdapter(t, path, raw)
+		}
 		if err := os.WriteFile(path, []byte(raw), mode); err != nil {
 			t.Fatal(err)
 		}

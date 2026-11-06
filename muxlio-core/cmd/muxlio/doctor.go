@@ -147,6 +147,21 @@ func cmdDoctor(args []string, globalDataDir string, globalJSON bool) int {
 		allPassed = false
 	}
 
+	// Executable readiness is separate from installation.
+	if caps, err := workerReadiness(root, ""); err == nil {
+		for _, cap := range caps {
+			for _, c := range cap.Readiness.Checks {
+				checks = append(checks, doctorCheck{Name: cap.Name + " / " + c.Name, Passed: c.Passed, Message: c.Message})
+			}
+			if !cap.Readiness.Ready {
+				allPassed = false
+			}
+		}
+	} else {
+		checks = append(checks, doctorCheck{Name: "Executor readiness", Passed: false, Message: "unable to load worker readiness configuration"})
+		allPassed = false
+	}
+
 	// 4. Check UI assets
 	uiIndex := filepath.Join(root, "share", "muxlio", "ui", "index.html")
 	if fileExists(uiIndex) {

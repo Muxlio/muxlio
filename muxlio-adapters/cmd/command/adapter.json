@@ -12,5 +12,6 @@
     "remoteTask": false,
     "typedResult": false
   },
-  "requiresHostExecution": true
+  "requiresHostExecution": true,
+  "probeVersion": "1"
 }

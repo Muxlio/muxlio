@@ -17,6 +17,11 @@ import (
 )
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		cli, _ := resolveCursorAgent()
+		adapter.RunProbe(adapter.RunnerChecks(cli, "status")...)
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-cursor: %v", err)

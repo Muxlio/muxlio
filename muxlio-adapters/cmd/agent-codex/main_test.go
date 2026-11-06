@@ -320,3 +320,46 @@ func buildAgentCodex(t *testing.T) string {
 	}
 	return bin
 }
+
+func TestCodexProbeInstalledButLoggedOut(t *testing.T) {
+	bin := buildAgentCodex(t)
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+ --version) echo 'codex 1.2.3'; exit 0 ;;
+ login) echo 'Not logged in; private-token' >&2; exit 1 ;;
+ *) echo 'probe attempted task execution' >&2; exit 99 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, adapter.ProbeFlag)
+	cmd.Env = append(os.Environ(), "PATH="+dir)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	var report struct {
+		Ready  bool
+		Checks []struct {
+			Name   string
+			Passed bool
+		}
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("invalid report: %s", raw)
+	}
+	if report.Ready || strings.Contains(string(raw), "private-token") {
+		t.Fatalf("unsafe report: %s", raw)
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.Name == "authentication" && !c.Passed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing login failure: %s", raw)
+	}
+}

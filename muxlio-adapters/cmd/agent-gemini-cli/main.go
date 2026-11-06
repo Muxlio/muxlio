@@ -26,6 +26,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,12 @@ import (
 )
 
 func main() {
+	if adapter.ProbeRequested(os.Args) {
+		checks := adapter.RunnerChecks(resolveGeminiCLI(), "--version")
+		checks[2] = contract.ProbeCheck{Name: contract.ProbeAuthentication, Passed: os.Getenv("GEMINI_API_KEY") != "", Message: "GEMINI_API_KEY must be configured; interactive authentication cannot be verified safely"}
+		adapter.RunProbe(checks...)
+		return
+	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-gemini-cli: %v", err)

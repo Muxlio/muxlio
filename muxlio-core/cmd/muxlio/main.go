@@ -65,6 +65,8 @@ Options:
   --worker-token-file <file>
                           File containing worker authentication token
   --fake-config <file>    JSON file with fake executor configuration
+  muxlio worker status [--adapters DIR] [--json]      Probe local executor readiness
+
   --adapters <dir>        Directory of executor adapter scripts (real execution)
   --workspace <dir>       Authorized workspace for standalone run (or MUXLIO_WORKSPACE)
                           Worker start uses this as the worker-local adapter workspace
@@ -268,6 +270,9 @@ func main() {
 		}
 
 	case "worker":
+		if len(args) > 1 && args[1] == "status" {
+			os.Exit(cmdWorkerStatus(dataDir, adaptersDir, jsonOut))
+		}
 		if len(args) < 2 || args[1] != "start" {
 			die("usage: muxlio worker start --coordinator URL --worker-id ID --workspace DIR [--capabilities name1,name2] [--worker-token TOKEN | --worker-token-file FILE]")
 		}
