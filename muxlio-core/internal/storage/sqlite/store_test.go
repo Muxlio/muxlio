@@ -511,6 +511,42 @@ func TestDispatchHonorsWorkerCapacityAndCapability(t *testing.T) {
 	}
 }
 
+func TestOutboxTimestampOrdering(t *testing.T) {
+	st := openTemp(t)
+	// Insert out of time order, including legacy variable-width fractions and
+	// equal timestamps whose IDs sort opposite to their insertion order.
+	for _, record := range []struct{ id, timestamp string }{
+		{"later", "2026-11-06T14:45:37.619022Z"},
+		{"tie-z", "2026-11-06T14:45:37.619Z"},
+		{"tie-a", "2026-11-06T14:45:37.619Z"},
+		{"whole-second", "2026-11-06T14:45:37Z"},
+		{"earlier", "2026-11-06T14:45:37.618975Z"},
+	} {
+		if _, err := st.db.Exec(`INSERT INTO outbox(id, kind, payload_json, created_at) VALUES(?, 'test', '{}', ?)`, record.id, record.timestamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"whole-second", "earlier", "tie-z", "tie-a", "later"}
+	for _, limit := range []int{0, 2} {
+		got, err := st.ListUnpublishedOutbox(limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := len(want)
+		if limit > 0 {
+			count = limit
+		}
+		if len(got) != count {
+			t.Fatalf("limit %d: got %d records, want %d", limit, len(got), count)
+		}
+		for i, record := range got {
+			if record.ID != want[i] {
+				t.Fatalf("limit %d: record %d = %q, want %q", limit, i, record.ID, want[i])
+			}
+		}
+	}
+}
+
 func TestOutboxLifecycle(t *testing.T) {
 	st := openTemp(t)
 	// Initially empty

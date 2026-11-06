@@ -201,7 +201,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
-		Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,
+		SessionInputs: req.SessionInputs, Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,
 		Workspace: req.Workspace, WorkDir: workDir,
 		HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed(),
 		RunID:                req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID,

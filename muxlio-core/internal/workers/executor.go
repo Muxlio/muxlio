@@ -16,6 +16,7 @@ import (
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	SessionInputs        []contract.SessionInput       `json:"sessionInputs,omitempty"`
 	Action               string                        `json:"action,omitempty"`
 	OperationAttemptID   string                        `json:"operationAttemptId,omitempty"`
 	IdempotencyKey       string                        `json:"idempotencyKey,omitempty"`

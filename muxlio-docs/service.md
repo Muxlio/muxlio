@@ -318,6 +318,43 @@ adapters cover the service contract; this feature has not exercised paid agent
 providers or real provider login flows. `command` defaults to the
 authorized workspace root; set `params.cwd` for a nested Go module.
 
+## Session input delivery
+
+Adapters may opt into `sessionInput` revision `1` for durable input at a resumed
+session's next turn, and `liveInput` revision `1` for input during an active
+turn. Both use structured session revision `2`. Capability absence means
+unsupported; the runtime never simulates steering by changing the pinned plan.
+Bundled adapters do not currently advertise these input guarantees.
+
+Submit input with `POST /v1/runs/{runId}/sessions/{sessionId}/inputs`:
+
+```json
+{"version":"1","requestId":"operator-message-1","message":"Focus on the failing check","policy":"live-or-next-boundary"}
+```
+
+The caller needs run-scoped `steer` permission and all queue permissions. The
+optional `Idempotency-Key` header must equal `requestId`. Repeating the same
+request returns the durable receipt; reusing its identity with different
+content, policy or caller returns `409`. New input to a terminal run is rejected.
+Unknown session input queues return `404`.
+
+Policies are `next-boundary`, `live-only`, and `live-or-next-boundary`.
+Unsupported live-only input returns `422`. Fallback input remains queued for
+the next resumed turn when live delivery is unsupported or unacknowledged;
+it does not create a turn automatically. The response is `202` with status
+`accepted`, not a delivery claim. With run-scoped `read` permission, reconnect
+and GET the same endpoint to inspect the versioned queue, chosen delivery
+mode, timestamps and `accepted` versus `delivered` receipts.
+
+Only an adapter's explicit `acknowledgedInputs` receipt marks input delivered.
+The adapter must persist request-ID deduplication across live and boundary
+delivery, including retries after lost receipts or restarts. Live transports
+and provider limitations belong in the adapter. Workers dispatch the shared
+`steer` action without acquiring the active session's turn lock or changing
+its durable checkpoint. Boundary batches are pinned in durable dispatches;
+new messages wait for a later turn. Queues and receipts survive coordinator
+restart when SQLite storage is configured.
+
 ## Verification
 
 ```sh

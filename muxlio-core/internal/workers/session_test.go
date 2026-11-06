@@ -51,6 +51,12 @@ func TestSessionAdapterProcess(t *testing.T) {
 		return
 	}
 
+	if req.Action == "steer" {
+		for _, input := range req.SessionInputs {
+			result.AcknowledgedInputs = append(result.AcknowledgedInputs, input.RequestID)
+		}
+		return
+	}
 	if req.Task == "multiplex" {
 		root := filepath.Join(os.Getenv("SESSION_FIXTURE_STATE"), "multiplex")
 		if err := os.MkdirAll(filepath.Join(root, filepath.Base(req.WorkDir)), 0700); err != nil {
@@ -354,5 +360,58 @@ func TestSessionAdapterMayExplicitlyMultiplex(t *testing.T) {
 		if r.Error != "" || r.Session == nil {
 			t.Fatalf("multiplex: %+v", r)
 		}
+	}
+}
+
+func TestLiveSessionInputBypassesTurnLockWithoutChangingCheckpoint(t *testing.T) {
+	s := sessionExecutor(t)
+	manifest, err := s.Descriptor("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Capabilities[contract.CapabilitySessionInput] = true
+	manifest.Capabilities[contract.CapabilityLiveInput] = true
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(s.scriptPath("test")+".json", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	handle := createSession(t, s, "")
+	req := ExecuteRequest{Executor: "test", Session: &contract.SessionRequest{Mode: "resume", Handle: handle}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	turn := req
+	turn.Context = ctx
+	turn.Task = "block"
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = s.NewAttempt().Execute(turn) }()
+	defer func() { cancel(); <-done }()
+	marker := filepath.Join(s.WorkerEnv["SESSION_FIXTURE_STATE"], "active")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("turn did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The active turn removed its checkpoint. Steering must neither wait on its
+	// lock nor invent a checkpoint that would imply a successful durable turn.
+	path := s.sessionPath("test", handle.ID)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("active checkpoint: %v", err)
+	}
+	liveCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	req.Context = liveCtx
+	req.Action = "steer"
+	req.SessionInputs = []contract.SessionInput{{Version: "1", RequestID: "id", Message: "new direction"}}
+	result, err := s.NewAttempt().Execute(req)
+	if err != nil || result.Error != "" || len(result.AcknowledgedInputs) != 1 {
+		t.Fatalf("live input: %+v %v", result, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("steering created checkpoint: %v", err)
 	}
 }

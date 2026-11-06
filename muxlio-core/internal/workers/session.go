@@ -53,6 +53,22 @@ func (s *ScriptExecutor) sessionPath(executor, id string) string {
 // Removing the checkpoint before a nonmultiplexed prompt ensures a crashed or
 // cancelled turn cannot later be presented as a known conversation checkpoint.
 func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, error) {
+	if req.Action == "steer" {
+		// The adapter owns the live transport. Never acquire or mutate the turn
+		// checkpoint while delivering an out-of-band message.
+		if req.Session == nil || req.Session.Handle == nil {
+			return ExecuteResult{Error: "steer requires an owned session"}, nil
+		}
+		h := req.Session.Handle
+		owner := s.WorkerID
+		if owner == "" {
+			owner = "local:" + s.SessionEnvironment()
+		}
+		if h.OwnerWorker != owner || h.OwnerEnvironment != s.SessionEnvironment() {
+			return ExecuteResult{Error: "session owner unavailable"}, nil
+		}
+		return s.execute(req)
+	}
 	if req.Session == nil {
 		result, err := s.execute(req)
 		if result.Session != nil {

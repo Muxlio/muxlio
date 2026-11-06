@@ -20,6 +20,8 @@ const WorkerHeartbeatWindow = 90 * time.Second
 
 // dispatchStore is implemented by durable stores that support worker polling.
 type dispatchStore interface {
+	state.SessionQueueStore
+	AssignmentRequest(string) ([]byte, error)
 	CancelAttemptWork(string) error
 	ExpireExecutingAttempt(string, time.Time) (bool, error)
 	ExpireQueuedAttempt(string, time.Time) (bool, error)
@@ -125,6 +127,9 @@ func (c *Coordinator) Heartbeat(workerID string, req WorkerHeartbeat) (WorkerHea
 			if err = c.store.RegisterWorker(w); err != nil {
 				return WorkerHeartbeatResult{}, err
 			}
+			if err := c.acknowledgeLiveInputs(workerID, req.InputReceipts); err != nil {
+				return WorkerHeartbeatResult{}, err
+			}
 			commands, err := c.heartbeatCommands(workerID, req.Active, req.Leases)
 			if err != nil {
 				return WorkerHeartbeatResult{}, err
@@ -154,6 +159,13 @@ func (c *Coordinator) heartbeatCommands(workerID string, active []string, leases
 		if mismatched || a == nil || a.State != "active" || !a.LeaseUntil.After(time.Now()) || a.CoordinatorEpoch != c.epoch {
 			commands = append(commands, map[string]any{"cancel": map[string]any{"assignmentId": assignmentID}})
 			continue
+		}
+		command, err := c.liveInputCommand(a)
+		if err != nil {
+			return nil, err
+		}
+		if command != nil {
+			commands = append(commands, command)
 		}
 		if rs, ok := c.store.(interface {
 			GetRun(string) (*state.Run, error)
@@ -219,7 +231,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}
@@ -246,6 +258,18 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.State != "succeeded" && req.State != "failed" && req.State != "cancelled" {
 		return invalidCompletionError{message: "invalid worker completion state"}
 	}
+	if len(result.AcknowledgedInputs) > 0 {
+		persisted, err := c.assignmentRequest(req.AssignmentID)
+		if err != nil {
+			return err
+		}
+		if persisted == nil || persisted.Session == nil || persisted.Session.Mode != "resume" || persisted.Session.Handle == nil {
+			return invalidCompletionError{message: "input acknowledgment requires a resumed session assignment"}
+		}
+		if err := state.CheckSessionInputAcknowledgments(persisted.SessionInputs, result.AcknowledgedInputs); err != nil {
+			return invalidCompletionError{message: err.Error()}
+		}
+	}
 	// Persist the receipt before publishing a result to the interpreter. Recovery
 	// must never observe the result without the corresponding worker measurement.
 	// The store validates receipt identity even for late or revoked assignments.
@@ -267,6 +291,18 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 		return err
 	}
 	if ok {
+		// The receipt is durable even if Execute's caller disconnected. Publish
+		// session delivery status before acknowledging this completion; retries
+		// repair an interruption between the two writes.
+		if result.Session != nil || len(result.AcknowledgedInputs) > 0 {
+			persisted, err := c.assignmentRequest(req.AssignmentID)
+			if err != nil {
+				return err
+			}
+			if persisted != nil {
+				return c.applySessionInputResult(*persisted, result)
+			}
+		}
 		return nil
 	}
 	if req.State == "cancelled" {
@@ -438,6 +474,31 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	}
 	guarded = workers.PrepareRemoteDispatch(guarded)
 	guarded = workers.StripInlineArtifactBytes(guarded)
+	if guarded.Session != nil && guarded.Session.Mode == "resume" {
+		s := c.store
+		// Reuse the persisted batch on recovery; newly accepted input waits for the
+		// next turn instead of changing an already dispatched attempt.
+		q, queueErr := s.GetSessionQueue(req.RunID, guarded.Session.Handle.ID)
+		if queueErr != nil && !errors.Is(queueErr, state.ErrSessionQueueNotFound) {
+			return workers.ExecuteResult{}, queueErr
+		}
+		if q != nil && !q.Handle.Equal(*guarded.Session.Handle) {
+			return workers.ExecuteResult{}, errors.New("session queue identity conflict")
+		}
+		prior, lookupErr := c.assignmentRequest(req.AttemptID)
+		if lookupErr != nil {
+			return workers.ExecuteResult{}, lookupErr
+		}
+		if prior != nil {
+			guarded.SessionInputs = prior.SessionInputs
+		} else {
+			inputs, inputErr := state.BoundaryInputs(s, req.RunID, guarded.Session.Handle.ID, req.AttemptID)
+			if inputErr != nil && !errors.Is(inputErr, state.ErrSessionQueueNotFound) {
+				return workers.ExecuteResult{}, inputErr
+			}
+			guarded.SessionInputs = inputs
+		}
+	}
 	raw, err := json.Marshal(guarded)
 	if err != nil {
 		return workers.ExecuteResult{}, err
@@ -471,6 +532,18 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 		}
 		var result workers.ExecuteResult
 		err = json.Unmarshal(raw, &result)
+		if err == nil {
+			persisted, lookupErr := c.assignmentRequest(req.AttemptID)
+			if lookupErr != nil {
+				return result, true, lookupErr
+			}
+			if persisted == nil {
+				persisted = &guarded
+			}
+			if inputErr := c.applySessionInputResult(*persisted, result); inputErr != nil {
+				return result, true, inputErr
+			}
+		}
 		if err == nil {
 			var envelope struct {
 				Diagnostic *diagnostic.Diagnostic `json:"diagnostic"`

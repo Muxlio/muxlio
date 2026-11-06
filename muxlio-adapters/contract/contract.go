@@ -64,9 +64,10 @@ type Reconciliation struct {
 }
 
 type Result struct {
-	Session        *SessionHandle  `json:"session,omitempty"`
-	Measurements   *Measurements   `json:"measurements,omitempty"`
-	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
+	AcknowledgedInputs []string        `json:"acknowledgedInputs,omitempty"`
+	Session            *SessionHandle  `json:"session,omitempty"`
+	Measurements       *Measurements   `json:"measurements,omitempty"`
+	Reconciliation     *Reconciliation `json:"reconciliation,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
 	// executor completion. Outputs may retain rejected text for diagnostics.
 	OutputErrors map[string]string `json:"outputErrors,omitempty"`
@@ -119,8 +120,9 @@ type Progress struct {
 // Request starts one invocation. Optional feature requirements are exact
 // capability revisions. Session and remote references must never be emulated.
 type Request struct {
+	SessionInputs        []SessionInput        `json:"sessionInputs,omitempty"`
 	Session              *SessionRequest       `json:"session,omitempty"`
-	Action               string                `json:"action,omitempty"` // empty starts work; reconcile only queries it
+	Action               string                `json:"action,omitempty"` // empty starts work; reconcile queries; steer delivers live input
 	OperationAttemptID   string                `json:"operationAttemptId,omitempty"`
 	Effect               string                `json:"effect,omitempty"`
 	IdempotencyKey       string                `json:"idempotencyKey,omitempty"`
@@ -152,6 +154,9 @@ func (r *Request) Check(m *AdapterManifest) error {
 	if err := r.CheckSession(); err != nil {
 		return err
 	}
+	if err := r.CheckSessionInputs(); err != nil {
+		return err
+	}
 	required := make(map[string]string, len(r.RequiredCapabilities))
 	for name, version := range r.RequiredCapabilities {
 		required[name] = version
@@ -161,8 +166,20 @@ func (r *Request) Check(m *AdapterManifest) error {
 			required[name] = Version
 		}
 	}
-	if r.Action != "" && r.Action != "reconcile" {
+	if r.Action != "" && r.Action != "reconcile" && r.Action != "steer" {
 		return fmt.Errorf("unsupported executor action %q", r.Action)
+	}
+	if len(r.SessionInputs) > 0 {
+		if version, explicit := required[CapabilitySessionInput]; explicit && version != SessionInputVersion {
+			return fmt.Errorf("session input requires capability version %s", SessionInputVersion)
+		}
+		required[CapabilitySessionInput] = SessionInputVersion
+	}
+	if r.Action == "steer" {
+		if version, explicit := required[CapabilityLiveInput]; explicit && version != SessionInputVersion {
+			return fmt.Errorf("live input requires capability version %s", SessionInputVersion)
+		}
+		required[CapabilityLiveInput] = SessionInputVersion
 	}
 	if r.Action == "reconcile" {
 		require(CapabilityReconcile)

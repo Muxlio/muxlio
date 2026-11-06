@@ -24,6 +24,7 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS session_input_queues (run_id TEXT NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL, queue_json BLOB NOT NULL, PRIMARY KEY(run_id, session_id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS exclusive_resources (resource_key TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, activation_id TEXT NOT NULL)`,
 	`PRAGMA journal_mode = WAL`,
 	`PRAGMA busy_timeout = 5000`,
@@ -2048,7 +2049,10 @@ func (s *Store) EnqueueOutbox(id, kind string, payload any) error {
 func (s *Store) ListUnpublishedOutbox(limit int) ([]state.OutboxRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, kind, payload_json, created_at, published_at FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC`
+	// Stored timestamps are UTC RFC3339Nano with variable-width fractions. Strip
+	// the trailing Z for ordering so a fractional prefix sorts before its longer
+	// successor (e.g. .619Z before .619022Z). Break equal timestamps by insertion.
+	query := `SELECT id, kind, payload_json, created_at, published_at FROM outbox WHERE published_at IS NULL ORDER BY rtrim(created_at, 'Z') ASC, rowid ASC`
 	var rows *sql.Rows
 	var err error
 	if limit > 0 {

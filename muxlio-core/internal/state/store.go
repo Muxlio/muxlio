@@ -22,6 +22,7 @@ type WorkflowVersionSummary struct {
 // Memory and SQLite implementations share this contract so a run can
 // continue after the process that created it has exited.
 type Store interface {
+	SessionQueueStore
 	CreateRun(run *Run) error
 	GetRun(id string) (*Run, error)
 	SetRunState(id, state string) error

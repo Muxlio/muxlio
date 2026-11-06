@@ -38,7 +38,15 @@ type remoteRegistrationResult struct {
 	CoordinatorEpoch int64 `json:"coordinatorEpoch"`
 	HeartbeatSeconds int   `json:"heartbeatSeconds"`
 }
+type remoteInputReceipt struct {
+	AssignmentID       string   `json:"assignmentId"`
+	Generation         int64    `json:"generation"`
+	CoordinatorEpoch   int64    `json:"coordinatorEpoch"`
+	AcknowledgedInputs []string `json:"acknowledgedInputs"`
+}
+
 type remoteHeartbeat struct {
+	InputReceipts   []remoteInputReceipt    `json:"inputReceipts,omitempty"`
 	Leases          []state.AssignmentLease `json:"leases,omitempty"`
 	Draining        bool                    `json:"draining,omitempty"`
 	InstanceID      string                  `json:"instanceId,omitempty"`
@@ -69,6 +77,7 @@ type remoteError struct {
 	Retryable  bool                   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
+	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
 	AssignmentID        string                        `json:"assignmentId"`
 	RunID               string                        `json:"runId"`
 	ActivationID        string                        `json:"activationId"`
@@ -261,10 +270,11 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	}
 
 	type attempt struct {
-		assignment remoteAssignment
-		cancel     context.CancelFunc
-		revoked    bool
-		leaseUntil time.Time
+		inputContext context.Context
+		assignment   remoteAssignment
+		cancel       context.CancelFunc
+		revoked      bool
+		leaseUntil   time.Time
 	}
 	type execution struct {
 		id      string
@@ -283,6 +293,13 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		err        error
 	}
 	active := make(map[string]*attempt)
+	type inputResult struct {
+		id      string
+		receipt remoteInputReceipt
+	}
+	inputResults := make(chan inputResult, cfg.Capacity)
+	inputBusy := make(map[string]bool)
+	pendingInputReceipts := []remoteInputReceipt{}
 	done := make(chan execution, cfg.Capacity)
 	receipts := make(chan receipt, cfg.Capacity)
 	polled := make(chan pollResult, 1)
@@ -404,7 +421,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 
 		leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)
-		active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: execCancel, leaseUntil: leaseUntil}
+		active[assignment.AssignmentID] = &attempt{inputContext: execCtx, assignment: assignment, cancel: execCancel, leaseUntil: leaseUntil}
 		children.Add(1)
 		go func() {
 			defer children.Done()
@@ -426,12 +443,13 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		return nil
 	}
 	type heartbeatResult struct {
-		leases   []state.AssignmentLease
-		sentAt   time.Time
-		draining bool
-		response remoteHeartbeatResult
-		status   int
-		err      error
+		inputReceiptCount int
+		leases            []state.AssignmentLease
+		sentAt            time.Time
+		draining          bool
+		response          remoteHeartbeatResult
+		status            int
+		err               error
 	}
 	heartbeats := make(chan heartbeatResult, 1)
 	heartbeating := false
@@ -454,7 +472,8 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 		// Capture the snapshot before starting I/O; only the supervisor owns active.
 		capacity := limit
-		body := remoteHeartbeat{InstanceID: registration.InstanceID, ProtocolVersion: remoteProtocolVersion, Active: ids, Leases: leases, Capacity: &capacity, AvailableSlots: slots, Draining: draining}
+		receiptSnapshot := append([]remoteInputReceipt(nil), pendingInputReceipts...)
+		body := remoteHeartbeat{InputReceipts: receiptSnapshot, InstanceID: registration.InstanceID, ProtocolVersion: remoteProtocolVersion, Active: ids, Leases: leases, Capacity: &capacity, AvailableSlots: slots, Draining: draining}
 		sentAt := time.Now()
 		children.Add(1)
 		go func() {
@@ -466,7 +485,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
 			}
 			select {
-			case heartbeats <- heartbeatResult{response: hb, status: status, err: err, leases: leases, sentAt: sentAt, draining: body.Draining}:
+			case heartbeats <- heartbeatResult{inputReceiptCount: len(receiptSnapshot), response: hb, status: status, err: err, leases: leases, sentAt: sentAt, draining: body.Draining}:
 			case <-ctx.Done():
 			}
 		}()
@@ -489,7 +508,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			heartbeat()
 		}
 		updateLimit()
-		if draining && drainReported && len(active) == 0 && !polling && !heartbeating {
+		if draining && drainReported && len(active) == 0 && len(inputBusy) == 0 && len(pendingInputReceipts) == 0 && !polling && !heartbeating {
 			return nil
 		}
 		if pollReady && !polling && len(active) < limit {
@@ -524,6 +543,11 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			drain = nil
 			draining = true
 			heartbeat()
+		case delivered := <-inputResults:
+			delete(inputBusy, delivered.id)
+			if len(delivered.receipt.AcknowledgedInputs) > 0 {
+				pendingInputReceipts = append(pendingInputReceipts, delivered.receipt)
+			}
 		case h := <-heartbeats:
 			heartbeating = false
 			if h.err != nil {
@@ -531,6 +555,64 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 					return h.err
 				}
 				continue
+			}
+			pendingInputReceipts = pendingInputReceipts[h.inputReceiptCount:]
+			for _, raw := range h.response.Commands {
+				var command struct {
+					SessionInput *struct {
+						AssignmentID string                  `json:"assignmentId"`
+						Inputs       []contract.SessionInput `json:"inputs"`
+					} `json:"sessionInput"`
+				}
+				if json.Unmarshal(raw, &command) != nil || command.SessionInput == nil {
+					continue
+				}
+				id := command.SessionInput.AssignmentID
+				child := active[id]
+				if child == nil || child.revoked || inputBusy[id] || child.inputContext == nil || remoteHeartbeatRevokesAssignment(id, child.assignment.CoordinatorEpoch, h.response) {
+					continue
+				}
+				var req ExecuteRequest
+				if json.Unmarshal(child.assignment.Request, &req) != nil || req.Session == nil || req.Session.Mode != "resume" {
+					continue
+				}
+				req.Action, req.SessionInputs, req.Context = "steer", command.SessionInput.Inputs, child.inputContext
+				req.Task, req.Outputs = "", nil
+				req.RunID, req.ActivationID, req.AttemptID = child.assignment.RunID, child.assignment.ActivationID, child.assignment.AttemptID
+				req.resourcesAdmitted = true
+				inner := executor
+				if cfg.ExecutorFactory != nil {
+					inner = cfg.ExecutorFactory()
+				} else if factory, ok := executor.(interface{ NewAttempt() Executor }); ok {
+					inner = factory.NewAttempt()
+				}
+				if inner == nil {
+					continue
+				}
+				inputBusy[id] = true
+				assignment := child.assignment
+				children.Add(1)
+				go func() {
+					defer children.Done()
+					receipt := remoteInputReceipt{AssignmentID: assignment.AssignmentID, Generation: assignment.Generation, CoordinatorEpoch: assignment.CoordinatorEpoch}
+					result, err := inner.Execute(req)
+					if err == nil {
+						// Receipts must name only input offered in this delivery.
+						allowed := map[string]bool{}
+						for _, input := range req.SessionInputs {
+							allowed[input.RequestID] = true
+						}
+						for _, ack := range result.AcknowledgedInputs {
+							if allowed[ack] {
+								receipt.AcknowledgedInputs = append(receipt.AcknowledgedInputs, ack)
+							}
+						}
+					}
+					select {
+					case inputResults <- inputResult{id, receipt}:
+					case <-ctx.Done():
+					}
+				}()
 			}
 			if h.draining {
 				drainReported = true
@@ -590,7 +672,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
 				result.Reconciliation = &reconciliation
 			}
-			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

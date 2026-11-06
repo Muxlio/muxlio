@@ -46,6 +46,7 @@ type WorkerRegistrationResult struct {
 }
 
 type WorkerHeartbeat struct {
+	InputReceipts   []liveInputReceipt      `json:"inputReceipts,omitempty"`
 	Leases          []state.AssignmentLease `json:"leases,omitempty"`
 	Draining        bool                    `json:"draining,omitempty"`
 	InstanceID      string                  `json:"instanceId,omitempty"`
@@ -74,6 +75,7 @@ type WorkerAssignment struct {
 }
 
 type WorkerCompletion struct {
+	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
 	AssignmentID        string                        `json:"assignmentId"`
 	RunID               string                        `json:"runId"`
 	ActivationID        string                        `json:"activationId"`

@@ -15,6 +15,7 @@ var _ Store = (*Memory)(nil)
 
 // Memory is the in-memory Store used when no data directory is configured.
 type Memory struct {
+	sessionQueues    map[string]*SessionQueue
 	workflowVersions map[string][]byte
 	mu               sync.RWMutex
 	runs             map[string]*Run
@@ -35,6 +36,7 @@ type Memory struct {
 func New() *Memory {
 	return &Memory{
 		workflowVersions: make(map[string][]byte),
+		sessionQueues:    make(map[string]*SessionQueue),
 		runs:             make(map[string]*Run),
 		activations:      make(map[string]*Activation),
 		events:           make(map[string][]Event),
