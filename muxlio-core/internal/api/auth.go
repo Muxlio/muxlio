@@ -1,11 +1,65 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 )
+
+// Caller is the authenticated identity propagated to handlers via request
+// context. IsAdmin denotes the coordinator control-plane credential or a
+// trusted loopback caller, which is authorized for every operation. A scoped
+// AccessGrant sets Permissions to its granted scope; handlers enforce any
+// additional permissions required by the resource (e.g. an input request).
+type Caller struct {
+	ID          string
+	IsAdmin     bool
+	Permissions []string
+}
+
+// HasPermission reports whether the caller holds the given permission. Admin
+// callers hold every permission.
+func (c Caller) HasPermission(p string) bool {
+	if c.IsAdmin {
+		return true
+	}
+	for _, perm := range c.Permissions {
+		if perm == p {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAllPermissions reports whether the caller holds every permission in the
+// list. An empty list is satisfied by any caller. Admin callers always pass.
+func (c Caller) HasAllPermissions(perms []string) bool {
+	for _, p := range perms {
+		if !c.HasPermission(p) {
+			return false
+		}
+	}
+	return true
+}
+
+type callerContextKey struct{}
+
+// CallerFromRequest returns the authenticated Caller, or a zero-value Caller
+// (no permissions, not admin) when no caller was attached.
+func CallerFromRequest(r *http.Request) Caller {
+	if c, ok := r.Context().Value(callerContextKey{}).(Caller); ok {
+		return c
+	}
+	return Caller{}
+}
+
+func withCaller(r *http.Request, c Caller) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), callerContextKey{}, c))
+}
 
 // WithAuth wraps handler to validate Bearer tokens for /v1/* routes.
 // clientToken authorizes the control plane; workerToken authorizes worker
@@ -20,11 +74,12 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 			return
 		}
 		tok := bearerCredential(r)
+		identity := fmt.Sprintf("credential:%x", sha256.Sum256([]byte(tok)))
 		loopback := requestFromLoopback(r)
 		for _, grant := range grants {
 			if tokenMatches(tok, grant.Token) {
 				if grant.authorize(r) {
-					handler.ServeHTTP(w, r)
+					handler.ServeHTTP(w, withCaller(r, Caller{ID: identity, Permissions: grant.Permissions}))
 				} else {
 					writeError(w, http.StatusForbidden, CodeUnauthorized, "credential does not authorize this resource or operation")
 				}
@@ -32,23 +87,23 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 			}
 		}
 		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback {
-			handler.ServeHTTP(w, r)
+			handler.ServeHTTP(w, withCaller(r, Caller{ID: "local-operator", IsAdmin: true}))
 			return
 		}
 		switch {
 		case isWorkerProtocolPath(r.URL.Path, r.Method):
 			if authorizeWorkerProtocol(tok, clientToken, workerToken, loopback) {
-				handler.ServeHTTP(w, r)
+				handler.ServeHTTP(w, withCaller(r, Caller{IsAdmin: loopback && tokenMatches(tok, clientToken)}))
 				return
 			}
 		case strings.HasPrefix(r.URL.Path, "/v1/artifacts/"):
 			if authorizeArtifacts(tok, clientToken, workerToken, r.Method, r.URL.Path) {
-				handler.ServeHTTP(w, r)
+				handler.ServeHTTP(w, withCaller(r, Caller{IsAdmin: tokenMatches(tok, clientToken)}))
 				return
 			}
 		default:
 			if tokenMatches(tok, clientToken) {
-				handler.ServeHTTP(w, r)
+				handler.ServeHTTP(w, withCaller(r, Caller{ID: identity, IsAdmin: true}))
 				return
 			}
 			if workerToken != "" && tokenMatches(tok, workerToken) {

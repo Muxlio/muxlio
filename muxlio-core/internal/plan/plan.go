@@ -170,14 +170,33 @@ type Node struct {
 
 	// --- wait ---
 
-	// WaitFor selects the wait condition type: "timer" or "signal".
+	// WaitFor selects the wait condition type: "timer", "signal", or "input".
 	WaitFor string `json:"waitFor,omitempty"`
 
 	// TimerSeconds is the duration in seconds for a timer wait.
 	TimerSeconds *float64 `json:"timerSeconds,omitempty"`
 
-	// SignalName is the name of the signal to wait for.
+	// SignalName is the name of the signal to wait for. For waitFor="input" it
+	// names the input request, which carries a stable request ID, optional
+	// response schema, expiration and required permissions.
 	SignalName string `json:"signalName,omitempty"`
+
+	// --- input request (waitFor="input") ---
+
+	// RequestSchema is an optional JSON Schema validating responses submitted to
+	// an input request. Malformed responses that fail validation are rejected
+	// before they are accepted.
+	RequestSchema json.RawMessage `json:"requestSchema,omitempty"`
+
+	// RequestExpiresSeconds is the optional lifetime of an input request in
+	// seconds. When it elapses without a response the request expires and the
+	// wait fails. Zero means no expiration.
+	RequestExpiresSeconds *float64 `json:"requestExpiresSeconds,omitempty"`
+
+	// RequestPermissions lists the permissions an authenticated responder must
+	// hold to submit a response. A caller missing any listed permission is
+	// rejected. Empty means any authorized caller may respond.
+	RequestPermissions []string `json:"requestPermissions,omitempty"`
 }
 
 // OutputDecl declares a named output port and its file contract.

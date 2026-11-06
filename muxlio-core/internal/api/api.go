@@ -280,6 +280,11 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			return
 		}
 
+		if len(parts) >= 2 && parts[1] == "input-requests" {
+			handleInputRequests(w, r, store, runID, parts[2:])
+			return
+		}
+
 		// POST /v1/runs/:id/signals/:name
 		if len(parts) == 3 && parts[1] == "signals" {
 			signalName := parts[2]
@@ -734,7 +739,16 @@ func handleGetLogs(w http.ResponseWriter, r *http.Request, store state.Store, ru
 func handleSendSignal(w http.ResponseWriter, r *http.Request, store state.Store, runID, name string) {
 	var payload map[string]any
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&payload)
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+		if err := dec.Decode(&payload); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, "signal payload must be a JSON object")
+			return
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, "expected one JSON object")
+			return
+		}
 	}
 	ikey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if err := store.SendSignal(runID, name, payload, ikey); err != nil {

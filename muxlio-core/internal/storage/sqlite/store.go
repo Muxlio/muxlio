@@ -80,6 +80,8 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS timers (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL DEFAULT '', due_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', payload_json TEXT, FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_timers_due ON timers(state, due_at)`,
 	`CREATE TABLE IF NOT EXISTS signals (run_id TEXT NOT NULL, name TEXT NOT NULL, seq INTEGER NOT NULL, payload_json TEXT, timestamp TEXT NOT NULL, PRIMARY KEY(run_id,name,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS input_requests (run_id TEXT NOT NULL, request_id TEXT NOT NULL, activation_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, schema_json TEXT, expires_at TEXT, permissions_json TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'pending', response_json TEXT, responder_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, fulfilled_at TEXT, idempotency_key TEXT NOT NULL DEFAULT '', PRIMARY KEY(run_id, request_id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE INDEX IF NOT EXISTS idx_input_requests_run ON input_requests(run_id, state)`,
 	`CREATE TABLE IF NOT EXISTS log_chunks (run_id TEXT NOT NULL, activation_id TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, timestamp TEXT NOT NULL, PRIMARY KEY(activation_id,stream,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', usage_json TEXT, execution_duration_ms INTEGER, FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS worker_execution_timings (attempt_id TEXT NOT NULL, assignment_id TEXT NOT NULL, generation INTEGER NOT NULL, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, worker_id TEXT NOT NULL, duration_ms INTEGER CHECK(duration_ms>=0), PRIMARY KEY(attempt_id,assignment_id,generation))`,
@@ -810,7 +812,174 @@ func (s *Store) ConsumeSignals(runID, name string) ([]state.Signal, error) {
 	return sigs, rows.Err()
 }
 
-// GetLogChunks returns all log chunks for a given activation.
+// --- input requests ---
+
+func scanInputRequest(row interface {
+	Scan(dest ...any) error
+}) (state.InputRequest, error) {
+	var req state.InputRequest
+	var createdAt string
+	var schema, response, permissions, expiresAt, fulfilledAt sql.NullString
+	if err := row.Scan(&req.RunID, &req.RequestID, &req.ActivationID, &req.Name, &schema, &expiresAt, &permissions, &req.State, &response, &req.ResponderID, &createdAt, &fulfilledAt, &req.IdempotencyKey); err != nil {
+		return req, err
+	}
+	var err error
+	req.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return req, err
+	}
+	if schema.Valid {
+		req.Schema = json.RawMessage(schema.String)
+	}
+	if expiresAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, expiresAt.String); err == nil {
+			req.ExpiresAt = &t
+		}
+	}
+	if permissions.Valid && permissions.String != "" {
+		_ = json.Unmarshal([]byte(permissions.String), &req.Permissions)
+	}
+	if response.Valid && response.String != "" {
+		decoder := json.NewDecoder(strings.NewReader(response.String))
+		decoder.UseNumber()
+		if err := decoder.Decode(&req.Response); err != nil {
+			return req, err
+		}
+	}
+	if fulfilledAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, fulfilledAt.String); err == nil {
+			req.FulfilledAt = &t
+		}
+	}
+	return req, nil
+}
+
+// CreateInputRequest is idempotent: recreating a request for an existing run
+// and request ID is a no-op (INSERT OR IGNORE), so run retries preserve an
+// already-accepted response.
+func (s *Store) CreateInputRequest(req *state.InputRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.State == "" {
+		req.State = state.InputRequestPending
+	}
+	if req.CreatedAt.IsZero() {
+		req.CreatedAt = time.Now()
+	}
+	permJSON, _ := json.Marshal(req.Permissions)
+	var expiresAt any
+	if req.ExpiresAt != nil {
+		expiresAt = rfc3339(*req.ExpiresAt)
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,response_json,responder_id,created_at,fulfilled_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+		req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permJSON), req.State, nullableJSON(nil), req.ResponderID, rfc3339(req.CreatedAt), req.IdempotencyKey)
+	return err
+}
+
+func nullableJSON(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return string(raw)
+}
+
+func (s *Store) GetInputRequest(runID, requestID string) (*state.InputRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? AND request_id=?`, runID, requestID)
+	req, err := scanInputRequest(row)
+	if err != nil {
+		return nil, fmt.Errorf("muxlio: input request %q not found for run %q: %w", requestID, runID, err)
+	}
+	return &req, nil
+}
+
+func (s *Store) ListInputRequests(runID string) ([]state.InputRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? ORDER BY created_at, request_id`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []state.InputRequest
+	for rows.Next() {
+		req, err := scanInputRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, req)
+	}
+	return result, rows.Err()
+}
+
+// SubmitInputResponse delivers a response at most once. The first submission
+// with a given idempotency key fulfills the request; a second call with the
+// same key returns the already-accepted request (accepted=false). A request
+// already fulfilled with a different key, or expired/cancelled, is rejected.
+func (s *Store) SubmitInputResponse(runID, requestID string, response any, responderID, idempotencyKey string) (*state.InputRequest, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRow(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? AND request_id=?`, runID, requestID)
+	req, err := scanInputRequest(row)
+	if err != nil {
+		return nil, false, fmt.Errorf("muxlio: input request %q not found for run %q: %w", requestID, runID, err)
+	}
+	if req.State == state.InputRequestFulfilled {
+		if idempotencyKey != "" && req.IdempotencyKey == idempotencyKey {
+			return &req, false, nil // idempotent replay
+		}
+		return nil, false, state.ErrInputRequestNotAccepting
+	}
+	if req.State == state.InputRequestPending && req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
+		if _, err := s.db.Exec(`UPDATE input_requests SET state='expired' WHERE run_id=? AND request_id=? AND state='pending'`, runID, requestID); err != nil {
+			return nil, false, err
+		}
+		req.State = state.InputRequestExpired
+	}
+	if req.State != state.InputRequestPending {
+		return nil, false, state.ErrInputRequestNotAccepting
+	}
+	respJSON, err := json.Marshal(response)
+	if err != nil {
+		return nil, false, err
+	}
+	now := time.Now()
+	res, err := s.db.Exec(`UPDATE input_requests SET state='fulfilled', response_json=?, responder_id=?, fulfilled_at=?, idempotency_key=? WHERE run_id=? AND request_id=? AND state='pending' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))`,
+		string(respJSON), responderID, rfc3339(now), idempotencyKey, runID, requestID, rfc3339(now))
+	if err != nil {
+		return nil, false, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return nil, false, err
+	} else if n != 1 {
+		current, err := scanInputRequest(s.db.QueryRow(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? AND request_id=?`, runID, requestID))
+		if err != nil {
+			return nil, false, err
+		}
+		if current.State == state.InputRequestFulfilled && idempotencyKey != "" && current.IdempotencyKey == idempotencyKey {
+			return &current, false, nil
+		}
+		return nil, false, state.ErrInputRequestNotAccepting
+	}
+	req.State = state.InputRequestFulfilled
+	req.Response = response
+	req.ResponderID = responderID
+	req.IdempotencyKey = idempotencyKey
+	req.FulfilledAt = &now
+	return &req, true, nil
+}
+
+func (s *Store) ExpireInputRequests(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec(`UPDATE input_requests SET state='expired' WHERE state='pending' AND expires_at IS NOT NULL AND julianday(expires_at) <= julianday(?)`, rfc3339(now))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
 func (s *Store) GetLogChunks(runID, activationID string) ([]state.LogChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -901,6 +1070,9 @@ func (s *Store) CancelRunWork(runID string) error {
 		}
 	}
 	if _, err := tx.Exec(`UPDATE timers SET state='cancelled' WHERE run_id=? AND state='pending'`, runID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE input_requests SET state='cancelled' WHERE run_id=? AND state='pending'`, runID); err != nil {
 		return err
 	}
 	return tx.Commit()

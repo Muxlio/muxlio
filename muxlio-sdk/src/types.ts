@@ -125,6 +125,15 @@ export interface Node extends ExecutorRequirements {
   onExhausted?: 'pause' | 'fail';
 
   // retry
+
+  // Durable waits. Input requests return the accepted JSON value on `response`.
+  waitFor?: 'timer' | 'signal' | 'input';
+  timerSeconds?: number;
+  signalName?: string;
+  requestSchema?: JSONSchema;
+  requestExpiresSeconds?: number;
+  requestPermissions?: string[];
+
   timeoutSeconds?: number;
   queueTimeoutSeconds?: number;
   retry?: RetryPolicy;

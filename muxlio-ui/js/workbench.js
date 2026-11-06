@@ -216,6 +216,7 @@ function renderWorkbench(r,g,events){
   activationData=acts;
   wbCurrentRun=r.id;
   wbCurrentRunState=r.state;
+  if(typeof refreshInputRequests==='function')refreshInputRequests(r.id);
 
   $('#workbenchView').hidden=false;
   $('#runDetail').hidden=true;

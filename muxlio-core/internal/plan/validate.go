@@ -387,12 +387,12 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 		// join is validated through input bindings; nothing extra needed.
 
 	case KindWait:
-		if node.WaitFor != "" && node.WaitFor != "timer" && node.WaitFor != "signal" {
+		if node.WaitFor != "" && node.WaitFor != "timer" && node.WaitFor != "signal" && node.WaitFor != "input" {
 			errs = append(errs, ValidationError{
 				Code: "MUXLIO_UNKNOWN_WAIT_TYPE", Severity: "error", Phase: "plan",
 				Subgraph: sgName, NodeID: node.ID,
 				Message: fmt.Sprintf("wait node %q has unknown waitFor %q", node.ID, node.WaitFor),
-				Fix:     "Set waitFor to \"timer\" or \"signal\", or leave empty for a pass-through wait.",
+				Fix:     "Set waitFor to \"timer\", \"signal\", or \"input\", or leave empty for a pass-through wait.",
 			})
 		}
 		if node.WaitFor == "timer" && node.TimerSeconds == nil {
@@ -403,13 +403,23 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 				Fix:     "Set timerSeconds to the number of seconds to wait.",
 			})
 		}
-		if node.WaitFor == "signal" && node.SignalName == "" {
+		if (node.WaitFor == "signal" || node.WaitFor == "input") && node.SignalName == "" {
 			errs = append(errs, ValidationError{
 				Code: "MUXLIO_MISSING_SIGNAL_NAME", Severity: "error", Phase: "plan",
 				Subgraph: sgName, NodeID: node.ID,
-				Message: fmt.Sprintf("wait node %q has waitFor=signal but no signalName", node.ID),
-				Fix:     "Set signalName to the signal the node should wait for.",
+				Message: fmt.Sprintf("wait node %q has waitFor=%q but no signalName", node.ID, node.WaitFor),
+				Fix:     fmt.Sprintf("Set signalName to the %s the node should wait for.", node.WaitFor),
 			})
+		}
+		if node.WaitFor == "input" {
+			if !validDuration(node.RequestExpiresSeconds) {
+				errs = append(errs, ValidationError{Code: "MUXLIO_BAD_TIMEOUT", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: "requestExpiresSeconds must be finite, nonnegative and fit a duration"})
+			}
+			if len(node.RequestSchema) > 0 {
+				if failure, ok := ValidateInputResponse(node.RequestSchema, nil).(*ValueValidationFailure); ok && failure.Code == InvalidSchema {
+					errs = append(errs, ValidationError{Code: InvalidSchema, Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: failure.Message, Fix: "Set requestSchema to a valid, self-contained JSON Schema or omit it."})
+				}
+			}
 		}
 
 	case KindChild:

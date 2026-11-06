@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/muxlio/muxlio-adapters/contract"
+	"sort"
 	"sync"
 	"time"
 )
@@ -23,6 +24,7 @@ type Memory struct {
 	timers           []*Timer
 	signals          []*Signal
 	signalSeq        map[string]int
+	inputRequests    map[string]*InputRequest // keyed by runID + "\x00" + requestID
 	logChunks        []LogChunk
 	assignments      map[string]*Assignment
 	attempts         []ExecutionAttempt
@@ -38,6 +40,7 @@ func New() *Memory {
 		events:           make(map[string][]Event),
 		eventSeq:         make(map[string]int),
 		signalSeq:        make(map[string]int),
+		inputRequests:    make(map[string]*InputRequest),
 		assignments:      make(map[string]*Assignment),
 	}
 }
@@ -457,6 +460,122 @@ func (s *Memory) ConsumeSignals(runID, name string) ([]Signal, error) {
 	return consumed, nil
 }
 
+// --- input requests ---
+
+func inputRequestKey(runID, requestID string) string { return runID + "\x00" + requestID }
+
+// CreateInputRequest is idempotent: recreating a request for an existing run
+// and request ID is a no-op, so run retries never clobber an accepted response.
+func (s *Memory) CreateInputRequest(req *InputRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := inputRequestKey(req.RunID, req.RequestID)
+	if _, ok := s.inputRequests[key]; ok {
+		return nil
+	}
+	if req.State == "" {
+		req.State = InputRequestPending
+	}
+	if req.CreatedAt.IsZero() {
+		req.CreatedAt = time.Now()
+	}
+	clone := cloneInputRequest(req)
+	s.inputRequests[key] = &clone
+	return nil
+}
+
+func (s *Memory) GetInputRequest(runID, requestID string) (*InputRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	req, ok := s.inputRequests[inputRequestKey(runID, requestID)]
+	if !ok {
+		return nil, fmt.Errorf("muxlio: input request %q not found for run %q", requestID, runID)
+	}
+	clone := cloneInputRequest(req)
+	return &clone, nil
+}
+
+func (s *Memory) ListInputRequests(runID string) ([]InputRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []InputRequest
+	for _, req := range s.inputRequests {
+		if req.RunID == runID {
+			clone := cloneInputRequest(req)
+			result = append(result, clone)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].RequestID < result[j].RequestID
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+	return result, nil
+}
+
+// SubmitInputResponse delivers a response at most once. The first submission
+// with a given idempotency key fulfills the request; a second call with the
+// same key returns the already-accepted request (accepted=false). A request
+// already fulfilled with a different key, or expired/cancelled, is rejected.
+func (s *Memory) SubmitInputResponse(runID, requestID string, response any, responderID, idempotencyKey string) (*InputRequest, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req, ok := s.inputRequests[inputRequestKey(runID, requestID)]
+	if !ok {
+		return nil, false, fmt.Errorf("muxlio: input request %q not found for run %q", requestID, runID)
+	}
+	if req.State == InputRequestFulfilled {
+		if idempotencyKey != "" && req.IdempotencyKey == idempotencyKey {
+			clone := cloneInputRequest(req)
+			return &clone, false, nil // idempotent replay
+		}
+		return nil, false, ErrInputRequestNotAccepting
+	}
+	if req.State == InputRequestPending && req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
+		req.State = InputRequestExpired
+	}
+	if req.State != InputRequestPending {
+		return nil, false, ErrInputRequestNotAccepting
+	}
+	now := time.Now()
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return nil, false, err
+	}
+	req.State = InputRequestFulfilled
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	_ = decoder.Decode(&req.Response)
+	req.ResponderID = responderID
+	req.IdempotencyKey = idempotencyKey
+	req.FulfilledAt = &now
+	clone := cloneInputRequest(req)
+	return &clone, true, nil
+}
+
+func cloneInputRequest(req *InputRequest) InputRequest {
+	raw, _ := json.Marshal(req)
+	var clone InputRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	_ = decoder.Decode(&clone)
+	return clone
+}
+
+func (s *Memory) ExpireInputRequests(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	for _, req := range s.inputRequests {
+		if req.State == InputRequestPending && req.ExpiresAt != nil && !req.ExpiresAt.After(now) {
+			req.State = InputRequestExpired
+			n++
+		}
+	}
+	return n, nil
+}
+
 // --- chunked logs ---
 
 func (s *Memory) AppendLogChunk(c LogChunk) error {
@@ -543,6 +662,11 @@ func (s *Memory) ListAssignments(runID string) ([]Assignment, error) {
 func (s *Memory) CancelRunWork(runID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, req := range s.inputRequests {
+		if req.RunID == runID && req.State == InputRequestPending {
+			req.State = InputRequestCancelled
+		}
+	}
 	for _, assignment := range s.assignments {
 		if assignment.RunID == runID && (assignment.State == "active" || assignment.State == "uncertain") {
 			assignment.State = "cancelled"

@@ -13,7 +13,23 @@ const (
 	InputValidationFailed  = "MUXLIO_INPUT_VALIDATION_FAILED"
 	OutputValidationFailed = "MUXLIO_OUTPUT_VALIDATION_FAILED"
 	InvalidSchema          = "MUXLIO_INVALID_SCHEMA"
+	// InputResponseValidationFailed is the code for a malformed input-request
+	// response that does not conform to the request's declared JSON Schema.
+	InputResponseValidationFailed = "MUXLIO_INPUT_RESPONSE_VALIDATION_FAILED"
 )
+
+// ValidateInputResponse validates a submitted response against an input
+// request's optional JSON Schema. A nil or empty schema accepts any JSON
+// value. The validation is generic (shared contract) and not provider
+// specific, so it lives in the coordinator's plan package rather than in an
+// adapter. Returns a *ValueValidationFailure describing the mismatch when the
+// response is malformed.
+func ValidateInputResponse(schema json.RawMessage, response any) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	return validateJSONValue(response, schema, "response", InputResponseValidationFailed)
+}
 
 // ValueValidationFailure carries the declared contract and the rejected JSON value.
 type ValueValidationFailure = state.ValueValidationFailure

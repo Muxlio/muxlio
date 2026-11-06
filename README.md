@@ -506,3 +506,60 @@ Runtime layout under `~/.muxlio`: `data/coordinator.db` (SQLite), `logs/` (inclu
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
+## Durable input requests
+
+A `wait` node with `waitFor: "input"` asks an authenticated human or agent for
+information. Approvals use the same contract as other input. The coordinator
+persists the request and enters `waiting` without dispatching a worker or holding
+a worker slot. Restarting the coordinator resumes the same request.
+
+```json
+{
+  "id": "review",
+  "kind": "wait",
+  "waitFor": "input",
+  "signalName": "release-review",
+  "requestSchema": {
+    "type": "object",
+    "required": ["approved"],
+    "properties": {"approved": {"type": "boolean"}},
+    "additionalProperties": false
+  },
+  "requestExpiresSeconds": 3600,
+  "requestPermissions": ["release:review"]
+}
+```
+
+`requestSchema`, expiration and permissions are optional. Schemas must be
+self-contained JSON Schema; remote references are disabled. Responses may be any
+JSON value matching the schema. Zero or omitted expiration has no deadline.
+An expired request fails the wait. A successful wait exposes the accepted value
+on its `response` output port. Request IDs derive from activation identity, so
+parallel map items with the same name remain individually addressable.
+
+Use `GET /v1/runs/:runId/input-requests` to discover IDs, schemas, deadlines,
+permissions and states. Submit a JSON response as the body of
+`POST /v1/runs/:runId/input-requests/:requestId`, with an `Idempotency-Key` header.
+Scoped credentials need `inputs` on that run plus **every** permission declared
+by the request; listing accepts `read` or `inputs`. Operator credentials can
+respond to all requests. The authenticated credential identity is recorded with
+the accepted response; clients cannot choose the responder identity.
+
+Delivery has at-most-once acceptance per request: the first response wins.
+Retrying with the same nonempty key returns the original response and
+`accepted: false`, without consuming another response, even after a restart.
+A different key after fulfillment, an expired request, or a cancelled request
+returns HTTP 409. Malformed JSON returns 400, schema mismatches 422, and missing
+permissions 403. Retrying a response still requires authorization and valid JSON
+matching the schema. Name-based signals cannot fulfill input requests.
+
+```sh
+muxlio signal RUN_ID --list-requests
+muxlio signal RUN_ID --request-id REQUEST_ID --idempotency-key DELIVERY_ID --data '{"approved":true}'
+```
+
+MCP exposes `get_input_requests` and `respond_input_request` (arguments:
+`runId`, `requestId`, `idempotencyKey`, `response`). The run workbench displays
+each request with schema-driven controls and a JSON editor for complex schemas.
+Existing `waitFor: "signal"` waits retain name-based delivery; CLI
+`--idempotency-key` and MCP `send_signal.idempotencyKey` deduplicate retries.

@@ -423,9 +423,20 @@ var tools = []toolDef{
 					"description": "Optional JSON payload for the signal. Use {} for a bare signal.",
 					"type":        "object",
 				},
+				"idempotencyKey": map[string]any{"type": "string", "description": "Optional delivery key; reuse on retries to avoid duplicate consumption."},
 			},
 			"required": []string{"runId", "signalName"},
 		},
+	},
+	{
+		Name:        "get_input_requests",
+		Description: "List durable input requests, including distinct request IDs, response schemas, permissions, deadlines and states.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"runId": map[string]any{"type": "string"}}, "required": []string{"runId"}},
+	},
+	{
+		Name:        "respond_input_request",
+		Description: "Respond to one durable input request. Reuse the idempotency key on retry: the accepted response is applied at most once. Required permissions and JSON Schema are enforced by the coordinator.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"runId": map[string]any{"type": "string"}, "requestId": map[string]any{"type": "string"}, "idempotencyKey": map[string]any{"type": "string"}, "response": map[string]any{}}, "required": []string{"runId", "requestId", "idempotencyKey", "response"}},
 	},
 	{
 		Name:        "get_workers",
@@ -489,7 +500,7 @@ func (c *apiClient) get(path string, query url.Values) (*apiResponse, error) {
 	return c.do(req)
 }
 
-func (c *apiClient) post(path string, body any) (*apiResponse, error) {
+func (c *apiClient) post(path string, body any, keys ...string) (*apiResponse, error) {
 	var r io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -503,6 +514,9 @@ func (c *apiClient) post(path string, body any) (*apiResponse, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if len(keys) > 0 {
+		req.Header.Set("Idempotency-Key", keys[0])
+	}
 	return c.do(req)
 }
 
@@ -621,6 +635,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolControlRun(args, "resume")
 	case "send_signal":
 		return s.toolSendSignal(args)
+	case "get_input_requests", "respond_input_request":
+		return s.toolInputRequest(name, args)
 	case "get_workers":
 		return s.toolGetWorkers()
 	case "server_health":
@@ -1128,9 +1144,10 @@ func (s *server) toolControlRun(args json.RawMessage, action string) toolCallRes
 
 func (s *server) toolSendSignal(args json.RawMessage) toolCallResult {
 	var params struct {
-		RunID      string          `json:"runId"`
-		SignalName string          `json:"signalName"`
-		Payload    json.RawMessage `json:"payload"`
+		RunID          string          `json:"runId"`
+		SignalName     string          `json:"signalName"`
+		Payload        json.RawMessage `json:"payload"`
+		IdempotencyKey string          `json:"idempotencyKey"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
@@ -1147,7 +1164,7 @@ func (s *server) toolSendSignal(args json.RawMessage) toolCallResult {
 		_ = json.Unmarshal(params.Payload, &payload)
 	}
 
-	resp, err := s.api.post("/v1/runs/"+url.PathEscape(params.RunID)+"/signals/"+url.PathEscape(params.SignalName), payload)
+	resp, err := s.api.post("/v1/runs/"+url.PathEscape(params.RunID)+"/signals/"+url.PathEscape(params.SignalName), payload, params.IdempotencyKey)
 	if err != nil {
 		return errResult("coordinator request failed: " + err.Error())
 	}

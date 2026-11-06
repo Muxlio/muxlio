@@ -92,3 +92,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .attempt-failure{grid-column:1/-1;padding:8px 10px;border-left:2px solid var(--red);background:var(--red-soft);border-radius:0 8px 8px 0;color:var(--red);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .attempt-list-head{display:none}
 @media(max-width:600px){.attempt-row{grid-template-columns:24px minmax(0,1fr) auto}.attempt-row time{display:none}}
+.input-request-field{display:flex;flex-direction:column;gap:5px;margin:10px 0}
+#inputRequests article{padding:12px;border-bottom:1px solid var(--border)}
+#inputRequests input,#inputRequests select,#inputRequests textarea{color:inherit;background:var(--bg);border:1px solid var(--border);padding:8px;max-width:100%}
+#inputRequests fieldset{border:1px solid var(--border);margin:10px 0}

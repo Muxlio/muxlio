@@ -297,6 +297,76 @@ function loadActivation(id){
 }
 async function loadOlder(){const id=current;try{const d=await api(`/v1/runs/${encodeURIComponent(current)}/events?after=${after}&limit=50`);if(id!==current)return;after=d.nextAfter||after;hasMore=!!d.hasMore;const list=$('#timeline');if(d.events?.length)list.insertAdjacentHTML('beforeend',d.events.map(eventHtml).join(''));if($('#moreEvents'))$('#moreEvents').disabled=!hasMore}catch(e){message(e.message,true)}}
 async function sendSignal(){const name=$('#signalName')?.value.trim(),status=$('#signalStatus');if(!name){if(status){status.className='inline-status error';status.textContent='Enter a signal name.'}return}let payload;try{payload=JSON.parse($('#signalPayload')?.value||'{}');if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error()}catch{if(status){status.className='inline-status error';status.textContent='Payload must be a JSON object.'}return}try{await api(`/v1/runs/${encodeURIComponent(current)}/signals/${encodeURIComponent(name)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(status){status.textContent=`Signal "${name}" sent.`;status.className='inline-status ok'}}catch(e){if(status){status.className='inline-status error';status.textContent=e.message}}}
+
+// Simple JSON Schema contracts get typed controls. Complex contracts retain a
+// JSON editor and show their full schema; the coordinator validates all input.
+function requestFields(schema, path=[], required=true) {
+  if(schema?.oneOf || schema?.anyOf || schema?.allOf || schema?.$ref)schema={title:schema.title,description:schema.description};
+  // JSON Schema requires a property's presence, not a nonempty string.
+  const attrs=`data-response-path="${esc(JSON.stringify(path))}" data-response-required="${required}" ${required && (schema?.type!=='string' || Array.isArray(schema?.enum))?'required':''}`;
+  const label=esc(schema?.title||path[path.length-1]||'Response');
+  const description=schema?.description?`<small>${esc(schema.description)}</small>`:'';
+  if(schema?.type==='object' && schema.properties && required && !Array.isArray(schema.enum)){
+    return `<fieldset><legend>${label}</legend>${Object.entries(schema.properties).map(([key,prop])=>requestFields(prop,[...path,key],(schema.required||[]).includes(key))).join('')}</fieldset>`;
+  }
+  let control;
+  if(Array.isArray(schema?.enum))control=`<select ${attrs} data-json-value><option value="">Choose…</option>${schema.enum.map(value=>`<option value="${esc(JSON.stringify(value))}">${esc(JSON.stringify(value))}</option>`).join('')}</select>`;
+  else if(schema?.type==='boolean')control=`<select ${attrs} data-json-value><option value="">Choose…</option><option value="true">True</option><option value="false">False</option></select>`;
+  else if(schema?.type==='string')control=`<input ${attrs} type="text" ${schema.minLength!==undefined?`minlength="${esc(schema.minLength)}"`:''} ${schema.maxLength!==undefined?`maxlength="${esc(schema.maxLength)}"`:''}>`;
+  else if(['number','integer'].includes(schema?.type))control=`<input ${attrs} data-json-value type="number" step="${schema.type==='integer'?'1':'any'}" ${schema.minimum!==undefined?`min="${esc(schema.minimum)}"`:''} ${schema.maximum!==undefined?`max="${esc(schema.maximum)}"`:''}>`;
+  else control=`<textarea ${attrs} data-json-value aria-label="JSON response" placeholder="JSON value"></textarea>`;
+  return `<label class="input-request-field">${label}${required?' *':''}${control}${description}</label>`;
+}
+
+function readRequestResponse(form) {
+  let response={};
+  for(const field of form.querySelectorAll('[data-response-path]')){
+    if(field.value==='' && !field.required && field.dataset.responseRequired!=='true')continue;
+    const path=JSON.parse(field.dataset.responsePath);
+    const value=field.hasAttribute('data-json-value')?JSON.parse(field.value):field.value;
+    if(!path.length){response=value;continue}
+    let obj=response;
+    for(const key of path.slice(0,-1)){
+      if(!Object.hasOwn(obj,key))Object.defineProperty(obj,key,{value:{},enumerable:true,writable:true});
+      obj=obj[key];
+    }
+    Object.defineProperty(obj,path[path.length-1],{value,enumerable:true,writable:true,configurable:true});
+  }
+  return response;
+}
+
+async function refreshInputRequests(runId) {
+  const panel=$('#inputRequestsPanel'),container=$('#inputRequests');
+  if(!panel||!container)return;
+  try{
+    const data=await api(`/v1/runs/${encodeURIComponent(runId)}/input-requests`);
+    if(current!==runId)return;
+    const requests=data.requests||[],signature=JSON.stringify([runId,requests]);
+    if(container._requestSignature===signature)return;
+    const existingForms=new Map([...container.querySelectorAll('form[data-input-request]')].map(form=>[form.dataset.inputRequest,form]));
+    container._requestSignature=signature;
+    panel.hidden=!requests.length;
+    container.innerHTML=requests.map(req=>`<article><strong>${esc(req.name)}</strong> · ${esc(req.state)}<div class="subtle">Request ${esc(req.requestId)} · Activation ${esc(req.activationId)}${req.expiresAt?` · Expires ${esc(req.expiresAt)}`:''}${req.permissions?.length?` · Requires ${esc(req.permissions.join(', '))}`:''}</div>${req.state==='pending'?`<form data-input-request="${esc(req.requestId)}">${requestFields(req.schema)}<details><summary>Response schema</summary><pre>${esc(JSON.stringify(req.schema??{},null,2))}</pre></details><button class="btn" type="submit">Submit response</button><span role="status"></span></form>`:''}</article>`).join('');
+    container.querySelectorAll('form[data-input-request]').forEach(form=>{
+      const definition=JSON.stringify([runId,requests.find(req=>req.requestId===form.dataset.inputRequest)]);
+      const existing=existingForms.get(form.dataset.inputRequest);
+      if(existing?._requestDefinition===definition){form.replaceWith(existing);return}
+      form._requestDefinition=definition;
+      const key=crypto.randomUUID();
+      form.onsubmit=async event=>{
+        event.preventDefault();
+        const status=form.querySelector('[role="status"]'),button=form.querySelector('button');
+        button.disabled=true;
+        try{
+          const response=readRequestResponse(form);
+          await api(`/v1/runs/${encodeURIComponent(runId)}/input-requests/${encodeURIComponent(form.dataset.inputRequest)}`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(response)});
+          status.textContent='Response accepted.';
+          await refreshInputRequests(runId);
+        }catch(err){status.textContent=err.message;button.disabled=false}
+      };
+    });
+  }catch(err){if(current===runId){panel.hidden=false;container.textContent=`Unable to load input requests: ${err.message}`;container._requestSignature=null}}
+}
 function formatWorkerCapability(cap){
   if(cap==null)return '';
   if(typeof cap==='string')return cap;

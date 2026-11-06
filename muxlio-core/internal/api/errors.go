@@ -41,6 +41,7 @@ const (
 	CodeWorkerNotRegistered = "MUXLIO_WORKER_NOT_REGISTERED"
 	CodeStaleAssignment     = "MUXLIO_STALE_ASSIGNMENT"
 	CodeRunControlRejected  = "MUXLIO_RUN_CONTROL_REJECTED"
+	CodeInputRequestClosed  = "MUXLIO_INPUT_REQUEST_CLOSED"
 
 	// 422 – semantic / validation failures
 	CodeValidationError   = "MUXLIO_VALIDATION_ERROR"
@@ -61,32 +62,34 @@ const (
 
 // fix messages paired with their codes.
 var codeFix = map[string]string{
-	CodeBadRequest:             "Check the request body and URL parameters; resend a well-formed request.",
-	CodeInvalidJSON:            "Ensure the request body is a single, valid JSON object.",
-	CodeMissingRunID:           "Include a run ID in the URL path, e.g. /v1/runs/<runId>.",
-	CodeUnsupportedProtocol:    "Set protocolVersion to \"v1\" in the worker registration payload.",
-	CodeInvalidRegistration:    "Provide a non-empty workerId, a positive capacity, and trimmed unique capability names.",
-	CodeInvalidCompletion:      "Supply assignment identity fields, a positive coordinatorEpoch, positive generation, and a terminal state (succeeded|failed|cancelled).",
-	CodeInvalidArtifactDigest:  "Use a well-formed digest in the URL, e.g. sha256:<64 hex chars>.",
-	CodeBadEventCursor:         "Set the after query parameter to a non-negative integer sequence number.",
-	CodeUnauthorized:           "Provide a valid Bearer token in the Authorization header.",
-	CodeNotFound:               "Verify the ID exists; use GET /v1/runs to list known runs.",
-	CodeMethodNotAllowed:       "Consult the Allow response header for the supported HTTP methods on this endpoint.",
-	CodeWorkerNotRegistered:    "Call POST /v1/workers/register before polling for assignments or sending heartbeats.",
-	CodeStaleAssignment:        "Fetch a fresh assignment via GET /v1/workers/<workerId>/assignments.",
-	CodeRunControlRejected:     "The run may already be terminal or in an incompatible state; check GET /v1/runs/<runId>.",
-	CodeValidationError:        "Correct the plan validation errors listed in details[] and resubmit.",
-	CodeDigestMismatch:         "Recompile the workflow to regenerate a consistent plan digest before submitting.",
-	CodeArtifactIntegrity:      "Recompute the artifact digest and reupload the correct bytes.",
-	CodeStoreError:             "Retry the request; if the problem persists inspect coordinator logs.",
-	CodeRunError:               "Inspect the run events via GET /v1/runs/<runId>/events for failure details.",
-	CodeRunnerUnavailable:      "The coordinator has no runner configured; ensure the server was started correctly.",
-	CodeRunControlUnavailable:  "Run pause/resume/cancel controls require a coordinator started with run control support.",
-	CodeArtifactUploadFailed:   "Verify the uploaded bytes match the declared digest and retry.",
-	CodeArtifactDownloadFailed: "The artifact may not have been uploaded yet; check the digest and retry.",
-	CodeStreamUnsupported:      "The reverse proxy or transport does not support streaming; use GET /v1/runs/<runId>/events for paginated events instead.",
-	CodeCoordinatorError:       "An unexpected coordinator error occurred; inspect coordinator logs.",
-	CodeWorkerProtocolError:    "Worker protocol is not configured on this coordinator.",
+	CodeBadRequest:                            "Check the request body and URL parameters; resend a well-formed request.",
+	CodeInvalidJSON:                           "Ensure the request body is a single, valid JSON object.",
+	CodeMissingRunID:                          "Include a run ID in the URL path, e.g. /v1/runs/<runId>.",
+	CodeUnsupportedProtocol:                   "Set protocolVersion to \"v1\" in the worker registration payload.",
+	CodeInvalidRegistration:                   "Provide a non-empty workerId, a positive capacity, and trimmed unique capability names.",
+	CodeInvalidCompletion:                     "Supply assignment identity fields, a positive coordinatorEpoch, positive generation, and a terminal state (succeeded|failed|cancelled).",
+	CodeInvalidArtifactDigest:                 "Use a well-formed digest in the URL, e.g. sha256:<64 hex chars>.",
+	CodeBadEventCursor:                        "Set the after query parameter to a non-negative integer sequence number.",
+	CodeUnauthorized:                          "Provide a valid Bearer token in the Authorization header.",
+	CodeNotFound:                              "Verify the ID exists; use GET /v1/runs to list known runs.",
+	CodeMethodNotAllowed:                      "Consult the Allow response header for the supported HTTP methods on this endpoint.",
+	CodeWorkerNotRegistered:                   "Call POST /v1/workers/register before polling for assignments or sending heartbeats.",
+	CodeStaleAssignment:                       "Fetch a fresh assignment via GET /v1/workers/<workerId>/assignments.",
+	CodeRunControlRejected:                    "The run may already be terminal or in an incompatible state; check GET /v1/runs/<runId>.",
+	CodeInputRequestClosed:                    "List input requests to inspect their state; retry accepted delivery with its original Idempotency-Key.",
+	"MUXLIO_INPUT_RESPONSE_VALIDATION_FAILED": "Submit a JSON value matching the input request's schema.",
+	CodeValidationError:                       "Correct the plan validation errors listed in details[] and resubmit.",
+	CodeDigestMismatch:                        "Recompile the workflow to regenerate a consistent plan digest before submitting.",
+	CodeArtifactIntegrity:                     "Recompute the artifact digest and reupload the correct bytes.",
+	CodeStoreError:                            "Retry the request; if the problem persists inspect coordinator logs.",
+	CodeRunError:                              "Inspect the run events via GET /v1/runs/<runId>/events for failure details.",
+	CodeRunnerUnavailable:                     "The coordinator has no runner configured; ensure the server was started correctly.",
+	CodeRunControlUnavailable:                 "Run pause/resume/cancel controls require a coordinator started with run control support.",
+	CodeArtifactUploadFailed:                  "Verify the uploaded bytes match the declared digest and retry.",
+	CodeArtifactDownloadFailed:                "The artifact may not have been uploaded yet; check the digest and retry.",
+	CodeStreamUnsupported:                     "The reverse proxy or transport does not support streaming; use GET /v1/runs/<runId>/events for paginated events instead.",
+	CodeCoordinatorError:                      "An unexpected coordinator error occurred; inspect coordinator logs.",
+	CodeWorkerProtocolError:                   "Worker protocol is not configured on this coordinator.",
 }
 
 // APIError is the structured error envelope returned by every non-2xx

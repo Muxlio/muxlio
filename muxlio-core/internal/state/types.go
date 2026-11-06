@@ -264,6 +264,40 @@ type Signal struct {
 	IdempotencyKey string // optional client-supplied deduplication key
 }
 
+// InputRequest is a typed, durable request for external input, identified by a
+// stable RequestID. An approval is one example of a generic input request, not
+// a distinct run state: the run waits (without consuming a worker slot) until a
+// response is delivered or the request expires. Each request carries an
+// optional JSON Schema for validating responses, an optional expiration
+// deadline, and the permissions a responder must hold. Responses are delivered
+// at most once: a second submission with the same IdempotencyKey returns the
+// already-accepted response without re-applying it.
+type InputRequest struct {
+	RunID        string          `json:"runId"`
+	ActivationID string          `json:"activationId"`
+	RequestID    string          `json:"requestId"`
+	Name         string          `json:"name"`                  // the signal name the wait node expects
+	Schema       json.RawMessage `json:"schema,omitempty"`      // optional JSON Schema for response validation
+	ExpiresAt    *time.Time      `json:"expiresAt,omitempty"`   // optional expiration deadline
+	Permissions  []string        `json:"permissions,omitempty"` // required responder permissions
+	State        string          `json:"state"`                 // pending, fulfilled, expired, cancelled
+	Response     any             `json:"response,omitempty"`    // the accepted JSON response payload
+	ResponderID  string          `json:"responderId,omitempty"` // who submitted the accepted response
+	CreatedAt    time.Time       `json:"createdAt"`
+	FulfilledAt  *time.Time      `json:"fulfilledAt,omitempty"`
+	// IdempotencyKey is the dedup key of the accepted response. A second
+	// submission with the same key is a no-op that returns this request.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+}
+
+// Input request states.
+const (
+	InputRequestPending   = "pending"
+	InputRequestFulfilled = "fulfilled"
+	InputRequestExpired   = "expired"
+	InputRequestCancelled = "cancelled"
+)
+
 // OutboxRecord is an append-only, at-least-once message queued for external delivery or worker notifications.
 type OutboxRecord struct {
 	ID          string     `json:"id"`

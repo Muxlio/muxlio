@@ -3,6 +3,8 @@ package plan
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,15 @@ func activationID(runID string, scope []string, nodeID string) string {
 		return runID + ":" + nodeID
 	}
 	return runID + ":" + strings.Join(scope, ":") + ":" + nodeID
+}
+
+// inputRequestID returns a stable, URL-safe request ID for an input wait. The
+// identity is derived from the activation and request name so a run retry
+// (which preserves the activation) reuses the same request and any
+// already-accepted response.
+func inputRequestID(actID, name string) string {
+	h := sha256.Sum256([]byte(actID + "\x00" + name))
+	return "req_" + hex.EncodeToString(h[:8])
 }
 
 // Engine interprets a Plan IR against a Store. The default store is
@@ -1408,6 +1419,78 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 						return nil, fmt.Errorf("muxlio: resuming from signal wait: %w", err)
 					}
 					return map[string]any{"payload": sigs[len(sigs)-1].Payload}, nil
+				}
+			}
+		}
+
+	case "input":
+		if node.SignalName == "" {
+			return nil, fmt.Errorf("muxlio: wait node %q: signalName required for input wait", node.ID)
+		}
+		reqID := inputRequestID(actID, node.SignalName)
+		// Create the durable input request. Creation is idempotent, so a run
+		// retry reuses the same request and any already-accepted response.
+		req := &state.InputRequest{
+			RunID:        runID,
+			ActivationID: actID,
+			RequestID:    reqID,
+			Name:         node.SignalName,
+			Schema:       node.RequestSchema,
+			Permissions:  node.RequestPermissions,
+		}
+		if node.RequestExpiresSeconds != nil && *node.RequestExpiresSeconds > 0 {
+			due := time.Now().Add(time.Duration(*node.RequestExpiresSeconds * float64(time.Second)))
+			req.ExpiresAt = &due
+		}
+		if err := e.store.CreateInputRequest(req); err != nil {
+			return nil, fmt.Errorf("muxlio: creating input request %q: %w", reqID, err)
+		}
+		// Re-read to pick up any pre-submitted response or prior acceptance.
+		current, err := e.store.GetInputRequest(runID, reqID)
+		if err != nil {
+			return nil, fmt.Errorf("muxlio: loading input request %q: %w", reqID, err)
+		}
+		if current.State == state.InputRequestFulfilled {
+			return map[string]any{"response": current.Response}, nil
+		}
+		if current.State == state.InputRequestExpired || current.State == state.InputRequestCancelled {
+			return nil, fmt.Errorf("muxlio: input request %q is %s", reqID, current.State)
+		}
+		// Wait for a response without dispatching a worker: the run and
+		// activation enter the waiting state so observers see a blocked run that
+		// consumes no worker slot.
+		if _, err := e.store.TransitionRunState(runID, []string{RunRunning, RunWaiting}, RunWaiting); err != nil {
+			return nil, fmt.Errorf("muxlio: transitioning to waiting for input %q: %w", node.SignalName, err)
+		}
+		if err := e.store.SetActivationState(actID, ActWaiting); err != nil {
+			return nil, fmt.Errorf("muxlio: setting activation waiting for input %q: %w", node.SignalName, err)
+		}
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-e.context().Done():
+				return nil, e.context().Err()
+			case <-ticker.C:
+				if err := e.checkpoint(); err != nil {
+					return nil, err
+				}
+				// Expire pending requests whose deadline elapsed without a response.
+				if _, err := e.store.ExpireInputRequests(time.Now()); err != nil {
+					return nil, fmt.Errorf("muxlio: expiring input requests: %w", err)
+				}
+				current, err := e.store.GetInputRequest(runID, reqID)
+				if err != nil {
+					return nil, fmt.Errorf("muxlio: polling input request %q: %w", reqID, err)
+				}
+				if current.State == state.InputRequestFulfilled {
+					if _, err := e.store.TransitionRunState(runID, []string{RunWaiting}, RunRunning); err != nil {
+						return nil, fmt.Errorf("muxlio: resuming from input wait: %w", err)
+					}
+					return map[string]any{"response": current.Response}, nil
+				}
+				if current.State == state.InputRequestExpired || current.State == state.InputRequestCancelled {
+					return nil, fmt.Errorf("muxlio: input request %q is %s", reqID, current.State)
 				}
 			}
 		}
