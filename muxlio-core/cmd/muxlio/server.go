@@ -56,6 +56,61 @@ func (r *serverRunner) CreatePlanRun(p *plan.Plan, input json.RawMessage) (strin
 	return runID, nil
 }
 
+// startScheduled attaches an engine to an already atomically persisted run.
+func (r *serverRunner) startScheduled(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.engines[id] != nil || r.ctx.Err() != nil {
+		return nil
+	}
+	run, err := r.store.GetRun(id)
+	if err != nil {
+		return err
+	}
+	if run.State != plan.RunCreated {
+		return nil
+	}
+	var p plan.Plan
+	if err := json.Unmarshal(run.PlanJSON, &p); err != nil {
+		return err
+	}
+	if err := p.VerifyDigest(); err != nil {
+		return err
+	}
+	engine := plan.NewEngineWithStore(&p, r.exec, r.store)
+	engine.Context = r.ctx
+	r.engines[id] = engine
+	r.workers[id] = make(chan struct{})
+	r.wg.Add(1)
+	coordinatorlog.RunAccepted(id, p.Name)
+	go func() { _ = r.Run(id) }()
+	return nil
+}
+
+func (r *serverRunner) runSchedules() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if r.ctx.Err() != nil {
+			return
+		}
+		ids, err := r.store.TickSchedules(time.Now().UTC())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "schedule tick:", err)
+		}
+		for _, id := range ids {
+			if err := r.startScheduled(id); err != nil {
+				fmt.Fprintln(os.Stderr, "schedule launch:", err)
+			}
+		}
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func (r *serverRunner) Run(runID string) error {
 	r.mu.Lock()
 	engine := r.engines[runID]
@@ -365,6 +420,8 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		runner.wg.Add(1)
 		go func(id string) { _ = runner.Run(id) }(id)
 	}
+	schedulesDone := make(chan struct{})
+	go func() { defer close(schedulesDone); runner.runSchedules() }()
 	workerDone := make(chan struct{})
 	if config != nil {
 		executor := workers.NewScriptExecutor(config.Adapters, filepath.Join(dataDir, "work"))
@@ -453,6 +510,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		}
 	}
 	stop()
+	<-schedulesDone
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if mcpServer != nil {

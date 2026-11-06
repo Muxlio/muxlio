@@ -24,6 +24,8 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, plan_json BLOB NOT NULL, next_fire TEXT)`,
+	`CREATE TABLE IF NOT EXISTS schedule_fires (schedule_id TEXT NOT NULL, due_at TEXT NOT NULL, through_at TEXT, state TEXT NOT NULL, run_id TEXT, PRIMARY KEY(schedule_id, due_at), FOREIGN KEY(schedule_id) REFERENCES schedules(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS session_input_queues (run_id TEXT NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL, queue_json BLOB NOT NULL, PRIMARY KEY(run_id, session_id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS exclusive_resources (resource_key TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, activation_id TEXT NOT NULL)`,
 	`PRAGMA journal_mode = WAL`,

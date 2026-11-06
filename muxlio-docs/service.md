@@ -358,6 +358,83 @@ its durable checkpoint. Boundary batches are pinned in durable dispatches;
 new messages wait for a later turn. Queues and receipts survive coordinator
 restart when SQLite storage is configured.
 
+## Run schedules
+
+The coordinator polls durable schedules at startup and every second. Use the
+administrator bearer token to register a compiled plan with
+`POST /v1/workflow-versions`, then create an immutable schedule:
+
+```http
+POST /v1/schedules
+Content-Type: application/json
+Authorization: Bearer <coordinator-token>
+
+{
+  "id": "nightly",
+  "workflowDigest": "sha256:<registered-plan-digest>",
+  "input": {},
+  "kind": "cron",
+  "startAt": "2026-11-06T00:00:00Z",
+  "cron": "0 2 * * *",
+  "timezone": "Europe/Dublin",
+  "overlap": "queue",
+  "maxCatchUp": 10
+}
+```
+
+The digest must identify an existing, verified workflow version. Input is
+required (including explicit `null` when appropriate) and validated against
+that version's input schema. Schedule IDs use 1–128 letters, digits, underscores
+or hyphens. Reusing an ID is rejected; definitions, target plans and inputs
+cannot be edited. Registering a newer workflow version never changes a schedule.
+
+`kind` is `once`, `interval` or `cron`. `startAt` is an inclusive absolute
+timestamp. A one-time schedule fires at that timestamp. An interval additionally
+requires `intervalSeconds` (1–315360000), anchored to `startAt` in elapsed UTC
+time, without clock drift. A cron schedule requires five numeric fields
+(minute, hour, day of month, month, weekday), supporting `*`, comma lists,
+inclusive ranges and `/steps`, plus an explicit IANA `timezone` (not `Local`).
+Sunday is 0 or 7. Restricted day-of-month and weekday fields use OR; when
+either starts with `*`, both fields must match. Cron starts at the first
+matching minute at or after `startAt`. Impossible expressions without a match
+within eight years are rejected. Timezone data is bundled with the binary.
+
+Cron uses local wall time with fixed DST policy: nonexistent times during a
+spring jump are skipped; a repeated minute during a fall-back fires twice,
+once at each distinct UTC instant. For example, `30 2 * * *` in
+`America/New_York` does not fire on March 8, 2026; `30 1 * * *` fires at both
+05:30Z and 06:30Z on November 1, 2026. Overlap and catch-up policy still apply
+to those distinct occurrences. Intervals ignore DST entirely.
+
+All schedules explicitly choose `overlap`:
+
+- `allow` starts every eligible occurrence, including concurrent runs.
+- `skip` records `overlap_skipped` when a prior run is still nonterminal.
+- `queue` retains occurrences in a durable FIFO and starts the next only when
+  the prior run becomes terminal. Paused and reconciliation-held runs block
+  both `skip` and `queue`. Only runs from the same schedule affect overlap.
+
+`maxCatchUp` (1–1000) limits how many overdue occurrences are considered in
+one observation, including the current occurrence. The oldest are considered
+first. Remaining overdue occurrences are permanently discarded, with a
+`catch_up_limit` history record covering the inclusive UTC range from the
+first discarded occurrence through the observation time. The cursor advances
+past that range. This also applies when creating a schedule with a past start.
+Queued occurrences already accepted by an earlier observation are preserved
+and do not consume a later catch-up allowance. Queue size can grow when runs
+consistently take longer than the recurrence interval.
+
+`GET /v1/schedules` returns definitions and the next UTC fire (null once a
+one-time schedule is exhausted). `GET /v1/schedules/:id/fires` returns persisted
+decisions: `started` with a run ID, `queued`, `overlap_skipped`, or
+`catch_up_limit` with `through`. A `started` receipt means the pinned run is
+durably created; execution follows worker availability. Run creation, its
+creation event, the fire receipt and the cursor commit in one transaction.
+Retries and coordinator restarts reuse the same run identity for a UTC fire;
+committed but unlaunched runs enter ordinary pinned-run recovery. Schedule
+endpoints are administrator operations, unavailable to scoped run or worker
+credentials. Schedules require SQLite storage and the running service.
+
 ## Verification
 
 ```sh
