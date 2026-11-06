@@ -12,16 +12,18 @@ import (
 // Run is one invocation of an immutable compiled workflow version.
 // PlanJSON, PlanDigest, and Input are fixed at creation; events order transitions.
 type Run struct {
-	PlanJSON     json.RawMessage `json:"-"`
-	PlanDigest   string          `json:"planDigest,omitempty"`
-	ID           string          `json:"id"`
-	WorkflowName string          `json:"workflowName"`
-	State        string          `json:"state"`
-	Input        any             `json:"input,omitempty"`
-	Output       any             `json:"output,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
+	Pinned        bool            `json:"pinned,omitempty"`
+	RetainedUntil *time.Time      `json:"retainedUntil,omitempty"`
+	PlanJSON      json.RawMessage `json:"-"`
+	PlanDigest    string          `json:"planDigest,omitempty"`
+	ID            string          `json:"id"`
+	WorkflowName  string          `json:"workflowName"`
+	State         string          `json:"state"`
+	Input         any             `json:"input,omitempty"`
+	Output        any             `json:"output,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
 // Activation is one materialised plan node within a run and structural scope.

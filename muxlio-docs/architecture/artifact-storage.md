@@ -77,3 +77,73 @@ outputs or downstream inputs. Final file references are uploaded on successful
 executor return and named outputs are committed only after attempt validation
 succeeds. Failed and cancelled attempts retain observations without publishing
 them as successful final results.
+
+## Retention and garbage collection
+
+`muxlio gc` performs offline maintenance on a local runtime. Stop the coordinator
+first; maintenance holds the same `service.lock` used by standalone and managed
+servers. Running, waiting, paused, and other nonterminal runs remain protected
+while the server is stopped. The command emits a JSON dry-run report by default,
+`--dry-run` explicitly requests a preview. Reports list artifact digests and byte sizes, event and stdout/stderr row counts by
+run, cached plan digests, and a review token. Apply requires that token and
+recalculates reachability before deleting anything. If the candidate set changes,
+review the new report and use its token.
+
+```sh
+muxlio gc --data-dir ~/.muxlio
+muxlio gc --data-dir ~/.muxlio --apply <token-from-reviewed-report>
+```
+
+Default retention after a run becomes terminal is seven days for event history,
+three days for stdout/stderr, and thirty days for artifacts. Unreferenced compiled
+plan cache entries expire fourteen days after registration. Override these
+independently with `--events 168h`, `--logs 72h`, `--artifacts 720h`, and
+`--caches 336h`; use the same flags for preview and apply. Zero disables cleanup
+for that category. Negative durations are rejected. Unreferenced local artifacts
+also receive the artifact duration as a grace period after their file modification
+time, protecting uploads that have not yet acquired a reference.
+
+Reachability includes retained run inputs and outputs, activation inputs and
+outputs, execution results, queued work and inputs, retained event references,
+registered schedules and triggers, and pinned plans and their transitive
+references. Snapshot observations survive event-history cleanup until artifact
+retention expires. Shared content stays protected if any retained scope refers
+to it. Event sequence numbers remain monotonic after history cleanup and retry.
+Unfinished execution attempts, active or uncertain assignments, and effects
+awaiting reconciliation protect their runs and fork ancestors even after a run
+becomes terminal. Worker diagnostics and input schemas participate in marking;
+pending, requeued, and dead-letter subscription deliveries retain their payload
+references so delivery and operator requeue remain safe.
+Unread events also remain protected until every enabled subscription's dispatcher
+cursor passes them, preserving fanout and artifact references across long outages.
+Approval tokens bind to log row identities and content as well as their counts,
+so replacing logs between preview and apply requires another review.
+
+Pins are durable and override retention:
+
+```sh
+muxlio gc --pin-run <run-id>
+muxlio gc --pin-plan sha256:<plan-digest>
+muxlio gc --pin-artifact sha256:<artifact-digest>
+```
+
+Use `--unpin-run`, `--unpin-plan`, or `--unpin-artifact` to remove a pin.
+Artifact pinning verifies that the local bytes exist and pass integrity checks.
+For an existing fork run, register its dependency before maintenance with
+`muxlio gc --fork-run <child-id> --parent-run <parent-id>`. This records ancestry;
+it does not create a fork. A retained descendant protects every ancestor's data.
+Cycles and missing parents are rejected. `--fork-run <id> --retain-until
+<RFC3339-time>` sets an explicit deadline for all enabled categories and preserves
+any existing ancestry relationship.
+
+Intentional artifact removal records a persistent expiration tombstone before
+unlinking bytes. A later GET or HEAD returns HTTP 410 with
+`MUXLIO_ARTIFACT_EXPIRED`; unknown digests return 404, and damaged bytes still
+produce an integrity failure. Reuploading valid bytes restores the artifact.
+Run and activation metadata remain available after payload cleanup.
+
+The report identifies `artifactStorage: "local"`. GC sweeps the runtime's local
+CAS and SQLite event/log/plan caches; it does not enumerate or delete remote S3
+objects, worker workspaces, or transfer staging files. Remote bucket lifecycle
+rules must preserve content referenced by runs and pins; a blanket age-based
+bucket expiration cannot provide that guarantee.

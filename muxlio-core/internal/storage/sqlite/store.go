@@ -24,6 +24,9 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS retention_pins (kind TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(kind,id))`,
+	`CREATE TABLE IF NOT EXISTS run_retention (run_id TEXT PRIMARY KEY REFERENCES runs(id), parent_id TEXT REFERENCES runs(id), retained_until TEXT)`,
+	`CREATE TABLE IF NOT EXISTS event_watermarks (run_id TEXT PRIMARY KEY REFERENCES runs(id), seq INTEGER NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, secret TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS subscription_deliveries (id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, state TEXT NOT NULL, due INTEGER NOT NULL, record_json BLOB NOT NULL)`,
 	`CREATE INDEX IF NOT EXISTS idx_subscription_due ON subscription_deliveries(state, due)`,
@@ -1276,6 +1279,16 @@ func (s *Store) CreateRun(run *state.Run) error {
 	if err != nil {
 		return fmt.Errorf("muxlio: inserting run: %w", err)
 	}
+	if run.Pinned {
+		if _, err := tx.Exec(`INSERT INTO retention_pins(kind,id) VALUES('run',?)`, run.ID); err != nil {
+			return err
+		}
+	}
+	if run.RetainedUntil != nil {
+		if _, err := tx.Exec(`INSERT INTO run_retention(run_id,retained_until) VALUES(?,?)`, run.ID, rfc3339(*run.RetainedUntil)); err != nil {
+			return err
+		}
+	}
 	if err := appendEvent(tx, run.ID, state.EventRunCreated, run.ID, nil); err != nil {
 		return err
 	}
@@ -1286,8 +1299,10 @@ func (s *Store) GetRun(id string) (*state.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.db.QueryRow(
-		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest
-		 FROM runs WHERE id = ?`, id)
+		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
+   EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id)
+   FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
 
@@ -1537,8 +1552,10 @@ func (s *Store) ListRuns() ([]*state.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(
-		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest
-		 FROM runs ORDER BY created_at`)
+		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
+   EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id)
+   FROM runs ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -1827,7 +1844,7 @@ func (s *Store) AppendEvent(runID, eventType, subjectID string, payload map[stri
 
 func appendEvent(tx *sql.Tx, runID, eventType, subjectID string, payload map[string]any) error {
 	var seq int
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM events WHERE run_id = ?`, runID).Scan(&seq); err != nil {
+	if err := tx.QueryRow(`SELECT MAX(COALESCE((SELECT MAX(seq) FROM events WHERE run_id = ?),0), COALESCE((SELECT seq FROM event_watermarks WHERE run_id = ?),0))`, runID, runID).Scan(&seq); err != nil {
 		return err
 	}
 	seq++
@@ -1855,11 +1872,19 @@ func scanRun(row rowScanner) (*state.Run, error) {
 	var pinned []byte
 	var input, output sql.NullString
 	var created, updated string
-	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest); err != nil {
+	var until sql.NullString
+	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest, &r.Pinned, &until); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("muxlio: run not found")
 		}
 		return nil, err
+	}
+	if until.Valid {
+		t, err := time.Parse(time.RFC3339Nano, until.String)
+		if err != nil {
+			return nil, err
+		}
+		r.RetainedUntil = &t
 	}
 	r.PlanJSON = pinned
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

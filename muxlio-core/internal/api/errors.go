@@ -43,6 +43,9 @@ const (
 	CodeRunControlRejected  = "MUXLIO_RUN_CONTROL_REJECTED"
 	CodeInputRequestClosed  = "MUXLIO_INPUT_REQUEST_CLOSED"
 
+	// 410 – intentionally removed by retention
+	CodeArtifactExpired = "MUXLIO_ARTIFACT_EXPIRED"
+
 	// 422 – semantic / validation failures
 	CodeValidationError   = "MUXLIO_VALIDATION_ERROR"
 	CodeDigestMismatch    = "MUXLIO_DIGEST_MISMATCH"
@@ -80,6 +83,7 @@ var codeFix = map[string]string{
 	"MUXLIO_INPUT_RESPONSE_VALIDATION_FAILED": "Submit a JSON value matching the input request's schema.",
 	CodeValidationError:                       "Correct the plan validation errors listed in details[] and resubmit.",
 	CodeDigestMismatch:                        "Recompile the workflow to regenerate a consistent plan digest before submitting.",
+	CodeArtifactExpired:                       "This artifact was removed by retention; rerun its producer to recreate it.",
 	CodeArtifactIntegrity:                     "Recompute the artifact digest and reupload the correct bytes.",
 	CodeStoreError:                            "Retry the request; if the problem persists inspect coordinator logs.",
 	CodeRunError:                              "Inspect the run events via GET /v1/runs/<runId>/events for failure details.",

@@ -132,6 +132,9 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					status := http.StatusInternalServerError
 					if errors.Is(err, artifacts.ErrNotFound) {
 						status = http.StatusNotFound
+					} else if errors.Is(err, artifacts.ErrExpired) {
+						writeError(w, http.StatusGone, CodeArtifactExpired, err.Error())
+						return
 					} else if errors.Is(err, artifacts.ErrInvalidDigest) {
 						status = http.StatusBadRequest
 					}
@@ -178,6 +181,9 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					status := http.StatusInternalServerError
 					if errors.Is(err, artifacts.ErrNotFound) {
 						status = http.StatusNotFound
+					} else if errors.Is(err, artifacts.ErrExpired) {
+						writeError(w, http.StatusGone, CodeArtifactExpired, err.Error())
+						return
 					} else if errors.Is(err, artifacts.ErrInvalidDigest) {
 						status = http.StatusBadRequest
 					}

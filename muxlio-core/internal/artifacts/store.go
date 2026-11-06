@@ -127,12 +127,18 @@ func (s *Local) PutStream(ctx context.Context, src io.Reader, mime, expectedDige
 		if "sha256:"+hex.EncodeToString(existingHash.Sum(nil)) != digest {
 			return Ref{}, fmt.Errorf("muxlio: existing artifact %q: %w", digest, ErrIntegrity)
 		}
+		if err := s.clearExpired(digest); err != nil {
+			return Ref{}, err
+		}
 		return Ref{Digest: digest, Mime: mime, Size: n}, nil
 	} else if !os.IsNotExist(err) {
 		return Ref{}, fmt.Errorf("muxlio: inspect artifact: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return Ref{}, fmt.Errorf("muxlio: publish artifact: %w", err)
+	}
+	if err := s.clearExpired(digest); err != nil {
+		return Ref{}, err
 	}
 	return Ref{Digest: digest, Mime: mime, Size: n}, nil
 }
@@ -147,6 +153,9 @@ func (s *Local) GetStream(ctx context.Context, digest string) (io.ReadCloser, Re
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if s.expired(digest) {
+				return nil, Ref{}, fmt.Errorf("muxlio: artifact %q: %w", digest, ErrExpired)
+			}
 			return nil, Ref{}, fmt.Errorf("muxlio: artifact %q: %w", digest, ErrNotFound)
 		}
 		return nil, Ref{}, fmt.Errorf("muxlio: open artifact %q: %w", digest, err)
@@ -238,6 +247,9 @@ func (s *Local) Put(data []byte, mime string) (*Blob, error) {
 	} else if err != nil {
 		return nil, err
 	}
+	if err := s.clearExpired(digest); err != nil {
+		return nil, err
+	}
 	return &Blob{Digest: digest, Data: append([]byte(nil), data...), Mime: mime, Size: int64(len(data))}, nil
 }
 
@@ -247,6 +259,12 @@ func (s *Local) Get(digest string) (*Blob, error) {
 		return nil, err
 	}
 	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		if s.expired(digest) {
+			return nil, ErrExpired
+		}
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("muxlio: artifact %q: %w", digest, err)
 	}
