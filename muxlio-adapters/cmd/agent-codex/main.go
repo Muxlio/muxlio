@@ -27,6 +27,9 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-codex: %v", err)
 	}
+	if err := adapter.CheckRunnerEnvironment(req, "codex"); err != nil {
+		adapter.Fail("agent-codex: %v", err)
+	}
 
 	prompt := adapter.ComposePrompt(req)
 

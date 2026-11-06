@@ -41,6 +41,8 @@ const (
 // human-readable explanation that must never contain secrets, credentials,
 // or tokens. It is safe to surface in diagnostics, doctor output, and logs.
 type ProbeCheck struct {
+	Runner  string `json:"runner,omitempty"`
+	Version string `json:"version,omitempty"`
 	Name    string `json:"name"`
 	Passed  bool   `json:"passed"`
 	Message string `json:"message,omitempty"`
@@ -102,4 +104,17 @@ func ParseProbeResult(raw []byte) (ProbeResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// RunnerVersions contains normalized versions only, never raw CLI output.
+func (r *ProbeResult) RunnerVersions() map[string]string {
+	versions := map[string]string{}
+	if r != nil {
+		for _, c := range r.Checks {
+			if c.Passed && c.Name == ProbeVersion && c.Runner != "" && runnerVersion.MatchString(c.Version) {
+				versions[c.Runner] = c.Version
+			}
+		}
+	}
+	return versions
 }

@@ -224,6 +224,7 @@ class IRBuilder implements BuildContext {
       id,
       kind: 'execute',
       executor: opts.executor,
+      environment: opts.environment,
       executorVersion: opts.executorVersion,
       contractVersion: opts.contractVersion,
       requiredCapabilities: opts.requiredCapabilities,

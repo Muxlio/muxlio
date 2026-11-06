@@ -17,6 +17,7 @@ func TestExecutorContractRequirementsReachDispatch(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"id":"task","kind":"execute","executor":"test","executorVersion":"2","contractVersion":"1","requiredCapabilities":{"progress":"1"},"session":{"mode":"create"},"remoteTask":{"id":"task","url":"https://example.test/task"}}`), &node); err != nil {
 		t.Fatal(err)
 	}
+	node.Environment = &contract.EnvironmentManifest{Version: "1", Digest: "sha256:pinned"}
 	store := state.New()
 	if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
 		t.Fatal(err)
@@ -39,7 +40,7 @@ func TestExecutorContractRequirementsReachDispatch(t *testing.T) {
 		t.Fatalf("dispatches: %d", len(calls))
 	}
 	req := calls[0]
-	if req.ExecutorVersion != node.ExecutorVersion || req.ContractVersion != node.ContractVersion || !reflect.DeepEqual(req.Session, node.Session) || !reflect.DeepEqual(req.RequiredCapabilities, node.RequiredCapabilities) || !reflect.DeepEqual(req.RemoteTask, node.RemoteTask) {
+	if !reflect.DeepEqual(req.Environment, node.Environment) || req.ExecutorVersion != node.ExecutorVersion || req.ContractVersion != node.ContractVersion || !reflect.DeepEqual(req.Session, node.Session) || !reflect.DeepEqual(req.RequiredCapabilities, node.RequiredCapabilities) || !reflect.DeepEqual(req.RemoteTask, node.RemoteTask) {
 		t.Fatalf("contract requirements lost: %+v", req)
 	}
 }

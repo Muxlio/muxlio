@@ -79,6 +79,7 @@ const (
 // name and leave all capability flags false (absent), which is equivalent to a
 // missing descriptor: every optional capability is unsupported.
 type AdapterManifest struct {
+	Environment *EnvironmentManifest `json:"environment,omitempty"`
 	// ProbeVersion opts into the non-destructive --muxlio-probe protocol.
 	ProbeVersion string `json:"probeVersion,omitempty"`
 
@@ -156,6 +157,9 @@ func ParseManifest(raw []byte) (*AdapterManifest, error) {
 	}
 	if m.ContractVersion != "" && m.ContractVersion != Version {
 		return nil, fmt.Errorf("adapter contract: unsupported version %q", m.ContractVersion)
+	}
+	if err := m.ValidateEnvironment(); err != nil {
+		return nil, err
 	}
 	return &m, nil
 }

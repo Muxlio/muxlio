@@ -220,6 +220,14 @@ func ReadRequestWithManifest(raw []byte) (*Request, error) {
 	if req.Executor == "" {
 		req.Executor = manifest.Executor
 	}
+	// Operator-managed pins are supplied by the worker. Verify the embedded
+	// adapter protocol independently; runner versions are re-observed locally.
+	if req.Environment != nil {
+		if req.Environment.ProtocolDigest != manifest.ProtocolDigest() {
+			return nil, fmt.Errorf("environment adapter protocol digest mismatch")
+		}
+		manifest.Environment = req.Environment
+	}
 	if err := req.Check(manifest); err != nil {
 		return nil, err
 	}

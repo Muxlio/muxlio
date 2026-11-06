@@ -170,13 +170,31 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if manifestErr != nil {
 		return ExecuteResult{Error: manifestErr.Error()}, nil
 	}
+
 	if capErr := CheckAdapterCapabilities(req, manifest); capErr != nil {
 		d := diagnostic.New("MUXLIO_INCOMPATIBLE_REQUIREMENTS", "runtime", capErr.Error(), "Select an adapter whose descriptor satisfies the requested contract, versions, and capabilities, or correct the node requirements.")
-		d.Requirements = map[string]any{"contractVersion": req.ContractVersion, "executorVersion": req.ExecutorVersion, "capabilities": req.RequiredCapabilities, "sessionRequested": req.SessionID != "", "remoteTaskRequested": req.RemoteTask != nil}
+		d.Requirements = map[string]any{"contractVersion": req.ContractVersion, "executorVersion": req.ExecutorVersion, "capabilities": req.RequiredCapabilities, "environment": req.Environment, "sessionRequested": req.SessionID != "", "remoteTaskRequested": req.RemoteTask != nil}
 		d.Expected = d.Requirements
 		d.Actual = manifest
 		d.Causes = []diagnostic.Diagnostic{diagnostic.New("MUXLIO_CAUSE", "runtime", capErr.Error(), "")}
 		return ExecuteResult{}, &d
+	}
+
+	if req.Environment != nil {
+		probeContext := req.Context
+		if probeContext == nil {
+			probeContext = s.Context
+		}
+		if probeContext == nil {
+			probeContext = context.Background()
+		}
+		report := s.Probe(probeContext, req.Executor)
+		if !report.Ready {
+			return ExecuteResult{Error: "pinned environment readiness failed"}, nil
+		}
+		if err := req.Environment.CheckRunners(report.RunnerVersions()); err != nil {
+			return ExecuteResult{Error: err.Error()}, nil
+		}
 	}
 
 	// Keep each attempt's workspace under the run so incidental agent files
@@ -198,7 +216,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 
 	// Use the shared wire envelope; worker scheduling and policy stay local.
 	stdin, err := json.Marshal(contract.Request{
-		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
+		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
 		SessionInputs: req.SessionInputs, Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,
@@ -234,6 +252,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if err != nil {
 		return ExecuteResult{}, err
 	}
+	cmd.Env = req.Environment.FilterEnvironment(cmd.Env)
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Dir = workDir
 

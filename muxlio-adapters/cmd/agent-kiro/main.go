@@ -42,6 +42,9 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-kiro: %v", err)
 	}
+	if err := adapter.CheckRunnerEnvironment(req, resolveKiroCLI()); err != nil {
+		adapter.Fail("agent-kiro: %v", err)
+	}
 
 	model := "auto"
 	if req.Params != nil {

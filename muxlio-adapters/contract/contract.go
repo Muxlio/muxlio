@@ -128,6 +128,7 @@ type Progress struct {
 // Request starts one invocation. Optional feature requirements are exact
 // capability revisions. Session and remote references must never be emulated.
 type Request struct {
+	Environment          *EnvironmentManifest  `json:"environment,omitempty"`
 	SessionInputs        []SessionInput        `json:"sessionInputs,omitempty"`
 	Session              *SessionRequest       `json:"session,omitempty"`
 	Action               string                `json:"action,omitempty"` // empty starts work; reconcile/poll query; steer delivers live input
@@ -159,6 +160,18 @@ type Request struct {
 // describes consumer validation; native typed generation must be requested
 // explicitly through the typedResult capability.
 func (r *Request) Check(m *AdapterManifest) error {
+	if m != nil {
+		if err := m.ValidateEnvironment(); err != nil {
+			return err
+		}
+	}
+	var available *EnvironmentManifest
+	if m != nil {
+		available = m.Environment
+	}
+	if err := CheckEnvironment(r.Environment, available); err != nil {
+		return err
+	}
 	if err := r.CheckSession(); err != nil {
 		return err
 	}

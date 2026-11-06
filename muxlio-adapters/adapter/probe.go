@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/muxlio/muxlio-adapters/contract"
 )
@@ -37,8 +38,10 @@ func CommandCheck(category, binary string, args ...string) contract.ProbeCheck {
 	cmd.Stderr = &output
 	cmd.WaitDelay = time.Second
 	ok := cmd.Run() == nil && ctx.Err() == nil && !output.overflow && len(strings.TrimSpace(string(output.data))) > 0
+	version := ""
 	if category == contract.ProbeVersion {
-		ok = ok && regexp.MustCompile(`[0-9]+\.[0-9]+`).Match(output.data)
+		version = observedRunnerVersion(string(output.data))
+		ok = ok && version != ""
 	}
 	if category == contract.ProbeAuthentication {
 		diagnostic := strings.ToLower(string(output.data))
@@ -55,7 +58,12 @@ func CommandCheck(category, binary string, args ...string) contract.ProbeCheck {
 	if !ok {
 		message = category + " verification failed; check runner installation and login"
 	}
-	return contract.ProbeCheck{Name: category, Passed: ok, Message: message}
+	check := contract.ProbeCheck{Name: category, Passed: ok, Message: message}
+	if category == contract.ProbeVersion && ok {
+		check.Runner = "runner"
+		check.Version = version
+	}
+	return check
 }
 func BinaryCheck(binary string) contract.ProbeCheck {
 	_, err := exec.LookPath(binary)
@@ -87,4 +95,28 @@ func (b *probeOutput) Write(p []byte) (int, error) {
 	}
 	b.data = append(b.data, p...)
 	return n, nil
+}
+
+// CheckRunnerEnvironment re-observes the adapter-owned runner before generation.
+func CheckRunnerEnvironment(req *Request, binary string) error {
+	if req.Environment == nil {
+		return nil
+	}
+	check := CommandCheck(contract.ProbeVersion, binary, "--version")
+	report := contract.ProbeResult{Checks: []contract.ProbeCheck{check}}
+	return req.Environment.CheckRunners(report.RunnerVersions())
+}
+
+// Inspect whole version tokens: matching a prefix can hide a changed build or
+// turn an unsupported four-component version into a compatible three-part pin.
+func observedRunnerVersion(output string) string {
+	for _, token := range strings.FieldsFunc(output, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '+' && r != '-'
+	}) {
+		token = strings.TrimPrefix(token, "v")
+		if contract.IsRunnerVersion(token) {
+			return token
+		}
+	}
+	return ""
 }

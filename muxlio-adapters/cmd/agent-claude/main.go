@@ -43,6 +43,9 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-claude: %v", err)
 	}
+	if err := adapter.CheckRunnerEnvironment(req, resolveClaudeCLI()); err != nil {
+		adapter.Fail("agent-claude: %v", err)
+	}
 
 	model := "claude-sonnet-4-5"
 	if req.Params != nil {

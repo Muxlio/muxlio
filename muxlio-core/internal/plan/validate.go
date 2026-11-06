@@ -76,6 +76,9 @@ func Validate(p *Plan) (errs []ValidationError) {
 			if node.Kind != "execute" {
 				continue
 			}
+			if err := node.Environment.Validate(); err != nil {
+				errs = append(errs, ValidationError{Code: "MUXLIO_ENVIRONMENT", Severity: "error", Phase: "plan", Subgraph: name, NodeID: node.ID, Message: err.Error()})
+			}
 			var value any
 			if len(node.Params) > 0 && json.Unmarshal(node.Params, &value) == nil && hasLiteralCredentials(value) {
 				errs = append(errs, ValidationError{Code: "MUXLIO_LITERAL_CREDENTIAL", Severity: "error", Phase: "plan", Subgraph: name, NodeID: node.ID, Message: "literal credentials are forbidden in execution parameters", Fix: "Use secretRefs with an executionPolicy allowlist and operator-configured worker handles."})

@@ -657,6 +657,7 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     id,
     kind: 'execute',
     executor: def.executor,
+    environment: def.environment,
     executorVersion: def.executorVersion,
     contractVersion: def.contractVersion,
     requiredCapabilities: def.requiredCapabilities,

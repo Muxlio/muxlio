@@ -41,6 +41,9 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-cursor: %v", err)
 	}
+	if err := adapter.CheckRunnerEnvironment(req, cli); err != nil {
+		adapter.Fail("agent-cursor: %v", err)
+	}
 	workDir, err := adapter.WorkingDir(req)
 	if err != nil {
 		adapter.Fail("agent-cursor: finding working directory: %v", err)

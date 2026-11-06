@@ -65,6 +65,7 @@ type Subgraph struct {
 
 // Node is a single step or control-flow construct within a subgraph.
 type Node struct {
+	Environment *contract.EnvironmentManifest `json:"environment,omitempty"`
 	// ID is the stable node identifier within its subgraph. Used in
 	// value references and activation identity.
 	ID string `json:"id"`

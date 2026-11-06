@@ -46,6 +46,9 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-gemini-cli: %v", err)
 	}
+	if err := adapter.CheckRunnerEnvironment(req, resolveGeminiCLI()); err != nil {
+		adapter.Fail("agent-gemini-cli: %v", err)
+	}
 
 	model := "gemini-2.5-pro"
 	if req.Params != nil {

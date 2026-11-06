@@ -551,6 +551,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		LifetimeContext:      e.Context,
 		Executor:             node.Executor,
 		ExecutorVersion:      node.ExecutorVersion,
+		Environment:          node.Environment,
 		ContractVersion:      node.ContractVersion,
 		RequiredCapabilities: node.RequiredCapabilities,
 		Session:              node.Session,

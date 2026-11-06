@@ -41,7 +41,7 @@ func (s *ScriptExecutor) Probe(ctx context.Context, name string) contract.ProbeR
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.scriptPath(name), "--muxlio-probe")
-	cmd.Env = env
+	cmd.Env = m.Environment.FilterEnvironment(env)
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = time.Second
 	var output probeBuffer

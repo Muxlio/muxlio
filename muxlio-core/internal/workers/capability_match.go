@@ -35,6 +35,9 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 	if descriptor == nil {
 		descriptor = &adapterManifest{ExecutorVersion: cap.Version}
 	}
+	if req.Environment != nil && req.Environment.CheckRunners(cap.Readiness.RunnerVersions()) != nil {
+		return false
+	}
 	if CheckAdapterCapabilities(req, descriptor) != nil {
 		return false
 	}

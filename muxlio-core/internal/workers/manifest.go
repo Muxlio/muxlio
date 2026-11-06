@@ -31,7 +31,7 @@ func loadAdapterManifest(scriptPath string) (*adapterManifest, error) {
 // CheckAdapterCapabilities rejects unsupported features before starting the adapter.
 func CheckAdapterCapabilities(req ExecuteRequest, manifest *adapterManifest) error {
 	return (&contract.Request{
-		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
+		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
 		SessionInputs: req.SessionInputs, Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask, Params: req.Params, Outputs: req.Outputs,

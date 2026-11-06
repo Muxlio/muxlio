@@ -67,7 +67,21 @@ export interface ProviderSession {
   recoverable: boolean;
 }
 
+/** Public operator-managed metadata. Values and credentials are never permitted. */
+export interface EnvironmentManifest {
+  version: '1';
+  digest: string;
+  protocolDigest: string;
+  runners?: Record<string, string>;
+  packages?: Record<string, string>;
+  containers?: Record<string, string>;
+  skills?: Record<string, string>;
+  allowedEnvironment?: string[];
+  permissions?: ('host-execution' | 'network' | 'workspace-read' | 'workspace-write')[];
+}
+
 export interface ExecutorRequirements {
+  environment?: EnvironmentManifest;
   executorVersion?: string;
   contractVersion?: string;
   requiredCapabilities?: Record<string, string>;
