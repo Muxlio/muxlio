@@ -373,7 +373,12 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 			if !allowed {
 				continue
 			}
-			caps = append(caps, workers.RemoteCapability{Name: name})
+			descriptor, err := executor.Descriptor(name)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			caps = append(caps, workers.RemoteCapability{Name: name, Version: descriptor.ExecutorVersion, Contract: descriptor})
 		}
 		workerURL := servers.loopbackURL()
 		go func() {

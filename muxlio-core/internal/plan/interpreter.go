@@ -519,19 +519,23 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	}
 
 	req := workers.ExecuteRequest{
-		Context:         e.context(),
-		LifetimeContext: e.Context,
-		Executor:        node.Executor,
-		ExecutorVersion: node.ExecutorVersion,
-		PlacementLabels: node.PlacementLabels,
-		WorkspaceMode:   node.WorkspaceMode,
-		ConcurrencyKeys: node.ConcurrencyKeys,
-		Task:            node.Task,
-		Params:          node.Params,
-		Inputs:          inputs,
-		Outputs:         outDecls,
-		ScopePath:       scope,
-		NodeID:          node.ID,
+		Context:              e.context(),
+		LifetimeContext:      e.Context,
+		Executor:             node.Executor,
+		ExecutorVersion:      node.ExecutorVersion,
+		ContractVersion:      node.ContractVersion,
+		RequiredCapabilities: node.RequiredCapabilities,
+		SessionID:            node.SessionID,
+		RemoteTask:           node.RemoteTask,
+		PlacementLabels:      node.PlacementLabels,
+		WorkspaceMode:        node.WorkspaceMode,
+		ConcurrencyKeys:      node.ConcurrencyKeys,
+		Task:                 node.Task,
+		Params:               node.Params,
+		Inputs:               inputs,
+		Outputs:              outDecls,
+		ScopePath:            scope,
+		NodeID:               node.ID,
 	}
 	if node.Retry != nil {
 		req.Effect = node.Retry.Effect

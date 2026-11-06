@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
@@ -36,10 +37,7 @@ type WorkerRegistration struct {
 	Labels          map[string]string  `json:"labels,omitempty"`
 }
 
-type WorkerCapability struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
-}
+type WorkerCapability = state.WorkerCapability
 
 type WorkerRegistrationResult struct {
 	CoordinatorEpoch int64 `json:"coordinatorEpoch"`
@@ -75,19 +73,21 @@ type WorkerAssignment struct {
 }
 
 type WorkerCompletion struct {
-	AssignmentID        string            `json:"assignmentId"`
-	RunID               string            `json:"runId"`
-	ActivationID        string            `json:"activationId"`
-	AttemptID           string            `json:"attemptId"`
-	CoordinatorEpoch    int64             `json:"coordinatorEpoch"`
-	Generation          int64             `json:"generation"`
-	State               string            `json:"state"`
-	Outputs             map[string]any    `json:"outputs,omitempty"`
-	Error               *WorkerError      `json:"error,omitempty"`
-	LogCursor           string            `json:"logCursor,omitempty"`
-	Logs                string            `json:"logs,omitempty"`
-	Usage               *state.TokenUsage `json:"usage,omitempty"`
-	ExecutionDurationMS *int64            `json:"executionDurationMs,omitempty"`
+	AssignmentID        string                        `json:"assignmentId"`
+	RunID               string                        `json:"runId"`
+	ActivationID        string                        `json:"activationId"`
+	AttemptID           string                        `json:"attemptId"`
+	CoordinatorEpoch    int64                         `json:"coordinatorEpoch"`
+	Generation          int64                         `json:"generation"`
+	State               string                        `json:"state"`
+	Outputs             map[string]any                `json:"outputs,omitempty"`
+	Error               *WorkerError                  `json:"error,omitempty"`
+	LogCursor           string                        `json:"logCursor,omitempty"`
+	Logs                string                        `json:"logs,omitempty"`
+	Usage               *state.TokenUsage             `json:"usage,omitempty"`
+	SessionID           string                        `json:"sessionId,omitempty"`
+	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
+	ExecutionDurationMS *int64                        `json:"executionDurationMs,omitempty"`
 }
 
 // WorkerLogAppend carries one incremental log chunk for an active assignment.

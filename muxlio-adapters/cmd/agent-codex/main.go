@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-codex: %v", err)
 	}
@@ -65,6 +65,7 @@ func main() {
 	//   item.started, item.updated, item.completed.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var completed bool
 	var usage *adapter.TokenUsage
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
@@ -102,6 +103,7 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, item.Text)
 			}
 		case "turn.completed":
+			completed = true
 			// turn.completed carries the thread's running token total. With
 			// --ephemeral the thread is fresh, so this is the run's usage.
 			// When multiple turns complete, the last holds the final total,
@@ -147,6 +149,10 @@ func main() {
 	if err := cmd.Wait(); err != nil {
 		runErr = appendFailure(runErr, fmt.Sprintf("codex exited with error: %v", err))
 	}
+	adapter.AppendLogChunk("stderr", stderr.String())
+	if !completed {
+		runErr = appendFailure(runErr, "stream ended without a completion event")
+	}
 	if runErr != "" {
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from turn.completed so failed
@@ -159,6 +165,7 @@ func main() {
 	// Collect declared outputs. Scalar ports (no file path) are returned as
 	// parsed JSON values; file-artifact ports as {mime, path, data} maps.
 	outputs, missing := adapter.CollectOutputs(req)
+	outputs["_text"] = map[string]any{"mime": "text/plain", "data": textChunks.String()}
 
 	errMsg := ""
 	if len(missing) > 0 {

@@ -107,10 +107,20 @@ func TestCursorAdapterLeavesUsageAbsentWhenNotReported(t *testing.T) {
 	}
 }
 
-func runCursorFixture(t *testing.T, script string) struct {
-	Error string              `json:"error"`
-	Usage *adapter.TokenUsage `json:"usage"`
-} {
+func TestCursorAdapterPreservesStderrWithoutProgressChannel(t *testing.T) {
+	t.Setenv("MUXLIO_LOG_FD", "")
+	for _, script := range []string{
+		`echo 'diagnostic details' >&2; echo '{"type":"result","result":"done"}'`,
+		`echo 'diagnostic details' >&2; exit 1`,
+	} {
+		got := runCursorFixture(t, script)
+		if !strings.Contains(got.Logs, "diagnostic details") {
+			t.Fatalf("stderr lost: %+v", got)
+		}
+	}
+}
+
+func runCursorFixture(t *testing.T, script string) adapter.Response {
 	t.Helper()
 	bin := buildAgentCursor(t)
 	workDir := t.TempDir()
@@ -126,10 +136,7 @@ func runCursorFixture(t *testing.T, script string) struct {
 	if err != nil {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
-	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
-	}
+	var resp adapter.Response
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}

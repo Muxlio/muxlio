@@ -68,6 +68,9 @@ func testScript(t *testing.T, body string) *ScriptExecutor {
 	if err := os.WriteFile(filepath.Join(dir, "test"), []byte("#!/bin/sh\n"+body), 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "test.json"), []byte(`{"manifestVersion":"1","executor":"test","capabilities":{"artifacts":true}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	return NewScriptExecutor(dir, t.TempDir())
 }
 

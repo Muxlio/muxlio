@@ -1,9 +1,7 @@
 package workers
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -57,18 +55,9 @@ func (s *ScriptExecutor) CanExecute(executor string) (bool, error) {
 	if config.Allow != nil && !*config.Allow {
 		return false, nil
 	}
-	raw, err := os.ReadFile(s.scriptPath(executor) + ".json")
-	if os.IsNotExist(err) {
-		return true, nil
-	}
+	m, err := s.Descriptor(executor)
 	if err != nil {
-		return false, fmt.Errorf("read executor descriptor: %w", err)
+		return false, err
 	}
-	var descriptor struct {
-		RequiresHostExecution bool `json:"requiresHostExecution"`
-	}
-	if err := json.Unmarshal(raw, &descriptor); err != nil {
-		return false, fmt.Errorf("invalid executor descriptor: %w", err)
-	}
-	return !descriptor.RequiresHostExecution || config.ExplicitlyAllowed(), nil
+	return !m.RequiresHostExecution || config.ExplicitlyAllowed(), nil
 }

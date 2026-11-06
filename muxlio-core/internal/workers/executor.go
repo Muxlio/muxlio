@@ -11,11 +11,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	ContractVersion      string                        `json:"contractVersion,omitempty"`
+	RequiredCapabilities map[string]string             `json:"requiredCapabilities,omitempty"`
+	SessionID            string                        `json:"sessionId,omitempty"`
+	RemoteTask           *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
 	// LifetimeContext is the hosting coordinator lifetime. Its cancellation
 	// suspends durable dispatch for recovery instead of revoking workflow intent.
 	LifetimeContext     context.Context `json:"-"`
@@ -105,22 +109,10 @@ func GuardRequest(req ExecuteRequest) (ExecuteRequest, error) {
 }
 
 // OutputDecl declares a named output port and its file contract.
-type OutputDecl struct {
-	Mime   string          `json:"mime,omitempty"`
-	Path   string          `json:"path,omitempty"`
-	Schema json.RawMessage `json:"schema,omitempty"`
-}
+type OutputDecl = contract.OutputDecl
 
 // ExecuteResult is what an executor returns.
-type ExecuteResult struct {
-	Outputs map[string]any    `json:"outputs,omitempty"`
-	Error   string            `json:"error,omitempty"`
-	Logs    string            `json:"logs,omitempty"`
-	Usage   *state.TokenUsage `json:"usage,omitempty"`
-	// ExecutionDurationMS is measured by the worker around executor execution.
-	// Nil means unavailable; a pointer to zero is a measured zero duration.
-	ExecutionDurationMS *int64 `json:"executionDurationMs,omitempty"`
-}
+type ExecuteResult = contract.Result
 
 // UncertainExecutionError requires reconciliation before another attempt can
 // safely run: the previous worker may already have performed its effects.

@@ -35,7 +35,7 @@ import (
 )
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-gemini-cli: %v", err)
 	}
@@ -86,6 +86,7 @@ func main() {
 	// Parse the newline-delimited stream-json event stream.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var completed bool
 	var usage *adapter.TokenUsage
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -135,6 +136,7 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, payload.Content)
 			}
 		case "result":
+			completed = true
 			// Gemini CLI's stream-json result event carries aggregated token
 			// usage. The field name depends on the CLI version: newer builds
 			// emit a top-level "usage" object, while the documented headless
@@ -214,6 +216,7 @@ func main() {
 				usage = u
 			}
 		case "completion", "done":
+			completed = true
 			// No extra action needed; process exit determines success.
 		}
 	}
@@ -225,6 +228,10 @@ func main() {
 	if err := cmd.Wait(); err != nil {
 		runErr = appendFailure(runErr, fmt.Sprintf("gemini-cli process error: %v", err))
 	}
+	adapter.AppendLogChunk("stderr", stderr.String())
+	if !completed {
+		runErr = appendFailure(runErr, "stream ended without a completion event")
+	}
 	if runErr != "" {
 		// Preserve provider-reported usage from the terminal result/usage
 		// event so failed attempts that still returned usage are recorded,
@@ -234,30 +241,7 @@ func main() {
 		adapter.FailWithUsage(usage, "agent-gemini-cli: %s", withStderr(runErr, stderr.String()))
 	}
 
-	// Collect declared output files from workDir.
-	outputs := make(map[string]any)
-	var missing []string
-	for port, decl := range req.Outputs {
-		name := decl.Path
-		if name == "" {
-			name = port
-		}
-		fullPath, err := adapter.ResolveOutput(req.WorkDir, name)
-		if err != nil {
-			missing = append(missing, port)
-			continue
-		}
-		data, err := adapter.ReadOutput(fullPath)
-		if err != nil {
-			missing = append(missing, port)
-			continue
-		}
-		outputs[port] = map[string]any{
-			"mime": decl.Mime,
-			"path": fullPath,
-			"data": string(data),
-		}
-	}
+	outputs, missing := adapter.CollectOutputs(req)
 
 	// Always populate "_text" with the complete assistant response.
 	outputs["_text"] = map[string]any{

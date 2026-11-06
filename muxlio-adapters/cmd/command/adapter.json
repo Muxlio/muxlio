@@ -1,1 +1,16 @@
-{"requiresHostExecution":true}
+{
+  "manifestVersion": "1",
+  "contractVersion": "1",
+  "executor": "command",
+  "executorVersion": "1",
+  "capabilities": {
+    "artifacts": true,
+    "progress": true,
+    "usage": false,
+    "cancel": true,
+    "session": false,
+    "remoteTask": false,
+    "typedResult": false
+  },
+  "requiresHostExecution": true
+}

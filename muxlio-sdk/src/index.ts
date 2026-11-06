@@ -7,6 +7,7 @@ export type {
   Subgraph,
   Node,
   NodeKind,
+  ExecutorRequirements,
   Binding,
   ValueRef,
   Expr,

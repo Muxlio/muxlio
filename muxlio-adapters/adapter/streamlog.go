@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // AppendStreamText emits incremental assistant text to muxlio when MUXLIO_LOG_FD is set.
@@ -15,7 +17,7 @@ func AppendStreamText(text string) {
 	if file == nil {
 		return
 	}
-	raw, err := json.Marshal(map[string]string{"stream": "agent", "text": text})
+	raw, err := json.Marshal(contract.Progress{Stream: "agent", Text: redact(text)})
 	if err != nil {
 		return
 	}
@@ -32,7 +34,7 @@ func AppendLogChunk(stream, text string) {
 	if file == nil {
 		return
 	}
-	raw, err := json.Marshal(map[string]string{"stream": stream, "text": text})
+	raw, err := json.Marshal(contract.Progress{Stream: stream, Text: redact(text)})
 	if err == nil {
 		_, _ = file.Write(append(raw, '\n'))
 	}

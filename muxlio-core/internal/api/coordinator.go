@@ -76,7 +76,15 @@ func (c *Coordinator) Register(req WorkerRegistration) (WorkerRegistrationResult
 	}
 	caps := make([]state.WorkerCapability, 0, len(req.Capabilities))
 	for _, capability := range req.Capabilities {
-		caps = append(caps, state.WorkerCapability{Name: capability.Name, Version: capability.Version})
+		if capability.Contract != nil {
+			if err := capability.Contract.Check(capability.Name, capability.Version, "", nil); err != nil {
+				return WorkerRegistrationResult{}, err
+			}
+			if capability.Version == "" {
+				capability.Version = capability.Contract.ExecutorVersion
+			}
+		}
+		caps = append(caps, state.WorkerCapability{Name: capability.Name, Version: capability.Version, Contract: capability.Contract})
 	}
 	if err := c.store.RegisterWorker(state.Worker{ID: req.WorkerID, InstanceID: req.InstanceID, Capacity: req.Capacity, Capabilities: caps, Labels: req.Labels, LastSeen: time.Now()}); err != nil {
 		return WorkerRegistrationResult{}, err
@@ -210,7 +218,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, SessionID: req.SessionID, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}

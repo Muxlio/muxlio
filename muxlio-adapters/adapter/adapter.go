@@ -6,49 +6,28 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // OutputDecl mirrors workers.OutputDecl.
-type OutputDecl struct {
-	Mime string `json:"mime,omitempty"`
-	Path string `json:"path,omitempty"`
-}
+type OutputDecl = contract.OutputDecl
 
 // Request is what ScriptExecutor sends on stdin: the standard ExecuteRequest
 // fields plus a WorkDir for this invocation's scratch space.
-type Request struct {
-	HostExecutionAllowed bool                  `json:"hostExecutionAllowed,omitempty"`
-	Workspace            string                `json:"workspace"`
-	RunID                string                `json:"runId,omitempty"`
-	ActivationID         string                `json:"activationId,omitempty"`
-	AttemptID            string                `json:"attemptId,omitempty"`
-	Executor             string                `json:"executor"`
-	Task                 string                `json:"task,omitempty"`
-	Params               json.RawMessage       `json:"params,omitempty"`
-	Inputs               map[string]any        `json:"inputs,omitempty"`
-	Outputs              map[string]OutputDecl `json:"outputs,omitempty"`
-	ScopePath            []string              `json:"scopePath,omitempty"`
-	NodeID               string                `json:"nodeId,omitempty"`
-	WorkDir              string                `json:"workDir"`
-}
+type Request = contract.Request
 
 // Response is what the adapter writes to stdout.
-type Response struct {
-	Outputs map[string]any `json:"outputs"`
-	Error   string         `json:"error"`
-	Usage   *TokenUsage    `json:"usage,omitempty"`
-}
+type Response = contract.Result
 
 // TokenUsage holds provider-reported token counts. A nil pointer on Response
 // means the provider did not supply usage; a non-nil zero value is reported zero.
-type TokenUsage struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-	Cached int64 `json:"cached"`
-}
+type TokenUsage = contract.TokenUsage
 
 // ParseTokenUsage parses common provider usage shapes while preserving absence.
 // Input keys: input_tokens, prompt_token_count, prompt_tokens, uncachedInputTokens, inputTokens,
@@ -95,17 +74,41 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	return &u
 }
 
+var responseSecrets map[string]string
+
 // ReadRequest decodes the Request from stdin.
 func ReadRequest() (*Request, error) {
-	var req Request
-	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
+	var req *Request
+	decoder := json.NewDecoder(os.Stdin)
+	if err := decoder.Decode(&req); err != nil {
 		return nil, fmt.Errorf("adapter: reading request: %w", err)
 	}
-	return &req, nil
+	if req == nil {
+		return nil, fmt.Errorf("adapter: request must be an object")
+	}
+	responseSecrets = req.Secrets
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("adapter: request must contain exactly one JSON value")
+	}
+	return req, nil
 }
 
 // WriteResponse encodes the Response to stdout.
 func WriteResponse(resp Response) error {
+	// Redact diagnostics before JSON encoding, so escaped secrets are covered.
+	resp.Error = redact(resp.Error)
+	resp.Logs = redact(resp.Logs)
+	for _, port := range []string{"stdout", "stderr", "_text"} {
+		if value, ok := resp.Outputs[port].(string); ok {
+			resp.Outputs[port] = redact(value)
+		}
+		if value, ok := resp.Outputs[port].(map[string]any); ok {
+			if data, ok := value["data"].(string); ok {
+				value["data"] = redact(data)
+			}
+		}
+	}
 	return json.NewEncoder(os.Stdout).Encode(resp)
 }
 
@@ -184,4 +187,38 @@ func WorkspaceRoot(req *Request) (string, error) {
 		return "", fmt.Errorf("workspace must be a directory")
 	}
 	return root, nil
+}
+
+func redact(value string) string {
+	values := make([]string, 0, len(responseSecrets))
+	for _, secret := range responseSecrets {
+		if secret != "" {
+			values = append(values, secret)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	for _, secret := range values {
+		value = strings.ReplaceAll(value, secret, "[REDACTED]")
+	}
+	return value
+}
+
+// ReadRequestWithManifest verifies the same contract used for worker matching.
+// The compiled-in manifest also protects direct adapter invocations.
+func ReadRequestWithManifest(raw []byte) (*Request, error) {
+	req, err := ReadRequest()
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := contract.ParseManifest(raw)
+	if err != nil {
+		return nil, err
+	}
+	if req.Executor == "" {
+		req.Executor = manifest.Executor
+	}
+	if err := req.Check(manifest); err != nil {
+		return nil, err
+	}
+	return req, nil
 }

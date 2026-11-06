@@ -23,7 +23,7 @@
 //   });
 
 import { z } from 'zod';
-import type { Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
+import type { ExecutorRequirements, Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
 import { computeDigest } from './builder.js';
 
 /** Opaque compile-time symbolic reference (property access builds Plan IR expressions). */
@@ -184,7 +184,7 @@ export const artifact = {
 export type TaskOutputSchema = Record<string, z.ZodTypeAny | ArtifactDecl | OutputDecl>;
 
 /** Options for defining a task. */
-export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSchema> {
+export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSchema> extends ExecutorRequirements {
   /** Primary executor capability name, e.g. `'agent/kiro'`. */
   executor: string;
   /** Fallback executors tried on retry. */
@@ -388,7 +388,7 @@ function shouldRunFixExpr(captureId: string, maxAttempts: number): Expr {
 // ---------------------------------------------------------------------------
 
 // Matches plan.Node but avoids circular import; all fields are optional JSON-safe.
-interface IRNode {
+interface IRNode extends ExecutorRequirements {
   id: string;
   kind: string;
   executor?: string;
@@ -656,6 +656,11 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     id,
     kind: 'execute',
     executor: def.executor,
+    executorVersion: def.executorVersion,
+    contractVersion: def.contractVersion,
+    requiredCapabilities: def.requiredCapabilities,
+    sessionId: def.sessionId,
+    remoteTask: def.remoteTask,
     workspaceMode: def.workspaceMode,
     concurrencyKeys: def.concurrencyKeys,
     task: def.task,

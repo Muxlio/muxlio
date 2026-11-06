@@ -3,6 +3,8 @@ package state
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // Run is one invocation of an immutable compiled workflow version.
@@ -69,8 +71,9 @@ type AssignmentLease struct {
 
 // WorkerCapability is one executor contract advertised by a worker.
 type WorkerCapability struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
+	Contract *contract.AdapterManifest `json:"contract,omitempty"`
+	Name     string                    `json:"name"`
+	Version  string                    `json:"version,omitempty"`
 }
 
 // Worker is a registered remote executor and its advertised capabilities.
@@ -103,11 +106,7 @@ type Dispatch struct {
 // which is represented by a non-nil pointer with all fields set to zero. The
 // distinction lets consumers tell "unavailable" from "free/empty" — missing
 // provider usage must remain explicitly unavailable, not be reported as zero.
-type TokenUsage struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-	Cached int64 `json:"cached"`
-}
+type TokenUsage = contract.TokenUsage
 
 // ExecutionAttempt records one interpreter call to an executor.
 // FinishedAt marks the logical attempt outcome. Cancellation does not prove

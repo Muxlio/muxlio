@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-cursor: %v", err)
 	}
@@ -43,7 +43,8 @@ func main() {
 
 	cmd := exec.Command(cli, "--print", "--yolo", "--trust", "--output-format", "stream-json", "--model", model, adapter.ComposePrompt(req))
 	cmd.Dir = workDir
-	cmd.Stderr = os.Stderr
+	var diagnostics adapter.BoundedBuffer
+	cmd.Stderr = &diagnostics
 	cmd.Env = cursorAgentEnv()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -107,17 +108,25 @@ func main() {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
+	adapter.AppendLogChunk("stderr", diagnostics.String())
+	fail := func(format string, args ...any) {
+		_ = adapter.WriteResponse(adapter.Response{Error: fmt.Sprintf(format, args...), Logs: diagnostics.String(), Usage: usage})
+	}
 	if readErr != nil {
-		adapter.FailWithUsage(usage, "agent-cursor: reading stream: %v", readErr)
+		fail("agent-cursor: reading stream: %v", readErr)
+		return
 	}
 	if !completed {
-		adapter.FailWithUsage(usage, "agent-cursor: stream ended without a completion event")
+		fail("agent-cursor: stream ended without a completion event")
+		return
 	}
 	if streamErr != "" {
-		adapter.FailWithUsage(usage, "agent-cursor: %s", streamErr)
+		fail("agent-cursor: %s", streamErr)
+		return
 	}
 	if waitErr != nil {
-		adapter.FailWithUsage(usage, "agent-cursor: agent exited with error: %v", waitErr)
+		fail("agent-cursor: agent exited with error: %v", waitErr)
+		return
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
@@ -128,7 +137,7 @@ func main() {
 	if len(missing) > 0 {
 		errMsg = fmt.Sprintf("agent-cursor did not write expected output files: %s", strings.Join(missing, ", "))
 	}
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Logs: diagnostics.String(), Usage: usage})
 }
 
 func assistantText(raw json.RawMessage) []string {

@@ -14,16 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 const remoteProtocolVersion = "v1"
 
-type RemoteCapability struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
-}
+type RemoteCapability = state.WorkerCapability
 type remoteRegistration struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	WorkerID        string             `json:"workerId"`
@@ -68,18 +66,20 @@ type remoteError struct {
 	Retryable bool   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
-	AssignmentID        string            `json:"assignmentId"`
-	RunID               string            `json:"runId"`
-	ActivationID        string            `json:"activationId"`
-	AttemptID           string            `json:"attemptId"`
-	CoordinatorEpoch    int64             `json:"coordinatorEpoch"`
-	Generation          int64             `json:"generation"`
-	State               string            `json:"state"`
-	Outputs             map[string]any    `json:"outputs,omitempty"`
-	Error               *remoteError      `json:"error,omitempty"`
-	Logs                string            `json:"logs,omitempty"`
-	Usage               *state.TokenUsage `json:"usage,omitempty"`
-	ExecutionDurationMS *int64            `json:"executionDurationMs,omitempty"`
+	AssignmentID        string                        `json:"assignmentId"`
+	RunID               string                        `json:"runId"`
+	ActivationID        string                        `json:"activationId"`
+	AttemptID           string                        `json:"attemptId"`
+	CoordinatorEpoch    int64                         `json:"coordinatorEpoch"`
+	Generation          int64                         `json:"generation"`
+	State               string                        `json:"state"`
+	Outputs             map[string]any                `json:"outputs,omitempty"`
+	Error               *remoteError                  `json:"error,omitempty"`
+	Logs                string                        `json:"logs,omitempty"`
+	Usage               *state.TokenUsage             `json:"usage,omitempty"`
+	SessionID           string                        `json:"sessionId,omitempty"`
+	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
+	ExecutionDurationMS *int64                        `json:"executionDurationMs,omitempty"`
 }
 
 // RemoteWorkerConfig describes an outbound worker connection.
@@ -561,7 +561,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			executeReq := ExecuteRequest{Secrets: finished.secrets}
 			result, execErr := finished.result, finished.err
 			result.Logs = boundedLog(RedactSecrets(result.Logs, executeReq.Secrets))
-			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, SessionID: result.SessionID, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

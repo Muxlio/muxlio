@@ -10,14 +10,6 @@ import (
 // Workers without this capability must never receive isolation-required tasks.
 const IsolationLabelPrefix = "muxlio.dev/isolation/"
 
-type dispatchRequirements struct {
-	WorkspaceMode   string            `json:"workspaceMode"`
-	ConcurrencyKeys []string          `json:"concurrencyKeys"`
-	ExecutorVersion string            `json:"executorVersion"`
-	PlacementLabels map[string]string `json:"placementLabels"`
-	Params          json.RawMessage   `json:"params"`
-}
-
 // MatchDispatch reports whether worker can claim an execute envelope.
 func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapability, labels map[string]string) bool {
 	var cap *state.WorkerCapability
@@ -30,11 +22,21 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 	if cap == nil {
 		return false
 	}
-	var req dispatchRequirements
+	var req ExecuteRequest
 	if len(requestJSON) > 0 {
 		if json.Unmarshal(requestJSON, &req) != nil {
 			return false
 		}
+	}
+	// Legacy workers can satisfy the baseline only. Optional requirements need
+	// an explicit descriptor, and the same check runs again at local dispatch.
+	req.Executor = executor
+	descriptor := cap.Contract
+	if descriptor == nil {
+		descriptor = &adapterManifest{ExecutorVersion: cap.Version}
+	}
+	if CheckAdapterCapabilities(req, descriptor) != nil {
+		return false
 	}
 	if ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys) != nil {
 		return false

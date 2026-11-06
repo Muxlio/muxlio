@@ -133,6 +133,16 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 			return 2
 		}
 		if allowed {
+			descriptor, err := executor.Descriptor(cap.Name)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if cap.Version != "" && cap.Version != descriptor.ExecutorVersion {
+				fmt.Fprintln(os.Stderr, "executor version does not match descriptor")
+				return 2
+			}
+			cap.Version, cap.Contract = descriptor.ExecutorVersion, descriptor
 			filtered = append(filtered, cap)
 		}
 	}

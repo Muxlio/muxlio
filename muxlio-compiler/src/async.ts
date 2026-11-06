@@ -14,6 +14,7 @@
 import { computeDigest } from '@muxlio/sdk';
 import type {
   Binding,
+  ExecutorRequirements,
   Expr,
   JSONSchema,
   Node,
@@ -118,7 +119,7 @@ class RecordingContext {
     return `${base}__${this.counter.value++}`;
   }
 
-  execute(id: string, opts: {
+  execute(id: string, opts: ExecutorRequirements & {
     executor: string;
     task?: string;
     params?: unknown;
@@ -142,6 +143,11 @@ class RecordingContext {
       id,
       kind: 'execute',
       executor: opts.executor,
+      executorVersion: opts.executorVersion,
+      contractVersion: opts.contractVersion,
+      requiredCapabilities: opts.requiredCapabilities,
+      sessionId: opts.sessionId,
+      remoteTask: opts.remoteTask,
       task: opts.task,
       params: opts.params,
       inputs,

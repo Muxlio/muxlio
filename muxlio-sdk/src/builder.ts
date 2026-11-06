@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import type {
   Binding,
+  ExecutorRequirements,
   Expr,
   JSONSchema,
   Node,
@@ -59,7 +60,7 @@ export interface ProjectResult {
 
 // --- Option types ---
 
-export interface ExecuteOptions {
+export interface ExecuteOptions extends ExecutorRequirements {
   executor: string;
   fallbackExecutors?: string[];
   /** Private snapshot by default; shared writes require exclusive keys. */
@@ -222,6 +223,11 @@ class IRBuilder implements BuildContext {
       id,
       kind: 'execute',
       executor: opts.executor,
+      executorVersion: opts.executorVersion,
+      contractVersion: opts.contractVersion,
+      requiredCapabilities: opts.requiredCapabilities,
+      sessionId: opts.sessionId,
+      remoteTask: opts.remoteTask,
       workspaceMode: opts.workspaceMode,
       concurrencyKeys: opts.concurrencyKeys,
       fallbackExecutors: opts.fallbackExecutors,

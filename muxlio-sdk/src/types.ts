@@ -51,8 +51,20 @@ export type NodeKind =
   | 'child'
   | 'project';
 
+/** Requirements checked against the advertised executor descriptor before dispatch.
+ * Optional capability values are exact revisions, e.g. { progress: '1' }.
+ * Output schemas alone request consumer validation, not native typed generation.
+ */
+export interface ExecutorRequirements {
+  executorVersion?: string;
+  contractVersion?: string;
+  requiredCapabilities?: Record<string, string>;
+  sessionId?: string;
+  remoteTask?: { id: string; url?: string };
+}
+
 /** A single node within a subgraph. */
-export interface Node {
+export interface Node extends ExecutorRequirements {
   id: string;
   kind: NodeKind;
 

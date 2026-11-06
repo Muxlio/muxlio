@@ -35,7 +35,7 @@ import (
 )
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-claude: %v", err)
 	}
@@ -178,6 +178,7 @@ func main() {
 	if err := cmd.Wait(); err != nil {
 		runErr = appendFailure(runErr, fmt.Sprintf("claude process error: %v", err))
 	}
+	adapter.AppendLogChunk("stderr", stderr.String())
 	if !completed {
 		runErr = appendFailure(runErr, "claude stream ended without a result event")
 	}
@@ -189,30 +190,7 @@ func main() {
 		adapter.FailWithUsage(usage, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
-	// Collect declared output files from workDir.
-	outputs := make(map[string]any)
-	var missing []string
-	for port, decl := range req.Outputs {
-		name := decl.Path
-		if name == "" {
-			name = port
-		}
-		fullPath, err := adapter.ResolveOutput(req.WorkDir, name)
-		if err != nil {
-			missing = append(missing, port)
-			continue
-		}
-		data, err := adapter.ReadOutput(fullPath)
-		if err != nil {
-			missing = append(missing, port)
-			continue
-		}
-		outputs[port] = map[string]any{
-			"mime": decl.Mime,
-			"path": fullPath,
-			"data": string(data),
-		}
-	}
+	outputs, missing := adapter.CollectOutputs(req)
 
 	// Always populate "_text" with the complete assistant response.
 	outputs["_text"] = map[string]any{

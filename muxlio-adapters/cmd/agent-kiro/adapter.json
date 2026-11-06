@@ -1,0 +1,15 @@
+{
+  "manifestVersion": "1",
+  "contractVersion": "1",
+  "executor": "agent/kiro",
+  "executorVersion": "1",
+  "capabilities": {
+    "artifacts": true,
+    "progress": true,
+    "usage": true,
+    "cancel": false,
+    "session": false,
+    "remoteTask": false,
+    "typedResult": false
+  }
+}

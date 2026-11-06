@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // Plan is an immutable compiled workflow definition.
@@ -74,12 +75,16 @@ type Node struct {
 	// --- execute ---
 
 	// Executor names the executor capability, e.g. "agent/claude".
-	Executor          string            `json:"executor,omitempty"`
-	ExecutorVersion   string            `json:"executorVersion,omitempty"`
-	PlacementLabels   map[string]string `json:"placementLabels,omitempty"`
-	WorkspaceMode     string            `json:"workspaceMode,omitempty"`
-	ConcurrencyKeys   []string          `json:"concurrencyKeys,omitempty"`
-	FallbackExecutors []string          `json:"fallbackExecutors,omitempty"`
+	Executor             string                        `json:"executor,omitempty"`
+	ContractVersion      string                        `json:"contractVersion,omitempty"`
+	RequiredCapabilities map[string]string             `json:"requiredCapabilities,omitempty"`
+	SessionID            string                        `json:"sessionId,omitempty"`
+	RemoteTask           *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
+	ExecutorVersion      string                        `json:"executorVersion,omitempty"`
+	PlacementLabels      map[string]string             `json:"placementLabels,omitempty"`
+	WorkspaceMode        string                        `json:"workspaceMode,omitempty"`
+	ConcurrencyKeys      []string                      `json:"concurrencyKeys,omitempty"`
+	FallbackExecutors    []string                      `json:"fallbackExecutors,omitempty"`
 
 	// Task is the natural-language or structured task description.
 	Task string `json:"task,omitempty"`
@@ -175,16 +180,7 @@ type Node struct {
 }
 
 // OutputDecl declares a named output port and its file contract.
-type OutputDecl struct {
-	// Mime is the expected MIME type of the output.
-	Mime string `json:"mime,omitempty"`
-
-	// Path is the expected file name within the executor's output dir.
-	Path string `json:"path,omitempty"`
-
-	// Schema is an optional JSON Schema for structured JSON output ports.
-	Schema json.RawMessage `json:"schema,omitempty"`
-}
+type OutputDecl = contract.OutputDecl
 
 // RetryPolicy defines retry behaviour for an execute node.
 type RetryPolicy struct {

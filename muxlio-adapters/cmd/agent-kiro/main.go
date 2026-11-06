@@ -34,7 +34,7 @@ import (
 )
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("agent-kiro: %v", err)
 	}
@@ -85,6 +85,7 @@ func main() {
 	// Collect all assistant text chunks; watch for runFinished.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var completed bool
 	var usage *adapter.TokenUsage
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
@@ -149,9 +150,12 @@ func main() {
 				ExitCode  *int   `json:"exitCode"`
 				Error     string `json:"error"`
 			}
-			if dataRaw, ok := ev["data"]; ok {
-				_ = json.Unmarshal(dataRaw, &payload)
+			dataRaw := ev["data"]
+			if len(dataRaw) == 0 || strings.TrimSpace(string(dataRaw)) == "null" || json.Unmarshal(dataRaw, &payload) != nil {
+				runErr = appendFailure(runErr, "malformed kiro runFinished data")
+				continue
 			}
+			completed = true
 			if payload.Status != "" && payload.Status != "success" {
 				runErr = fmt.Sprintf("kiro run finished with status %s", payload.Status)
 			}
@@ -173,6 +177,10 @@ func main() {
 
 	if err := cmd.Wait(); err != nil {
 		runErr = appendFailure(runErr, fmt.Sprintf("kiro-cli process error: %v", err))
+	}
+	adapter.AppendLogChunk("stderr", stderr.String())
+	if !completed {
+		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
 	if runErr != "" {
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")

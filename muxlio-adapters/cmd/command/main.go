@@ -65,7 +65,7 @@ func (p *preview) String() string {
 }
 
 func main() {
-	req, err := adapter.ReadRequest()
+	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
 		adapter.Fail("command: %v", err)
 	}
@@ -196,6 +196,9 @@ func main() {
 	started := time.Now()
 	runErr := runCommand(ctx, cmd)
 	duration := time.Since(started).Milliseconds()
+	if parent.Err() != nil {
+		adapter.Fail("command: cancelled")
+	}
 	if ctx.Err() != nil {
 		adapter.Fail("command: timed out after %s", timeout)
 	}
@@ -221,8 +224,28 @@ func main() {
 		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: "command produced output while failOnOutput is enabled"})
 		return
 	}
+	// Preserve onNonZero=return for callers inspecting process failures.
+	if sig, ok := result["signal"].(string); ok && sig != "" && p.OnNonZero == "fail" {
+		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: fmt.Sprintf("command terminated by signal: %s", sig)})
+		return
+	}
 	if code, ok := result["exitCode"].(int); ok && code != 0 && p.OnNonZero == "fail" {
 		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: fmt.Sprintf("command exited with status %d", code)})
+		return
+	}
+	declared := *req
+	declared.Outputs = make(map[string]adapter.OutputDecl)
+	for port, decl := range req.Outputs {
+		if _, builtin := result[port]; !builtin || decl.Path != "" {
+			declared.Outputs[port] = decl
+		}
+	}
+	outputs, missing := adapter.CollectOutputs(&declared)
+	for port, value := range outputs {
+		result[port] = value
+	}
+	if len(missing) > 0 {
+		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: fmt.Sprintf("command did not write expected output files: %s", strings.Join(missing, ", "))})
 		return
 	}
 	// Keep full output available through normal Muxlio task logs; the adapter

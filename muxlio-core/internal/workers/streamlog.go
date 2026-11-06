@@ -7,14 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 const muxlioLogFDEnv = "MUXLIO_LOG_FD"
 
-type muxlioLogLine struct {
-	Stream string `json:"stream"`
-	Text   string `json:"text"`
-}
+type muxlioLogLine = contract.Progress
 
 // startAdapterLogPump wires MUXLIO_LOG_FD (fd 3) into req.LogSink while the adapter runs.
 func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err error) {

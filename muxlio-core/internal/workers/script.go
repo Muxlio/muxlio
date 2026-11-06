@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // ScriptExecutor dispatches execute requests to per-executor shell scripts.
@@ -152,6 +154,16 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 			"muxlio: no adapter for executor %q (expected script at %s)", req.Executor, script)
 	}
 
+	// Verify adapter capabilities before dispatch. Unsupported capabilities are
+	// reported as explicit executor errors, never silently emulated.
+	manifest, manifestErr := loadAdapterManifest(script)
+	if manifestErr != nil {
+		return ExecuteResult{Error: manifestErr.Error()}, nil
+	}
+	if capErr := CheckAdapterCapabilities(req, manifest); capErr != nil {
+		return ExecuteResult{Error: capErr.Error()}, nil
+	}
+
 	// Keep each attempt's workspace under the run so incidental agent files
 	// (notes, scratch output, CLI diagnostics) cannot land in the source repo.
 	// Older/direct callers without execution IDs retain an isolated temp dir.
@@ -169,13 +181,17 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		return ExecuteResult{Error: err.Error()}, nil
 	}
 
-	// Build the stdin payload: ExecuteRequest + workDir.
-	type scriptInput struct {
-		ExecuteRequest
-		WorkDir              string `json:"workDir"`
-		HostExecutionAllowed bool   `json:"hostExecutionAllowed"`
-	}
-	stdin, err := json.Marshal(scriptInput{ExecuteRequest: req, WorkDir: workDir, HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed()})
+	// Use the shared wire envelope; worker scheduling and policy stay local.
+	stdin, err := json.Marshal(contract.Request{
+		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion,
+		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
+		SessionID: req.SessionID, RemoteTask: req.RemoteTask,
+		Workspace: req.Workspace, WorkDir: workDir,
+		HostExecutionAllowed: s.Executors[req.Executor].ExplicitlyAllowed(),
+		RunID:                req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID,
+		Task: req.Task, Params: req.Params, Inputs: req.Inputs, Outputs: req.Outputs,
+		Secrets: req.Secrets, ScopePath: req.ScopePath, NodeID: req.NodeID,
+	})
 	if err != nil {
 		return ExecuteResult{}, fmt.Errorf("muxlio: marshalling script input: %w", err)
 	}
@@ -228,8 +244,8 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	}
 
 	// Parse stdout as ExecuteResult.
-	var result ExecuteResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+	result, err := contract.ParseResult(stdout.Bytes())
+	if err != nil {
 		return ExecuteResult{
 			Error: fmt.Sprintf("adapter %q returned invalid JSON: %v\nstdout: %s\nstderr: %s",
 				req.Executor, err, boundedLog(RedactSecrets(stdout.String(), req.Secrets)), RedactSecrets(stderr.String(), req.Secrets)), Logs: RedactSecrets(stderr.String(), req.Secrets),
