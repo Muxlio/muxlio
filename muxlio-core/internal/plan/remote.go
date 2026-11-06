@@ -56,7 +56,7 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		if _, queued := e.executor.(workers.QueuedExecutor); queued && len(prior) > 0 && prior[len(prior)-1].State == "running" {
 			queryReq.AttemptID = prior[len(prior)-1].ID
 		}
-		queryReq.Context, queryReq.Effect = e.context(), "pure"
+		queryReq.Context, queryReq.Effect = e.telemetryContext(), "pure"
 		queryReq.Workspace, queryReq.WorkspaceMode, queryReq.ConcurrencyKeys = "", "", nil
 		// Polls run in scratch even when submission required a host workspace.
 		// Narrow that filesystem grant in both representations of the policy;

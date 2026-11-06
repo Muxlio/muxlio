@@ -60,7 +60,7 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	}
 	req.PlacementLabels = labels
 	req.ExecutionDeadline, req.QueueDeadline = nil, nil
-	req.Context = e.context()
+	req.Context = e.telemetryContext()
 	req.OnExecutionReturned = nil
 	// A reconciliation query is bounded and read-only. It must not silently start work.
 	seconds := 30.0

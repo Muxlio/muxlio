@@ -128,6 +128,9 @@ type Progress struct {
 // Request starts one invocation. Optional feature requirements are exact
 // capability revisions. Session and remote references must never be emulated.
 type Request struct {
+	// TraceContext carries W3C traceparent/tracestate for optional adapter
+	// instrumentation. It contains no baggage, credentials, or request content.
+	TraceContext         map[string]string     `json:"traceContext,omitempty"`
 	Environment          *EnvironmentManifest  `json:"environment,omitempty"`
 	SessionInputs        []SessionInput        `json:"sessionInputs,omitempty"`
 	Session              *SessionRequest       `json:"session,omitempty"`

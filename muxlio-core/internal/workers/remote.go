@@ -19,6 +19,7 @@ import (
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/telemetry"
 )
 
 const remoteProtocolVersion = "v1"
@@ -276,11 +277,12 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	}
 
 	type attempt struct {
-		inputContext context.Context
-		assignment   remoteAssignment
-		cancel       context.CancelFunc
-		revoked      bool
-		leaseUntil   time.Time
+		inputContext   context.Context
+		assignment     remoteAssignment
+		cancel         context.CancelFunc
+		revoked        bool
+		leaseUntil     time.Time
+		leaseRenewedAt time.Time
 	}
 	type execution struct {
 		id      string
@@ -339,7 +341,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		reject := func(err error) error {
 			_, cancel := context.WithCancel(ctx)
 			leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)
-			active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: cancel, leaseUntil: leaseUntil}
+			active[assignment.AssignmentID] = &attempt{assignment: assignment, cancel: cancel, leaseUntil: leaseUntil, leaseRenewedAt: time.Now()}
 			children.Add(1)
 			go func() {
 				defer children.Done()
@@ -400,6 +402,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			execCtx, execCancel = timeoutCtx, func() { timeoutCancel(); parentCancel() }
 		}
 
+		execCtx, endAttempt := telemetry.Start(telemetry.Extract(execCtx, executeReq.TraceContext), "muxlio.worker.attempt", telemetry.WorkerAttemptAttributes(executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID, executeReq.Executor, cfg.WorkerID)...)
 		executeReq.Context = execCtx
 		inner := executor
 		if cfg.ExecutorFactory != nil {
@@ -408,6 +411,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			inner = factory.NewAttempt()
 		}
 		if inner == nil {
+			endAttempt(true)
 			execCancel()
 			return reject(fmt.Errorf("attempt executor is required"))
 		}
@@ -427,13 +431,16 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 
 		leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)
-		active[assignment.AssignmentID] = &attempt{inputContext: execCtx, assignment: assignment, cancel: execCancel, leaseUntil: leaseUntil}
+		active[assignment.AssignmentID] = &attempt{inputContext: execCtx, assignment: assignment, cancel: execCancel, leaseUntil: leaseUntil, leaseRenewedAt: time.Now()}
 		children.Add(1)
 		go func() {
 			defer children.Done()
 			defer execCancel()
 			started := time.Now()
 			r, e := runExecutor.Execute(executeReq)
+			telemetry.Usage(execCtx, r.Usage)
+			endAttempt(e != nil || r.Error != "" || execCtx.Err() != nil)
+			telemetry.Duration(execCtx, "muxlio.execution.duration", time.Since(started), executeReq.Executor)
 			if execCtx.Err() != nil {
 				e = execCtx.Err()
 				r.Outputs = nil
@@ -466,6 +473,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 		heartbeating = true
 		updateLimit()
+		telemetry.Slots(ctx, cfg.WorkerID, len(active), limit)
+		for _, child := range active {
+			telemetry.LeaseAge(ctx, cfg.WorkerID, time.Since(child.leaseRenewedAt))
+		}
 		ids := make([]string, 0, len(active))
 		leases := make([]state.AssignmentLease, 0, len(active))
 		for id, child := range active {
@@ -632,6 +643,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 					child.revoked = true
 					child.cancel()
 				} else if h.response.LeaseSeconds > 0 && !child.revoked {
+					child.leaseRenewedAt = h.sentAt
 					child.leaseUntil = h.sentAt.Add(time.Duration(h.response.LeaseSeconds) * time.Second)
 				}
 			}

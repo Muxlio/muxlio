@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"os"
 	"os/exec"
@@ -17,7 +16,9 @@ import (
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/sandbox"
+	"github.com/muxlio/muxlio-core/internal/telemetry"
 )
 
 // ScriptExecutor dispatches execute requests to per-executor shell scripts.
@@ -87,13 +88,23 @@ func (s *ScriptExecutor) scriptPath(executor string) string {
 }
 
 // Execute implements Executor.
-func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
+func (s *ScriptExecutor) Execute(req ExecuteRequest) (result ExecuteResult, executionErr error) {
+	if req.Context == nil {
+		req.Context = s.Context
+	}
+	ctx, end := telemetry.Start(req.Context, "execute_tool", telemetry.AttemptAttributes(req.RunID, req.ActivationID, req.AttemptID, req.Executor)...)
+	req.Context = ctx
+	defer func() {
+		telemetry.Usage(ctx, result.Usage)
+		end(executionErr != nil || result.Error != "")
+	}()
 	started := time.Now()
 	req, resolveErr := s.resolveSecrets(req)
 	if resolveErr != nil {
 		return ExecuteResult{Error: resolveErr.Error()}, nil
 	}
 	result, err := s.executeSession(req)
+	telemetry.Duration(ctx, "muxlio.adapter.duration", time.Since(started), req.Executor)
 	result, err = sanitizeExecution(result, err, executionSecrets(req))
 	elapsed := time.Since(started).Milliseconds()
 	result.ExecutionDurationMS = &elapsed
@@ -186,7 +197,8 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 
 	// Use the shared wire envelope; worker scheduling and policy stay local.
 	stdin, err := json.Marshal(contract.Request{
-		Executor: req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
+		TraceContext: telemetry.Inject(req.Context),
+		Executor:     req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
 		SessionInputs: req.SessionInputs, Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,

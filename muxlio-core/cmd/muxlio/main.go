@@ -581,6 +581,13 @@ func cmdRunsWithStore(store state.Store, stateFilters []string, jsonOut bool) in
 }
 
 func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
+	shutdownTelemetry, telemetryErr := setupTelemetry()
+	if telemetryErr != nil {
+		fmt.Fprintln(os.Stderr, telemetryErr)
+		return 1
+	}
+	defer shutdownTelemetry()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

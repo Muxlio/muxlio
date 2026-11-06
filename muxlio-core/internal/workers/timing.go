@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/muxlio/muxlio-core/internal/telemetry"
 )
 
 // QueuedExecutor owns admission timing; execution timeout starts after admission.
@@ -13,13 +15,15 @@ type QueuedExecutor interface {
 
 // ExecuteAttempt propagates cancellation without claiming that an executor's
 // return proves an external effect was rolled back or even stopped.
-func ExecuteAttempt(executor Executor, req ExecuteRequest) (ExecuteResult, error) {
+func ExecuteAttempt(executor Executor, req ExecuteRequest) (result ExecuteResult, executionErr error) {
+	ctx, end := telemetry.Start(req.Context, "muxlio.attempt", telemetry.AttemptAttributes(req.RunID, req.ActivationID, req.AttemptID, req.Executor)...)
+	req.Context = ctx
+	defer func() {
+		telemetry.Usage(ctx, result.Usage)
+		end(executionErr != nil || result.Error != "")
+	}()
 	if queued, ok := executor.(QueuedExecutor); ok {
 		return queued.ExecuteQueued(req)
-	}
-	ctx := req.Context
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	cancel := func() {}
 	if req.Deadline != nil {
@@ -46,7 +50,9 @@ func ExecuteAttempt(executor Executor, req ExecuteRequest) (ExecuteResult, error
 	}
 	done := make(chan outcome, 1)
 	go func() {
+		started := time.Now()
 		result, err := executor.Execute(req)
+		telemetry.Duration(ctx, "muxlio.execution.duration", time.Since(started), req.Executor)
 		if req.OnExecutionReturned != nil {
 			req.OnExecutionReturned()
 		}

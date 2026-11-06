@@ -16,6 +16,7 @@ import (
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/telemetry"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -49,6 +50,7 @@ func inputRequestID(actID, name string) string {
 // Engine interprets a Plan IR against a Store. The default store is
 // in-memory; pass a SQLite store for durable runs.
 type Engine struct {
+	traceContext    context.Context
 	budgetMu        sync.Mutex
 	Context         context.Context
 	plan            *Plan
@@ -203,7 +205,7 @@ func (e *Engine) Retry(runID string) error {
 }
 
 // Run executes the run to completion. For M0 this is synchronous.
-func (e *Engine) Run(runID string) error {
+func (e *Engine) Run(runID string) (runErr error) {
 	run, err := e.store.GetRun(runID)
 	if err != nil {
 		return err
@@ -230,6 +232,9 @@ func (e *Engine) Run(runID string) error {
 	if e.plan.DeadlineSeconds != nil && *e.plan.DeadlineSeconds > 0 {
 		e.applyRunDeadline(run.CreatedAt.Add(time.Duration(*e.plan.DeadlineSeconds * float64(time.Second))))
 	}
+	traceCtx, end := telemetry.Start(e.context(), "invoke_workflow", telemetry.RunAttributes(runID, e.plan.Name)...)
+	e.traceContext = traceCtx
+	defer func() { end(runErr != nil) }()
 	defer func() {
 		if err := e.context().Err(); err != nil && e.scopeInterrupted() {
 			_, _ = e.store.TransitionRunState(runID, []string{RunCreated, RunRunning, RunWaiting, RunPaused}, RunCancelled)
@@ -280,8 +285,9 @@ func (e *Engine) Run(runID string) error {
 	}
 
 	ctx := &EvalContext{
-		Input:   run.Input,
-		Outputs: make(map[string]map[string]any),
+		traceContext: e.traceContext,
+		Input:        run.Input,
+		Outputs:      make(map[string]map[string]any),
 	}
 
 	output, err := e.executeSubgraph(runID, rootName, rootSG, nil, ctx)
@@ -455,7 +461,17 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 }
 
 // executeNode dispatches to the appropriate handler based on node kind.
-func (e *Engine) executeNode(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
+func (e *Engine) executeNode(runID string, node *Node, scope []string, ctx *EvalContext) (output map[string]any, executeErr error) {
+	parent := ctx.traceContext
+	if parent == nil {
+		parent = e.telemetryContext()
+	}
+	traceCtx, end := telemetry.Start(parent, "muxlio.activation", telemetry.ActivationAttributes(runID, activationID(runID, scope, node.ID), node.ID)...)
+	defer func() { end(executeErr != nil) }()
+	local := *ctx
+	local.traceContext = traceCtx
+	ctx = &local
+
 	switch node.Kind {
 	case KindExecute:
 		return e.executeExecute(runID, node, scope, ctx)
@@ -502,7 +518,8 @@ func (e *Engine) executeChild(runID string, node *Node, scope []string, ctx *Eva
 	}
 	childScope := append(append([]string{}, scope...), "child:"+node.ChildRef)
 	output, err := e.executeSubgraph(runID, node.ChildRef, sg, childScope, &EvalContext{
-		Input: ctx.Input, Item: ctx.Item, State: ctx.State,
+		traceContext: ctx.traceContext,
+		Input:        ctx.Input, Item: ctx.Item, State: ctx.State,
 		Outputs: make(map[string]map[string]any),
 	})
 	if err != nil {
@@ -546,8 +563,12 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		outDecls[port] = workers.OutputDecl{Mime: decl.Mime, Path: decl.Path, Schema: decl.Schema}
 	}
 
+	parent := ctx.traceContext
+	if parent == nil {
+		parent = e.telemetryContext()
+	}
 	req := workers.ExecuteRequest{
-		Context:              e.context(),
+		Context:              parent,
 		LifetimeContext:      e.Context,
 		Executor:             node.Executor,
 		ExecutorVersion:      node.ExecutorVersion,
@@ -1030,9 +1051,10 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 		var keyStr string
 		if node.Key != nil {
 			keyVal, err := node.Key.Eval(&EvalContext{
-				Input:   ctx.Input,
-				Item:    item,
-				Outputs: ctx.Outputs,
+				traceContext: ctx.traceContext,
+				Input:        ctx.Input,
+				Item:         item,
+				Outputs:      ctx.Outputs,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("muxlio: evaluating map key: %w", err)
@@ -1058,9 +1080,10 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 		for i, item := range items {
 			itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", node.ID, keys[i]))
 			itemCtx := &EvalContext{
-				Input:   ctx.Input,
-				Item:    item,
-				Outputs: inheritOutputs(ctx),
+				traceContext: ctx.traceContext,
+				Input:        ctx.Input,
+				Item:         item,
+				Outputs:      inheritOutputs(ctx),
 			}
 			itemOutput, err := e.executeSubgraph(runID, node.BodyRef, bodySG, itemScope, itemCtx)
 			if err != nil {
@@ -1086,9 +1109,10 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 				defer func() { <-sem }()
 				itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", node.ID, keys[index]))
 				itemCtx := &EvalContext{
-					Input:   ctx.Input,
-					Item:    item,
-					Outputs: inheritOutputs(ctx),
+					traceContext: ctx.traceContext,
+					Input:        ctx.Input,
+					Item:         item,
+					Outputs:      inheritOutputs(ctx),
 				}
 				itemOutput, err := e.executeSubgraph(runID, node.BodyRef, bodySG, itemScope, itemCtx)
 				resultCh <- mapResult{index: index, output: unwrapSubgraphOutput(itemOutput), err: err}
@@ -1150,10 +1174,11 @@ func (e *Engine) executeBranch(runID string, node *Node, scope []string, ctx *Ev
 	branchScope := append(append([]string{}, scope...), fmt.Sprintf("branch:%s:%t", node.ID, cond))
 
 	output, err := e.executeSubgraph(runID, sgName, sg, branchScope, &EvalContext{
-		Input:   ctx.Input,
-		Item:    ctx.Item,
-		State:   ctx.State,
-		Outputs: inheritOutputs(ctx),
+		traceContext: ctx.traceContext,
+		Input:        ctx.Input,
+		Item:         ctx.Item,
+		State:        ctx.State,
+		Outputs:      inheritOutputs(ctx),
 	})
 	if err != nil {
 		return nil, err
@@ -1221,9 +1246,10 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		if iteration >= maxIter {
 			if maxIter > 0 {
 				whileCtx := &EvalContext{
-					Input:   ctx.Input,
-					State:   currentState,
-					Outputs: ctx.Outputs,
+					traceContext: ctx.traceContext,
+					Input:        ctx.Input,
+					State:        currentState,
+					Outputs:      ctx.Outputs,
 				}
 				condVal, err := node.While.Eval(whileCtx)
 				if err != nil {
@@ -1238,9 +1264,10 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 
 		// Evaluate while condition with current state.
 		whileCtx := &EvalContext{
-			Input:   ctx.Input,
-			State:   currentState,
-			Outputs: ctx.Outputs,
+			traceContext: ctx.traceContext,
+			Input:        ctx.Input,
+			State:        currentState,
+			Outputs:      ctx.Outputs,
 		}
 		condVal, err := node.While.Eval(whileCtx)
 		if err != nil {
@@ -1257,9 +1284,10 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		// Execute body subgraph.
 		iterScope := append(append([]string{}, scope...), fmt.Sprintf("loop:%s:%d", node.ID, iteration))
 		iterCtx := &EvalContext{
-			Input:   ctx.Input,
-			State:   currentState,
-			Outputs: inheritOutputs(ctx),
+			traceContext: ctx.traceContext,
+			Input:        ctx.Input,
+			State:        currentState,
+			Outputs:      inheritOutputs(ctx),
 		}
 
 		bodyOutput, err := e.executeSubgraph(runID, node.BodyRef, bodySG, iterScope, iterCtx)

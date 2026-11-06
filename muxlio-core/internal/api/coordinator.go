@@ -12,6 +12,7 @@ import (
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
 	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/telemetry"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -197,14 +198,14 @@ func (c *Coordinator) NextAssignmentForInstance(workerID, instanceID string) (*W
 	if c.initErr != nil {
 		return nil, c.initErr
 	}
-	workers, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
+	registeredWorkers, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
 	if err != nil {
 		return nil, err
 	}
 	var worker *state.Worker
-	for i := range workers {
-		if workers[i].ID == workerID {
-			worker = &workers[i]
+	for i := range registeredWorkers {
+		if registeredWorkers[i].ID == workerID {
+			worker = &registeredWorkers[i]
 			break
 		}
 	}
@@ -217,6 +218,10 @@ func (c *Coordinator) NextAssignmentForInstance(workerID, instanceID string) (*W
 	d, generation, err := c.store.ClaimDispatchForEpoch(workerID, time.Now().Add(c.lease), c.epoch)
 	if err != nil || d == nil {
 		return nil, err
+	}
+	var envelope workers.ExecuteRequest
+	if json.Unmarshal(d.Request, &envelope) == nil && envelope.QueuedAt != nil {
+		telemetry.Duration(telemetry.Extract(context.Background(), envelope.TraceContext), "muxlio.queue.delay", time.Since(*envelope.QueuedAt), d.Executor)
 	}
 	return &WorkerAssignment{AssignmentID: d.AssignmentID, RunID: d.RunID, ActivationID: d.ActivationID, AttemptID: d.AttemptID, CoordinatorEpoch: c.epoch, Generation: generation, LeaseUntil: time.Now().Add(c.lease).UTC().Format(time.RFC3339), Request: json.RawMessage(d.Request)}, nil
 }
@@ -472,6 +477,9 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if len(guarded.Secrets) != 0 {
 		return workers.ExecuteResult{}, fmt.Errorf("durable dispatch requires secret handles instead of credential values")
 	}
+	guarded.TraceContext = telemetry.Inject(ctx)
+	queuedAt := time.Now()
+	guarded.QueuedAt = &queuedAt
 	guarded = workers.PrepareRemoteDispatch(guarded)
 	guarded = workers.StripInlineArtifactBytes(guarded)
 	if guarded.Session != nil && guarded.Session.Mode == "resume" {

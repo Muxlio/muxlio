@@ -315,6 +315,51 @@ muxlio ui --server http://127.0.0.1:7600 --port 7601
 
 From a development checkout you can also run `npm --prefix muxlio-ui start` with `MUXLIO_API_URL=http://127.0.0.1:7600`. The dashboard provides run search and state filters, input/output/error and timing details, the materialized activation/scope graph, logs, execution attempt history, a cursor-paginated event timeline, active worker assignments, a **Live** page for streaming attempt logs from running activations, and a send-signal form for waiting runs.
 
+### OpenTelemetry export
+
+Local runs, coordinators and remote workers can export OTLP/HTTP traces and metrics.
+Set these variables on each process (including service child processes):
+
+```sh
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=muxlio
+```
+
+Export is disabled by default; each signal accepts `otlp` or `none`.
+Standard OTLP endpoint, TLS and header environment settings configure the HTTP
+exporters. Command shutdown flushes pending telemetry with a five-second limit.
+
+Run, activation, attempt, worker and adapter invocation spans share W3C trace
+context carried in durable assignments. Muxlio IDs remain span attributes.
+Activation and attempt IDs use `sha256:` followed by the SHA-256 hex digest of
+the original ID, consistently across processes, because their scope paths can
+contain input-derived map keys. Run IDs retain their generated values.
+The shared adapter request includes a `traceContext` map containing W3C
+`traceparent` and, when present, `tracestate`, so adapter-owned instrumentation
+can continue the invocation span without receiving baggage.
+Resumed coordinator executions start another trace segment; the run and attempt
+IDs correlate those segments with previously dispatched work. Generic tool spans
+use `gen_ai.operation.name=execute_tool` and `gen_ai.tool.name`; workflow spans
+use `invoke_workflow`. Provider and model identity stay adapter-owned. Reported
+token counts use `gen_ai.usage.*`; unavailable usage is absent and reported zero
+remains zero. These attributes follow the
+[OpenTelemetry GenAI conventions](https://github.com/open-telemetry/semantic-conventions-genai/tree/main/docs/gen-ai).
+
+Metrics use seconds for `muxlio.queue.delay` (enqueue to claim),
+`muxlio.execution.duration` (executor invocation to return, excluding queue and
+completion transport), `muxlio.adapter.duration` (local adapter invocation), and
+`muxlio.lease.age` (time since claim or the last acknowledged renewal).
+`muxlio.worker.slots.used`, `muxlio.worker.slots.capacity` and
+`muxlio.worker.slot_pressure` expose heartbeat snapshots; pressure is occupied
+slots divided by capacity. Metric dimensions use executor or worker identity,
+without per-run IDs.
+
+Prompt bodies, params, inputs, transcripts, artifact contents, secrets and error
+messages are excluded from this instrumentation. It propagates trace identity
+without baggage. Content capture is not enabled by any Muxlio setting.
+
 ## Workers
 
 - **Local worker (service)** — `muxlio service start` registers an outbound worker (`worker-id` `local`) that executes steps in `config.json` `workspace` using adapters from `adapters` (default `~/.muxlio/libexec/muxlio/adapters`). Only capabilities listed in `config.json` are advertised, even if more adapters exist on disk.

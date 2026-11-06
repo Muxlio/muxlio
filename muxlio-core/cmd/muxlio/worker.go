@@ -52,6 +52,13 @@ func discoverCapabilities(dir string) ([]workers.RemoteCapability, error) {
 }
 
 func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDir, dataDir, workspace, _ string, workerTokenFlagVal, workerTokenFileFlagVal string) int {
+	shutdownTelemetry, telemetryErr := setupTelemetry()
+	if telemetryErr != nil {
+		fmt.Fprintln(os.Stderr, telemetryErr)
+		return 1
+	}
+	defer shutdownTelemetry()
+
 	if coordinator == "" || workerID == "" {
 		fmt.Fprintln(os.Stderr, "error: worker start requires --coordinator and --worker-id")
 		fmt.Fprintln(os.Stderr, "usage: muxlio worker start --coordinator URL --worker-id ID --workspace DIR [--capabilities name1,name2] [--capacity N] [--worker-token TOKEN | --worker-token-file FILE]")

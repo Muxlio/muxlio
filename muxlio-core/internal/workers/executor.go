@@ -16,6 +16,9 @@ import (
 
 // ExecuteRequest is the envelope sent to an executor.
 type ExecuteRequest struct {
+	// TraceContext contains W3C trace identity only; no baggage or content.
+	TraceContext         map[string]string             `json:"traceContext,omitempty"`
+	QueuedAt             *time.Time                    `json:"queuedAt,omitempty"`
 	Environment          *contract.EnvironmentManifest `json:"environment,omitempty"`
 	SessionInputs        []contract.SessionInput       `json:"sessionInputs,omitempty"`
 	Action               string                        `json:"action,omitempty"`

@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// telemetryContext retains the run span without changing cancellation for
+// callers that execute a subgraph directly.
+func (e *Engine) telemetryContext() context.Context {
+	if e.traceContext != nil {
+		return e.traceContext
+	}
+	return e.context()
+}
+
 func (e *Engine) context() context.Context {
 	e.ctxOnce.Do(func() {
 		parent := e.Context

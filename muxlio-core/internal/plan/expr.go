@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -50,6 +51,7 @@ type Expr struct {
 
 // EvalContext provides the runtime context for expression evaluation.
 type EvalContext struct {
+	traceContext context.Context
 	// subgraph identifies the source of the currently executing node.
 	subgraph string
 	// Input is the root run input.

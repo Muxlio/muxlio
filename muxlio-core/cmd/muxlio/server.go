@@ -252,6 +252,13 @@ func cmdServerStart(dataDir, addr string, jsonOut bool) int {
 }
 
 func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
+	shutdownTelemetry, telemetryErr := setupTelemetry()
+	if telemetryErr != nil {
+		fmt.Fprintln(os.Stderr, telemetryErr)
+		return 1
+	}
+	defer shutdownTelemetry()
+
 	if dataDir == "" {
 		dataDir = defaultRuntime()
 	}

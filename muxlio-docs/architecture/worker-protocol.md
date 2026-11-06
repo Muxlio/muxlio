@@ -1,5 +1,19 @@
 # Remote worker protocol v1
 
+## Trace correlation
+
+Durable execute envelopes carry optional `traceContext` (W3C `traceparent` and
+`tracestate`, without baggage) and `queuedAt`. The coordinator measures queue
+delay at claim using its own enqueue timestamp; workers measure execution
+duration separately. Workers continue the dispatched span context and supply
+the current adapter invocation context in the shared adapter request's optional
+`traceContext` field. Adapters can extract this context for their own spans;
+provider-specific telemetry stays in the adapter. Prompt, transcript, artifact,
+credential and arbitrary error content is excluded from Muxlio telemetry.
+Exported activation and attempt ID attributes contain `sha256:` plus the SHA-256
+hex digest of the original ID: scope paths can include input-derived map keys.
+Wire and stored IDs are unchanged; coordinator and worker spans use the same digest.
+
 ## Detached remote operations
 
 An execute node opts into asynchronous handoff with
