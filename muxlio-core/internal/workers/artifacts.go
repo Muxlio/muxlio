@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
+	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 // ArtifactRef is a portable content-addressed reference without inline bytes.
@@ -59,6 +62,9 @@ type ArtifactTransferExecutor struct {
 	Inner    Executor
 	Client   artifacts.Client
 	WorkBase string
+	// Snapshot publishes provenance only after immutable bytes reach the store.
+	Snapshot         func(seq int, snapshot state.ArtifactSnapshot) error
+	SnapshotInterval time.Duration
 }
 
 func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
@@ -78,11 +84,91 @@ func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, er
 	if req.Context != nil && req.Context.Err() != nil {
 		return ExecuteResult{}, req.Context.Err()
 	}
+	stopSnapshots := a.startSnapshots(req)
 	result, err := a.Inner.Execute(req)
+	stopSnapshots()
 	if err != nil || result.Error != "" {
 		return result, err
 	}
 	return a.publishOutputs(req, result)
+}
+
+// startSnapshots observes declared files only. It copies bytes before hashing
+// and uploading so later writes can never change a published content address.
+func (a ArtifactTransferExecutor) startSnapshots(req ExecuteRequest) func() {
+	if a.Snapshot == nil || len(req.Outputs) == 0 {
+		return func() {}
+	}
+	ctx := req.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	interval := a.SnapshotInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		last := map[string]string{}
+		seq, remaining := 0, int64(state.MaxAttemptSnapshotBytes)
+		capture := func() {
+			for name, decl := range req.Outputs {
+				if decl.Path == "" || seq >= state.MaxAttemptSnapshots || remaining <= 0 || ctx.Err() != nil {
+					continue
+				}
+				path := filepath.Join(req.attemptScratch, filepath.Base(decl.Path))
+				info, err := os.Lstat(path)
+				if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+					continue
+				}
+				// os.Root rejects symlinks escaping the attempt directory, including
+				// a replacement between Lstat and Open.
+				root, err := os.OpenRoot(req.attemptScratch)
+				if err != nil {
+					continue
+				}
+				f, err := root.Open(filepath.Base(decl.Path))
+				root.Close()
+				if err != nil {
+					continue
+				}
+				data, err := io.ReadAll(io.LimitReader(f, (4<<20)+1))
+				f.Close()
+				if err != nil || len(data) > 4<<20 || int64(len(data)) > remaining {
+					continue
+				}
+				hash := sha256.Sum256(data)
+				digest := "sha256:" + hex.EncodeToString(hash[:])
+				if last[name] == digest {
+					continue
+				}
+				ref, err := a.Client.Upload(ctx, digest, decl.Mime, int64(len(data)), bytes.NewReader(data))
+				if err != nil {
+					continue
+				}
+				seq++
+				remaining -= ref.Size
+				if a.Snapshot(seq, state.ArtifactSnapshot{Name: name, Digest: ref.Digest, Mime: ref.Mime, Size: ref.Size}) == nil {
+					last[name] = digest
+				}
+			}
+		}
+		for {
+			select {
+			case <-ticker.C:
+				capture()
+			case <-stop:
+				capture()
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() { close(stop); <-done }
 }
 
 func (a ArtifactTransferExecutor) materializeInputs(req *ExecuteRequest) error {

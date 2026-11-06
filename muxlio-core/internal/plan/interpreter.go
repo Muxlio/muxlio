@@ -610,7 +610,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "running", StartedAt: started}); recordErr != nil {
 			return nil, recordErr
 		}
-		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets)
+		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets, req.AttemptID)
 		guarded.LogSink = logSink
 		guarded.TimeoutSeconds = node.TimeoutSeconds
 		guarded.QueueTimeoutSeconds = node.QueueTimeoutSeconds
@@ -646,7 +646,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			return nil, err
 		}
 		if result.Logs != "" {
-			if logErr := workers.AppendBoundedExecutorLog(e.store, runID, actID, attempt, result.Logs, guarded.Secrets); logErr != nil {
+			if logErr := workers.AppendBoundedExecutorLog(e.store, runID, actID, attempt, result.Logs, guarded.Secrets, req.AttemptID); logErr != nil {
 				return nil, logErr
 			}
 		}

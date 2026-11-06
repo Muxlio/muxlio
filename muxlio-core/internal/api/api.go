@@ -315,6 +315,42 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		}
 
 		// GET /v1/runs/:id/events, /events/stream, and /stream (SSE live stream)
+		if len(parts) == 2 && parts[1] == "snapshots" {
+			if r.Method != http.MethodGet {
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
+				return
+			}
+			if _, err := store.GetRun(runID); err != nil {
+				writeError(w, http.StatusNotFound, CodeNotFound, "run not found")
+				return
+			}
+			snapshots, err := state.ListSnapshots(store, runID, r.URL.Query().Get("activationId"), r.URL.Query().Get("attemptId"), r.URL.Query().Get("current") == "true")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+				return
+			}
+			after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit <= 0 || limit > 200 {
+				limit = 200
+			}
+			page := make([]state.Event, 0)
+			for _, event := range snapshots {
+				if event.Seq > after {
+					page = append(page, event)
+				}
+			}
+			more := len(page) > limit
+			if more {
+				page = page[:limit]
+			}
+			next := after
+			if len(page) > 0 {
+				next = page[len(page)-1].Seq
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"snapshots": page, "nextAfter": next, "hasMore": more})
+			return
+		}
 		if len(parts) == 2 && parts[1] == "stream" {
 			if r.Method != http.MethodGet {
 				w.Header().Set("Allow", http.MethodGet)

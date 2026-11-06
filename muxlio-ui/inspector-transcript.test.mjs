@@ -200,6 +200,7 @@ let workbenchMarkup;
 const workbenchOutput = {report:{mime:'text/markdown',path:'report.md',data:formatted}};
 const workbenchOriginal = JSON.stringify(workbenchOutput);
 Object.assign(context, {
+  selectedActivation:'review-output', api:async()=>({snapshots:[],hasMore:false}),
   activationData:[{id:'review-output'}], current:'run', wbCurrentRunState:'succeeded',
   nodeDisplayName:value=>value, stateClass:()=>'', buildAttemptUsageMarkup:()=>'',
   replaceHTMLPreservingDetails:(_element,html)=>{workbenchMarkup=html},

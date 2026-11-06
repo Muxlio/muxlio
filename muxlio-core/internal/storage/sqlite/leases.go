@@ -132,16 +132,44 @@ func (s *Store) AppendWorkerLogChunk(a state.Assignment, chunk state.LogChunk) (
 	if err := checkCoordinatorEpoch(tx, a.CoordinatorEpoch); err != nil {
 		return false, err
 	}
-	res, err := tx.Exec(`INSERT INTO log_chunks(run_id,activation_id,stream,seq,data,timestamp)
- SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?)`,
-		chunk.RunID, chunk.ActivationID, chunk.Stream, chunk.Seq, chunk.Data, rfc3339(chunk.Timestamp),
-		a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.CoordinatorEpoch, rfc3339(time.Now()))
-	if err != nil {
+	var valid bool
+	err = tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?)`, a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.CoordinatorEpoch, rfc3339(time.Now())).Scan(&valid)
+	if err != nil || !valid {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
+	chunk.AttemptID = a.AttemptID
+	chunk.AssignmentID, chunk.WorkerID = a.AssignmentID, a.WorkerID
+	chunk.Generation, chunk.CoordinatorEpoch = a.Generation, a.CoordinatorEpoch
+	if err := persistProgress(tx, chunk); err != nil {
 		return false, err
 	}
-	return n == 1, tx.Commit()
+	return true, tx.Commit()
+}
+
+// persistProgress atomically publishes the replay event and compatibility log.
+// Limits apply at ingestion as well as in workers, including across reconnects.
+func persistProgress(tx *sql.Tx, c state.LogChunk) error {
+	kind, subject, payload := state.ProgressEvent(c)
+	var count, duplicate, size int64
+	if err := tx.QueryRow(`SELECT count(*), coalesce(sum(CASE WHEN json_extract(payload_json,'$.stream')=? AND json_extract(payload_json,'$.sourceSeq')=? AND coalesce(json_extract(payload_json,'$.generation'),0)=? AND coalesce(json_extract(payload_json,'$.coordinatorEpoch'),0)=? THEN 1 ELSE 0 END),0), coalesce(sum(CASE WHEN type='artifact.snapshot' THEN json_extract(payload_json,'$.snapshot.size') ELSE length(cast(json_extract(payload_json,'$.text') AS BLOB)) END),0) FROM events WHERE run_id=? AND subject_id=? AND type=?`, c.Stream, c.Seq, c.Generation, c.CoordinatorEpoch, c.RunID, subject, kind).Scan(&count, &duplicate, &size); err != nil {
+		return err
+	}
+	if duplicate > 0 {
+		return nil
+	}
+	if c.Snapshot != nil {
+		if count >= state.MaxAttemptSnapshots || c.Snapshot.Size < 0 || c.Snapshot.Size > 4<<20 || size+c.Snapshot.Size > state.MaxAttemptSnapshotBytes {
+			return nil
+		}
+	} else if count >= state.MaxAttemptProgressEvents || size+int64(len(c.Data)) > state.MaxAttemptProgressBytes {
+		return nil
+	}
+	if err := appendEvent(tx, c.RunID, kind, subject, payload); err != nil {
+		return err
+	}
+	if c.Snapshot != nil {
+		return nil
+	}
+	_, err := tx.Exec(`INSERT INTO log_chunks(run_id,activation_id,stream,seq,data,timestamp) SELECT ?,?,?,coalesce(max(seq),0)+1,?,? FROM log_chunks WHERE activation_id=? AND stream=?`, c.RunID, c.ActivationID, c.Stream, c.Data, rfc3339(c.Timestamp), c.ActivationID, c.Stream)
+	return err
 }

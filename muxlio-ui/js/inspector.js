@@ -159,11 +159,44 @@ function renderInspectorWb(act){
     </div>`:''}
     ${act.error?`<div class="insp-section"><div class="insp-error">${esc(act.error)}</div></div>`:''}
     ${buildAttemptUsageMarkup(act)}
+    <div class="insp-section" id="inspSnapshots"><h3 class="insp-output-title">Intermediate snapshots</h3><div class="subtle">Loading snapshots…</div></div>
     ${transcriptSectionMarkup(act,current)}
   `);
   if(activationHasTranscript(act)&&(act.state==='running'||activationTranscripts.get(act.id)?.agent))scheduleTranscriptPoll(act,current);
+  loadInspectorSnapshots(act,current);
   const actionsEl=$('#inspActions');
   if(actionsEl)actionsEl.hidden=!['failed','cancelled'].includes(wbCurrentRunState);
+}
+
+let snapshotPollTimer=null,snapshotPollToken=0;
+async function loadInspectorSnapshots(act,runId){
+  if(snapshotPollTimer)clearTimeout(snapshotPollTimer);
+  const token=++snapshotPollToken;
+  try{
+    const snapshots=[];
+    let after=0,data;
+    do{
+      data=await api(`/v1/runs/${encodeURIComponent(runId)}/snapshots?activationId=${encodeURIComponent(act.id)}&after=${after}`);
+      if(token!==snapshotPollToken||selectedActivation!==act.id||current!==runId)return;
+      snapshots.push(...(data.snapshots||[]));
+      after=data.nextAfter;
+    }while(data.hasMore);
+    if(token!==snapshotPollToken||selectedActivation!==act.id||current!==runId)return;
+    const el=$('#inspSnapshots');if(!el)return;
+    const latest=new Map();
+    for(const event of snapshots)latest.set(event.payload.snapshot.name,event.seq);
+    el.innerHTML='<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>'+snapshots.slice().reverse().map(event=>{
+      const ref=event.payload.snapshot;
+      return `<section class="artifact"><strong>${esc(ref.name)}</strong> <span class="subtle">${latest.get(ref.name)===event.seq?'Latest':'Historical'} · seq ${esc(event.seq)}</span><div class="subtle">${esc(event.subjectId)} · ${esc(date(event.timestamp))}</div><code>${esc(ref.digest)}</code><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
+    }).join('')+(!snapshots.length?'<div class="subtle">No snapshots recorded.</div>':'');
+    for(const button of el.querySelectorAll('[data-snapshot-seq]'))button.onclick=()=>{
+      const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);
+      if(event)showArtifactOutput(event.payload.snapshot,event.payload.snapshot.name);
+    };
+  }catch{
+    const el=$('#inspSnapshots');if(el&&token===snapshotPollToken)el.textContent='Unable to load intermediate snapshots.';
+  }
+  if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&act.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(act,runId),TRANSCRIPT_POLL_MS);
 }
 
 /* ── shared helpers (kept from original) ─────── */

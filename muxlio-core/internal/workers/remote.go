@@ -377,6 +377,15 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			Inner:    inner,
 			Client:   artifacts.Client{BaseURL: base.String(), Token: cfg.Token, HTTP: client},
 			WorkBase: cfg.WorkBase,
+			Snapshot: func(seq int, snapshot state.ArtifactSnapshot) error {
+				_, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments/log", map[string]any{
+					"assignmentId": assignment.AssignmentID, "runId": assignment.RunID,
+					"activationId": assignment.ActivationID, "attemptId": assignment.AttemptID,
+					"coordinatorEpoch": assignment.CoordinatorEpoch, "generation": assignment.Generation,
+					"stream": "snapshot", "seq": seq, "snapshot": snapshot,
+				}, nil)
+				return err
+			},
 		}
 
 		leaseUntil, _ := time.Parse(time.RFC3339Nano, assignment.LeaseUntil)

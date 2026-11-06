@@ -92,15 +92,16 @@ type WorkerCompletion struct {
 
 // WorkerLogAppend carries one incremental log chunk for an active assignment.
 type WorkerLogAppend struct {
-	AssignmentID     string `json:"assignmentId"`
-	RunID            string `json:"runId"`
-	ActivationID     string `json:"activationId"`
-	AttemptID        string `json:"attemptId"`
-	CoordinatorEpoch int64  `json:"coordinatorEpoch"`
-	Generation       int64  `json:"generation"`
-	Stream           string `json:"stream"`
-	Seq              int    `json:"seq"`
-	Data             []byte `json:"data"`
+	Snapshot         *state.ArtifactSnapshot `json:"snapshot,omitempty"`
+	AssignmentID     string                  `json:"assignmentId"`
+	RunID            string                  `json:"runId"`
+	ActivationID     string                  `json:"activationId"`
+	AttemptID        string                  `json:"attemptId"`
+	CoordinatorEpoch int64                   `json:"coordinatorEpoch"`
+	Generation       int64                   `json:"generation"`
+	Stream           string                  `json:"stream"`
+	Seq              int                     `json:"seq"`
+	Data             []byte                  `json:"data"`
 }
 
 type WorkerError struct {
@@ -226,11 +227,11 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 			if !decodeWorkerJSON(w, r, &req) {
 				return
 			}
-			if req.AssignmentID == "" || req.Generation < 1 || req.CoordinatorEpoch < 1 || req.RunID == "" || req.ActivationID == "" || req.AttemptID == "" || req.Stream == "" || req.Seq < 1 || len(req.Data) == 0 {
+			if req.AssignmentID == "" || req.Generation < 1 || req.CoordinatorEpoch < 1 || req.RunID == "" || req.ActivationID == "" || req.AttemptID == "" || req.Stream == "" || req.Seq < 1 || (len(req.Data) == 0 && req.Snapshot == nil) {
 				writeError(w, http.StatusBadRequest, CodeBadRequest, "assignment identity, positive epoch and generation, stream, seq, and data are required")
 				return
 			}
-			if len(req.Data) > 64<<10 {
+			if len(req.Data) > 64<<10 || len(req.Stream) > 256 {
 				writeError(w, http.StatusBadRequest, CodeBadRequest, "log chunk exceeds 64 KiB")
 				return
 			}

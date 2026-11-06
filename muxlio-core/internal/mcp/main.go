@@ -318,6 +318,18 @@ var tools = []toolDef{
 		},
 	},
 	{
+		Name:        "get_snapshots",
+		Description: "Inspect immutable intermediate artifact snapshots, including failed or running attempts. These are not committed final outputs. Use read_artifact with a snapshot digest. Default returns history; current=true selects latest per output. Page with nextAfter.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"runId":        map[string]any{"type": "string"},
+			"activationId": map[string]any{"type": "string"},
+			"attemptId":    map[string]any{"type": "string"},
+			"current":      map[string]any{"type": "boolean"},
+			"after":        map[string]any{"type": "integer"},
+			"limit":        map[string]any{"type": "integer"},
+		}, "required": []string{"runId"}},
+	},
+	{
 		Name:        "get_activations",
 		Description: "List the materialised activation steps for a run.",
 		InputSchema: map[string]any{
@@ -591,6 +603,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolGetGraph(args)
 	case "get_events":
 		return s.toolGetEvents(args)
+	case "get_snapshots":
+		return s.toolGetSnapshots(args)
 	case "get_activations":
 		return s.toolGetActivations(args)
 	case "get_logs":

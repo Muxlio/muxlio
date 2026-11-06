@@ -312,11 +312,25 @@ func (c *Coordinator) AppendWorkerLog(workerID string, req WorkerLogAppend) erro
 	if req.CoordinatorEpoch != c.epoch {
 		return staleAssignmentError{}
 	}
+	if req.Snapshot != nil {
+		ref := req.Snapshot
+		if c.Artifacts == nil || ref.Name == "" || len(ref.Name) > 256 || ref.Size < 0 || ref.Size > 4<<20 || len(ref.Mime) > 256 {
+			return errors.New("invalid artifact snapshot")
+		}
+		stream, stored, err := c.Artifacts.GetStream(context.Background(), ref.Digest)
+		if err != nil {
+			return err
+		}
+		stream.Close()
+		if ref.Size != stored.Size {
+			return errors.New("snapshot size does not match stored content")
+		}
+	}
 	ok, err := c.store.AppendWorkerLogChunk(state.Assignment{
 		CoordinatorEpoch: req.CoordinatorEpoch, RunID: req.RunID, ActivationID: req.ActivationID,
 		WorkerID: workerID, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID, Generation: req.Generation,
 	}, state.LogChunk{RunID: req.RunID, ActivationID: req.ActivationID, Stream: req.Stream,
-		Seq: req.Seq, Data: req.Data, Timestamp: time.Now()})
+		Seq: req.Seq, Data: req.Data, Snapshot: req.Snapshot, Timestamp: time.Now()})
 	if err != nil {
 		return err
 	}

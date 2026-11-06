@@ -459,6 +459,40 @@ func (s *Memory) AppendLogChunk(c LogChunk) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	kind, subject, payload := ProgressEvent(c)
+	count, size := 0, 0
+	for _, event := range s.events[c.RunID] {
+		if event.Type == kind && event.SubjectID == subject {
+			count++
+			if text, ok := event.Payload["text"].(string); ok {
+				size += len(text)
+			}
+			if snapshot, ok := event.Payload["snapshot"].(ArtifactSnapshot); ok {
+				size += int(snapshot.Size)
+			}
+			if event.Payload["stream"] == c.Stream && event.Payload["sourceSeq"] == c.Seq && event.Payload["generation"] == payload["generation"] && event.Payload["coordinatorEpoch"] == payload["coordinatorEpoch"] {
+				return nil
+			}
+		}
+	}
+	if c.Snapshot != nil {
+		if count >= MaxAttemptSnapshots || c.Snapshot.Size < 0 || c.Snapshot.Size > 4<<20 || int64(size)+c.Snapshot.Size > MaxAttemptSnapshotBytes {
+			return nil
+		}
+	} else if count >= MaxAttemptProgressEvents || size+len(c.Data) > MaxAttemptProgressBytes {
+		return nil
+	}
+	s.appendEventLocked(c.RunID, kind, subject, payload)
+	if c.Snapshot != nil {
+		return nil
+	}
+	c.Data = append([]byte(nil), c.Data...)
+	c.Seq = 1
+	for _, prior := range s.logChunks {
+		if prior.ActivationID == c.ActivationID && prior.Stream == c.Stream && prior.Seq >= c.Seq {
+			c.Seq = prior.Seq + 1
+		}
+	}
 	s.logChunks = append(s.logChunks, c)
 	return nil
 }

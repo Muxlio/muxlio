@@ -22,3 +22,39 @@ storage. Consumers verify SHA-256 before bytes are returned. Keep credentials
 in the process environment or a secret manager; they are not printed by the
 artifact driver. S3-compatible services must support SigV4 and path-style
 bucket access.
+
+## Live progress and intermediate snapshots
+
+Workers batch live text at 250 ms intervals (or 64 KiB), retaining at most
+1 MiB per attempt. The coordinator atomically stores `execution.progress`
+events with run sequence numbers and attempt/assignment provenance. Reconnect
+with `GET /v1/runs/<id>/events?after=<last-seq>` or the SSE last-event ID;
+`muxlio events <id> --since <seq>` and MCP `get_events` expose the same history.
+Ingestion accepts at most 256 progress events and 1 MiB of text per attempt,
+independently of worker buffering, and deduplicates retried source sequences
+within their worker generation and coordinator epoch.
+
+During execution, declared output files are sampled once per second and at
+executor return. Changed regular files up to 4 MiB become immutable SHA-256
+objects before their `artifact.snapshot` event is accepted. Each attempt is
+limited to 128 observations and 64 MiB of snapshot uploads; ingestion enforces
+the same snapshot event and byte budgets. Missing files and
+unavailable transfers can be observed on a subsequent sample. A snapshot is an
+observation of bytes at that point, not a declaration that the file is complete.
+The coordinator verifies stored content and size before recording provenance;
+reads verify the digest even after the worker's scratch directory is lost.
+
+Inspect history with `muxlio snapshots <id> --json`, or select the latest
+observation per activation/output using `--current`. `--attempt <id>` and
+`--activation <id>` filter provenance; `--since` and `--limit` page history.
+The API is `GET /v1/runs/<id>/snapshots`, with `current`, `attemptId`,
+`activationId`, `after`, and `limit` query parameters. Responses contain
+`snapshots`, `nextAfter`, and `hasMore`. MCP exposes this as `get_snapshots`;
+use `read_artifact` with any recorded digest. The run inspector labels latest
+and historical snapshots separately from outputs and opens their stored bytes.
+
+Snapshot history survives failure and retries. It never updates named activation
+outputs or downstream inputs. Final file references are uploaded on successful
+executor return and named outputs are committed only after attempt validation
+succeeds. Failed and cancelled attempts retain observations without publishing
+them as successful final results.

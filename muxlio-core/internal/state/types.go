@@ -157,12 +157,53 @@ type ExecutionAttempt struct {
 
 // LogChunk is an append-only chunk of worker output.
 type LogChunk struct {
-	RunID        string    `json:"runId"`
-	ActivationID string    `json:"activationId"`
-	Stream       string    `json:"stream"`
-	Seq          int       `json:"seq"`
-	Data         []byte    `json:"data"`
-	Timestamp    time.Time `json:"timestamp"`
+	AssignmentID     string            `json:"assignmentId,omitempty"`
+	WorkerID         string            `json:"workerId,omitempty"`
+	Generation       int64             `json:"generation,omitempty"`
+	CoordinatorEpoch int64             `json:"coordinatorEpoch,omitempty"`
+	AttemptID        string            `json:"attemptId,omitempty"`
+	Snapshot         *ArtifactSnapshot `json:"snapshot,omitempty"`
+	RunID            string            `json:"runId"`
+	ActivationID     string            `json:"activationId"`
+	Stream           string            `json:"stream"`
+	Seq              int               `json:"seq"`
+	Data             []byte            `json:"data"`
+	Timestamp        time.Time         `json:"timestamp"`
+}
+
+// ArtifactSnapshot is an immutable observation, never a committed named output.
+// Run/activation/attempt provenance and sequence are carried by its enclosing event.
+type ArtifactSnapshot struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+	Mime   string `json:"mime,omitempty"`
+	Size   int64  `json:"size"`
+}
+
+const EventProgress = "execution.progress"
+const EventArtifactSnapshot = "artifact.snapshot"
+const MaxAttemptProgressEvents = 256
+const MaxAttemptProgressBytes = 1 << 20
+const MaxAttemptSnapshots = 128
+const MaxAttemptSnapshotBytes = 64 << 20
+
+// ProgressEvent maps worker observations into the shared, replayable event log.
+func ProgressEvent(c LogChunk) (string, string, map[string]any) {
+	subject := c.AttemptID
+	if subject == "" {
+		subject = c.ActivationID
+	}
+	payload := map[string]any{"activationId": c.ActivationID, "attemptId": c.AttemptID, "stream": c.Stream, "sourceSeq": c.Seq}
+	if c.AssignmentID != "" {
+		payload["assignmentId"], payload["workerId"] = c.AssignmentID, c.WorkerID
+		payload["generation"], payload["coordinatorEpoch"] = c.Generation, c.CoordinatorEpoch
+	}
+	if c.Snapshot != nil {
+		payload["snapshot"] = *c.Snapshot
+		return EventArtifactSnapshot, subject, payload
+	}
+	payload["text"] = string(c.Data)
+	return EventProgress, subject, payload
 }
 
 // Timer is a persisted deadline/wakeup for an activation.

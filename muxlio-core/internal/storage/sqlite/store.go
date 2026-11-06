@@ -68,6 +68,7 @@ var schemaStmts = []string{
 )`,
 	`CREATE INDEX IF NOT EXISTS idx_activations_run ON activations(run_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq)`,
+	`CREATE INDEX IF NOT EXISTS idx_events_subject_type ON events(run_id, subject_id, type)`,
 	`CREATE TABLE IF NOT EXISTS assignments (activation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, worker_id TEXT NOT NULL, generation INTEGER NOT NULL, lease_until TEXT NOT NULL, state TEXT NOT NULL, assignment_id TEXT NOT NULL DEFAULT '', attempt_id TEXT NOT NULL DEFAULT '', FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, capacity INTEGER NOT NULL, capabilities_json TEXT NOT NULL, labels_json TEXT NOT NULL DEFAULT '{}', last_seen TEXT NOT NULL, draining INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS dispatches (assignment_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL UNIQUE, attempt_id TEXT NOT NULL, executor TEXT NOT NULL, request_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', FOREIGN KEY(run_id) REFERENCES runs(id))`,
@@ -649,8 +650,15 @@ func (s *Store) AppendLogChunk(c state.LogChunk) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`INSERT INTO log_chunks(run_id,activation_id,stream,seq,data,timestamp) VALUES(?,?,?,?,?,?)`, c.RunID, c.ActivationID, c.Stream, c.Seq, c.Data, rfc3339(c.Timestamp))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := persistProgress(tx, c); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ScheduleTimer durably records a timer.
