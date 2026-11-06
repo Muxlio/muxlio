@@ -92,3 +92,57 @@ An explicit retry is an operator decision about incomplete work. Providers own
 protocols, authentication, usage normalization and limitations; no provider name
 changes these state or identity rules. Missing usage remains unavailable, distinct
 from reported zero.
+
+## Run-wide limits and accounting
+
+Both TypeScript workflow APIs accept `limits`, pinned into the Plan IR:
+
+```ts
+limits: {
+  maxAttempts: 100,
+  maxActivations: 500,
+  maxActiveAttempts: 4,
+  maxTokens: 200000,
+  maxCostUsd: 5,
+  missingUsage: 'fail-closed',
+},
+deadlineSeconds: 600,
+```
+
+Omitted limits are unlimited; zero forbids admission. `maxAttempts` counts every
+executor invocation, including automatic retries and read-only reconciliation
+queries. `maxActivations` counts every materialized node, including control nodes
+and nodes inside maps, loops and children. Admission checks and insertion are
+serialized across concurrent branches before dispatch. Persisted records retain
+consumption across coordinator recovery and explicit run retry. Reattaching the
+same admitted durable attempt consumes no additional slot.
+
+`maxActiveAttempts` rejects admission when the run already has that many running,
+cancelled or unresolved attempts. A cancelled attempt counts conservatively until
+explicitly resolved because cancellation does not prove external termination.
+Interrupted reconciliation queries also retain their active slots until explicit
+resolution confirms their completion or termination.
+Limits fail the run with `run budget exhausted: <limit>` and preserve the reason
+in its error. Already admitted work may finish. The wall-clock `deadlineSeconds`
+window starts at persisted run creation, includes queueing and pauses, and cancels
+with a `run.interrupted` event containing `run deadline exceeded`.
+
+Executor results retain optional observed `usage` token counts and may supply
+`measurements: { estimatedTokens, costUsd, estimatedCostUsd }`. Costs are in USD.
+These fields pass through the shared executor protocol, remote workers and attempt
+storage without provider-specific interpretation. No cost or token estimates are
+inferred by the coordinator. Token consumption is input plus output; cached tokens
+are an input subset. An observed measurement takes precedence over its estimate.
+`GET /v1/runs/:id` exposes `usage.tokens` and `usage.costUsd`, each containing
+nullable `observed` and `estimated` subtotals and an `unknown` attempt count.
+Unavailable values remain null; a reported zero remains zero.
+
+Token and cost thresholds check consumption before admission and after completion.
+They stop subsequent work and fail a run whose final attempt exceeded a threshold;
+they cannot guarantee a maximum external bill for an already admitted invocation.
+The default `missingUsage: 'fail-closed'` requires observed data for each configured
+measurement; missing or estimated-only data stops the run explicitly. In-flight
+attempts also lack observed data, so this policy conservatively blocks additional
+admissions while usage is unknown. Explicit `fail-open` permits unknown data and
+checks available observed and estimated consumption, keeping unknown counts visible.
+Choose hard invocation, activation and deadline limits as well when using fail-open.

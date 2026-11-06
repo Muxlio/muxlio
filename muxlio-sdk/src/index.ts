@@ -6,6 +6,7 @@ export { assertNoLiteralCredentials } from './security.js';
 
 export type {
   Plan,
+  RunLimits,
   Subgraph,
   Node,
   NodeKind,

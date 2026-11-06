@@ -380,6 +380,7 @@ class IRBuilder implements BuildContext {
 // --- defineWorkflow ---
 
 export interface WorkflowDefinition {
+  limits?: Plan['limits'];
   deadlineSeconds?: number;
   name: string;
   input?: JSONSchema;
@@ -402,6 +403,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
     irVersion: '1.0',
     name: def.name,
     deadlineSeconds: def.deadlineSeconds,
+    limits: def.limits,
     root: 'root',
     inputSchema: def.input,
     outputSchema: def.output,

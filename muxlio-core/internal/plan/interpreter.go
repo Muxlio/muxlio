@@ -37,6 +37,7 @@ func activationID(runID string, scope []string, nodeID string) string {
 // Engine interprets a Plan IR against a Store. The default store is
 // in-memory; pass a SQLite store for durable runs.
 type Engine struct {
+	budgetMu        sync.Mutex
 	Context         context.Context
 	plan            *Plan
 	store           state.Store
@@ -294,6 +295,17 @@ func (e *Engine) Run(runID string) error {
 		return nil
 	}
 
+	// Recheck even if every activation was restored from a successful checkpoint.
+	if e.plan.Limits != nil {
+		attempts, err := e.store.ListExecutionAttempts(runID, "")
+		if err != nil {
+			return err
+		}
+		if err := e.checkUsage(attempts, false); err != nil {
+			_ = e.store.SetRunError(runID, err)
+			return err
+		}
+	}
 	// Convention: if the root subgraph output has a single port, the run
 	// output is that value. If multiple, the run output is the full map.
 	var runOutput any
@@ -377,7 +389,7 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 				NodeID:    node.ID,
 				State:     ActQueued,
 			}
-			if err := e.store.CreateActivation(act); err != nil {
+			if err := e.admitActivation(act); err != nil {
 				return nil, err
 			}
 		}
@@ -608,15 +620,17 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		if a.AwaitReconciliationReason != "" || a.State == "running" || a.State == "awaiting_reconciliation" {
 			if _, queued := e.executor.(workers.QueuedExecutor); queued && a.State == "running" && a.AwaitReconciliationReason == "" {
+				recoveredBase = a.RetryNumber - 1
 				break
 			}
-			// A recovered coordinator may resume the same dispatch. It must retain
-			// the original policy and key rather than inventing a new operation.
+			// A direct replay is a fresh invocation even when its effect is safe.
+			// Preserve the logical idempotency key but charge a new attempt slot.
 			if a.Effect == "none" || a.Effect == "pure" || ((a.Effect == "idempotency-key" || a.Effect == "idempotent-with-key") && a.IdempotencyKey != "") {
 				if a.IdempotencyKey != "" {
 					idempotencyKey = a.IdempotencyKey
 					req.IdempotencyKey = idempotencyKey
 				}
+				recoveredBase = a.RetryNumber
 				break
 			}
 			req.RunID, req.ActivationID, req.AttemptID, req.Executor = runID, actID, a.ID, a.Executor
@@ -675,7 +689,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		coordinatorlog.RegisterSecrets(guarded.Secrets)
 		started := time.Now()
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "running", StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey}); recordErr != nil {
+		if recordErr := e.admitAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "running", StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey}); recordErr != nil {
 			return nil, recordErr
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets, req.AttemptID)
@@ -693,11 +707,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key")) {
 				safeRedispatch = true
 			} else {
-				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask}
+				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Usage: result.Usage, Measurements: result.Measurements}
 				var reconciled workers.ExecuteResult
 				reconciled, safeRedispatch, err = e.reconcileEffect(guarded, a, node)
 				if err == nil && !safeRedispatch {
+					// Lookup usage belongs to its own invocation, not the original operation.
+					observed, measurements := result.Usage, result.Measurements
 					result = reconciled
+					result.Usage, result.Measurements = observed, measurements
 				}
 				if safeRedispatch {
 					err = fmt.Errorf("previous operation confirmed not applied")
@@ -722,19 +739,19 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
 				failureMsg = fmt.Sprintf("run deadline exceeded (node %q, attempt %d)", node.ID, attemptBase+attempt)
 			}
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			return nil, ctxErr
 		}
 		// Per-node execution timeout: record the attempt as cancelled with an
 		// actionable diagnostic. Do not replay while external completion is unknown.
 		if errors.Is(err, context.DeadlineExceeded) {
 			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			lastErr = fmt.Errorf("muxlio: %s", failureMsg)
 			return nil, lastErr
 		}
 		if errors.Is(err, context.Canceled) {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			return nil, err
 		}
 		if result.Logs != "" {
@@ -839,9 +856,19 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			heldReason = awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)
 			attemptState = "awaiting_reconciliation"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
 			return nil, recordErr
 		}
+		if e.plan.Limits != nil {
+			attempts, err := e.store.ListExecutionAttempts(runID, "")
+			if err != nil {
+				return nil, err
+			}
+			if err := e.checkUsage(attempts, false); err != nil {
+				return nil, err
+			}
+		}
+
 		if err != nil {
 			lastErr = fmt.Errorf("muxlio: executor %q attempt %d failed: %s", executor, attempt, diagnostic.Redact(workers.RedactSecrets(err.Error(), guarded.Secrets)))
 			if attempt == maxAttempts || (!safeRedispatch && (req.Effect == "reconcile" || req.Effect == "reconcilable")) {

@@ -85,6 +85,7 @@ type WorkerCompletion struct {
 	Error               *WorkerError                  `json:"error,omitempty"`
 	LogCursor           string                        `json:"logCursor,omitempty"`
 	Logs                string                        `json:"logs,omitempty"`
+	Measurements        *contract.Measurements        `json:"measurements,omitempty"`
 	Usage               *state.TokenUsage             `json:"usage,omitempty"`
 	SessionID           string                        `json:"sessionId,omitempty"`
 	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`

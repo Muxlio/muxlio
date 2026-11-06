@@ -45,7 +45,7 @@ func TestReconciledCompletionMustValidateOutputs(t *testing.T) {
 	if f.effects != 1 {
 		t.Fatal("invalid reconciliation repeated the operation")
 	}
-	attempts, err := e.store.ListExecutionAttempts("run", "")
+	attempts, err := e.store.ListExecutionAttempts("run", "run:node")
 	if err != nil || len(attempts) != 1 || !strings.Contains(attempts[0].AwaitReconciliationReason, "reconciled result is invalid") {
 		t.Fatalf("missing explanation for invalid reconciliation: %+v %v", attempts, err)
 	}
@@ -162,7 +162,7 @@ func TestAdapterReconciliationBeforeRedispatch(t *testing.T) {
 			if (err == nil) != (outcome == "completed" || outcome == "not-applied") {
 				t.Fatalf("outcome %q: %v", outcome, err)
 			}
-			attempts, _ := e.store.ListExecutionAttempts("run", "")
+			attempts, _ := e.store.ListExecutionAttempts("run", "run:node")
 			if err != nil && (len(attempts) != 1 || !strings.Contains(attempts[0].AwaitReconciliationReason, "external ledger checked")) {
 				t.Fatalf("missing reconciliation explanation: %+v", attempts)
 			}
@@ -219,7 +219,7 @@ func TestRecoveryAfterNotAppliedResolutionUsesNewAttempt(t *testing.T) {
 			if _, err := e.executeExecute("run", node, nil, &EvalContext{}); err == nil {
 				t.Fatal("single-attempt budget should be exhausted")
 			}
-			attempts, err := store.ListExecutionAttempts("run", "")
+			attempts, err := store.ListExecutionAttempts("run", "run:node")
 			if err != nil || len(attempts) != 1 || attempts[0].State != "resolved" {
 				t.Fatalf("not-applied checkpoint overwritten: %+v %v", attempts, err)
 			}

@@ -556,7 +556,8 @@ func handleGetRun(w http.ResponseWriter, r *http.Request, store state.Store, run
 	writeJSON(w, http.StatusOK, struct {
 		*state.Run
 		Diagnostics []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
-	}{&safe, state.AttemptDiagnostics(attempts)})
+		Usage       state.UsageSummary      `json:"usage"`
+	}{&safe, state.AttemptDiagnostics(attempts), state.SummarizeUsage(attempts)})
 }
 
 func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {

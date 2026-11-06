@@ -593,6 +593,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	if a.Result != nil {
 		payload["result"] = a.Result
 	}
+	if a.Measurements != nil {
+		payload["measurements"] = a.Measurements
+	}
 	if a.Usage != nil {
 		payload["usage"] = a.Usage
 	}

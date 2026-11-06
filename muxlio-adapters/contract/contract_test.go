@@ -473,3 +473,15 @@ func TestProgressEventRequiresNonEmptyStream(t *testing.T) {
 		t.Fatal("unexpected non-empty stream")
 	}
 }
+
+func TestOptionalMeasurementsDoNotInventTokens(t *testing.T) {
+	result, err := ParseResult([]byte(`{"measurements":{"estimatedTokens":42,"costUsd":0,"estimatedCostUsd":0.25}}`))
+	if err != nil || result.Usage != nil || result.Measurements == nil || *result.Measurements.CostUSD != 0 || *result.Measurements.EstimatedTokens != 42 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	for _, raw := range []string{`{"measurements":{"costUsd":-1}}`, `{"measurements":{"estimatedTokens":-1}}`, `{"measurements":{"estimatedCostUsd":-1}}`} {
+		if _, err := ParseResult([]byte(raw)); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+}

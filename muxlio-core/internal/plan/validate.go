@@ -24,6 +24,9 @@ func hasErrors(errs []ValidationError) bool {
 // of errors; if the slice is empty the plan is valid.
 func Validate(p *Plan) (errs []ValidationError) {
 	defer func() { errs = finalizeDiagnostics(p, errs) }()
+	if err := p.Limits.validate(); err != nil {
+		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_RUN_LIMITS", Severity: "error", Phase: "plan", Message: err.Error()})
+	}
 	if !validDuration(p.DeadlineSeconds) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_DEADLINE", Severity: "error", Phase: "plan", Message: "deadlineSeconds must be finite, nonnegative and fit a duration"})
 	}

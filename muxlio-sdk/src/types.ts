@@ -137,7 +137,18 @@ export interface Subgraph {
 }
 
 /** The immutable compiled workflow plan. */
+export interface RunLimits {
+  maxAttempts?: number;
+  maxActivations?: number;
+  maxActiveAttempts?: number;
+  maxTokens?: number;
+  maxCostUsd?: number;
+  /** Defaults to fail-closed, requiring observed data. */
+  missingUsage?: 'fail-open' | 'fail-closed';
+}
+
 export interface Plan {
+  limits?: RunLimits;
   /** Wall-clock limit from persisted run creation, including queueing and pauses. */
   deadlineSeconds?: number;
   irVersion: string;

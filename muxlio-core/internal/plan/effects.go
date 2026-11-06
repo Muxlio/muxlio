@@ -1,10 +1,14 @@
 package plan
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
-	"time"
 )
 
 // reconcileEffect holds uncertainty durably before asking an adapter. A missing
@@ -35,7 +39,12 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	req.OperationAttemptID = a.ID
 	req.RemoteTask = a.OperationRef
 	req.ActivationID = a.ID + "-reconciliation"
-	req.AttemptID = req.ActivationID
+	// Each outcome lookup is an invocation too; use a fresh durable identity.
+	priorQueries, err := e.store.ListExecutionAttempts(a.RunID, req.ActivationID)
+	if err != nil {
+		return workers.ExecuteResult{}, false, err
+	}
+	req.AttemptID = fmt.Sprintf("%s-%d", req.ActivationID, len(priorQueries)+1)
 	req.Effect = "pure"
 	// Outcome lookup must not wait for exclusive resources held by the lost
 	// operation. The adapter's reconciliation capability is read-only and
@@ -56,7 +65,29 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	// A reconciliation query is bounded and read-only. It must not silently start work.
 	seconds := 30.0
 	req.TimeoutSeconds, req.QueueTimeoutSeconds = &seconds, &seconds
+	query := state.ExecutionAttempt{ID: req.AttemptID, RunID: a.RunID, ActivationID: req.ActivationID, Executor: req.Executor, RetryNumber: len(priorQueries) + 1, State: "running", StartedAt: time.Now(), Effect: "pure"}
+	if err := e.admitAttempt(query); err != nil {
+		return workers.ExecuteResult{}, false, err
+	}
 	result, err := workers.ExecuteAttempt(e.executor, req)
+	query.State, query.FinishedAt = "succeeded", time.Now()
+	query.Usage, query.Measurements = result.Usage, result.Measurements
+	query.ExecutionDurationMS = result.ExecutionDurationMS
+	if err != nil {
+		query.State, query.Failure = "failed", err.Error()
+		var uncertain workers.UncertainExecutionError
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &uncertain) {
+			// A read-only query can still consume resources after local waiting
+			// stops. Keep its active slot until termination is explicitly resolved.
+			query.State = "awaiting_reconciliation"
+			query.AwaitReconciliationReason = "reconciliation query completion unknown; explicit resolution required"
+		}
+	} else if result.Error != "" {
+		query.State, query.Failure = "failed", result.Error
+	}
+	if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
+		return workers.ExecuteResult{}, false, recordErr
+	}
 	if err == nil && result.Error == "" && result.Reconciliation != nil {
 		status := result.Reconciliation.Status
 		if status == "completed" || status == "not-applied" {

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 const Version = "1"
@@ -27,6 +28,29 @@ type TokenUsage struct {
 	Cached int64 `json:"cached"`
 }
 
+// Measurements contains optional accounting supplied by an executor. Estimates
+// never replace observed token usage. Costs are USD; no prices are inferred.
+type Measurements struct {
+	EstimatedTokens  *int64   `json:"estimatedTokens,omitempty"`
+	CostUSD          *float64 `json:"costUsd,omitempty"`
+	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
+}
+
+func (m *Measurements) Validate() error {
+	if m == nil {
+		return nil
+	}
+	if m.EstimatedTokens != nil && *m.EstimatedTokens < 0 {
+		return fmt.Errorf("estimated tokens must be non-negative")
+	}
+	for _, cost := range []*float64{m.CostUSD, m.EstimatedCostUSD} {
+		if cost != nil && (math.IsNaN(*cost) || math.IsInf(*cost, 0) || *cost < 0) {
+			return fmt.Errorf("cost must be finite and non-negative")
+		}
+	}
+	return nil
+}
+
 type RemoteTaskReference struct {
 	ID  string `json:"id"`
 	URL string `json:"url,omitempty"`
@@ -40,6 +64,7 @@ type Reconciliation struct {
 }
 
 type Result struct {
+	Measurements   *Measurements   `json:"measurements,omitempty"`
 	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
 	// executor completion. Outputs may retain rejected text for diagnostics.
@@ -67,6 +92,9 @@ func ParseResult(raw []byte) (Result, error) {
 	}
 	if u := result.Usage; u != nil && (u.Input < 0 || u.Output < 0 || u.Cached < 0) {
 		return Result{}, fmt.Errorf("executor usage must be non-negative")
+	}
+	if err := result.Measurements.Validate(); err != nil {
+		return Result{}, err
 	}
 	if result.ExecutionDurationMS != nil && *result.ExecutionDurationMS < 0 {
 		return Result{}, fmt.Errorf("executor duration must be non-negative")

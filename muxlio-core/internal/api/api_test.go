@@ -131,6 +131,27 @@ func TestAttemptsAPIExposesUsage(t *testing.T) {
 	}
 }
 
+func TestRunAPIExposesUnavailableUsage(t *testing.T) {
+	store := state.New()
+	if err := store.CreateRun(&state.Run{ID: "usage"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "a", RunID: "usage", State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	NewRouter(store, nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/runs/usage", nil))
+	var body struct {
+		Usage state.UsageSummary `json:"usage"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || body.Usage.Tokens.Observed != nil || body.Usage.Tokens.Unknown != 1 || body.Usage.CostUSD.Observed != nil || body.Usage.CostUSD.Unknown != 1 {
+		t.Fatalf("response=%s", response.Body.String())
+	}
+}
+
 func TestHealthzMethods(t *testing.T) {
 	handler := NewRouter(state.New(), nil)
 

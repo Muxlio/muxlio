@@ -1060,6 +1060,7 @@ type BuildContextFor<TInput extends z.ZodTypeAny | JSONSchema> =
 
 /** Options for declaring a workflow. */
 export interface WorkflowOptions<TInput extends z.ZodTypeAny | JSONSchema = JSONSchema> {
+  limits?: Plan['limits'];
   deadlineSeconds?: number;
   /** Input schema: a Zod type (converted automatically) or a plain JSON Schema object. */
   input?: TInput;
@@ -1136,6 +1137,7 @@ function compileWorkflowPlan<TInput extends z.ZodTypeAny | JSONSchema>(
   const plan: Plan = {
     irVersion: '1.0',
     deadlineSeconds: options.deadlineSeconds,
+    limits: options.limits,
     name,
     root: 'root',
     inputSchema: inputSchema as any,

@@ -16,6 +16,7 @@ import (
 
 // Plan is an immutable compiled workflow definition.
 type Plan struct {
+	Limits      *RunLimits `json:"limits,omitempty"`
 	sourceJSON  json.RawMessage
 	sourceTyped []byte
 	// IRVersion is the Plan IR version this document conforms to.

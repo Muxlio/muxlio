@@ -144,18 +144,19 @@ type AttemptResult struct {
 // executor termination; execution.returned events and worker diagnostics record
 // later returns separately, without asserting external effect completion.
 type ExecutionAttempt struct {
-	ID                  string         `json:"id"`
-	RunID               string         `json:"runId"`
-	ActivationID        string         `json:"activationId"`
-	RetryNumber         int            `json:"retryNumber"`
-	Executor            string         `json:"executor"`
-	State               string         `json:"state"`
-	StartedAt           time.Time      `json:"startedAt"`
-	FinishedAt          time.Time      `json:"finishedAt"`
-	Failure             string         `json:"failure,omitempty"`
-	Result              *AttemptResult `json:"result,omitempty"`
-	Usage               *TokenUsage    `json:"usage,omitempty"`
-	ExecutionDurationMS *int64         `json:"executionDurationMs,omitempty"`
+	Measurements        *contract.Measurements `json:"measurements,omitempty"`
+	ID                  string                 `json:"id"`
+	RunID               string                 `json:"runId"`
+	ActivationID        string                 `json:"activationId"`
+	RetryNumber         int                    `json:"retryNumber"`
+	Executor            string                 `json:"executor"`
+	State               string                 `json:"state"`
+	StartedAt           time.Time              `json:"startedAt"`
+	FinishedAt          time.Time              `json:"finishedAt"`
+	Failure             string                 `json:"failure,omitempty"`
+	Result              *AttemptResult         `json:"result,omitempty"`
+	Usage               *TokenUsage            `json:"usage,omitempty"`
+	ExecutionDurationMS *int64                 `json:"executionDurationMs,omitempty"`
 
 	// Effect is the declared policy: pure, idempotent-with-key, reconcilable,
 	// nonretryable, or a legacy alias. It is

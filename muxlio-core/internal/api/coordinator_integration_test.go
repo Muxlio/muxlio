@@ -119,7 +119,8 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 	if !after[0].LeaseUntil.After(before[0].LeaseUntil) {
 		t.Fatal("heartbeat did not renew lease")
 	}
-	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs", SessionID: "session", RemoteTask: &contract.RemoteTaskReference{ID: "task", URL: "https://example.test/task"}, Usage: &state.TokenUsage{Input: 9, Output: 4, Cached: 2}})
+	cost := 0.25
+	err = c.Complete("worker", WorkerCompletion{AssignmentID: a.AssignmentID, RunID: a.RunID, ActivationID: a.ActivationID, AttemptID: a.AttemptID, CoordinatorEpoch: a.CoordinatorEpoch, Generation: a.Generation, State: "succeeded", Outputs: map[string]any{"answer": "ok"}, Logs: "worker logs", SessionID: "session", RemoteTask: &contract.RemoteTaskReference{ID: "task", URL: "https://example.test/task"}, Usage: &state.TokenUsage{Input: 9, Output: 4, Cached: 2}, Measurements: &contract.Measurements{CostUSD: &cost}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestDispatchReturnsDurableResultAndRenewsLease(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
-		if result.SessionID != "session" || result.RemoteTask == nil || result.RemoteTask.ID != "task" || result.RemoteTask.URL != "https://example.test/task" || result.Outputs["answer"] != "ok" || result.Logs != "worker logs" || result.Usage == nil || result.Usage.Input != 9 || result.Usage.Output != 4 || result.Usage.Cached != 2 {
+		if result.SessionID != "session" || result.RemoteTask == nil || result.RemoteTask.ID != "task" || result.RemoteTask.URL != "https://example.test/task" || result.Outputs["answer"] != "ok" || result.Logs != "worker logs" || result.Usage == nil || result.Usage.Input != 9 || result.Usage.Output != 4 || result.Usage.Cached != 2 || result.Measurements == nil || result.Measurements.CostUSD == nil || *result.Measurements.CostUSD != cost {
 			t.Fatalf("lost completion: %#v", result)
 		}
 	case <-time.After(3 * time.Second):
