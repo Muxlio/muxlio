@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"strconv"
@@ -528,7 +529,17 @@ func handleGetRun(w http.ResponseWriter, r *http.Request, store state.Store, run
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	attempts, err := store.ListExecutionAttempts(runID, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+		return
+	}
+	safe := *run
+	safe.Error = diagnostic.Redact(safe.Error)
+	writeJSON(w, http.StatusOK, struct {
+		*state.Run
+		Diagnostics []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
+	}{&safe, state.AttemptDiagnostics(attempts)})
 }
 
 func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
@@ -718,33 +729,30 @@ func handleSendSignal(w http.ResponseWriter, r *http.Request, store state.Store,
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	if code >= 400 {
+		b, _ := diagnostic.JSON(v)
+		_, _ = w.Write(b)
+	} else {
+		_ = json.NewEncoder(w).Encode(v)
+	}
 }
 
 // writeError writes a structured APIError envelope. errCode must be one of
 // the MUXLIO_* constants defined in errors.go; the fix is looked up
 // automatically and may be overridden by callers that pass additional details.
 func writeError(w http.ResponseWriter, httpStatus int, errCode, message string) {
-	env := APIError{Code: errCode, Message: message, Fix: codeFix[errCode]}
+	d := diagnostic.New(errCode, "request", message, codeFix[errCode])
+	env := APIError{ID: d.ID, Severity: "error", Phase: "request", Code: errCode, Message: message, Fix: codeFix[errCode]}
 	writeJSON(w, httpStatus, env)
 }
 
 // writeValidationErrors writes a 422 response whose details[] array contains
 // one ErrorDetail per plan validation error.
 func writeValidationErrors(w http.ResponseWriter, errs []plan.ValidationError) {
-	details := make([]ErrorDetail, len(errs))
-	for i, e := range errs {
-		details[i] = ErrorDetail{
-			Code:     e.Code,
-			Severity: e.Severity,
-			Phase:    e.Phase,
-			Subgraph: e.Subgraph,
-			NodeID:   e.NodeID,
-			Message:  e.Message,
-			Fix:      e.Fix,
-		}
-	}
+	details := errs
 	env := APIError{
+		ID:       diagnostic.New(CodeValidationError, "plan", "", "").ID,
+		Severity: "error", Phase: "plan",
 		Code:    CodeValidationError,
 		Message: fmt.Sprintf("plan has %d validation error(s)", len(errs)),
 		Fix:     codeFix[CodeValidationError],

@@ -50,6 +50,8 @@ type Expr struct {
 
 // EvalContext provides the runtime context for expression evaluation.
 type EvalContext struct {
+	// subgraph identifies the source of the currently executing node.
+	subgraph string
 	// Input is the root run input.
 	Input any
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/plan"
 )
 
@@ -67,7 +68,7 @@ func cmdBuild(args []string, globalJSON bool) int {
 	sourcePath := fs.Arg(0)
 	absSource, err := filepath.Abs(sourcePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid source path: %v\n", err)
+		emitDiagnostic(sourcePath, err, *jsonOut)
 		return 1
 	}
 
@@ -78,7 +79,7 @@ func cmdBuild(args []string, globalJSON bool) int {
 	case ".json":
 		data, err := os.ReadFile(absSource)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: reading file: %v\n", err)
+			emitDiagnostic(sourcePath, err, *jsonOut)
 			return 1
 		}
 		rawPlan = data
@@ -86,31 +87,39 @@ func cmdBuild(args []string, globalJSON bool) int {
 	case ".ts", ".js", ".mjs":
 		compiled, err := compileTypeScriptWorkflow(absSource)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: compiling %s: %v\n", sourcePath, err)
+			emitDiagnostic(sourcePath, err, *jsonOut)
 			return 1
 		}
 		rawPlan = compiled
 
 	default:
-		fmt.Fprintf(os.Stderr, "error: unsupported file extension %q (expected .ts, .js, or .json)\n", ext)
+		emitDiagnostic(sourcePath, fmt.Errorf("unsupported file extension %q (expected .ts, .js, or .json)", ext), *jsonOut)
 		return 1
 	}
 
 	var p plan.Plan
 	if err := json.Unmarshal(rawPlan, &p); err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid plan JSON: %v\n", err)
+		emitDiagnostic(sourcePath, err, *jsonOut)
 		return 1
 	}
 
 	// Validate the compiled plan
-	verrs := plan.Validate(&p)
+	issues := plan.Validate(&p)
+	verrs := plan.ErrorsOnly(issues)
+	warnings := plan.WarningsOnly(issues)
+	for i := range verrs {
+		if verrs[i].Source != nil && ext == ".json" {
+			verrs[i].Source.File = sourcePath
+		}
+	}
 	if len(verrs) > 0 {
 		if *jsonOut {
-			out, _ := json.MarshalIndent(map[string]any{
-				"valid":  false,
-				"errors": verrs,
-				"digest": p.Digest,
-			}, "", "  ")
+			out, _ := diagnostic.JSON(map[string]any{
+				"valid":    false,
+				"errors":   verrs,
+				"warnings": warnings,
+				"digest":   p.Digest,
+			})
 			fmt.Println(string(out))
 		} else {
 			fmt.Fprintf(os.Stderr, "✗ plan has %d validation error(s):\n", len(verrs))
@@ -135,19 +144,21 @@ func cmdBuild(args []string, globalJSON bool) int {
 	// Compute canonical digest if missing or ensure update
 	formatted, err := json.MarshalIndent(&p, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: formatting plan JSON: %v\n", err)
+		emitDiagnostic(sourcePath, err, *jsonOut)
 		return 1
 	}
 
 	if *outPath != "" {
 		if err := os.WriteFile(*outPath, formatted, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: writing output to %s: %v\n", *outPath, err)
+			emitDiagnostic(sourcePath, err, *jsonOut)
 			return 1
 		}
 	}
 
 	if *jsonOut {
+		safeWarnings, _ := diagnostic.JSON(warnings)
 		res := map[string]any{
+			"warnings":  json.RawMessage(safeWarnings),
 			"valid":     true,
 			"name":      p.Name,
 			"irVersion": p.IRVersion,

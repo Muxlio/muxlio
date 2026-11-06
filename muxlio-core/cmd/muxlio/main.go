@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"net/url"
@@ -356,15 +358,20 @@ func loadFakeExecutor(configPath string) (*workers.FakeExecutor, error) {
 func cmdCheck(path string, jsonOut bool) int {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		emitDiagnostic(path, err, jsonOut)
 		return 1
 	}
 	p, err := loadPlan(absPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		emitDiagnostic(path, err, jsonOut)
 		return 1
 	}
 	allIssues := plan.Validate(p)
+	for i := range allIssues {
+		if allIssues[i].Source != nil && strings.EqualFold(filepath.Ext(path), ".json") {
+			allIssues[i].Source.File = path
+		}
+	}
 
 	// Split into hard errors and warnings.
 	var errors, warnings []plan.ValidationError
@@ -382,17 +389,17 @@ func cmdCheck(path string, jsonOut bool) int {
 		if ext == ".ts" || ext == ".js" || ext == ".mjs" {
 			if testErr := runWorkflowTests(absPath, jsonOut); testErr != "" {
 				if jsonOut {
-					out, _ := json.Marshal(map[string]any{"valid": false, "errors": []string{testErr}, "warnings": warnings, "digest": p.Digest})
+					out, _ := diagnostic.JSON(map[string]any{"valid": false, "errors": []diagnostic.Diagnostic{diagnostic.New("MUXLIO_WORKFLOW_TEST_FAILED", "build", testErr, "Fix the failing workflow test and rerun check.")}, "warnings": warnings, "digest": p.Digest})
 					fmt.Println(string(out))
 				} else {
-					fmt.Fprintf(os.Stderr, "✗ %s\n", testErr)
+					fmt.Fprintf(os.Stderr, "✗ %s\n", diagnostic.Redact(testErr))
 				}
 				return 1
 			}
 		}
 
 		if jsonOut {
-			out, _ := json.Marshal(map[string]any{"valid": true, "digest": p.Digest, "warnings": warnings})
+			out, _ := diagnostic.JSON(map[string]any{"valid": true, "digest": p.Digest, "warnings": warnings})
 			fmt.Println(string(out))
 		} else {
 			// Surface warnings even when the plan is structurally valid.
@@ -416,7 +423,7 @@ func cmdCheck(path string, jsonOut bool) int {
 	}
 
 	if jsonOut {
-		out, _ := json.MarshalIndent(map[string]any{"valid": false, "errors": errors, "warnings": warnings}, "", "  ")
+		out, _ := diagnostic.JSON(map[string]any{"valid": false, "errors": errors, "warnings": warnings})
 		fmt.Println(string(out))
 	} else {
 		for _, ve := range warnings {
@@ -634,13 +641,15 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 		// Even on failure, emit JSON so the test harness can inspect it.
 		run, _ := engine.Store().GetRun(runID)
 		if jsonOut && run != nil {
-			out, _ := json.MarshalIndent(map[string]any{
-				"runId":  runID,
-				"state":  run.State,
-				"error":  run.Error,
-				"output": run.Output,
-				"events": formatEvents(mustEvents(engine.Store(), runID)),
-			}, "", "  ")
+			attempts, _ := engine.Store().ListExecutionAttempts(runID, "")
+			out, _ := diagnostic.JSON(map[string]any{
+				"diagnostics": state.AttemptDiagnostics(attempts),
+				"runId":       runID,
+				"state":       run.State,
+				"error":       run.Error,
+				"output":      run.Output,
+				"events":      formatEvents(mustEvents(engine.Store(), runID)),
+			})
 			fmt.Println(string(out))
 			return 1
 		}
@@ -828,10 +837,11 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, 
 			continue
 		}
 		var run struct {
-			ID     string `json:"id"`
-			State  string `json:"state"`
-			Output any    `json:"output,omitempty"`
-			Error  string `json:"error,omitempty"`
+			ID          string                  `json:"id"`
+			State       string                  `json:"state"`
+			Output      any                     `json:"output,omitempty"`
+			Error       string                  `json:"error,omitempty"`
+			Diagnostics []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
 		}
 		if err := json.Unmarshal(pollRaw, &run); err != nil {
 			continue
@@ -841,13 +851,14 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, 
 		}
 		if terminal[run.State] {
 			if jsonOut {
-				out, _ := json.MarshalIndent(map[string]any{
-					"runId":  runID,
-					"state":  run.State,
-					"output": run.Output,
-					"error":  run.Error,
-					"server": serverURL,
-				}, "", "  ")
+				out, _ := diagnostic.JSON(map[string]any{
+					"diagnostics": run.Diagnostics,
+					"runId":       runID,
+					"state":       run.State,
+					"output":      run.Output,
+					"error":       run.Error,
+					"server":      serverURL,
+				})
 				fmt.Println(string(out))
 			} else {
 				fmt.Printf("\nrun %s: %s\n", runID, run.State)
@@ -864,5 +875,27 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, 
 			}
 			return 1
 		}
+	}
+}
+
+func emitDiagnostic(path string, err error, jsonOut bool) {
+	d := diagnostic.New("MUXLIO_BUILD_FAILED", "build", err.Error(), "Correct the source file or compiler error and rerun check --json.")
+	d.Source = &diagnostic.Source{File: path}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		d.Code = "MUXLIO_INVALID_JSON"
+		if raw, readErr := os.ReadFile(path); readErr == nil && syntax.Offset > 0 && syntax.Offset <= int64(len(raw)) {
+			before := string(raw[:syntax.Offset-1])
+			d.Source.Line = strings.Count(before, "\n") + 1
+			d.Source.Column = len(before) - strings.LastIndex(before, "\n")
+		}
+	}
+	d.Identify()
+	if jsonOut {
+		b, _ := diagnostic.JSON(map[string]any{"valid": false, "errors": []diagnostic.Diagnostic{d}})
+		fmt.Println(string(b))
+	} else {
+		fmt.Fprintln(os.Stderr, diagnostic.Redact(d.Error()))
+		fmt.Fprintln(os.Stderr, "fix:", d.Fix)
 	}
 }

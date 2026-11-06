@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -44,38 +45,40 @@ func cmdTest(args []string, globalJSON bool) int {
 	if ext == ".ts" || ext == ".js" || ext == ".mjs" {
 		absPath, err := filepath.Abs(workflowPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: invalid path: %v\n", err)
+			emitDiagnostic(workflowPath, err, *jsonOut)
 			return 1
 		}
 		raw, err := compileTypeScriptWorkflow(absPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: compiling workflow: %v\n", err)
+			emitDiagnostic(workflowPath, err, *jsonOut)
 			return 1
 		}
 		var parsed plan.Plan
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			fmt.Fprintf(os.Stderr, "error: parsing compiled plan: %v\n", err)
+			emitDiagnostic(workflowPath, err, *jsonOut)
 			return 1
 		}
 		p = &parsed
 	} else {
 		loaded, err := loadPlan(workflowPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: loading plan: %v\n", err)
+			emitDiagnostic(workflowPath, err, *jsonOut)
 			return 1
 		}
 		p = loaded
 	}
 
 	// 2. Validate Plan
-	verrs := plan.Validate(p)
+	issues := plan.Validate(p)
+	verrs := plan.ErrorsOnly(issues)
 	if len(verrs) > 0 {
 		if *jsonOut {
-			out, _ := json.MarshalIndent(map[string]any{
-				"valid":  false,
-				"errors": verrs,
-				"state":  "failed",
-			}, "", "  ")
+			out, _ := diagnostic.JSON(map[string]any{
+				"valid":    false,
+				"errors":   verrs,
+				"warnings": plan.WarningsOnly(issues),
+				"state":    "failed",
+			})
 			fmt.Println(string(out))
 		} else {
 			fmt.Fprintf(os.Stderr, "error: plan validation failed with %d error(s)\n", len(verrs))
@@ -89,14 +92,14 @@ func cmdTest(args []string, globalJSON bool) int {
 	// 3. Load input JSON
 	inputData, err := os.ReadFile(inputPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: reading input file %s: %v\n", inputPath, err)
+		emitDiagnostic(inputPath, err, *jsonOut)
 		return 1
 	}
 
 	// 4. Setup Fake Executor and In-Memory Store
 	fakeExec, err := loadFakeExecutor(*fakeConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: loading fake executor config: %v\n", err)
+		emitDiagnostic(*fakeConfig, err, *jsonOut)
 		return 1
 	}
 
@@ -107,7 +110,7 @@ func cmdTest(args []string, globalJSON bool) int {
 
 	runID, err := engine.CreateRun(inputData)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: creating test run: %v\n", err)
+		emitDiagnostic(inputPath, err, *jsonOut)
 		return 1
 	}
 
@@ -127,7 +130,10 @@ func cmdTest(args []string, globalJSON bool) int {
 			outputVal = run.Output
 			errMsg = run.Error
 		}
+		attempts, _ := memStore.ListExecutionAttempts(runID, "")
 		res := map[string]any{
+			"diagnostics": state.AttemptDiagnostics(attempts),
+			"warnings":    plan.WarningsOnly(issues),
 			"test":        "passed",
 			"workflow":    p.Name,
 			"runId":       runID,
@@ -141,7 +147,7 @@ func cmdTest(args []string, globalJSON bool) int {
 		if !success {
 			res["test"] = "failed"
 		}
-		out, _ := json.MarshalIndent(res, "", "  ")
+		out, _ := diagnostic.JSON(res)
 		fmt.Println(string(out))
 		if success {
 			return 0

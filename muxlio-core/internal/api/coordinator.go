@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"sync"
 	"time"
 
@@ -230,7 +231,14 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 			return invalidCompletionError{message: err.Error()}
 		}
 	}
-	raw, err := json.Marshal(result)
+	var detail *diagnostic.Diagnostic
+	if req.Error != nil {
+		detail = req.Error.Diagnostic
+	}
+	raw, err := json.Marshal(struct {
+		workers.ExecuteResult
+		Diagnostic *diagnostic.Diagnostic `json:"diagnostic,omitempty"`
+	}{result, detail})
 	if err != nil {
 		return err
 	}
@@ -456,6 +464,14 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 		}
 		var result workers.ExecuteResult
 		err = json.Unmarshal(raw, &result)
+		if err == nil {
+			var envelope struct {
+				Diagnostic *diagnostic.Diagnostic `json:"diagnostic"`
+			}
+			if json.Unmarshal(raw, &envelope) == nil && envelope.Diagnostic != nil && result.Error != "" {
+				return result, true, envelope.Diagnostic
+			}
+		}
 		return result, true, err
 	}
 	if r, found, err := read(); found || err != nil {

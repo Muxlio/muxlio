@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"net/url"
@@ -61,9 +63,10 @@ type remoteAssignment struct {
 	Request          json.RawMessage `json:"request"`
 }
 type remoteError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable,omitempty"`
+	Diagnostic *diagnostic.Diagnostic `json:"diagnostic,omitempty"`
+	Code       string                 `json:"code"`
+	Message    string                 `json:"message"`
+	Retryable  bool                   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
 	AssignmentID        string                        `json:"assignmentId"`
@@ -581,7 +584,14 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				if execErr != nil {
 					message = execErr.Error()
 				}
-				completion.Error = &remoteError{Code: "execution_failed", Message: RedactSecrets(message, executeReq.Secrets), Retryable: true}
+				completion.Error = &remoteError{Code: "execution_failed", Message: diagnostic.Redact(RedactSecrets(message, executeReq.Secrets)), Retryable: true}
+				var d *diagnostic.Diagnostic
+				if errors.As(execErr, &d) {
+					var safe diagnostic.Diagnostic
+					if json.Unmarshal(diagnostic.WithSecrets(d, executeReq.Secrets), &safe) == nil {
+						completion.Error.Diagnostic = &safe
+					}
+				}
 			}
 
 			children.Add(1)

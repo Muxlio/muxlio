@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"strings"
 	"sync"
 	"time"
@@ -330,6 +331,9 @@ func (e *Engine) Run(runID string) error {
 // executeSubgraph processes all nodes in dependency order, then evaluates
 // the subgraph's output bindings.
 func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []string, ctx *EvalContext) (map[string]any, error) {
+	local := *ctx
+	local.subgraph = sgName
+	ctx = &local
 	order, err := topoSort(sg.Nodes)
 	if err != nil {
 		return nil, fmt.Errorf("muxlio: subgraph %q: %w", sgName, err)
@@ -652,16 +656,16 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		failure := ""
 		if err != nil {
-			failure = workers.RedactSecrets(err.Error(), guarded.Secrets)
+			failure = diagnostic.Redact(workers.RedactSecrets(err.Error(), guarded.Secrets))
 		} else if result.Error != "" {
-			failure = workers.RedactSecrets(result.Error, guarded.Secrets)
+			failure = diagnostic.Redact(workers.RedactSecrets(result.Error, guarded.Secrets))
 		}
 		attemptResult := &state.AttemptResult{ExecutionSucceeded: failure == "", Outputs: result.Outputs}
 		var validationErr error
 		if failure == "" {
 			validationErr = ValidateExecuteResult(node.Outputs, result)
 			if validationErr != nil {
-				failure = workers.RedactSecrets(validationErr.Error(), guarded.Secrets)
+				failure = diagnostic.Redact(workers.RedactSecrets(validationErr.Error(), guarded.Secrets))
 				var diagnostic *ValueValidationFailure
 				if errors.As(validationErr, &diagnostic) {
 					attemptResult.ValidationFailure = diagnostic
@@ -671,6 +675,65 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		attemptState := "succeeded"
 		if failure != "" {
 			attemptState = "failed"
+			d := diagnostic.New("MUXLIO_EXECUTION_FAILED", "runtime", failure, "Repair the executor failure and retry the run.")
+			var typed *diagnostic.Diagnostic
+			if errors.As(err, &typed) {
+				d = *typed
+			}
+			d.RunID = runID
+			d.ScopeID = actID
+			d.AttemptID = req.AttemptID
+			d.NodeID = node.ID
+			d.Subgraph = ctx.subgraph
+			if d.Requirements == nil {
+				d.Requirements = node.RequiredCapabilities
+			}
+			if v := attemptResult.ValidationFailure; v != nil {
+				d.Code = v.Code
+				d.Expected = v.Expected
+				d.Actual = v.Actual
+				d.ValuePath = v.Path
+				if v.Missing {
+					d.Actual = "<missing>"
+				}
+				d.Fix = "Return the declared output ports with values matching their JSON Schemas."
+			}
+			cause := err
+			for depth := 0; cause != nil && depth < 8; depth++ {
+				d.Causes = append(d.Causes, diagnostic.New("MUXLIO_CAUSE", "runtime", cause.Error(), ""))
+				cause = errors.Unwrap(cause)
+			}
+			if sg, ok := e.plan.Subgraphs[ctx.subgraph]; ok {
+				for i, sourceNode := range sg.Nodes {
+					if sourceNode.ID == node.ID {
+						pointer := fmt.Sprintf("/subgraphs/%s/nodes/%d", pointerPart(ctx.subgraph), i)
+						d.Source = sourcePosition(e.plan.sourceJSON, pointer, sourceOffsets(e.plan.sourceJSON))
+						break
+					}
+				}
+			}
+			d.Identify()
+			var safeDiagnostic diagnostic.Diagnostic
+			if decodeErr := json.Unmarshal(diagnostic.WithSecrets(&d, guarded.Secrets), &safeDiagnostic); decodeErr != nil {
+				return nil, fmt.Errorf("decode sanitized diagnostic: %w", decodeErr)
+			}
+			attemptResult.Diagnostic = &safeDiagnostic
+			sanitized := diagnostic.WithSecrets(attemptResult, guarded.Secrets)
+			var safeResult state.AttemptResult
+			if decodeErr := json.Unmarshal(sanitized, &safeResult); decodeErr != nil {
+				return nil, fmt.Errorf("decode sanitized attempt diagnostic: %w", decodeErr)
+			}
+			// Keep the returned typed validation error safe even if the combined
+			// payload budget omitted validationFailure after the diagnostic.
+			if attemptResult.ValidationFailure != nil {
+				var safeValidation ValueValidationFailure
+				if decodeErr := json.Unmarshal(diagnostic.WithSecrets(attemptResult.ValidationFailure, guarded.Secrets), &safeValidation); decodeErr != nil {
+					return nil, fmt.Errorf("decode sanitized validation failure: %w", decodeErr)
+				}
+				validationErr = &safeValidation
+			}
+			attemptResult = &safeResult
+
 		}
 		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}); recordErr != nil {
 			return nil, recordErr
@@ -680,14 +743,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if errors.As(err, &uncertain) {
 				return nil, err
 			}
-			lastErr = fmt.Errorf("muxlio: executor %q attempt %d failed: %s", executor, attempt, workers.RedactSecrets(err.Error(), guarded.Secrets))
+			lastErr = fmt.Errorf("muxlio: executor %q attempt %d failed: %s", executor, attempt, diagnostic.Redact(workers.RedactSecrets(err.Error(), guarded.Secrets)))
 			if attempt == maxAttempts {
 				return nil, lastErr
 			}
 			continue
 		}
 		if result.Error != "" {
-			lastErr = fmt.Errorf("muxlio: executor %q attempt %d returned error: %s", executor, attempt, workers.RedactSecrets(result.Error, guarded.Secrets))
+			lastErr = fmt.Errorf("muxlio: executor %q attempt %d returned error: %s", executor, attempt, diagnostic.Redact(workers.RedactSecrets(result.Error, guarded.Secrets)))
 			if attempt == maxAttempts {
 				return nil, lastErr
 			}

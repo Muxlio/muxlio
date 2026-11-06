@@ -195,3 +195,57 @@ These appear in run error fields (not API response codes) for failures during pl
 - **Phase:** plan
 - **Cause:** Nodes in a subgraph form a circular dependency.
 - **Fix:** Break the cycle by removing or redirecting a binding.
+
+## Diagnostic identity and repair workflow
+
+`muxlio check plan.json --json` emits `{ "valid": false, "errors": [...] }`
+and exits with status 1 for invalid plans, unreadable files, invalid JSON, and
+compiler failures. Patch the field identified by `source.pointer`, then rerun
+check; successful checks exit with status 0. `build --json` uses the same
+validation diagnostics. MCP `check_plan`, `build`, and `test` return JSON text
+with the same diagnostic fields. HTTP plan validation returns those fields in
+`details[]` with status 422.
+
+Every diagnostic has a stable `code`, `id`, `message`, and suggested `fix`.
+The `diag_` identifier hashes the code, phase, subgraph, node, and JSON pointer;
+file failures without a pointer include the filename. It excludes prose and
+run/attempt IDs, so the same issue at the same location retains its identifier
+across retries and transports. An ID identifies an issue location, not a unique
+execution event. Use `runId`, `scopeId` (activation identity), and `attemptId` to
+identify an occurrence.
+
+`source.pointer` is an escaped JSON Pointer into the submitted Plan IR.
+`source.line` and `source.column` are 1-based byte positions in that JSON.
+Missing fields point to the field's parent object. Positions for compiled
+TypeScript/JavaScript refer to the generated Plan IR, not the original source;
+no original-source mapping is inferred. `source.file` is included when a local
+JSON file is available. Programmatically constructed plans can provide pointers
+without line/column positions.
+
+Failed execution attempts persist `result.diagnostic`. It contains execution
+identity, the source node, declared requirements, expected and actual values
+when available, and a bounded `causes[]` chain. Output validation includes
+`valuePath` for the invalid returned value. Inspect attempts through
+`GET /v1/runs/<runId>/attempts` or MCP `get_attempts`. `GET /v1/runs/<runId>`,
+CLI JSON run/test results, and MCP test results also include `diagnostics[]`.
+Remote workers preserve the diagnostic contract in their completion receipts.
+
+Additional stable codes:
+
+| Code | Repair |
+|---|---|
+| `MUXLIO_ADAPTER_NOT_FOUND` | Install the adapter in the configured directory or correct the executor name. |
+| `MUXLIO_INCOMPATIBLE_REQUIREMENTS` | Select a descriptor that satisfies the contract/executor versions and capabilities, or correct the requirements. `expected`, `actual`, and `requirements` describe the mismatch. |
+| `MUXLIO_EXECUTION_FAILED` | Repair the reported executor failure and retry. |
+| `MUXLIO_BUILD_FAILED` | Correct the source, file access, or compiler failure and rerun check. |
+| `MUXLIO_WORKFLOW_TEST_FAILED` | Fix the co-located workflow test and rerun check. |
+| `MUXLIO_TOOL_ERROR` | Correct the MCP tool arguments or reported failure and retry. |
+| `MUXLIO_DIAGNOSTICS_TRUNCATED` | Fix the reported issues and rerun check to reveal additional issues. |
+
+Diagnostic JSON and error envelopes are limited to 64 KiB, collections to 100
+entries, and individual strings to approximately 2 KiB. Deep or oversized
+values are omitted or replaced with truncation markers; diagnostic identity
+and repair fields take priority over payload details. Normal successful output
+and artifact responses retain their existing contracts. Known execution and
+environment credentials, sensitive structured keys, authorization values, URL
+credentials, and recognizable token strings are redacted before transport.

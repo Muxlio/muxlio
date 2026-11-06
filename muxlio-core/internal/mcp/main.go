@@ -59,6 +59,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"net/url"
@@ -70,6 +71,7 @@ import (
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/plan"
+	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -551,9 +553,11 @@ func (r *apiResponse) isError() bool {
 func validatePlanLocally(raw json.RawMessage) ([]map[string]any, error) {
 	var p plan.Plan
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return []map[string]any{
-			{"code": "MUXLIO_INVALID_JSON", "severity": "error", "message": "plan is not valid JSON: " + err.Error()},
-		}, nil
+		d := diagnostic.New("MUXLIO_INVALID_JSON", "plan", "plan is not valid JSON: "+err.Error(), "Correct the JSON syntax and retry validation.")
+		b, _ := diagnostic.JSON(d)
+		var item map[string]any
+		_ = json.Unmarshal(b, &item)
+		return []map[string]any{item}, nil
 	}
 
 	validationErrors := plan.Validate(&p)
@@ -646,9 +650,11 @@ func (s *server) toolCheckPlan(args json.RawMessage) toolCallResult {
 		return errResult("validation error: " + err.Error())
 	}
 
+	errs, warnings := splitValidationIssues(errs)
 	result := map[string]any{
-		"valid":  len(errs) == 0,
-		"errors": errs,
+		"warnings": warnings,
+		"valid":    len(errs) == 0,
+		"errors":   errs,
 	}
 
 	// Also extract name/digest for convenience.
@@ -664,7 +670,7 @@ func (s *server) toolCheckPlan(args json.RawMessage) toolCallResult {
 		result["digest"] = meta.Digest
 	}
 
-	text, _ := json.MarshalIndent(result, "", "  ")
+	text, _ := diagnostic.JSON(result)
 	return toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: string(text)}},
 		IsError: len(errs) > 0,
@@ -738,9 +744,12 @@ func (s *server) toolBuild(args json.RawMessage) toolCallResult {
 	if err := json.Unmarshal(rawPlan, &p); err != nil {
 		return errResult("parsing plan JSON: " + err.Error())
 	}
-	verrs := plan.Validate(&p)
+	issues := plan.Validate(&p)
+	verrs := plan.ErrorsOnly(issues)
+	safeWarnings, _ := diagnostic.JSON(plan.WarningsOnly(issues))
 
 	result := map[string]any{
+		"warnings":  json.RawMessage(safeWarnings),
 		"valid":     len(verrs) == 0,
 		"name":      p.Name,
 		"irVersion": p.IRVersion,
@@ -763,7 +772,14 @@ func (s *server) toolBuild(args json.RawMessage) toolCallResult {
 		result["plan"] = planObj
 	}
 
-	text, _ := json.MarshalIndent(result, "", "  ")
+	var text []byte
+	if len(verrs) > 0 {
+		text, _ = diagnostic.JSON(result)
+	} else {
+		// The compiled plan is executable data; diagnostic bounds must not
+		// silently drop nodes, bindings, or task content.
+		text, _ = json.Marshal(result)
+	}
 	return toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: string(text)}},
 		IsError: len(verrs) > 0,
@@ -842,7 +858,8 @@ func (s *server) toolTest(args json.RawMessage) toolCallResult {
 	if err := json.Unmarshal(rawPlan, &p); err != nil {
 		return errResult("parsing plan: " + err.Error())
 	}
-	if verrs := plan.Validate(&p); len(verrs) > 0 {
+	issues := plan.Validate(&p)
+	if verrs := plan.ErrorsOnly(issues); len(verrs) > 0 {
 		errList := make([]map[string]any, 0, len(verrs))
 		for _, ve := range verrs {
 			item, _ := json.Marshal(ve)
@@ -850,7 +867,7 @@ func (s *server) toolTest(args json.RawMessage) toolCallResult {
 			_ = json.Unmarshal(item, &m)
 			errList = append(errList, m)
 		}
-		out, _ := json.MarshalIndent(map[string]any{"test": "failed", "errors": errList}, "", "  ")
+		out, _ := diagnostic.JSON(map[string]any{"test": "failed", "errors": errList, "warnings": plan.WarningsOnly(issues)})
 		return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(out)}}, IsError: true}
 	}
 
@@ -891,6 +908,8 @@ func (s *server) toolTest(args json.RawMessage) toolCallResult {
 	}
 
 	result := map[string]any{
+		"diagnostics": state.AttemptDiagnostics(mustAttempts(store, runID)),
+		"warnings":    plan.WarningsOnly(issues),
 		"test":        testStatus,
 		"workflow":    p.Name,
 		"runId":       runID,
@@ -900,7 +919,7 @@ func (s *server) toolTest(args json.RawMessage) toolCallResult {
 		"activations": len(activations),
 		"events":      evtList,
 	}
-	text, _ := json.MarshalIndent(result, "", "  ")
+	text, _ := diagnostic.JSON(result)
 	return toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: string(text)}},
 		IsError: testStatus == "failed",
@@ -941,7 +960,7 @@ func (s *server) toolGetArtifactMetadata(args json.RawMessage) toolCallResult {
 			if result["digest"] == "" {
 				result["digest"] = params.Digest
 			}
-			text, _ := json.MarshalIndent(result, "", "  ")
+			text, _ := diagnostic.JSON(result)
 			return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(text)}}}
 		}
 		body, _ := io.ReadAll(io.LimitReader(headResp.Body, 64<<10))
@@ -967,6 +986,7 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 
 	// Local pre-flight validation before touching the coordinator.
 	errs, _ := validatePlanLocally(params.Plan)
+	errs, _ = splitValidationIssues(errs)
 	if len(errs) > 0 {
 		text, _ := json.MarshalIndent(map[string]any{
 			"code":    "MUXLIO_PLAN_INVALID",
@@ -1169,7 +1189,7 @@ func extractRunID(args json.RawMessage) (string, error) {
 
 func errResult(msg string) toolCallResult {
 	return toolCallResult{
-		Content: []contentBlock{{Type: "text", Text: msg}},
+		Content: []contentBlock{{Type: "text", Text: diagnosticText(msg)}},
 		IsError: true,
 	}
 }
@@ -1178,7 +1198,7 @@ func apiResultOrError(r *apiResponse) toolCallResult {
 	text := r.asText()
 	if r.isError() {
 		return toolCallResult{
-			Content: []contentBlock{{Type: "text", Text: fmt.Sprintf("HTTP %d: %s", r.statusCode, text)}},
+			Content: []contentBlock{{Type: "text", Text: safeErrorText(text, r.statusCode)}},
 			IsError: true,
 		}
 	}
@@ -1323,4 +1343,37 @@ func Main() {
 		fmt.Fprintln(os.Stderr, "muxlio-mcp: read error:", err)
 		os.Exit(1)
 	}
+}
+
+func diagnosticText(msg string) string {
+	d := diagnostic.New("MUXLIO_TOOL_ERROR", "request", msg, "Correct the tool arguments or reported failure and retry.")
+	b, _ := diagnostic.JSON(d)
+	return string(b)
+}
+func safeErrorText(text string, status int) string {
+	var v any
+	if json.Unmarshal([]byte(text), &v) != nil {
+		return diagnosticText(text)
+	}
+	if obj, ok := v.(map[string]any); ok {
+		obj["httpStatus"] = status
+	}
+	b, _ := diagnostic.JSON(v)
+	return string(b)
+}
+
+func mustAttempts(store state.Store, runID string) []state.ExecutionAttempt {
+	attempts, _ := store.ListExecutionAttempts(runID, "")
+	return attempts
+}
+
+func splitValidationIssues(issues []map[string]any) (errs, warnings []map[string]any) {
+	for _, issue := range issues {
+		if issue["severity"] == "warning" {
+			warnings = append(warnings, issue)
+		} else {
+			errs = append(errs, issue)
+		}
+	}
+	return
 }

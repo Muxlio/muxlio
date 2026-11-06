@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -131,6 +132,7 @@ func (f *ValueValidationFailure) Error() string {
 // AttemptResult separates executor completion from semantic result validity and
 // retains returned ports (including artifact references) on validation failure.
 type AttemptResult struct {
+	Diagnostic         *diagnostic.Diagnostic  `json:"diagnostic,omitempty"`
 	ExecutionSucceeded bool                    `json:"executionSucceeded"`
 	Outputs            map[string]any          `json:"outputs,omitempty"`
 	ValidationFailure  *ValueValidationFailure `json:"validationFailure,omitempty"`
@@ -257,3 +259,26 @@ const (
 	EventWorkerActivity      = "worker.activity"
 	EventExecutionAttempt    = "execution.attempt"
 )
+
+// AttemptDiagnostics returns the shared diagnostics from failed execution attempts.
+func AttemptDiagnostics(attempts []ExecutionAttempt) []diagnostic.Diagnostic {
+	result := make([]diagnostic.Diagnostic, 0)
+	for _, attempt := range attempts {
+		if attempt.Result != nil && attempt.Result.Diagnostic != nil {
+			result = append(result, *attempt.Result.Diagnostic)
+		}
+		if len(result) == diagnostic.MaxIssues {
+			break
+		}
+	}
+	// Bound the collection as well as each individual diagnostic.
+	raw, err := diagnostic.JSON(result)
+	if err != nil {
+		return nil
+	}
+	var bounded []diagnostic.Diagnostic
+	if json.Unmarshal(raw, &bounded) != nil {
+		return nil
+	}
+	return bounded
+}

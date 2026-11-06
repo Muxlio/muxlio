@@ -2,6 +2,8 @@ package workers
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,7 +60,8 @@ func TestCompatibilityRejectsBeforeProcessLaunch(t *testing.T) {
 			req := ExecuteRequest{Executor: "test"}
 			tc.change(&req)
 			result, err := s.Execute(req)
-			if err != nil || !strings.Contains(result.Error, tc.want) {
+			var detail *diagnostic.Diagnostic
+			if !errors.As(err, &detail) || detail.Code != "MUXLIO_INCOMPATIBLE_REQUIREMENTS" || detail.Expected == nil || detail.Actual == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 			entries, err := os.ReadDir(s.workBase)

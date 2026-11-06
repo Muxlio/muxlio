@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"os"
 	"os/exec"
@@ -150,8 +151,10 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	}
 	script := s.scriptPath(req.Executor)
 	if _, err := os.Stat(script); err != nil {
-		return ExecuteResult{}, fmt.Errorf(
-			"muxlio: no adapter for executor %q (expected script at %s)", req.Executor, script)
+		d := diagnostic.New("MUXLIO_ADAPTER_NOT_FOUND", "runtime", fmt.Sprintf("no adapter for executor %q (expected script at %s)", req.Executor, script), "Install the executor adapter in the configured adapters directory or correct the executor name.")
+		d.Expected = script
+		d.Actual = "adapter unavailable"
+		return ExecuteResult{}, &d
 	}
 
 	// Verify adapter capabilities before dispatch. Unsupported capabilities are
@@ -161,7 +164,12 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		return ExecuteResult{Error: manifestErr.Error()}, nil
 	}
 	if capErr := CheckAdapterCapabilities(req, manifest); capErr != nil {
-		return ExecuteResult{Error: capErr.Error()}, nil
+		d := diagnostic.New("MUXLIO_INCOMPATIBLE_REQUIREMENTS", "runtime", capErr.Error(), "Select an adapter whose descriptor satisfies the requested contract, versions, and capabilities, or correct the node requirements.")
+		d.Requirements = map[string]any{"contractVersion": req.ContractVersion, "executorVersion": req.ExecutorVersion, "capabilities": req.RequiredCapabilities, "sessionRequested": req.SessionID != "", "remoteTaskRequested": req.RemoteTask != nil}
+		d.Expected = d.Requirements
+		d.Actual = manifest
+		d.Causes = []diagnostic.Diagnostic{diagnostic.New("MUXLIO_CAUSE", "runtime", capErr.Error(), "")}
+		return ExecuteResult{}, &d
 	}
 
 	// Keep each attempt's workspace under the run so incidental agent files

@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"math"
 	"sort"
 	"strings"
@@ -12,17 +13,7 @@ import (
 )
 
 // ValidationError is a structured validation error with a stable code.
-type ValidationError struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"` // error, warning
-	Phase    string `json:"phase"`    // build, plan
-	Subgraph string `json:"subgraph,omitempty"`
-	NodeID   string `json:"nodeId,omitempty"`
-	Message  string `json:"message"`
-	Fix      string `json:"fix,omitempty"`
-}
-
-func (e *ValidationError) Error() string { return e.Message }
+type ValidationError = diagnostic.Diagnostic
 
 // hasErrors returns true when any ValidationError has severity "error" (not just warnings).
 func hasErrors(errs []ValidationError) bool {
@@ -31,8 +22,8 @@ func hasErrors(errs []ValidationError) bool {
 
 // Validate checks a plan for structural correctness. It returns a slice
 // of errors; if the slice is empty the plan is valid.
-func Validate(p *Plan) []ValidationError {
-	var errs []ValidationError
+func Validate(p *Plan) (errs []ValidationError) {
+	defer func() { errs = finalizeDiagnostics(p, errs) }()
 	if !validDuration(p.DeadlineSeconds) {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_DEADLINE", Severity: "error", Phase: "plan", Message: "deadlineSeconds must be finite, nonnegative and fit a duration"})
 	}
@@ -105,6 +96,17 @@ func ErrorsOnly(errs []ValidationError) []ValidationError {
 	return result
 }
 
+// WarningsOnly returns the non-fatal issues separately from errors.
+func WarningsOnly(issues []ValidationError) []ValidationError {
+	var warnings []ValidationError
+	for _, issue := range issues {
+		if issue.Severity == "warning" {
+			warnings = append(warnings, issue)
+		}
+	}
+	return warnings
+}
+
 // visibleOuterNodes returns node IDs from enclosing subgraphs that a nested
 // body subgraph may reference (e.g. prepare before a map in the root).
 func visibleOuterNodes(p *Plan, bodySG string) map[string]bool {
@@ -156,7 +158,7 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 	for id := range visibleOuterNodes(p, sgName) {
 		seen[id] = true
 	}
-	for _, node := range sg.Nodes {
+	for index, node := range sg.Nodes {
 		if err := workers.ValidateWorkspaceContract(node.WorkspaceMode, node.ConcurrencyKeys); err != nil {
 			errs = append(errs, ValidationError{Code: "MUXLIO_BAD_WORKSPACE", Severity: "error", Phase: "plan", Subgraph: sgName, NodeID: node.ID, Message: err.Error()})
 		}
@@ -165,6 +167,7 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 				Code: "MUXLIO_MISSING_NODE_ID", Severity: "error", Phase: "plan",
 				Subgraph: sgName,
 				Message:  "node is missing id",
+				Source:   &diagnostic.Source{Pointer: fmt.Sprintf("/subgraphs/%s/nodes/%d/id", pointerPart(sgName), index)},
 				Fix:      "Every node needs a stable id.",
 			})
 			continue
@@ -174,6 +177,7 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 				Code: "MUXLIO_DUPLICATE_NODE_ID", Severity: "error", Phase: "plan",
 				Subgraph: sgName, NodeID: node.ID,
 				Message: fmt.Sprintf("duplicate node id %q in subgraph %q", node.ID, sgName),
+				Source:  &diagnostic.Source{Pointer: fmt.Sprintf("/subgraphs/%s/nodes/%d/id", pointerPart(sgName), index)},
 				Fix:     "Node IDs must be unique within a subgraph.",
 			})
 		}
@@ -190,7 +194,9 @@ func validateSubgraph(p *Plan, sgName string, sg Subgraph) []ValidationError {
 					Code: "MUXLIO_BAD_REF", Severity: "error", Phase: "plan",
 					Subgraph: sgName,
 					Message:  fmt.Sprintf("output port %q references unknown node %q", port, b.Ref.Node),
-					Fix:      "Ensure output bindings reference existing nodes in this subgraph.",
+					Source:   &diagnostic.Source{Pointer: "/subgraphs/" + pointerPart(sgName) + "/output/" + pointerPart(port) + "/ref/node"},
+					Expected: "an existing node reference", Actual: b.Ref.Node,
+					Fix: "Ensure output bindings reference existing nodes in this subgraph.",
 				})
 			}
 		}
@@ -257,8 +263,10 @@ func validateNode(p *Plan, sgName string, node Node, seen map[string]bool) []Val
 				errs = append(errs, ValidationError{
 					Code: "MUXLIO_BAD_REF", Severity: "error", Phase: "plan",
 					Subgraph: sgName, NodeID: node.ID,
-					Message: fmt.Sprintf("input %q references unknown node %q", name, b.Ref.Node),
-					Fix:     "Ensure input bindings reference earlier nodes in this subgraph.",
+					Message:  fmt.Sprintf("input %q references unknown node %q", name, b.Ref.Node),
+					Source:   &diagnostic.Source{Pointer: inputPointer(p, sgName, node.ID, name)},
+					Expected: "an existing node reference", Actual: b.Ref.Node,
+					Fix: "Ensure input bindings reference earlier nodes in this subgraph.",
 				})
 			}
 		}

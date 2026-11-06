@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"strings"
@@ -105,9 +106,10 @@ type WorkerLogAppend struct {
 }
 
 type WorkerError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable,omitempty"`
+	Diagnostic *diagnostic.Diagnostic `json:"diagnostic,omitempty"`
+	Code       string                 `json:"code"`
+	Message    string                 `json:"message"`
+	Retryable  bool                   `json:"retryable,omitempty"`
 }
 
 // WorkerProtocolHandler serves the coordinator-facing worker API.
