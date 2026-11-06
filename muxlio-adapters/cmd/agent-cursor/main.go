@@ -131,13 +131,13 @@ func main() {
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
 	// parsed JSON values; file-artifact ports as {mime, path, data} maps.
-	outputs, missing := adapter.CollectOutputs(req)
+	outputs, missing, outputErrors := adapter.CollectOutputs(req)
 	outputs["_text"] = map[string]any{"mime": "text/plain", "data": textChunks.String()}
 	errMsg := ""
 	if len(missing) > 0 {
 		errMsg = fmt.Sprintf("agent-cursor did not write expected output files: %s", strings.Join(missing, ", "))
 	}
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Logs: diagnostics.String(), Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Logs: diagnostics.String(), Usage: usage})
 }
 
 func assistantText(raw json.RawMessage) []string {

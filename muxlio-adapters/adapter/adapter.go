@@ -99,6 +99,9 @@ func WriteResponse(resp Response) error {
 	// Redact diagnostics before JSON encoding, so escaped secrets are covered.
 	resp.Error = redact(resp.Error)
 	resp.Logs = redact(resp.Logs)
+	for port, message := range resp.OutputErrors {
+		resp.OutputErrors[port] = redact(message)
+	}
 	for _, port := range []string{"stdout", "stderr", "_text"} {
 		if value, ok := resp.Outputs[port].(string); ok {
 			resp.Outputs[port] = redact(value)

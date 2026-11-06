@@ -269,16 +269,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	}
 	for port, decl := range req.Outputs {
 		if _, ok := result.Outputs[port]; ok {
-			// Script already set it — but if it's a { mime, path, data } map
-			// and the mime is application/json, unwrap data to a parsed value.
-			if m, ok := result.Outputs[port].(map[string]any); ok {
-				if data, ok := m["data"].(string); ok && isJSONMime(decl.Mime) {
-					var parsed any
-					if err := json.Unmarshal([]byte(data), &parsed); err == nil {
-						result.Outputs[port] = parsed
-					}
-				}
-			}
+			// Returned JSON values are authoritative, including objects with data fields.
 			continue
 		}
 		name := decl.Path
@@ -306,14 +297,19 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		if len(data) > 4<<20 {
 			return ExecuteResult{Error: "adapter output exceeds 4 MiB limit"}, nil
 		}
-		// For application/json, parse and return the native value directly
-		// so expression-language field ops work against it.
-		if isJSONMime(decl.Mime) {
+		// Only pathless ports are JSON results; file artifacts retain their bytes.
+		if decl.Path == "" {
 			var parsed any
 			if err := json.Unmarshal(data, &parsed); err == nil {
 				result.Outputs[port] = parsed
-				continue
+			} else {
+				result.Outputs[port] = string(data)
+				if result.OutputErrors == nil {
+					result.OutputErrors = make(map[string]string)
+				}
+				result.OutputErrors[port] = fmt.Sprintf("result port must contain JSON: %v", err)
 			}
+			continue
 		}
 		result.Outputs[port] = map[string]any{
 			"mime": decl.Mime,
@@ -447,13 +443,6 @@ func RedactSecrets(value string, secrets map[string]string) string {
 		}
 	}
 	return value
-}
-
-// isJSONMime returns true for MIME types whose content should be parsed as JSON.
-func isJSONMime(mime string) bool {
-	return mime == "application/json" ||
-		strings.HasSuffix(mime, "+json") ||
-		strings.HasPrefix(mime, "application/json;")
 }
 
 const MaxLogBytes = 64 << 10

@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -108,22 +109,50 @@ type Dispatch struct {
 // provider usage must remain explicitly unavailable, not be reported as zero.
 type TokenUsage = contract.TokenUsage
 
+// ValueValidationFailure describes a runtime contract violation. Missing is
+// distinct from a reported JSON null. Expected is the declared JSON Schema.
+type ValueValidationFailure struct {
+	Code     string          `json:"code"`
+	Path     string          `json:"path"`
+	Expected json.RawMessage `json:"expected"`
+	Actual   json.RawMessage `json:"actual,omitempty"`
+	Missing  bool            `json:"missing,omitempty"`
+	Message  string          `json:"message"`
+}
+
+func (f *ValueValidationFailure) Error() string {
+	actual := string(f.Actual)
+	if f.Missing {
+		actual = "<missing>"
+	}
+	return fmt.Sprintf("%s at %s: %s; expected %s; actual %s", f.Code, f.Path, f.Message, f.Expected, actual)
+}
+
+// AttemptResult separates executor completion from semantic result validity and
+// retains returned ports (including artifact references) on validation failure.
+type AttemptResult struct {
+	ExecutionSucceeded bool                    `json:"executionSucceeded"`
+	Outputs            map[string]any          `json:"outputs,omitempty"`
+	ValidationFailure  *ValueValidationFailure `json:"validationFailure,omitempty"`
+}
+
 // ExecutionAttempt records one interpreter call to an executor.
 // FinishedAt marks the logical attempt outcome. Cancellation does not prove
 // executor termination; execution.returned events and worker diagnostics record
 // later returns separately, without asserting external effect completion.
 type ExecutionAttempt struct {
-	ID                  string      `json:"id"`
-	RunID               string      `json:"runId"`
-	ActivationID        string      `json:"activationId"`
-	RetryNumber         int         `json:"retryNumber"`
-	Executor            string      `json:"executor"`
-	State               string      `json:"state"`
-	StartedAt           time.Time   `json:"startedAt"`
-	FinishedAt          time.Time   `json:"finishedAt"`
-	Failure             string      `json:"failure,omitempty"`
-	Usage               *TokenUsage `json:"usage,omitempty"`
-	ExecutionDurationMS *int64      `json:"executionDurationMs,omitempty"`
+	ID                  string         `json:"id"`
+	RunID               string         `json:"runId"`
+	ActivationID        string         `json:"activationId"`
+	RetryNumber         int            `json:"retryNumber"`
+	Executor            string         `json:"executor"`
+	State               string         `json:"state"`
+	StartedAt           time.Time      `json:"startedAt"`
+	FinishedAt          time.Time      `json:"finishedAt"`
+	Failure             string         `json:"failure,omitempty"`
+	Result              *AttemptResult `json:"result,omitempty"`
+	Usage               *TokenUsage    `json:"usage,omitempty"`
+	ExecutionDurationMS *int64         `json:"executionDurationMs,omitempty"`
 }
 
 // LogChunk is an append-only chunk of worker output.

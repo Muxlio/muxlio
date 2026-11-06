@@ -124,6 +124,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE workers ADD COLUMN labels_json TEXT NOT NULL DEFAULT '{}'`,
 		// Attempt-level token usage reported by the executor/adapter.
 		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
+		`ALTER TABLE execution_attempts ADD COLUMN result_json TEXT`,
 		`ALTER TABLE execution_attempts ADD COLUMN execution_duration_ms INTEGER`,
 		`ALTER TABLE activations ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE activations ADD COLUMN inputs_json BLOB`,
@@ -899,7 +900,15 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,execution_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?)) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json,execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, a.ID, a.ExecutionDurationMS)
+	var resultJSON any
+	if a.Result != nil {
+		raw, marshalErr := json.Marshal(a.Result)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		resultJSON = string(raw)
+	}
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?)) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=excluded.usage_json,result_json=excluded.result_json,execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, resultJSON, a.ID, a.ExecutionDurationMS)
 	if err != nil {
 		return err
 	}
@@ -911,6 +920,9 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		a.ExecutionDurationMS = &recordedDuration.Int64
 	}
 	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
+	if a.Result != nil {
+		payload["result"] = a.Result
+	}
 	if a.Usage != nil {
 		payload["usage"] = a.Usage
 	}
@@ -935,7 +947,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,execution_duration_ms FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -951,9 +963,9 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 	for rows.Next() {
 		var a state.ExecutionAttempt
 		var started, finished string
-		var usageJSON sql.NullString
+		var usageJSON, resultJSON sql.NullString
 		var execDuration sql.NullInt64
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &execDuration); err != nil {
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &resultJSON, &execDuration); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -963,6 +975,11 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 		a.FinishedAt, err = time.Parse(time.RFC3339Nano, finished)
 		if err != nil {
 			return nil, err
+		}
+		if resultJSON.Valid {
+			if err := json.Unmarshal([]byte(resultJSON.String), &a.Result); err != nil {
+				return nil, err
+			}
 		}
 		a.Usage, err = unmarshalUsage(usageJSON)
 		if execDuration.Valid {

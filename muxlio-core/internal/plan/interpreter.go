@@ -656,11 +656,23 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		} else if result.Error != "" {
 			failure = workers.RedactSecrets(result.Error, guarded.Secrets)
 		}
+		attemptResult := &state.AttemptResult{ExecutionSucceeded: failure == "", Outputs: result.Outputs}
+		var validationErr error
+		if failure == "" {
+			validationErr = ValidateExecuteResult(node.Outputs, result)
+			if validationErr != nil {
+				failure = workers.RedactSecrets(validationErr.Error(), guarded.Secrets)
+				var diagnostic *ValueValidationFailure
+				if errors.As(validationErr, &diagnostic) {
+					attemptResult.ValidationFailure = diagnostic
+				}
+			}
+		}
 		attemptState := "succeeded"
 		if failure != "" {
 			attemptState = "failed"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Usage: result.Usage, ExecutionDurationMS: result.ExecutionDurationMS}); recordErr != nil {
 			return nil, recordErr
 		}
 		if err != nil {
@@ -681,8 +693,8 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			}
 			continue
 		}
-		if err := ValidateExecuteOutputs(node.Outputs, result.Outputs); err != nil {
-			lastErr = fmt.Errorf("muxlio: executor %q output validation: %w", executor, err)
+		if validationErr != nil {
+			lastErr = fmt.Errorf("muxlio: executor %q output validation: %w", executor, validationErr)
 			if attempt == maxAttempts {
 				return nil, lastErr
 			}

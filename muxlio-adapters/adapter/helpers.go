@@ -39,12 +39,13 @@ func WorkingDir(req *Request) (string, error) {
 
 // CollectOutputs reads each declared output file from the run work directory.
 //
-// Scalar ports (decl.Path == "") are returned as parsed JSON values, falling
-// back to the raw string when the file content is not valid JSON. File-artifact
+// Scalar ports (decl.Path == "") must contain JSON. Rejected text is retained
+// for inspection and explicitly flagged in outputErrors. File-artifact
 // ports (decl.Path != "") are returned as {mime, path, data} maps for upload.
-// Ports whose file is absent or unreadable are reported in the missing slice so
-// the caller can surface them as an error.
-func CollectOutputs(req *Request) (map[string]any, []string) {
+// Absent or unreadable JSON ports are reported in outputErrors; absent or
+// unreadable artifacts are reported in missing.
+func CollectOutputs(req *Request) (map[string]any, []string, map[string]string) {
+	outputErrors := make(map[string]string)
 	outputs := make(map[string]any)
 	var missing []string
 	for port, decl := range req.Outputs {
@@ -54,12 +55,20 @@ func CollectOutputs(req *Request) (map[string]any, []string) {
 		}
 		fullPath, err := ResolveOutput(req.WorkDir, name)
 		if err != nil {
-			missing = append(missing, port)
+			if decl.Path == "" {
+				outputErrors[port] = err.Error()
+			} else {
+				missing = append(missing, port)
+			}
 			continue
 		}
 		data, err := ReadOutput(fullPath)
 		if err != nil {
-			missing = append(missing, port)
+			if decl.Path == "" {
+				outputErrors[port] = err.Error()
+			} else {
+				missing = append(missing, port)
+			}
 			continue
 		}
 		if decl.Path == "" {
@@ -70,6 +79,7 @@ func CollectOutputs(req *Request) (map[string]any, []string) {
 				outputs[port] = parsed
 			} else {
 				outputs[port] = string(data)
+				outputErrors[port] = fmt.Sprintf("result port must contain JSON: %v", err)
 			}
 		} else {
 			outputs[port] = map[string]any{
@@ -79,7 +89,7 @@ func CollectOutputs(req *Request) (map[string]any, []string) {
 			}
 		}
 	}
-	return outputs, missing
+	return outputs, missing, outputErrors
 }
 
 // InputContent returns inline text for an input port value. It handles raw

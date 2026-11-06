@@ -198,6 +198,17 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 						t.Fatal("missing declared artifact accepted")
 					}
 				})
+				t.Run("invalid_json_preserves_execution_success_and_artifact", func(t *testing.T) {
+					resp, _ := invoke(t, bin, f, f.SuccessStream, "", 0, false, map[string]adapter.OutputDecl{
+						"report":     {Path: "report.txt", Mime: "text/plain"},
+						"report.txt": {Schema: json.RawMessage(`{"type":"string"}`)},
+						"absent":     {Schema: json.RawMessage(`{"type":"boolean"}`)},
+					})
+					artifact, ok := resp.Outputs["report"].(map[string]any)
+					if resp.Error != "" || resp.OutputErrors["report.txt"] == "" || resp.OutputErrors["absent"] == "" || resp.Outputs["report.txt"] != "report" || !ok || artifact["data"] != "report" {
+						t.Fatalf("JSON result errors lost execution success or artifact: %+v", resp)
+					}
+				})
 				t.Run("artifacts_and_scalar", func(t *testing.T) {
 					resp, _ := invoke(t, bin, f, f.SuccessStream, "", 0, false, map[string]adapter.OutputDecl{"report": {Path: "report.txt", Mime: "text/plain"}, "value": {Mime: "application/json"}})
 					artifact, ok := resp.Outputs["report"].(map[string]any)

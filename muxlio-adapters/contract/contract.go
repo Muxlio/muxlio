@@ -33,6 +33,10 @@ type RemoteTaskReference struct {
 }
 
 type Result struct {
+	// OutputErrors records invalid or unreadable JSON ports independently of
+	// executor completion. Outputs may retain rejected text for diagnostics.
+	OutputErrors map[string]string `json:"outputErrors,omitempty"`
+
 	Outputs             map[string]any       `json:"outputs"`
 	Error               string               `json:"error"`
 	Logs                string               `json:"logs,omitempty"`

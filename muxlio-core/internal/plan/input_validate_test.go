@@ -62,22 +62,22 @@ func TestValidateInputEnforcesArrayBoundsAndStringMinLength(t *testing.T) {
 		{
 			name:  "missing features",
 			input: `{"repository":"r","branch":"main"}`,
-			want:  `missing required field "features"`,
+			want:  `missing property 'features'`,
 		},
 		{
 			name:  "empty features",
 			input: `{"repository":"r","branch":"main","features":[]}`,
-			want:  "at least 1 item",
+			want:  "minItems: got 0, want 1",
 		},
 		{
 			name:  "too many features",
 			input: `{"repository":"r","branch":"main","features":[` + strings.Repeat(`{"id":"a","feature":"x"},`, 20) + `{"id":"b","feature":"x"}]}`,
-			want:  "at most 20 item",
+			want:  "maxItems: got 21, want 20",
 		},
 		{
 			name:  "empty feature id",
 			input: `{"repository":"r","branch":"main","features":[{"id":"","feature":"x"}]}`,
-			want:  "at least 1 character",
+			want:  "minLength: got 0, want 1",
 		},
 		{
 			name:  "duplicate feature ids",

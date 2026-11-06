@@ -190,7 +190,7 @@ func main() {
 		adapter.FailWithUsage(usage, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
-	outputs, missing := adapter.CollectOutputs(req)
+	outputs, missing, outputErrors := adapter.CollectOutputs(req)
 
 	// Always populate "_text" with the complete assistant response.
 	outputs["_text"] = map[string]any{
@@ -206,7 +206,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

@@ -422,15 +422,22 @@ func ValidateInput(p *Plan, input json.RawMessage) error {
 	if len(p.InputSchema) == 0 {
 		return nil
 	}
-	var schema map[string]any
-	if err := json.Unmarshal(p.InputSchema, &schema); err != nil {
-		return fmt.Errorf("muxlio: invalid input schema on plan")
-	}
-	var inputObj map[string]any
+	var value any
 	dec := json.NewDecoder(strings.NewReader(string(input)))
 	dec.UseNumber()
-	if err := dec.Decode(&inputObj); err != nil {
-		return fmt.Errorf("muxlio: input is not a JSON object")
+	if !json.Valid(input) {
+		return &ValueValidationFailure{Code: InputValidationFailed, Path: "input", Expected: p.InputSchema, Message: "input is not valid JSON"}
 	}
-	return validateInputAgainstSchema(inputObj, schema, "")
+	if err := dec.Decode(&value); err != nil {
+		return err
+	}
+	if err := validateJSONValue(value, p.InputSchema, "input", InputValidationFailed); err != nil {
+		return err
+	}
+	var schema map[string]any
+	_ = json.Unmarshal(p.InputSchema, &schema)
+	if err := validateUniqueInputIDs(value, schema, "input"); err != nil {
+		return &ValueValidationFailure{Code: InputValidationFailed, Path: "input", Expected: p.InputSchema, Actual: input, Message: err.Error()}
+	}
+	return nil
 }

@@ -164,7 +164,7 @@ func main() {
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
 	// parsed JSON values; file-artifact ports as {mime, path, data} maps.
-	outputs, missing := adapter.CollectOutputs(req)
+	outputs, missing, outputErrors := adapter.CollectOutputs(req)
 	outputs["_text"] = map[string]any{"mime": "text/plain", "data": textChunks.String()}
 
 	errMsg := ""
@@ -172,7 +172,7 @@ func main() {
 		errMsg = fmt.Sprintf("codex did not write expected output files: %s", strings.Join(missing, ", "))
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
 }
 
 // tailBuffer retains only the most recent limit bytes written to it.

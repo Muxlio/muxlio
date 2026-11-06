@@ -528,6 +528,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 		s.attempts = append(s.attempts, a)
 	}
 	payload := map[string]any{"attemptId": a.ID, "retryNumber": a.RetryNumber, "executor": a.Executor, "state": a.State, "startedAt": a.StartedAt, "finishedAt": a.FinishedAt, "failure": a.Failure}
+	if a.Result != nil {
+		payload["result"] = a.Result
+	}
 	if a.Usage != nil {
 		payload["usage"] = a.Usage
 	}

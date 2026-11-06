@@ -149,7 +149,7 @@ func TestCollectOutputsScalarJSON(t *testing.T) {
 			"passed": {Mime: "application/json"}, // scalar: no Path
 		},
 	}
-	outputs, missing := CollectOutputs(req)
+	outputs, missing, _ := CollectOutputs(req)
 	if len(missing) != 0 {
 		t.Fatalf("unexpected missing: %v", missing)
 	}
@@ -170,7 +170,7 @@ func TestCollectOutputsScalarString(t *testing.T) {
 			"path": {Mime: "application/json"}, // scalar: no Path
 		},
 	}
-	outputs, missing := CollectOutputs(req)
+	outputs, missing, _ := CollectOutputs(req)
 	if len(missing) != 0 {
 		t.Fatalf("unexpected missing: %v", missing)
 	}
@@ -190,7 +190,7 @@ func TestCollectOutputsArtifactReturnedAsMap(t *testing.T) {
 			"notes": {Mime: "text/markdown", Path: "notes.md"}, // artifact: has Path
 		},
 	}
-	outputs, missing := CollectOutputs(req)
+	outputs, missing, _ := CollectOutputs(req)
 	if len(missing) != 0 {
 		t.Fatalf("unexpected missing: %v", missing)
 	}
@@ -211,7 +211,7 @@ func TestCollectOutputsMissingFile(t *testing.T) {
 			"report": {Mime: "text/markdown", Path: "report.md"},
 		},
 	}
-	_, missing := CollectOutputs(req)
+	_, missing, _ := CollectOutputs(req)
 	if len(missing) != 1 || missing[0] != "report" {
 		t.Errorf("expected [report] missing, got %v", missing)
 	}
@@ -353,4 +353,25 @@ func contains(s, sub string) bool {
 			}
 			return false
 		}())
+}
+
+func TestCollectOutputsRejectsProseAsJSONAndPreservesArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"approval", "message", "notes.md"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("looks good"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outputs, missing, invalid := CollectOutputs(&Request{WorkDir: dir, Outputs: map[string]OutputDecl{
+		"approval": {Schema: json.RawMessage(`{"type":"boolean"}`)},
+		"message":  {Schema: json.RawMessage(`{"type":"string"}`)},
+		"absent":   {Schema: json.RawMessage(`{"type":"boolean"}`)},
+		"notes":    {Path: "notes.md", Mime: "text/markdown"},
+	}})
+	if len(missing) != 0 || len(invalid) != 3 || invalid["approval"] == "" || invalid["message"] == "" || invalid["absent"] == "" {
+		t.Fatalf("missing=%v invalid=%v", missing, invalid)
+	}
+	if outputs["approval"] != "looks good" || outputs["notes"].(map[string]any)["data"] != "looks good" {
+		t.Fatalf("lost inspectable content: %v", outputs)
+	}
 }

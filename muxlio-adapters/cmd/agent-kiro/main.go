@@ -191,7 +191,7 @@ func main() {
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
 	// parsed JSON values; file-artifact ports as {mime, path, data} maps.
-	outputs, missing := adapter.CollectOutputs(req)
+	outputs, missing, outputErrors := adapter.CollectOutputs(req)
 
 	// Always populate the special "_text" port with the full assistant response.
 	fullText := textChunks.String()
@@ -208,7 +208,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
 }
 
 func parseKiroUsage(result json.RawMessage) *adapter.TokenUsage {

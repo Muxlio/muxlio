@@ -240,17 +240,17 @@ func main() {
 			declared.Outputs[port] = decl
 		}
 	}
-	outputs, missing := adapter.CollectOutputs(&declared)
+	outputs, missing, outputErrors := adapter.CollectOutputs(&declared)
 	for port, value := range outputs {
 		result[port] = value
 	}
 	if len(missing) > 0 {
-		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: fmt.Sprintf("command did not write expected output files: %s", strings.Join(missing, ", "))})
+		_ = adapter.WriteResponse(adapter.Response{Outputs: result, OutputErrors: outputErrors, Error: fmt.Sprintf("command did not write expected output files: %s", strings.Join(missing, ", "))})
 		return
 	}
 	// Keep full output available through normal Muxlio task logs; the adapter
 	// response holds only the bounded previews.
-	_ = adapter.WriteResponse(adapter.Response{Outputs: result})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: result, OutputErrors: outputErrors})
 }
 
 var argPlaceholder = regexp.MustCompile(`\{\{([A-Za-z0-9_.-]+)\}\}`)
