@@ -39,10 +39,14 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 				continue
 			}
 			if line.OperationRef != nil {
-				raw, _ := json.Marshal(line.OperationRef)
+				clean, err := sanitizeExecution(ExecuteResult{RemoteTask: line.OperationRef}, nil, executionSecrets(req))
+				if err != nil {
+					continue
+				}
+				raw, _ := json.Marshal(clean.RemoteTask)
 				_ = req.LogSink.Append("operation", raw)
 			} else {
-				_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(line.Text))
+				_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(RedactSecrets(line.Text, executionSecrets(req))))
 			}
 		}
 	}()

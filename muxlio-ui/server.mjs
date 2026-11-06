@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
+import { isIP } from 'node:net';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const apiURL = new URL(process.env.MUXLIO_API_URL || 'http://127.0.0.1:7600');
@@ -30,6 +31,22 @@ const apiToken = configuredToken();
 const port = Number(process.env.PORT || 7601);
 const host = process.env.HOST || '127.0.0.1';
 
+// Implicit operator credentials belong only to the same-origin local UI.
+export function localUIRequest(req) {
+  const loopback = value => {
+    const ip = value?.replace(/^::ffff:/i, '');
+    return ip === '::1' || (isIP(ip || '') === 4 && ip.startsWith('127.'));
+  };
+  if (!loopback(req.socket.remoteAddress)) return false;
+  try {
+    const local = new URL(`http://${req.headers.host}`);
+    if (local.hostname !== 'localhost' && !loopback(local.hostname.replace(/^\[|\]$/g, ''))) return false;
+    if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+    if (req.headers.origin && req.headers.origin !== local.origin) return false;
+    return true;
+  } catch { return false; }
+}
+
 export function createUIServer({ coordinatorURL = apiURL, uiDirectory = directory } = {}) {
   const target = coordinatorURL instanceof URL ? coordinatorURL : new URL(coordinatorURL);
   return createServer(async (req, res) => {
@@ -41,7 +58,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
         headers: {
           ...req.headers,
           host: target.host,
-          ...(uiAPI && apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
+          ...(uiAPI && apiToken && !req.headers.authorization && localUIRequest(req) ? { authorization: `Bearer ${apiToken}` } : {}),
         },
       }, (upstream) => {
         res.writeHead(upstream.statusCode || 502, upstream.headers);

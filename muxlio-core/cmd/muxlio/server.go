@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -284,7 +285,12 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 			return 1
 		}
 	}
-	handler = api.WithAuth(handler, authToken, workerToken)
+	grants, grantErr := readAccessGrants(credentialConfigPath)
+	if grantErr != nil {
+		fmt.Fprintln(os.Stderr, "error: configuring scoped credentials:", grantErr)
+		return 1
+	}
+	handler = api.WithAuth(handler, authToken, workerToken, grants...)
 
 	if config != nil {
 		handler = serviceUI(handler, config.UI, authToken)
@@ -467,12 +473,14 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 func serviceUI(api http.Handler, directory, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/_ui-api/v1/") {
-			if token != "" {
-				r = r.Clone(r.Context())
-				r.Header = r.Header.Clone()
+			// Only the local UI may use the operator credential implicitly.
+			// Preserve explicit credentials so scoped clients cannot gain admin.
+			r = r.Clone(r.Context())
+			if token != "" && r.Header.Get("Authorization") == "" && localUIRequest(r) {
 				r.Header.Set("Authorization", "Bearer "+token)
 			}
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/_ui-api")
+			r.URL.RawPath = ""
 			api.ServeHTTP(w, r)
 			return
 		}
@@ -506,4 +514,36 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, filepath.Join(directory, name))
 	})
+}
+
+// Implicit UI credentials require a local peer and local Host. Browser requests
+// must also be same-origin, preventing cross-site forms and DNS rebinding from
+// borrowing the local operator's authority.
+func localUIRequest(r *http.Request) bool {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	host := (&url.URL{Host: r.Host}).Hostname()
+	if ip = net.ParseIP(host); !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return false
+	}
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if err != nil || u.Scheme != scheme || u.Host != r.Host {
+			return false
+		}
+	}
+	return true
 }

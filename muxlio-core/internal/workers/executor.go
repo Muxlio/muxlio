@@ -45,6 +45,7 @@ type ExecuteRequest struct {
 	resourcesAdmitted bool
 	// attemptScratch is owned by one invocation and shared with artifact transfer.
 	attemptScratch  string
+	redactions      map[string]string
 	RunID           string            `json:"runId,omitempty"`
 	ActivationID    string            `json:"activationId,omitempty"`
 	AttemptID       string            `json:"attemptId,omitempty"`
@@ -54,13 +55,14 @@ type ExecuteRequest struct {
 	Task            string            `json:"task,omitempty"`
 	Params          json.RawMessage   `json:"params,omitempty"`
 	Inputs          map[string]any    `json:"inputs,omitempty"`
-	// Secrets contains named secret values supplied by the coordinator. Executors
-	// must only receive names explicitly allowed by Policy.
-	Secrets   map[string]string     `json:"secrets,omitempty"`
-	Policy    *ExecutionPolicy      `json:"executionPolicy,omitempty"`
-	Outputs   map[string]OutputDecl `json:"outputs,omitempty"`
-	ScopePath []string              `json:"scopePath,omitempty"`
-	NodeID    string                `json:"nodeId,omitempty"`
+	// Secrets contains transient values for local execution only. Durable and
+	// remote requests carry SecretRefs resolved by operator policy on the worker.
+	Secrets    map[string]string     `json:"-"`
+	SecretRefs map[string]string     `json:"secretRefs,omitempty"`
+	Policy     *ExecutionPolicy      `json:"executionPolicy,omitempty"`
+	Outputs    map[string]OutputDecl `json:"outputs,omitempty"`
+	ScopePath  []string              `json:"scopePath,omitempty"`
+	NodeID     string                `json:"nodeId,omitempty"`
 	// LogSink receives incremental output while the attempt is running.
 	LogSink LogSink `json:"-"`
 }
@@ -68,6 +70,9 @@ type ExecuteRequest struct {
 // ExecutionPolicy is the worker-side allowlist for data and capabilities.
 // Required policies fail closed when the executor cannot enforce them.
 type ExecutionPolicy struct {
+	Trust               string   `json:"trust,omitempty"`
+	Network             string   `json:"network,omitempty"`
+	Filesystem          string   `json:"filesystem,omitempty"`
 	Required            bool     `json:"required,omitempty"`
 	AllowedSecrets      []string `json:"allowedSecrets,omitempty"`
 	AllowedCapabilities []string `json:"allowedCapabilities,omitempty"`
@@ -77,13 +82,21 @@ type ExecutionPolicy struct {
 // copy safe to pass to an executor. A required policy must name the selected
 // executor and every secret being propagated.
 func GuardRequest(req ExecuteRequest) (ExecuteRequest, error) {
+	var configErr error
+	req, configErr = executionSecurityConfig(req)
+	if configErr != nil {
+		return ExecuteRequest{}, configErr
+	}
 	if req.Policy == nil {
-		if len(req.Secrets) != 0 {
+		if len(req.Secrets) != 0 || len(req.SecretRefs) != 0 {
 			return ExecuteRequest{}, fmt.Errorf("execution policy required to propagate secrets")
 		}
 		return req, nil
 	}
 	policy := req.Policy
+	if err := ValidatePermissions(req); err != nil {
+		return ExecuteRequest{}, err
+	}
 	capabilityAllowed := false
 	for _, capability := range policy.AllowedCapabilities {
 		if capability == req.Executor {
@@ -107,6 +120,14 @@ func GuardRequest(req ExecuteRequest) (ExecuteRequest, error) {
 		}
 		filtered[name] = value
 	}
+	refs := make(map[string]string)
+	for name, handle := range req.SecretRefs {
+		if !allowed[name] || handle == "" {
+			return ExecuteRequest{}, fmt.Errorf("execution policy does not allow secret handle")
+		}
+		refs[name] = handle
+	}
+	req.SecretRefs = refs
 	req.Secrets = filtered
 	return req, nil
 }

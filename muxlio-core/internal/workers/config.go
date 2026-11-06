@@ -10,6 +10,8 @@ import (
 type ExecutorConfig struct {
 	Allow *bool             `json:"allow,omitempty"`
 	Env   map[string]string `json:"env,omitempty"`
+	// SecretEnv maps opaque handles to operator environment variable names.
+	SecretEnv map[string]string `json:"secretEnv,omitempty"`
 }
 
 func (c ExecutorConfig) ExplicitlyAllowed() bool { return c.Allow != nil && *c.Allow }
@@ -17,6 +19,11 @@ func (c ExecutorConfig) ExplicitlyAllowed() bool { return c.Allow != nil && *c.A
 // ValidateExecutorConfigs validates the shared runtime configuration contract.
 func ValidateExecutorConfigs(configs map[string]ExecutorConfig) error {
 	for name, config := range configs {
+		for handle, key := range config.SecretEnv {
+			if handle == "" || key == "" || strings.ContainsAny(key, "=\x00") {
+				return fmt.Errorf("invalid secret handle configuration")
+			}
+		}
 		if err := ValidateWorkerEnv(config.Env); err != nil {
 			return fmt.Errorf("executor %q: %w", name, err)
 		}

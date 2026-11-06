@@ -9,6 +9,7 @@
 // interpreter consumes.
 
 import { createHash } from 'node:crypto';
+import { assertNoLiteralCredentials } from './security.js';
 import type {
   Binding,
   ExecutorRequirements,
@@ -418,6 +419,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
     plan.subgraphs[name] = collected.subgraphs[name];
   }
 
+  assertNoLiteralCredentials(plan);
   plan.digest = computeDigest(plan);
   return { plan };
 }

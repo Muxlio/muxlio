@@ -69,6 +69,18 @@ func Validate(p *Plan) (errs []ValidationError) {
 	sort.Strings(names)
 	for _, name := range names {
 		sg := p.Subgraphs[name]
+		for _, node := range sg.Nodes {
+			if node.Kind != "execute" {
+				continue
+			}
+			var value any
+			if len(node.Params) > 0 && json.Unmarshal(node.Params, &value) == nil && hasLiteralCredentials(value) {
+				errs = append(errs, ValidationError{Code: "MUXLIO_LITERAL_CREDENTIAL", Severity: "error", Phase: "plan", Subgraph: name, NodeID: node.ID, Message: "literal credentials are forbidden in execution parameters", Fix: "Use secretRefs with an executionPolicy allowlist and operator-configured worker handles."})
+			}
+			if err := validateExecutionSecurity(node); err != nil {
+				errs = append(errs, ValidationError{Code: "MUXLIO_EXECUTION_POLICY", Severity: "error", Phase: "plan", Subgraph: name, NodeID: node.ID, Message: "execution permissions or secret references are invalid", Fix: "Declare allowed secret names and an enforced isolation runtime for restricted attempts."})
+			}
+		}
 		errs = append(errs, validateSubgraph(p, name, sg)...)
 	}
 

@@ -389,6 +389,9 @@ func (c *Coordinator) ExecuteQueued(req workers.ExecuteRequest) (workers.Execute
 }
 
 func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+	if len(req.Secrets) != 0 {
+		return workers.ExecuteResult{}, errors.New("durable dispatch requires secret handles instead of credential values")
+	}
 	if c.initErr != nil {
 		return workers.ExecuteResult{}, c.initErr
 	}
@@ -430,6 +433,9 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 		return workers.ExecuteResult{}, err
 	}
 	coordinatorlog.RegisterSecrets(guarded.Secrets)
+	if len(guarded.Secrets) != 0 {
+		return workers.ExecuteResult{}, fmt.Errorf("durable dispatch requires secret handles instead of credential values")
+	}
 	guarded = workers.PrepareRemoteDispatch(guarded)
 	guarded = workers.StripInlineArtifactBytes(guarded)
 	raw, err := json.Marshal(guarded)

@@ -11,7 +11,7 @@
 // validates the restricted TypeScript subset without executing `run` is a
 // later milestone (see design §4.1, §4.2, M0 tasks).
 
-import { computeDigest } from '@muxlio/sdk';
+import { computeDigest, assertNoLiteralCredentials } from '@muxlio/sdk';
 import type {
   Binding,
   ExecutorRequirements,
@@ -345,6 +345,7 @@ export async function defineAsyncWorkflow(
     requiredExecutors: [...collected.requiredExecutors],
   };
 
+  assertNoLiteralCredentials(plan);
   plan.digest = computeDigest(plan);
   return { plan };
 }

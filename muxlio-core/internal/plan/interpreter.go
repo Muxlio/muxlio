@@ -552,7 +552,8 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.PlacementLabels[workers.WorkspacePlacementLabel] = ws
 	}
 	var executionConfig struct {
-		Policy *workers.ExecutionPolicy `json:"executionPolicy"`
+		Policy     *workers.ExecutionPolicy `json:"executionPolicy"`
+		SecretRefs map[string]string        `json:"secretRefs"`
 	}
 	if len(node.Params) > 0 {
 		if err := json.Unmarshal(node.Params, &executionConfig); err != nil {
@@ -560,6 +561,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 	}
 	req.Policy = executionConfig.Policy
+	req.SecretRefs = executionConfig.SecretRefs
 
 	maxAttempts := 1
 	// Legacy retryable failures retain their retry budget. Reconciliation only

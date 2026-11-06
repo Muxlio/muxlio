@@ -65,6 +65,28 @@ export interface ExecutorRequirements {
   remoteTask?: { id: string; url?: string };
 }
 
+/** Shared security fields inside execute params. Restrictions fail closed;
+ * legacy requests without a policy use trusted native execution.
+ */
+export interface ExecutionSecurityParams {
+  /** Names map to opaque worker-configured handles, never credential values. */
+  secretRefs?: Record<string, string>;
+  executionPolicy?: {
+    required?: boolean;
+    allowedSecrets?: string[];
+    allowedCapabilities?: string[];
+    trust?: 'restricted' | 'trusted-native';
+    network?: 'none' | 'host';
+    filesystem?: 'scratch' | 'workspace-read-only' | 'workspace-write';
+  };
+  isolation?: {
+    mode: 'required' | 'trusted-native';
+    runtime?: 'bwrap' | 'oci' | 'macos-vm';
+    image?: string;
+    enabled?: boolean;
+  };
+}
+
 /** A single node within a subgraph. */
 export interface Node extends ExecutorRequirements {
   id: string;

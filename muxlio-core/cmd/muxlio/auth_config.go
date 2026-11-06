@@ -8,7 +8,47 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/muxlio/muxlio-core/internal/api"
 )
+
+// Scoped credentials are loaded from protected files, never from workflow data.
+func readAccessGrants(configPath string) ([]api.AccessGrant, error) {
+	raw, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var config struct {
+		AccessGrants []api.AccessGrant `json:"accessGrants"`
+	}
+	if json.Unmarshal(raw, &config) != nil {
+		return nil, fmt.Errorf("invalid access grant configuration")
+	}
+	seen := make(map[string]bool)
+	for i := range config.AccessGrants {
+		g := &config.AccessGrants[i]
+		if g.TokenFile == "" {
+			return nil, fmt.Errorf("access grant requires tokenFile")
+		}
+		path := g.TokenFile
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(configPath), path)
+		}
+		value, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read access grant credential file")
+		}
+		g.Token = strings.TrimSpace(string(value))
+		if g.Token == "" || seen[g.Token] {
+			return nil, fmt.Errorf("access grant credentials must be nonempty and unique")
+		}
+		seen[g.Token] = true
+	}
+	return config.AccessGrants, nil
+}
 
 func readConfiguredAuthToken(configPath string) string {
 	return readConfiguredToken(configPath, "token", "tokenFile")

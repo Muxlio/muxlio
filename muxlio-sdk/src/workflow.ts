@@ -25,6 +25,7 @@
 import { z } from 'zod';
 import type { ExecutorRequirements, Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
 import { computeDigest } from './builder.js';
+import { assertNoLiteralCredentials } from './security.js';
 
 /** Opaque compile-time symbolic reference (property access builds Plan IR expressions). */
 export type SymbolicRef<T = unknown> = T & { readonly __muxlioSymbolic: unique symbol };
@@ -1148,6 +1149,7 @@ function compileWorkflowPlan<TInput extends z.ZodTypeAny | JSONSchema>(
     requiredExecutors: [...state.requiredExecutors].sort(),
   };
 
+  assertNoLiteralCredentials(plan);
   plan.digest = computeDigest(plan);
 
   return plan;

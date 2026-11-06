@@ -2,12 +2,15 @@
 // workflow definitions that compile to the Plan IR JSON consumed by the
 // Go coordinator.
 
+export { assertNoLiteralCredentials } from './security.js';
+
 export type {
   Plan,
   Subgraph,
   Node,
   NodeKind,
   ExecutorRequirements,
+  ExecutionSecurityParams,
   Binding,
   ValueRef,
   Expr,

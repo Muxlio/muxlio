@@ -67,11 +67,22 @@ type ArtifactTransferExecutor struct {
 	SnapshotInterval time.Duration
 }
 
-func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
+func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (result ExecuteResult, resultErr error) {
+	defer func() {
+		result, resultErr = sanitizeExecution(result, resultErr, executionSecrets(req))
+	}()
 	if req.Context != nil && req.Context.Err() != nil {
 		return ExecuteResult{}, req.Context.Err()
 	}
 	var err error
+	if resolver, ok := a.Inner.(interface {
+		resolveSecrets(ExecuteRequest) (ExecuteRequest, error)
+	}); ok {
+		req, err = resolver.resolveSecrets(req)
+		if err != nil {
+			return ExecuteResult{Error: err.Error()}, nil
+		}
+	}
 	req.attemptScratch, err = a.workDir(req)
 	if err != nil {
 		return ExecuteResult{}, err
@@ -85,7 +96,7 @@ func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (ExecuteResult, er
 		return ExecuteResult{}, req.Context.Err()
 	}
 	stopSnapshots := a.startSnapshots(req)
-	result, err := a.Inner.Execute(req)
+	result, err = a.Inner.Execute(req)
 	stopSnapshots()
 	if err != nil || result.Error != "" {
 		return result, err
@@ -137,7 +148,7 @@ func (a ArtifactTransferExecutor) startSnapshots(req ExecuteRequest) func() {
 				}
 				data, err := io.ReadAll(io.LimitReader(f, (4<<20)+1))
 				f.Close()
-				if err != nil || len(data) > 4<<20 || int64(len(data)) > remaining {
+				if err != nil || len(data) > 4<<20 || int64(len(data)) > remaining || containsSecret(data, executionSecrets(req)) {
 					continue
 				}
 				hash := sha256.Sum256(data)
@@ -249,8 +260,18 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output %q: %v", port, err)}, nil
 		}
+		// Stage the exact scanned bytes so concurrent adapter writes cannot swap
+		// credentials into the upload after validation. Do not cap artifact size.
+		staged, err := os.CreateTemp(workDir, ".publish-*")
+		if err != nil {
+			f.Close()
+			return ExecuteResult{}, err
+		}
+		defer os.Remove(staged.Name())
+		defer staged.Close()
 		h := sha256.New()
-		size, err := io.Copy(h, f)
+		scanner := &credentialWriter{dst: io.MultiWriter(staged, h), secrets: executionSecrets(req)}
+		size, err := io.Copy(scanner, f)
 		_ = f.Close()
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: read output %q: %v", port, err)}, nil
@@ -260,12 +281,10 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		if ref.Mime != "" {
 			mime = ref.Mime
 		}
-		f2, err := os.Open(filePath)
-		if err != nil {
-			return ExecuteResult{Error: err.Error()}, nil
+		if _, err := staged.Seek(0, io.SeekStart); err != nil {
+			return ExecuteResult{}, err
 		}
-		uploaded, err := a.Client.Upload(ctx, digest, mime, size, f2)
-		_ = f2.Close()
+		uploaded, err := a.Client.Upload(ctx, digest, mime, size, staged)
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: upload output %q: %v", port, err)}, nil
 		}

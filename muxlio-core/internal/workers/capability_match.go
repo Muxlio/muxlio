@@ -38,7 +38,7 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 	if CheckAdapterCapabilities(req, descriptor) != nil {
 		return false
 	}
-	if ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys) != nil {
+	if ValidatePermissions(req) != nil || ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys) != nil {
 		return false
 	}
 	var params struct {

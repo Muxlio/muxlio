@@ -119,7 +119,12 @@ func (s *ScriptExecutor) scriptPath(executor string) string {
 // Execute implements Executor.
 func (s *ScriptExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	started := time.Now()
+	req, resolveErr := s.resolveSecrets(req)
+	if resolveErr != nil {
+		return ExecuteResult{Error: resolveErr.Error()}, nil
+	}
 	result, err := s.execute(req)
+	result, err = sanitizeExecution(result, err, executionSecrets(req))
 	elapsed := time.Since(started).Milliseconds()
 	result.ExecutionDurationMS = &elapsed
 	return result, err
@@ -243,12 +248,12 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 
 	runErr := runProcess(ctx, cmd)
 	if ctx.Err() != nil {
-		return ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: RedactSecrets(stderr.String(), req.Secrets)}, nil
+		return ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: RedactSecrets(stderr.String(), executionSecrets(req))}, nil
 	}
 	if runErr != nil && stdout.Len() == 0 {
 		// Script failed with no stdout — surface stderr as executor error.
 		return ExecuteResult{
-			Error: fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr), Logs: RedactSecrets(stderr.String(), req.Secrets),
+			Error: fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr), Logs: RedactSecrets(stderr.String(), executionSecrets(req)),
 		}, nil
 	}
 
@@ -257,23 +262,26 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if err != nil {
 		return ExecuteResult{
 			Error: fmt.Sprintf("adapter %q returned invalid JSON: %v\nstdout: %s\nstderr: %s",
-				req.Executor, err, boundedLog(RedactSecrets(stdout.String(), req.Secrets)), RedactSecrets(stderr.String(), req.Secrets)), Logs: RedactSecrets(stderr.String(), req.Secrets),
+				req.Executor, err, boundedLog(RedactSecrets(stdout.String(), executionSecrets(req))), RedactSecrets(stderr.String(), executionSecrets(req))), Logs: RedactSecrets(stderr.String(), executionSecrets(req)),
 		}, nil
 	}
-	result.Error = RedactSecrets(result.Error, req.Secrets)
+	result.Error = RedactSecrets(result.Error, executionSecrets(req))
 	if result.Reconciliation != nil {
-		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, req.Secrets))
+		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, executionSecrets(req)))
 	}
 	if runErr != nil {
 		result.Error = fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr)
 	}
-	result.Logs = boundedLog(RedactSecrets(result.Logs+stderr.String(), req.Secrets))
+	result.Logs = boundedLog(RedactSecrets(result.Logs+stderr.String(), executionSecrets(req)))
 	if req.WorkspaceMode == "shared-write" {
 		result.Logs = "[muxlio shared writable workspace: exclusive resource keys required]\n" + result.Logs
 	}
 	if isolated {
-		result.Logs = "[muxlio isolation enforced]\n" + result.Logs
+		result.Logs = "[muxlio isolation enforced; network=none; filesystem=scratch plus declared workspace mounts]\n" + result.Logs
+	} else {
+		result.Logs = "[muxlio trusted native execution; network=host; filesystem=host; agent tool calls are not intercepted]\n" + result.Logs
 	}
+	result.Logs = boundedLog(result.Logs)
 
 	// Auto-populate any declared output port whose file the script wrote to workDir.
 	if result.Outputs == nil {
@@ -351,6 +359,9 @@ func safePathPart(value string) string {
 }
 
 func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*exec.Cmd, bool, error) {
+	if err := ValidatePermissions(req); err != nil {
+		return nil, false, err
+	}
 	var params struct {
 		Isolation *isolationPolicy `json:"isolation"`
 	}

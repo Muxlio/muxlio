@@ -11,7 +11,7 @@ import (
 // clientToken authorizes the control plane; workerToken authorizes worker
 // protocol and artifact transfer used during remote execution.
 // /healthz and non-/v1 paths stay public.
-func WithAuth(handler http.Handler, clientToken, workerToken string) http.Handler {
+func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...AccessGrant) http.Handler {
 	clientToken = strings.TrimSpace(clientToken)
 	workerToken = strings.TrimSpace(workerToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +21,17 @@ func WithAuth(handler http.Handler, clientToken, workerToken string) http.Handle
 		}
 		tok := bearerCredential(r)
 		loopback := requestFromLoopback(r)
-		if clientToken == "" && workerToken == "" {
+		for _, grant := range grants {
+			if tokenMatches(tok, grant.Token) {
+				if grant.authorize(r) {
+					handler.ServeHTTP(w, r)
+				} else {
+					writeError(w, http.StatusForbidden, CodeUnauthorized, "credential does not authorize this resource or operation")
+				}
+				return
+			}
+		}
+		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback {
 			handler.ServeHTTP(w, r)
 			return
 		}
