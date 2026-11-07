@@ -132,6 +132,7 @@ func Open(path string) (*Store, error) {
 	}
 	// Older databases predate the assignment identity columns.
 	for _, stmt := range []string{
+		`ALTER TABLE runs ADD COLUMN fork_json BLOB`,
 		`ALTER TABLE runs ADD COLUMN plan_json BLOB`,
 		`ALTER TABLE runs ADD COLUMN plan_digest TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE assignments ADD COLUMN assignment_id TEXT NOT NULL DEFAULT ''`,
@@ -1260,6 +1261,10 @@ func (s *Store) CreateRun(run *state.Run) error {
 	run.UpdatedAt = run.CreatedAt
 	run.State = "created"
 
+	forkJSON, err := json.Marshal(run.Fork)
+	if err != nil {
+		return err
+	}
 	inputJSON, err := marshalJSON(run.Input)
 	if err != nil {
 		return err
@@ -1272,9 +1277,9 @@ func (s *Store) CreateRun(run *state.Run) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest)
-		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest,
+		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
+		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("muxlio: inserting run: %w", err)
@@ -1284,8 +1289,15 @@ func (s *Store) CreateRun(run *state.Run) error {
 			return err
 		}
 	}
-	if run.RetainedUntil != nil {
-		if _, err := tx.Exec(`INSERT INTO run_retention(run_id,retained_until) VALUES(?,?)`, run.ID, rfc3339(*run.RetainedUntil)); err != nil {
+	if run.Fork != nil || run.RetainedUntil != nil {
+		var parent, until any
+		if run.Fork != nil {
+			parent = run.Fork.SourceRunID
+		}
+		if run.RetainedUntil != nil {
+			until = rfc3339(*run.RetainedUntil)
+		}
+		if _, err := tx.Exec(`INSERT INTO run_retention(run_id,parent_id,retained_until) VALUES(?,?,?)`, run.ID, parent, until); err != nil {
 			return err
 		}
 	}
@@ -1301,7 +1313,7 @@ func (s *Store) GetRun(id string) (*state.Run, error) {
 	row := s.db.QueryRow(
 		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
-   (SELECT retained_until FROM run_retention WHERE run_id=runs.id)
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json
    FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
@@ -1554,7 +1566,7 @@ func (s *Store) ListRuns() ([]*state.Run, error) {
 	rows, err := s.db.Query(
 		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
-   (SELECT retained_until FROM run_retention WHERE run_id=runs.id)
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json
    FROM runs ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -1869,11 +1881,11 @@ type rowScanner interface {
 
 func scanRun(row rowScanner) (*state.Run, error) {
 	var r state.Run
-	var pinned []byte
+	var pinned, fork []byte
 	var input, output sql.NullString
 	var created, updated string
 	var until sql.NullString
-	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest, &r.Pinned, &until); err != nil {
+	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest, &r.Pinned, &until, &fork); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("muxlio: run not found")
 		}
@@ -1885,6 +1897,11 @@ func scanRun(row rowScanner) (*state.Run, error) {
 			return nil, err
 		}
 		r.RetainedUntil = &t
+	}
+	if len(fork) > 0 {
+		if err := json.Unmarshal(fork, &r.Fork); err != nil {
+			return nil, err
+		}
 	}
 	r.PlanJSON = pinned
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

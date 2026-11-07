@@ -89,6 +89,10 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 			return false
 		}
 		if r.Method == http.MethodGet {
+			// A run-scoped credential cannot read another history through comparison.
+			if len(parts) == 3 && parts[2] == "compare" && r.URL.Query().Get("other") != g.RunID {
+				return false
+			}
 			if len(parts) == 3 && parts[2] == "input-requests" {
 				return g.permits("read") || g.permits("inputs")
 			}
@@ -98,7 +102,7 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 			return false
 		}
 		switch parts[2] {
-		case "pause", "resume", "cancel", "retry":
+		case "pause", "resume", "cancel", "retry", "start":
 			return len(parts) == 3 && g.permits("control")
 		case "signals":
 			return len(parts) == 4 && g.permits("signals")

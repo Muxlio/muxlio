@@ -11,7 +11,16 @@ import (
 
 // Run is one invocation of an immutable compiled workflow version.
 // PlanJSON, PlanDigest, and Input are fixed at creation; events order transitions.
+// ForkProvenance pins the source and explicitly selected output candidates.
+// A fork never inherits attempts, signals, sessions, or external effects.
+type ForkProvenance struct {
+	SourceRunID      string   `json:"sourceRunId"`
+	SourcePlanDigest string   `json:"sourcePlanDigest"`
+	ReuseActivations []string `json:"reuseActivations,omitempty"`
+}
+
 type Run struct {
+	Fork          *ForkProvenance `json:"fork,omitempty"`
 	Pinned        bool            `json:"pinned,omitempty"`
 	RetainedUntil *time.Time      `json:"retainedUntil,omitempty"`
 	PlanJSON      json.RawMessage `json:"-"`

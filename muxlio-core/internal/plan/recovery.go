@@ -17,6 +17,9 @@ type unclaimedProver interface {
 // RecoverRuns reconstructs pinned engines for all non-terminal runs after a
 // coordinator restart. The rules are:
 //
+// Created forks remain dormant until explicitly started; recovery omits them.
+// For runs that have started:
+//
 //  1. Succeeded activations are preserved; their stored outputs are reused by
 //     the resumed Engine.Run walk.
 //  2. Failed or cancelled activations are terminal: the run cannot be safely
@@ -42,6 +45,11 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 	for _, run := range runs {
 		switch run.State {
 		case RunSucceeded, RunFailed, RunCancelled:
+			continue
+		}
+		// Fork creation is deliberately separate from execution. A restart
+		// must not turn a dormant fork into an implicitly started run.
+		if run.State == RunCreated && run.Fork != nil {
 			continue
 		}
 		fail := func(reason string) error {

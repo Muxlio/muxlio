@@ -87,6 +87,10 @@ func (e *Engine) Plan() *Plan { return e.plan }
 
 // CreateRun validates input, creates a run record, and returns its ID.
 func (e *Engine) CreateRun(input json.RawMessage) (string, error) {
+	return e.createRun(input, nil)
+}
+
+func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (string, error) {
 	if errs := Validate(e.plan); HasErrors(errs) {
 		errOnly := ErrorsOnly(errs)
 		return "", fmt.Errorf("muxlio: invalid plan: %s", errOnly[0].Message)
@@ -116,6 +120,7 @@ func (e *Engine) CreateRun(input json.RawMessage) (string, error) {
 	}
 	runID := generateRunID()
 	run := &state.Run{
+		Fork:         fork,
 		PlanJSON:     pinned,
 		PlanDigest:   snapshot.Digest,
 		ID:           runID,
@@ -415,7 +420,27 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 			return nil, err
 		}
 
-		nodeOutputs, err := e.executeNode(runID, node, scope, ctx)
+		var nodeOutputs map[string]any
+		var reused bool
+		var err error
+		if node.Kind == "execute" {
+			var act *state.Activation
+			act, err = e.store.GetActivation(actID)
+			if err == nil {
+				var inputs map[string]any
+				if len(act.Inputs) > 0 {
+					err = json.Unmarshal(act.Inputs, &inputs)
+				} else {
+					inputs, err = EvalBindings(node.Inputs, ctx)
+				}
+				if err == nil {
+					nodeOutputs, reused, err = e.forkOutput(runID, node, scope, ctx, inputs)
+				}
+			}
+		}
+		if err == nil && !reused {
+			nodeOutputs, err = e.executeNode(runID, node, scope, ctx)
+		}
 		if err != nil {
 			if errors.Is(err, errRunPaused) {
 				return nil, errRunPaused

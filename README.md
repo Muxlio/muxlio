@@ -508,6 +508,43 @@ Returned execution output and usage are also copied to isolate each result.
 These identities pin the experiment specification; external model behavior and
 services can still vary. Keep the dataset alongside the manifest for replay.
 
+
+### Forking and comparing runs
+
+`POST /v1/runs/:sourceId/fork` creates a new run from a terminal run's original
+inputs and pinned plan. The JSON body accepts an optional replacement `input`,
+`plan` or registered `planDigest`, and `reuseActivations` containing successful
+activation IDs from the source. For example:
+
+```json
+{"reuseActivations":["run_original:analyse"],"start":false}
+```
+
+The new run persists its source run and source plan digest. Creation does not
+execute steps; use `POST /v1/runs/:newId/start` or request `"start":true` at
+creation. Unstarted forks remain dormant across coordinator restarts.
+Forks execute only steps explicitly declared `retry.effect: "pure"`.
+Steps with sessions, remote tasks, workspace state, or exclusive resources are
+blocked even when labelled pure. Unsafe steps fail with a diagnostic before
+any dispatch; external effects, attempts, signals, and session state are never
+copied. The original history remains unchanged.
+
+Selected outputs are reused only when the recorded dependency fingerprint
+matches. This first version fingerprints the full pinned plan, node contract,
+resolved dependencies, inputs, and structural scope; any plan change disables
+reuse. Legacy outputs without fingerprints are recomputed. File outputs require
+content-addressed artifact references. Each reuse appends an
+`activation.output_reused` event with the source run, source activation, and
+fingerprint. Reuse creates no new execution attempt or copied charges.
+
+`GET /v1/runs/:sourceId/compare?other=:newId` returns both plans, inputs, results,
+and activation differences aligned by scope, node, and occurrence, along with
+reuse references and both usage summaries. Observed and estimated costs remain
+separate, and unavailable costs remain unavailable. Forking and comparisons
+across runs require an administrator credential; run-scoped read credentials
+cannot reveal another run through comparison.
+
+
 ## Monorepo structure
 
 | Path | Language | Description |

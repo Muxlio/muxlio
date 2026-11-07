@@ -5,6 +5,9 @@
 //	GET  /v1/runs                   list all runs
 //	POST /v1/runs                   submit and start a run
 //	GET  /v1/runs/:id               get a single run
+//	POST /v1/runs/:id/fork          fork original inputs and selected pure outputs
+//	GET  /v1/runs/:id/compare       compare with ?other=<runId>
+//	POST /v1/runs/:id/start         explicitly start a created run
 //	GET  /v1/runs/:id/events        paginated event log (after=, limit=)
 //	GET  /v1/runs/:id/activations   materialized activations
 //	GET  /v1/runs/:id/graph         materialized scopes and activations
@@ -317,6 +320,18 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			return
 		}
 
+		if len(parts) == 2 && parts[1] == "start" && r.Method == http.MethodPost {
+			handleStartRun(w, r, store, runner, runID)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "fork" && r.Method == http.MethodPost {
+			handleForkRun(w, r, store, runner, runID)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "compare" && r.Method == http.MethodGet {
+			handleCompareRuns(w, r, store, runID)
+			return
+		}
 		if len(parts) == 3 && parts[1] == "sessions" {
 			handleSessionInputs(w, r, store, runID, parts[2])
 			return
