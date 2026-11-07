@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -493,7 +494,19 @@ func finish(req *adapter.Request, t task, endpoint string) adapter.Response {
 			if decl.Path != "" {
 				// Materialize bytes rather than JSON-encoding a possibly non-UTF8
 				// string. The generic worker uploads the file before scratch cleanup.
-				file, writeErr := os.CreateTemp(req.WorkDir, "a2a-artifact-*")
+				outputPath := filepath.Join(req.WorkDir, decl.Path)
+				root, openErr := os.OpenRoot(req.WorkDir)
+				if openErr != nil {
+					r.OutputErrors[port] = "cannot open A2A artifact directory"
+					continue
+				}
+				if err := root.MkdirAll(filepath.Dir(decl.Path), 0700); err != nil {
+					root.Close()
+					r.OutputErrors[port] = "cannot create A2A artifact directory"
+					continue
+				}
+				file, writeErr := root.OpenFile(decl.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+				root.Close()
 				if writeErr != nil {
 					r.OutputErrors[port] = "cannot create A2A artifact"
 					continue
@@ -505,7 +518,7 @@ func finish(req *adapter.Request, t task, endpoint string) adapter.Response {
 					r.OutputErrors[port] = "cannot write A2A artifact"
 					continue
 				}
-				r.Outputs[port] = map[string]any{"mime": decl.Mime, "path": file.Name()}
+				r.Outputs[port] = map[string]any{"mime": decl.Mime, "path": outputPath}
 			} else {
 				var value any
 				if e = json.Unmarshal(data, &value); e != nil {

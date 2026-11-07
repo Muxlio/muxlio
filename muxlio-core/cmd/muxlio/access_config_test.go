@@ -78,12 +78,12 @@ func TestWorkerCredentialFilesReloadWithoutCoordinatorRestart(t *testing.T) {
 	check("new", 503)
 }
 
-func TestServiceUIRespectsAuthorizationScopes(t *testing.T) {
+func TestServiceUIAllowsNetworkAccessAndRespectsExplicitScopes(t *testing.T) {
 	for _, tc := range []struct {
 		name, peer, host, token, origin, site, path string
 		want                                        int
 	}{
-		{name: "remote anonymous cancel", peer: "203.0.113.1:9", want: 401},
+		{name: "network UI without credentials", peer: "192.168.1.2:9", host: "192.168.1.1:7600", want: 204},
 		{name: "remote scoped cancel another run", peer: "203.0.113.1:9", token: "scoped", want: 403},
 		{name: "local scoped cancel another run", peer: "127.0.0.1:9", token: "scoped", want: 403},
 		{name: "remote scoped answer another run", peer: "203.0.113.1:9", token: "scoped", path: "/runs/other/signals/answer", want: 403},
@@ -93,15 +93,15 @@ func TestServiceUIRespectsAuthorizationScopes(t *testing.T) {
 		{name: "remote administrator", peer: "203.0.113.1:9", token: "admin", want: 204},
 		{name: "local anonymous UI", peer: "127.0.0.1:9", want: 204},
 		{name: "local same origin UI", peer: "127.0.0.1:9", origin: "http://localhost", want: 204},
-		{name: "cross origin UI", peer: "127.0.0.1:9", origin: "https://evil.example", want: 401},
-		{name: "null origin UI", peer: "127.0.0.1:9", origin: "null", want: 401},
-		{name: "cross site UI", peer: "127.0.0.1:9", site: "cross-site", want: 401},
-		{name: "untrusted host", peer: "127.0.0.1:9", host: "evil.example", want: 401},
+		{name: "cross origin UI", peer: "127.0.0.1:9", origin: "https://evil.example", want: 204},
+		{name: "null origin UI", peer: "127.0.0.1:9", origin: "null", want: 204},
+		{name: "cross site UI", peer: "127.0.0.1:9", site: "cross-site", want: 204},
+		{name: "untrusted host", peer: "127.0.0.1:9", host: "evil.example", want: 204},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := serviceUI(api.WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !strings.HasPrefix(r.URL.Path, "/v1/") {
-					t.Fatal("proxy path was not rewritten")
+					t.Fatal("API path was not preserved")
 				}
 				w.WriteHeader(204)
 			}), "admin", "worker", api.AccessGrant{Token: "scoped", RunID: "own", Permissions: []string{"control", "signals"}}), "", "admin")
@@ -109,7 +109,7 @@ func TestServiceUIRespectsAuthorizationScopes(t *testing.T) {
 			if path == "" {
 				path = "/runs/other/cancel"
 			}
-			req := httptest.NewRequest("POST", "http://localhost/_ui-api/v1"+path, nil)
+			req := httptest.NewRequest("POST", "http://localhost/v1"+path, nil)
 			req.RemoteAddr = tc.peer
 			if tc.host != "" {
 				req.Host = tc.host

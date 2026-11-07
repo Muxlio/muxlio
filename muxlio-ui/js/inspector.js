@@ -2,6 +2,7 @@
 const TRANSCRIPT_POLL_MS=1200;
 const activationTranscripts=new Map();
 let transcriptPollTimer=null,transcriptPollToken=0;
+let selectedActivationDetail=null,attemptOffset=0,attemptPageMore=false;
 
 function decodeLogData(data){
   if(typeof data!=='string')return '';
@@ -17,7 +18,7 @@ function mergeActivationLogs(actId,logs){
     const key=`${chunk.stream||'log'}:${chunk.seq}`;
     if(state.seen.has(key))continue;
     state.seen.add(key);
-    state.agent+=decodeLogData(chunk.data);
+    state.agent=(state.agent+decodeLogData(chunk.data)).slice(-65536);
   }
   return state.agent;
 }
@@ -45,7 +46,7 @@ function scheduleTranscriptPoll(act,runId){
   async function tick(){
     if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
     try{
-      const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
+      const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=0&limit=20`);
       if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
       updateTranscriptPanel(mergeActivationLogs(actId,d.logs||[]),act.state==='running');
     }catch{}
@@ -96,13 +97,13 @@ function buildAttemptUsageMarkup(act){
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
   const actAttempts=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
   if(!actAttempts.length)return '';
-  const fmtTokens=n=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n||0);
+  const formatTokens=n=>fmtTokens(n||0);
   const rows=actAttempts.map((a,i)=>{
-    const label=String(i+1);
+    const label=String(attemptOffset+i+1);
     if(a.usage==null){
       return `<tr><td>${esc(label)}</td><td colspan="3" class="num" style="color:var(--muted)">—</td></tr>`;
     }
-    return `<tr><td>${esc(label)}</td><td class="num">${esc(fmtTokens(a.usage.input))}</td><td class="num">${esc(fmtTokens(a.usage.output))}</td><td class="num">${esc(fmtTokens(a.usage.cached))}</td></tr>`;
+    return `<tr><td>${esc(label)}</td><td class="num">${esc(formatTokens(a.usage.input))}</td><td class="num">${esc(formatTokens(a.usage.output))}</td><td class="num">${esc(formatTokens(a.usage.cached))}</td></tr>`;
   });
   return `<div class="insp-section">
     <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Token usage</div>
@@ -127,6 +128,9 @@ function renderInspectorWb(act){
   if(descEl){descEl.textContent=act.description||'';descEl.hidden=!act.description}
   const body=$('#inspBody');
   if(!body)return;
+  const oldSession=$('#sessionControls');
+  const inspectorAttempts=typeof runAttempts!=='undefined'?runAttempts:[];
+  const session=inspectorAttempts.filter(a=>a.activationId===act.id).map(a=>a.result?.session).filter(Boolean).at(-1);
   const agent=resolveInspectorAgent(act);
   const skill=act.skill||'—';
   const inRef=act.inputRef||act.inputArtifact||'—';
@@ -159,44 +163,46 @@ function renderInspectorWb(act){
     </div>`:''}
     ${act.error?`<div class="insp-section"><div class="insp-error">${esc(act.error)}</div></div>`:''}
     ${buildAttemptUsageMarkup(act)}
+    ${typeof attemptMetadataMarkup==='function'?attemptMetadataMarkup(inspectorAttempts.filter(a=>a.activationId===act.id)):''}
+    ${session?'<section class="insp-section" id="sessionControls"></section>':''}
+    <nav class="pager" aria-label="Attempt pages"><span>Attempts · page ${Math.floor(attemptOffset/50)+1}</span><button class="btn ghost" data-attempt-page="-1"${attemptOffset===0?' disabled':''}>Previous</button><button class="btn ghost" data-attempt-page="1"${!attemptPageMore?' disabled':''}>Next</button></nav>
     <div class="insp-section" id="inspSnapshots"><h3 class="insp-output-title">Intermediate snapshots</h3><div class="subtle">Loading snapshots…</div></div>
     ${transcriptSectionMarkup(act,current)}
   `);
   if(activationHasTranscript(act)&&(act.state==='running'||activationTranscripts.get(act.id)?.agent))scheduleTranscriptPoll(act,current);
   loadInspectorSnapshots(act,current);
+  if(session&&typeof loadSessionControls==='function'){
+   const panel=$('#sessionControls');
+   if(oldSession?.dataset.sessionId===session.id&&panel)panel.replaceWith(oldSession);else loadSessionControls(current,session);
+  }
   const actionsEl=$('#inspActions');
   if(actionsEl)actionsEl.hidden=!['failed','cancelled'].includes(wbCurrentRunState);
 }
 
 let snapshotPollTimer=null,snapshotPollToken=0;
+let snapshotActivation=null,snapshotCursors=[0],snapshotPageIndex=0;
 async function loadInspectorSnapshots(act,runId){
-  if(snapshotPollTimer)clearTimeout(snapshotPollTimer);
-  const token=++snapshotPollToken;
-  try{
-    const snapshots=[];
-    let after=0,data;
-    do{
-      data=await api(`/v1/runs/${encodeURIComponent(runId)}/snapshots?activationId=${encodeURIComponent(act.id)}&after=${after}`);
-      if(token!==snapshotPollToken||selectedActivation!==act.id||current!==runId)return;
-      snapshots.push(...(data.snapshots||[]));
-      after=data.nextAfter;
-    }while(data.hasMore);
-    if(token!==snapshotPollToken||selectedActivation!==act.id||current!==runId)return;
-    const el=$('#inspSnapshots');if(!el)return;
-    const latest=new Map();
-    for(const event of snapshots)latest.set(event.payload.snapshot.name,event.seq);
-    el.innerHTML='<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>'+snapshots.slice().reverse().map(event=>{
-      const ref=event.payload.snapshot;
-      return `<section class="artifact"><strong>${esc(ref.name)}</strong> <span class="subtle">${latest.get(ref.name)===event.seq?'Latest':'Historical'} · seq ${esc(event.seq)}</span><div class="subtle">${esc(event.subjectId)} · ${esc(date(event.timestamp))}</div><code>${esc(ref.digest)}</code><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
-    }).join('')+(!snapshots.length?'<div class="subtle">No snapshots recorded.</div>':'');
-    for(const button of el.querySelectorAll('[data-snapshot-seq]'))button.onclick=()=>{
-      const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);
-      if(event)showArtifactOutput(event.payload.snapshot,event.payload.snapshot.name);
-    };
-  }catch{
-    const el=$('#inspSnapshots');if(el&&token===snapshotPollToken)el.textContent='Unable to load intermediate snapshots.';
-  }
-  if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&act.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(act,runId),TRANSCRIPT_POLL_MS);
+ if(snapshotPollTimer)clearTimeout(snapshotPollTimer);
+ if(snapshotActivation!==act.id){snapshotActivation=act.id;snapshotCursors=[0];snapshotPageIndex=0;}
+ const token=++snapshotPollToken;
+ try{
+  const data=await api(`/v1/runs/${encodeURIComponent(runId)}/snapshots?activationId=${encodeURIComponent(act.id)}&after=${snapshotCursors[snapshotPageIndex]||0}&limit=20`);
+  if(token!==snapshotPollToken||selectedActivation!==act.id||current!==runId)return;
+  const snapshots=data.snapshots||[];
+  snapshotCursors[snapshotPageIndex+1]=data.nextAfter||0;
+  const el=$('#inspSnapshots');if(!el)return;
+  el.innerHTML='<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>'+snapshots.map(event=>{
+   const ref=event.payload.snapshot;
+   return `<section class="artifact"><strong>${esc(ref.name)}</strong> <span class="subtle">seq ${esc(event.seq)}</span><div class="subtle">${esc(event.subjectId)} · ${esc(date(event.timestamp))}</div><code>${esc(ref.digest)}</code><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
+  }).join('')+(!snapshots.length?'<div class="subtle">No snapshots recorded.</div>':'')+
+  `<nav class="pager" aria-label="Snapshot pages"><span>Page ${snapshotPageIndex+1}</span><button class="btn ghost" data-snapshot-page="-1"${snapshotPageIndex===0?' disabled':''}>Previous</button><button class="btn ghost" data-snapshot-page="1"${!data.hasMore?' disabled':''}>Next</button></nav>`;
+  for(const button of el.querySelectorAll('[data-snapshot-seq]'))button.onclick=()=>{
+   const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);
+   if(event)showArtifactOutput(event.payload.snapshot,event.payload.snapshot.name);
+  };
+  for(const button of el.querySelectorAll('[data-snapshot-page]'))button.onclick=()=>{snapshotPageIndex+=Number(button.dataset.snapshotPage);loadInspectorSnapshots(act,runId);};
+ }catch{const el=$('#inspSnapshots');if(el&&token===snapshotPollToken)el.textContent='Unable to load intermediate snapshots.';}
+ if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&act.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(act,runId),TRANSCRIPT_POLL_MS);
 }
 
 /* ── shared helpers (kept from original) ─────── */
@@ -289,12 +295,26 @@ function renderInspector(){
   const id=selectedActivation,tab=inspectorTab,run=current,request=++inspectorRequest;
   Promise.all([inspectorTab==='logs'?api(`/v1/runs/${encodeURIComponent(current)}/logs?activationId=${encodeURIComponent(id)}`):Promise.resolve(null),inspectorTab==='attempts'?api(`/v1/runs/${encodeURIComponent(current)}/attempts?activationId=${encodeURIComponent(id)}`):Promise.resolve(null)]).then(([l,a])=>{if(request!==inspectorRequest||id!==selectedActivation||tab!==inspectorTab||run!==current||!out.isConnected)return;if(inspectorTab==='logs'){const logs=l.logs||[];const decoded=logs.length?logs.map(x=>{let data=x.data;try{data=new TextDecoder().decode(Uint8Array.from(atob(data),c=>c.charCodeAt(0)))}catch{}return {ts:date(x.timestamp),stream:x.stream,text:data}}).filter(x=>x):[];if(!decoded.length){out.innerHTML='<p class="inspector-placeholder">No logs.</p>';}else{let allText=decoded.map(x=>x.text).join('\n');out.innerHTML='<div class="data-tools"><button class="btn ghost" data-copylogs>Copy logs</button></div>'+decoded.map(x=>`<h3>${esc(x.ts)} · ${esc(x.stream)}</h3><pre>${esc(x.text)}</pre>`).join('');out._copyLogsText=allText}}else{const attempts=a.attempts||[];out.innerHTML=attempts.length?`<div class="tablebox"><table><thead><tr><th>Retry</th><th>Executor</th><th>State</th><th>Started</th><th>Finished</th></tr></thead><tbody>${attempts.map(x=>`<tr><td>${esc(x.retryNumber)}</td><td>${esc(x.executor)}</td><td>${esc(x.state)}</td><td>${esc(date(x.startedAt))}</td><td>${esc(date(x.finishedAt))}</td></tr>`).join('')}</tbody></table></div>`:'<p class="inspector-placeholder">No attempts.</p>'}}).catch(e=>{if(request!==inspectorRequest||id!==selectedActivation||run!==current)return;if(out.isConnected)out.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`})
 }
-function loadActivation(id){
-  stopTranscriptPoll();
-  selectedActivation=id;
+async function loadActivation(id,offset=0){
+ stopTranscriptPoll();
+ const run=current,request=++inspectorRequest;
+ selectedActivation=id;
+ if(selectedActivationDetail?.id!==id){selectedActivationDetail=null;activationTranscripts.clear();}
+ attemptOffset=offset;
+ try{
+  const [act,page]=await Promise.all([
+   api(`/v1/runs/${encodeURIComponent(run)}/activations/${encodeURIComponent(id)}`),
+   api(`/v1/runs/${encodeURIComponent(run)}/attempts?activationId=${encodeURIComponent(id)}&offset=${offset}&limit=50&details=false`)
+  ]);
+  if(current!==run||selectedActivation!==id||request!==inspectorRequest)return null;
+  selectedActivationDetail=act;runAttempts=page.attempts||[];attemptPageMore=!!page.hasMore;
+  const index=activationData.findIndex(a=>a.id===id);
+  if(index>=0)activationData[index]=act;else activationData.push(act);
   document.querySelectorAll('[data-act]').forEach(b=>{const on=b.dataset.act===id;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))});
-  renderInspector();
+  renderInspector();return act;
+ }catch(err){if(current===run&&selectedActivation===id)message(err.message,true);return null;}
 }
+document.addEventListener('click',event=>{const button=event.target.closest('[data-attempt-page]');if(button&&!button.disabled&&selectedActivation)loadActivation(selectedActivation,Math.max(0,attemptOffset+Number(button.dataset.attemptPage)*50));});
 async function loadOlder(){const id=current;try{const d=await api(`/v1/runs/${encodeURIComponent(current)}/events?after=${after}&limit=50`);if(id!==current)return;after=d.nextAfter||after;hasMore=!!d.hasMore;const list=$('#timeline');if(d.events?.length)list.insertAdjacentHTML('beforeend',d.events.map(eventHtml).join(''));if($('#moreEvents'))$('#moreEvents').disabled=!hasMore}catch(e){message(e.message,true)}}
 async function sendSignal(){const name=$('#signalName')?.value.trim(),status=$('#signalStatus');if(!name){if(status){status.className='inline-status error';status.textContent='Enter a signal name.'}return}let payload;try{payload=JSON.parse($('#signalPayload')?.value||'{}');if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error()}catch{if(status){status.className='inline-status error';status.textContent='Payload must be a JSON object.'}return}try{await api(`/v1/runs/${encodeURIComponent(current)}/signals/${encodeURIComponent(name)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(status){status.textContent=`Signal "${name}" sent.`;status.className='inline-status ok'}}catch(e){if(status){status.className='inline-status error';status.textContent=e.message}}}
 
@@ -373,6 +393,13 @@ function formatWorkerCapability(cap){
   if(typeof cap==='object'&&cap.name)return cap.version?`${cap.name}@${cap.version}`:cap.name;
   return String(cap);
 }
+function workerCapabilityMarkup(cap){
+ if(typeof cap==='string')return esc(cap);
+ const report=cap.readiness,contract=cap.contract||{};
+ const state=report?(report.ready?'Ready':'Blocked'):'Readiness unavailable';
+ const checks=(report?.checks||[]).map(check=>`<li>${check.passed?'✓':'✕'} ${esc(check.name)} · ${esc(check.message||'')}</li>`).join('');
+ return `<details><summary>${esc(formatWorkerCapability(cap))} · ${state}</summary><p>Contract ${esc(contract.contractVersion||'Unavailable')}</p>${contract.environment?.digest?`<p>Environment <code>${esc(contract.environment.digest)}</code></p>`:''}<p>${esc(Object.entries(contract.capabilities||{}).filter(([,enabled])=>enabled).map(([name])=>name).join(', ')||'Baseline capabilities')}</p>${checks?`<ul>${checks}</ul>`:''}</details>`;
+}
 async function loadWorkers(){
   try{
     const d=await api('/v1/workers');
@@ -381,7 +408,7 @@ async function loadWorkers(){
     const busy=new Set(assignments.filter(x=>x.state==='active').map(x=>x.workerId));
     const rosterEl=$('#workerRoster');
     if(rosterEl){
-      rosterEl.innerHTML=roster.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>${roster.map(x=>{const anchor=encodeURIComponent(x.workerId),id=esc(x.workerId),status=busy.has(x.workerId)?'busy':'idle',caps=(x.capabilities||[]).map(c=>esc(formatWorkerCapability(c))).filter(Boolean).join(', ')||'—';return `<tr id="worker-roster-${anchor}"><td class="primary-cell"><strong>${id}</strong></td><td><span class="state ${status==='busy'?'running':'queued'}">${status}</span></td><td class="num">${esc(x.capacity)}</td><td class="mono">${caps}</td><td class="num">${esc(date(x.lastSeen))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No workers available</strong>No workers have heartbeated within the coordinator window. Start a worker and register it with the coordinator.</div>';
+      rosterEl.innerHTML=roster.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>${roster.map(x=>{const anchor=encodeURIComponent(x.workerId),id=esc(x.workerId),status=x.draining?'draining':busy.has(x.workerId)?'busy':'idle',caps=(x.capabilities||[]).map(workerCapabilityMarkup).filter(Boolean).join(', ')||'—';return `<tr id="worker-roster-${anchor}"><td class="primary-cell"><strong>${id}</strong>${Object.keys(x.labels||{}).length?`<details><summary>Placement &amp; isolation labels</summary><pre>${esc(pretty(x.labels))}</pre></details>`:''}</td><td><span class="state ${status==='busy'?'running':'queued'}">${status}</span></td><td class="num">${esc(x.capacity)}</td><td class="mono">${caps}</td><td class="num">${esc(date(x.lastSeen))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No workers available</strong>No workers have heartbeated within the coordinator window. Start a worker and register it with the coordinator.</div>';
     }
     const workerLink=id=>`<a href="#worker-roster-${encodeURIComponent(id)}" style="color:var(--teal)"><strong>${esc(id)}</strong></a>`;
     $('#workerList').innerHTML=assignments.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Run</th><th>Activation</th><th>Generation</th><th>Lease until</th><th>State</th></tr></thead><tbody>${assignments.map(x=>`<tr><td class="primary-cell">${workerLink(x.workerId)}</td><td><a href="#run/${encodeURIComponent(x.runId)}" style="color:var(--teal)">${esc(x.runId)}</a></td><td class="mono">${esc(x.activationId)}</td><td>${esc(x.generation)}</td><td style="color:var(--muted)">${esc(date(x.leaseUntil))}</td><td><span class="state ${esc(x.state)}">${esc(x.state)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No active assignments</strong>The coordinator is not reporting any active worker assignments right now.</div>';

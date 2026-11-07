@@ -10,10 +10,10 @@ const refreshRuns=get('refreshRuns');if(refreshRuns)refreshRuns.onclick=loadRuns
 const refreshWorkers=get('refreshWorkers');if(refreshWorkers)refreshWorkers.onclick=loadWorkers;
 const refreshWorkflowsEl=get('refreshWorkflows');if(refreshWorkflowsEl)refreshWorkflowsEl.onclick=()=>loadWorkflows(true);
 const refreshArtifactsEl=get('refreshArtifacts');if(refreshArtifactsEl)refreshArtifactsEl.onclick=()=>loadArtifacts(true);
-const searchEl=get('search');if(searchEl)searchEl.oninput=()=>{runsPage=1;renderRuns()};
-const stateFilterEl=get('stateFilter');if(stateFilterEl)stateFilterEl.onchange=()=>{runsPage=1;renderRuns()};
-const sortOrderEl=get('sortOrder');if(sortOrderEl)sortOrderEl.onchange=()=>{runsPage=1;renderRuns()};
-const artifactSearchEl=get('artifactSearch');if(artifactSearchEl)artifactSearchEl.oninput=renderArtifacts;
+const searchEl=get('search');if(searchEl)searchEl.oninput=()=>{runsPage=1;loadRuns()};
+const stateFilterEl=get('stateFilter');if(stateFilterEl)stateFilterEl.onchange=()=>{runsPage=1;loadRuns()};
+const sortOrderEl=get('sortOrder');if(sortOrderEl)sortOrderEl.onchange=()=>{runsPage=1;loadRuns()};
+const artifactSearchEl=get('artifactSearch');if(artifactSearchEl)artifactSearchEl.oninput=()=>loadArtifacts();
 const moreEventsWbEl=get('moreEventsWb');if(moreEventsWbEl)moreEventsWbEl.onclick=loadOlder;
 document.querySelectorAll('[data-wb-tab]').forEach(b=>b.onclick=()=>showWbTab(b.dataset.wbTab));
 // check connection

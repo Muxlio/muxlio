@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // ── helpers ───────────────────────────────────────────────────────────────
-const wbSource = readFileSync(new URL('./js/workbench.js', import.meta.url), 'utf8');
+const wbSource = readFileSync(new URL("./js/format.js", import.meta.url), "utf8") + "\n" + readFileSync(new URL('./js/workbench.js', import.meta.url), 'utf8');
 const inspSource = readFileSync(new URL('./js/inspector.js', import.meta.url), 'utf8');
 
 function makeCtx(runAttempts = []) {
@@ -198,3 +198,9 @@ console.log('buildWbStats token stat checks passed');
   }
 }
 console.log('buildAttemptUsageMarkup checks passed');
+
+// Compact values remain readable at million/billion boundaries.
+{
+ const format=vm.runInNewContext(`${wbSource};fmtTokens`,makeCtx());
+ for(const [value,expected] of [[0,'0'],[999,'999'],[1000,'1.0K'],[1250000,'1.3M'],[999999,'1.0M'],[1500000000,'1.5B']])assert.equal(format(value),expected);
+}

@@ -471,3 +471,10 @@ operation failure; the reference must match the polled identity. Errors without
 a terminal reference describe failed lookups and leave the operation detached.
 The same terminal failure with `reconciliation.status: "completed"` ends an
 uncertain operation through the normal failure path.
+
+### Completion port decoding errors
+
+Worker completions preserve the shared result's optional `outputErrors` map
+alongside `outputs`. A successful executor completion with a port decoding error
+still fails output validation, including when the declared JSON Schema accepts
+strings. Transporting a retained prose value must not turn it into valid JSON.

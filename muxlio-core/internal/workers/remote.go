@@ -80,6 +80,7 @@ type remoteError struct {
 	Retryable  bool                   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
+	OutputErrors        map[string]string             `json:"outputErrors,omitempty"`
 	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
 	AssignmentID        string                        `json:"assignmentId"`
 	RunID               string                        `json:"runId"`
@@ -690,7 +691,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
 				result.Reconciliation = &reconciliation
 			}
-			completion := remoteCompletion{AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{OutputErrors: result.OutputErrors, AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

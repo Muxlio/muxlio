@@ -3,14 +3,40 @@
 
 let refreshTimer=null,refreshPaused=false,refreshBusy=false,refreshEpoch=0,lastRefresh=null;
 let runAttempts=[],requestControllers=new Set(),renderedRun=null,detailRequest=0,eventRecords=[];
+const RUN_DETAIL_PAGE_SIZE=50;
+let outputOffset=0,eventCursors=[0],eventPageIndex=0,liveAfter=0,liveEventRecords=[],runDataLoaded=false;
+function runPager(key,offset,more,label){return `<nav class="pager" aria-label="${esc(label)} pages"><span>${esc(label)} · page ${Math.floor(offset/RUN_DETAIL_PAGE_SIZE)+1}</span><div class="pager-controls"><button class="btn ghost" data-run-page="${key}" data-direction="-1"${offset===0?' disabled':''}>Previous</button><button class="btn ghost" data-run-page="${key}" data-direction="1"${!more?' disabled':''}>Next</button></div></nav>`}
+function renderRunPagers(graph,outputs,events){
+ const outputsPager=document.getElementById('outputsPager');if(outputsPager)outputsPager.innerHTML=runPager('outputs',outputOffset,outputs.hasMore,'Artifacts and outputs');
+ const eventsPager=document.getElementById('eventsPager');if(eventsPager)eventsPager.innerHTML=runPager('events',eventPageIndex*RUN_DETAIL_PAGE_SIZE,events.hasMore,'Event history');
+ const list=document.getElementById('wbArtifactList');if(list)list.innerHTML=(outputs.outputs||[]).map(item=>`<div class="artifact-row"><div class="artifact-icon">📄</div><div><div class="artifact-name">${esc(item.name)}</div><div class="artifact-meta">${esc(item.nodeId)}</div></div><button class="artifact-view" data-open-output="${esc(item.activationId)}" data-output-name="${esc(item.name)}">View</button></div>`).join('')||'<p class="subtle">No outputs on this page.</p>';
+}
+document.addEventListener('click',async event=>{
+ if(event.target.closest('#focusCurrent')){const node=document.querySelector('.node-card.running,.node-card.waiting,.node-card.queued,.node-card.failed');if(node){for(let parent=node.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;node.scrollIntoView({block:'center',inline:'center',behavior:'smooth'});node.focus({preventScroll:true});}return;}
+ const output=event.target.closest('[data-open-output]');
+ if(output){const act=await loadActivation(output.dataset.openOutput);if(act&&current===act.runId)showArtifactOutput(act.outputs?.[output.dataset.outputName],output.dataset.outputName);return;}
+ const button=event.target.closest('[data-run-page]');if(!button||button.disabled)return;
+ if(['attempts','artifact-index'].includes(button.dataset.runPage))return;
+ const direction=Number(button.dataset.direction);
+ if(button.dataset.runPage==='outputs')outputOffset=Math.max(0,outputOffset+direction*RUN_DETAIL_PAGE_SIZE);
+ if(button.dataset.runPage==='events')eventPageIndex=Math.max(0,eventPageIndex+direction);
+ await openRun(current);
+});
+async function loadRunData(){
+ if(runDataLoaded||!current)return;
+ const id=current,data=await api(`/v1/runs/${encodeURIComponent(id)}`);
+ if(id!==current)return;
+ currentRunInput=data.input;currentRunOutput=data.output;runDataLoaded=true;
+ replaceHTMLPreservingDetails(document.getElementById('runInputInspector'),inputMarkup(data.input));
+ replaceHTMLPreservingDetails(document.getElementById('runOutputInspector'),outputMarkup(data.output,'run-output'));
+}
 let eventStreamController=null,eventStreamRun=null,eventStreamUnsupported=false,eventStreamRetry=null,eventStreamTerminal=false;
 
 // ── event renderer ────────────────────────────────────────────────────────
 eventHtml=function(e){
   const label=eventLabel(e.type),
         tone=String(e.type||'').includes('fail')?'err':String(e.type||'').includes('succeed')?'ok':'',
-        stamp=e.timestamp?new Date(e.timestamp):null,
-        time=stamp&&!isNaN(stamp)?stamp.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+        time=MuxlioFormat.timestamp(e.timestamp,true);
   return `<li class="ev${tone?' ev-'+tone:''}"><span class="ev-time">${esc(time)}</span><span class="ev-dot" aria-hidden="true"></span><span class="ev-body"><strong class="ev-label">${esc(label)}</strong>${e.subjectId?`<span class="ev-sub">${esc(e.subjectId)}</span>`:''}</span><span class="ev-seq">#${esc(e.seq)}</span>${e.payload?`<details class="ev-data" data-preserve-key="event:${esc(e.seq)}"><summary>data</summary><pre>${esc(pretty(e.payload))}</pre></details>`:''}</li>`;
 };
 
@@ -37,11 +63,10 @@ api=async function(path,opts={}){
 
 // ── event merge (dedupes by seq) ──────────────────────────────────────────
 function mergeEvents(page){
-  const records=new Map(eventRecords.map(e=>[e.seq,e]));
-  for(const event of page.events||[])records.set(event.seq,event);
-  eventRecords=[...records.values()].sort((a,b)=>a.seq-b.seq);
-  after=Math.max(after,page.nextAfter||0);
-  hasMore=!!page.hasMore;
+ eventRecords=(page.events||[]).slice(0,RUN_DETAIL_PAGE_SIZE);
+ after=page.nextAfter||0;hasMore=!!page.hasMore;
+ eventCursors[eventPageIndex+1]=page.nextBefore;
+ wbHasMore=hasMore;
 }
 
 function stopEventStream(){
@@ -52,16 +77,20 @@ function stopEventStream(){
 }
 function renderLiveEvents(){
   const timeline=document.getElementById('wbTimeline');
-  if(timeline)replaceHTMLPreservingDetails(timeline,eventRecords.length?eventRecords.map(eventHtml).join(''):'');
-  const recent=document.getElementById('wbEventList');
-  if(recent)replaceHTMLPreservingDetails(recent,buildWbEvents(eventRecords));
+  // Keep historical pages fixed while the first page follows new events.
+  if(!timeline||eventPageIndex!==0)return;
+  const merged=new Map(eventRecords.map(event=>[event.seq,event]));
+  for(const event of liveEventRecords)merged.set(event.seq,event);
+  eventRecords=[...merged.values()].sort((a,b)=>b.seq-a.seq).slice(0,RUN_DETAIL_PAGE_SIZE);
+  if(eventRecords.length)eventCursors[1]=eventRecords[eventRecords.length-1].seq;
+  replaceHTMLPreservingDetails(timeline,eventRecords.length?eventRecords.map(eventHtml).join(''):'<li class="subtle">No events recorded.</li>');
 }
 async function startEventStream(id){
   if(eventStreamUnsupported||eventStreamRun===id)return;
   stopEventStream();eventStreamRun=id;
   const controller=new AbortController();eventStreamController=controller;
   try{
-    const response=await uiFetch(`/v1/runs/${encodeURIComponent(id)}/events/stream?after=${after}`,{headers:{Accept:'text/event-stream'},signal:controller.signal});
+    const response=await uiFetch(`/v1/runs/${encodeURIComponent(id)}/events/stream?after=${liveAfter}`,{headers:{Accept:'text/event-stream'},signal:controller.signal});
     if(response.status===404||response.status===501){eventStreamUnsupported=true;stopEventStream();return;}
     if(!response.ok)throw Error(`HTTP ${response.status}`);
     if(!response.body){eventStreamUnsupported=true;stopEventStream();return;}
@@ -79,9 +108,9 @@ async function startEventStream(id){
         try{
           const event=JSON.parse(data.slice(5).trim());
           if(['run.succeeded','run.failed','run.cancelled'].includes(event.type))eventStreamTerminal=true;
-          if(event.seq>after){
-            const records=new Map(eventRecords.map(item=>[item.seq,item]));records.set(event.seq,event);
-            eventRecords=[...records.values()].sort((a,b)=>a.seq-b.seq).slice(-1000);after=event.seq;renderLiveEvents();
+          if(event.seq>liveAfter){
+            const records=new Map(liveEventRecords.map(item=>[item.seq,item]));records.set(event.seq,event);
+            liveEventRecords=[...records.values()].sort((a,b)=>a.seq-b.seq).slice(-50);liveAfter=event.seq;renderLiveEvents();
           }
         }catch{}
       }
@@ -101,8 +130,8 @@ renderWorkbench=function(r,g,events){
   if(!actions)return;
   let controls=document.getElementById('runControls');
   if(!controls){controls=document.createElement('span');controls.id='runControls';controls.style.cssText='display:flex;gap:7px';actions.prepend(controls);}
-  const active=['running','waiting','created'].includes(r.state),paused=r.state==='paused',retryable=['failed','cancelled'].includes(r.state);
-  controls.innerHTML=`${active?'<button class="btn ghost" data-run-action="pause">Pause run</button>':''}${paused?'<button class="btn primary" data-run-action="resume">Resume run</button>':''}${retryable?'<button class="btn primary" data-run-action="retry">Retry run</button>':''}${active||paused?'<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>':''}`;
+  const created=r.state==='created',active=['running','waiting'].includes(r.state),paused=r.state==='paused',retryable=['failed','cancelled'].includes(r.state);
+  controls.innerHTML=`${created?'<button class="btn primary" data-run-action="start">Start run</button>':''}${active?'<button class="btn ghost" data-run-action="pause">Pause run</button>':''}${paused?'<button class="btn primary" data-run-action="resume">Resume run</button>':''}${retryable?'<button class="btn primary" data-run-action="retry">Retry run</button>':''}${active||paused?'<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>':''}`;
   controls.querySelectorAll('[data-run-action]').forEach(button=>button.onclick=async()=>{
     const action=button.dataset.runAction;
     if(action==='cancel'){if(!await openCancelRunModal())return;}
@@ -204,19 +233,29 @@ document.addEventListener('click', async function(e) {
 const _baseOpenRun=openRun;
 openRun=async function(id){
   const epoch=refreshEpoch,seq=++detailRequest,same=renderedRun===id;
-  if(!same){selectedActivation=null;after=0;eventRecords=[];}
+  if(!same){selectedActivation=null;selectedActivationDetail=null;after=0;eventRecords=[];outputOffset=0;eventCursors=[0];eventPageIndex=0;liveEventRecords=[];runDataLoaded=false;runAttempts=[];
+ for(const key of ['runInputInspector','runOutputInspector']){const el=document.getElementById(key);if(el)el.textContent='Open the Data tab to load run inputs and outputs.';}}
+
   try{
-    const [r,g,e,a]=await Promise.all([
-      api(`/v1/runs/${encodeURIComponent(id)}`),
+    const r=await api(`/v1/runs/${encodeURIComponent(id)}?summary=true`);
+    if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
+    if(!r.overview)throw Error('Coordinator update required: this UI uses paged run views. Upgrade the coordinator before opening run histories.');
+    const [g,e,o,l]=await Promise.all([
       api(`/v1/runs/${encodeURIComponent(id)}/graph`),
-      api(`/v1/runs/${encodeURIComponent(id)}/events?after=${after}&limit=50`),
-      api(`/v1/runs/${encodeURIComponent(id)}/attempts`).catch(()=>({attempts:[]}))
+      api(`/v1/runs/${encodeURIComponent(id)}/events?order=desc&before=${eventCursors[eventPageIndex]||0}&limit=${RUN_DETAIL_PAGE_SIZE}`),
+      api(`/v1/runs/${encodeURIComponent(id)}/outputs?offset=${outputOffset}&limit=${RUN_DETAIL_PAGE_SIZE}`),
+      api(`/v1/runs/${encodeURIComponent(id)}/events?tail=true&limit=50`)
     ]);
     if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
-    runAttempts=a.attempts||[];
+    if(!same)liveAfter=r.overview?.latestEventSeq||0;
+    const recent=new Map((l.events||[]).map(event=>[event.seq,event]));for(const event of liveEventRecords)recent.set(event.seq,event);liveEventRecords=[...recent.values()].sort((a,b)=>a.seq-b.seq).slice(-50);
     mergeEvents(e);
     // Call the workbench renderer with merged events
     renderWorkbench(r,g,eventRecords);
+    renderRunPagers(g,o,e);renderLiveEvents();
+    if(operationsRun?.id===r.id&&operationsRun.state!==r.state)runDataLoaded=false;
+    renderRunOperations(r);
+    if(wbActiveTab==='data'&&!runDataLoaded)loadRunData();
     renderedRun=id;
     if(['succeeded','failed','cancelled'].includes(r.state))stopEventStream();
     else {eventStreamTerminal=false;if(!eventStreamUnsupported)startEventStream(id);}
@@ -234,21 +273,7 @@ openRun=async function(id){
 };
 
 // ── loadOlder with event merge ────────────────────────────────────────────
-loadOlder=async function(){
-  const epoch=refreshEpoch,id=current;
-  const btn=document.getElementById('moreEventsWb');
-  if(btn)btn.disabled=true;
-  try{
-    const page=await api(`/v1/runs/${encodeURIComponent(id)}/events?after=${after}&limit=50`);
-    if(epoch!==refreshEpoch||id!==current)return;
-    mergeEvents(page);
-    const tl=document.getElementById('wbTimeline');
-    if(tl)replaceHTMLPreservingDetails(tl,eventRecords.map(eventHtml).join(''));
-    if(btn)btn.disabled=!hasMore;
-  }catch(err){
-    if(epoch===refreshEpoch){message(err.message,true);if(btn)btn.disabled=false;}
-  }
-};
+loadOlder=async function(){if(hasMore){eventPageIndex++;await openRun(current);}};
 
 // ── connection status ─────────────────────────────────────────────────────
 function connectionOK(){lastRefresh=new Date();}
@@ -270,6 +295,9 @@ async function refreshWorkspace(){
     }
     else if(location.hash==='#workers')await loadWorkers();
     else if(location.hash==='#live'&&typeof loadLive==='function')await loadLive();
+    else if(location.hash==='#runs')await loadRuns();
+    else if(location.hash==='#artifacts')await loadArtifacts();
+    else if(location.hash==='#workflows')await loadWorkflows();
     else{runs=await fetchRuns();if(epoch===refreshEpoch){message('');renderOverview();renderRuns();connectionOK();}}
   }catch(err){if(epoch===refreshEpoch)connectionError(err);}
   finally{refreshBusy=false;scheduleRefresh();}
@@ -363,7 +391,7 @@ function renderWorkflowList(){
         <td class="primary-cell"><strong>${esc(w.name||'Unnamed')}</strong></td>
         <td class="mono">${esc(w.digest?w.digest.slice(0,24)+'…':'-')}</td>
         <td style="color:var(--muted)">${esc(w.irVersion||'-')}</td>
-        <td style="color:var(--muted)">${esc(w.createdAt?new Date(w.createdAt).toLocaleString():'-')}</td>
+        <td style="color:var(--muted)">${esc(date(w.createdAt))}</td>
         <td><button class="btn ghost" data-wf-digest="${esc(w.digest)}" data-wf-name="${esc(w.name||'')}">View plan</button></td>
       </tr>`).join('')}
     </tbody></table></div>`;
@@ -422,58 +450,16 @@ document.getElementById('planModal')?.addEventListener('click',e=>{
 // ── Artifacts view ────────────────────────────────────────────────────────
 let allArtifacts=[];
 
+let artifactOffset=0,artifactPageMore=false,artifactQuery='';
 async function loadArtifacts(force){
-  const epoch=refreshEpoch;
-  const countEl=document.getElementById('artifactCount');
-  if(countEl)countEl.textContent='Loading…';
-  try{
-    // Collect all artifacts across all runs by scanning activations.
-    const runsData=await api('/v1/runs');
-    if(epoch!==refreshEpoch)return;
-    const runs=(runsData.runs||[]);
-    const artifactEntries=[];
-    // Fetch activations for all runs in parallel (cap at 40 runs to keep it fast).
-    const targets=runs.slice(0,40);
-    await Promise.all(targets.map(async run=>{
-      try{
-        const gData=await api(`/v1/runs/${encodeURIComponent(run.id)}/graph`);
-        if(epoch!==refreshEpoch)return;
-        for(const act of (gData.activations||[])){
-          for(const [name,val] of Object.entries(act.outputs||{})){
-            const ref=extractArtifactRef(val);
-            if(ref){
-              artifactEntries.push({
-                runId:run.id,
-                workflowName:run.workflowName||'',
-                nodeId:act.nodeId||act.id,
-                activationId:act.id,
-                name,
-                digest:ref.digest||'',
-                mime:ref.mime||ref.mimeType||'',
-                size:ref.size||null,
-                path:ref.path||'',
-              });
-            }
-          }
-        }
-      }catch{}
-    }));
-    if(epoch!==refreshEpoch)return;
-    // Deduplicate by digest (same artifact may appear in multiple outputs).
-    const seen=new Set();
-    allArtifacts=artifactEntries.filter(a=>{
-      if(!a.digest)return true;
-      if(seen.has(a.digest))return false;
-      seen.add(a.digest);return true;
-    });
-    renderArtifacts();
-    connectionOK();
-  }catch(err){
-    if(epoch!==refreshEpoch)return;
-    const el=document.getElementById('artifactList');
-    if(el)el.innerHTML=`<div class="notice error" role="alert">Unable to load artifacts: ${esc(err.message)}</div>`;
-    connectionError(err);
-  }
+ const epoch=refreshEpoch;
+ const query=(document.getElementById('artifactSearch')?.value||'').trim();
+ if(query!==artifactQuery){artifactOffset=0;artifactQuery=query;}
+ try{
+  const page=await api(`/v1/outputs?offset=${artifactOffset}&limit=50&q=${encodeURIComponent(query)}`);
+  if(epoch!==refreshEpoch)return;
+  allArtifacts=page.outputs||[];artifactPageMore=!!page.hasMore;renderArtifacts();
+ }catch(err){const el=document.getElementById('artifactList');if(el&&epoch===refreshEpoch)el.innerHTML=`<div class="notice error">${esc(err.message)}</div>`;}
 }
 
 function extractArtifactRef(val){
@@ -490,9 +476,9 @@ function renderArtifacts(){
   if(!el)return;
   const q=(document.getElementById('artifactSearch')?.value||'').trim().toLowerCase();
   const filtered=q?allArtifacts.filter(a=>`${a.runId} ${a.workflowName} ${a.nodeId} ${a.name} ${a.digest} ${a.mime} ${a.path}`.toLowerCase().includes(q)):allArtifacts;
-  if(countEl)countEl.textContent=`${filtered.length} of ${allArtifacts.length} ${allArtifacts.length===1?'artifact':'artifacts'}`;
+  if(countEl)countEl.textContent=`${filtered.length} artifacts on page ${Math.floor(artifactOffset/50)+1}`;
   if(!filtered.length){
-    el.innerHTML=`<div class="tablebox empty"><strong>${q?'No matching artifacts':'No artifacts found'}</strong>${q?'Try a different search term.':'Artifacts are collected from completed run activations. Submit a run that produces file outputs to see them here.'}</div>`;
+    el.innerHTML=`<div class="tablebox empty"><strong>${q?'No matching artifacts':'No artifacts found'}</strong></div>`+runPager('artifact-index',artifactOffset,false,'Artifacts');
     return;
   }
   el.innerHTML=`<div class="tablebox"><table>
@@ -508,7 +494,7 @@ function renderArtifacts(){
           ${a.digest?`<button class="btn ghost" data-art-copy="${esc(a.digest)}">Copy digest</button>`:''}
         </td>
       </tr>`).join('')}
-    </tbody></table></div>`;
+    </tbody></table></div>`+runPager('artifact-index',artifactOffset,artifactPageMore,'Artifacts');
 
   el.querySelectorAll('[data-art-download]').forEach(btn=>btn.onclick=()=>downloadArtifact(btn.dataset.artDownload,btn.dataset.artName,btn));
   el.querySelectorAll('[data-art-copy]').forEach(btn=>btn.onclick=async()=>{
@@ -707,3 +693,5 @@ function restoreDetail(saved){
   eventRecords = saved.eventRecords || [];
   after = saved.after || 0;
 }
+
+document.addEventListener('click',event=>{const button=event.target.closest('[data-run-page="artifact-index"]');if(button&&!button.disabled){artifactOffset=Math.max(0,artifactOffset+Number(button.dataset.direction)*50);loadArtifacts();}});

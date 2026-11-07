@@ -3,6 +3,7 @@ const TPAGE_POLL_MS = 1200;
 let tpageRunId = null, tpageActId = null;
 let tpagePollTimer = null, tpagePollToken = 0;
 let tpageActState = '';
+let tpageLogOffset=0;
 const transcriptPageLogs = new Map();
 
 function stopTranscriptPage() {
@@ -55,9 +56,12 @@ function scheduleTranscriptPagePoll(runId, actId) {
   async function tick() {
     if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
     try {
-      const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
+      const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=${tpageLogOffset}&limit=1`);
       if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+      activationTranscripts.delete(actId);
       const text = mergeActivationLogs(actId, d.logs || []);
+      const pager=document.getElementById('transcriptPager');
+      if(pager){pager.innerHTML=`<nav class="pager" aria-label="Transcript pages"><span>Page ${tpageLogOffset+1}</span><button class="btn ghost" data-transcript-page="-1"${tpageLogOffset===0?' disabled':''}>Previous</button><button class="btn ghost" data-transcript-page="1"${!d.hasMore?' disabled':''}>Next</button></nav>`;pager.querySelectorAll('[data-transcript-page]').forEach(button=>button.onclick=()=>{tpageLogOffset=Math.max(0,tpageLogOffset+Number(button.dataset.transcriptPage));scheduleTranscriptPagePoll(runId,actId);});}
       transcriptPageLogs.set(`${runId}:${actId}`, text);
       updateTranscriptPageBody(text, tpageActState === 'running');
     } catch {}
@@ -67,9 +71,8 @@ function scheduleTranscriptPagePoll(runId, actId) {
     statePollCount++;
     if (statePollCount % 5 === 0) {
       try {
-        const g = await api(`/v1/runs/${encodeURIComponent(runId)}/graph`);
+        const act = await api(`/v1/runs/${encodeURIComponent(runId)}/activations/${encodeURIComponent(actId)}`);
         if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
-        const act = (g.activations || []).find(a => a.id === actId);
         if (act) tpageActState = act.state || tpageActState;
       } catch {}
     }
@@ -86,11 +89,11 @@ async function refreshTranscriptState(runId, actId) {
   if (!runId || !actId) return;
   try {
     const [graphData, attemptsData] = await Promise.all([
-      api(`/v1/runs/${encodeURIComponent(runId)}/graph`),
-      api(`/v1/runs/${encodeURIComponent(runId)}/attempts`).catch(() => ({ attempts: [] })),
+      api(`/v1/runs/${encodeURIComponent(runId)}/activations/${encodeURIComponent(actId)}`),
+      api(`/v1/runs/${encodeURIComponent(runId)}/attempts?activationId=${encodeURIComponent(actId)}&offset=0&limit=50&details=false`).catch(() => ({ attempts: [] })),
     ]);
     if (tpageRunId !== runId || tpageActId !== actId) return;
-    const act = (graphData.activations || []).find(a => a.id === actId);
+    const act = graphData;
     if (!act) return;
     tpageActState = act.state || '';
     const attempts = (attemptsData.attempts || []).filter(a => a.activationId === actId)
@@ -112,6 +115,7 @@ async function loadTranscriptPage(runId, actId) {
   stopTranscriptPage();
   tpageRunId = runId;
   tpageActId = actId;
+  tpageLogOffset=0;activationTranscripts.clear();transcriptPageLogs.clear();
   tpageActState = '';
   const meta = document.getElementById('transcriptMeta');
   if (meta) meta.innerHTML = '<p class="inspector-placeholder">Loading…</p>';

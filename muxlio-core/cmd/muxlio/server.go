@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -443,6 +442,12 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		executor.AgentHome = config.AgentHome
 		executor.Executors = config.Executors
 		executor.WorkerEnv = config.WorkerEnv
+		isolationLabels, err := workers.IsolationLabels(config.IsolationBackends)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+
 		if config.AttemptTimeoutSeconds > 0 {
 			executor.Timeout = time.Duration(config.AttemptTimeoutSeconds) * time.Second
 		}
@@ -468,7 +473,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 				if ctx.Err() != nil {
 					return
 				}
-				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Capacity: 1, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace}, executor)
+				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Labels: isolationLabels, Capacity: 1, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace}, executor)
 				if err == nil || ctx.Err() != nil {
 					return
 				}
@@ -551,15 +556,14 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 
 func serviceUI(api http.Handler, directory, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/_ui-api/v1/") {
-			// Only the local UI may use the operator credential implicitly.
-			// Preserve explicit credentials so scoped clients cannot gain admin.
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			// UI access is trusted on this deployment's local network. The
+			// browser does not need credentials; worker/client tokens supplied
+			// explicitly retain their scopes.
 			r = r.Clone(r.Context())
-			if token != "" && r.Header.Get("Authorization") == "" && localUIRequest(r) {
+			if token != "" && r.Header.Get("Authorization") == "" {
 				r.Header.Set("Authorization", "Bearer "+token)
 			}
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/_ui-api")
-			r.URL.RawPath = ""
 			api.ServeHTTP(w, r)
 			return
 		}
@@ -570,11 +574,13 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			"/workspace.css":    "workspace.css",
 			"/js/markdown.js":   "js/markdown.js",
 			"/js/core.js":       "js/core.js",
+			"/js/format.js":     "js/format.js",
 			"/js/workbench.js":  "js/workbench.js",
 			"/js/inspector.js":  "js/inspector.js",
 			"/js/live.js":       "js/live.js",
 			"/js/transcript.js": "js/transcript.js",
 			"/js/analytics.js":  "js/analytics.js",
+			"/js/operations.js": "js/operations.js",
 			"/js/boot.js":       "js/boot.js",
 			"/logo.png":         "logo.png",
 			"/favicon.ico":      "favicon.ico",
@@ -593,38 +599,6 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, filepath.Join(directory, name))
 	})
-}
-
-// Implicit UI credentials require a local peer and local Host. Browser requests
-// must also be same-origin, preventing cross-site forms and DNS rebinding from
-// borrowing the local operator's authority.
-func localUIRequest(r *http.Request) bool {
-	peer, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		peer = r.RemoteAddr
-	}
-	ip := net.ParseIP(peer)
-	if ip == nil || !ip.IsLoopback() {
-		return false
-	}
-	host := (&url.URL{Host: r.Host}).Hostname()
-	if ip = net.ParseIP(host); !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return false
-	}
-	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		return false
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		if err != nil || u.Scheme != scheme || u.Host != r.Host {
-			return false
-		}
-	}
-	return true
 }
 
 // Artifact bodies use the transport limit; control requests retain the smaller

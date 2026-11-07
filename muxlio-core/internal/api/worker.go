@@ -77,6 +77,7 @@ type WorkerAssignment struct {
 }
 
 type WorkerCompletion struct {
+	OutputErrors        map[string]string             `json:"outputErrors,omitempty"`
 	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
 	AssignmentID        string                        `json:"assignmentId"`
 	RunID               string                        `json:"runId"`

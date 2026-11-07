@@ -71,6 +71,11 @@ func TestBundledConformance(t *testing.T) {
 		covered[f.Binary] = true
 	}
 	for _, entry := range entries {
+		// Git does not remove empty directories left by retired adapters.
+		// Only executable source packages participate in bundled conformance.
+		if _, err := os.Stat(filepath.Join(root, "cmd", entry.Name(), "main.go")); os.IsNotExist(err) {
+			continue
+		}
 		if entry.IsDir() && !covered[entry.Name()] {
 			t.Errorf("bundled adapter %s has no conformance fixture", entry.Name())
 		}

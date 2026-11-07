@@ -108,6 +108,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .content > .page:not([hidden]),.content > #message{flex:0 0 auto}
 .content > #detailView:not([hidden]){display:flex;flex-direction:column;min-height:0;flex:0 0 auto;width:100%}
 .content--wb,.content:has(#workbenchView:not([hidden])){overflow:auto;padding:0}
+.content:has(#detailView:not([hidden]) #workbenchView:not([hidden]) #wbTabGraph:not([hidden])){
+  background-color:#0e1316;
+  background-image:linear-gradient(to left,var(--bg) var(--insp-w),transparent var(--insp-w)),radial-gradient(circle,#2a363c 1px,transparent 1px);
+  background-size:100% 100%,20px 20px;
+  background-repeat:no-repeat,repeat
+}
 .content--wb > #detailView:not([hidden]),.content:has(#workbenchView:not([hidden])) > #detailView:not([hidden]){flex:0 0 auto;min-height:0}
 #detailView > #workbenchView:not([hidden]){flex:0 0 auto;min-height:0;width:100%}
 #detailView > #runDetail:not([hidden]){flex:0 0 auto;width:100%;min-height:100%;overflow:visible}
@@ -153,11 +159,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .legend-dot.failed{background:var(--red)}
 .legend-dot.pending{background:var(--amber)}
 .graph-canvas{
-  flex:0 0 auto;overflow:visible;padding:28px 24px;position:relative;min-height:0;
-  background-color:#0e1316;
-  background-image:radial-gradient(circle,#2a363c 1px,transparent 1px);
-  background-size:20px 20px
+  flex:0 0 auto;overflow:visible;padding:28px 24px;position:relative;min-height:0;width:max-content;min-width:100%;
+  background:transparent
 }
+.wb-head,.stat-row,.graph-toolbar{background-color:var(--bg)}
 .graph-flow{display:flex;align-items:center;gap:0;width:max-content;min-width:0;min-height:180px}
 .graph-col.graph-control-stage{padding:12px;border:1px solid var(--border2);border-radius:14px;background:#10181c}
 .graph-col{display:flex;flex-direction:column;align-items:flex-start;gap:0;flex:0 0 auto;width:max-content;position:relative}

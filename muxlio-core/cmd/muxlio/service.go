@@ -23,7 +23,8 @@ var originalArgs = append([]string(nil), os.Args...)
 
 // serviceConfig authorizes native execution within one explicit workspace.
 type serviceConfig struct {
-	Admission state.AdmissionConfig `json:"admission,omitempty"`
+	IsolationBackends []string              `json:"isolationBackends,omitempty"`
+	Admission         state.AdmissionConfig `json:"admission,omitempty"`
 	// configPath identifies the selected credential file independently of RuntimeDir.
 	configPath string
 

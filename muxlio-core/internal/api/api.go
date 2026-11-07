@@ -293,6 +293,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		_, _ = w.Write(raw)
 	})
 
+	mux.HandleFunc("/v1/outputs", func(w http.ResponseWriter, r *http.Request) { handleRunOutputs(w, r, store, "") })
 	mux.HandleFunc("/v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handleCreateRun(w, r, runner)
@@ -301,6 +302,21 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET or POST")
 			return
+		}
+		if r.URL.Query().Has("limit") {
+			if index, ok := store.(state.RunIndexStore); ok {
+				offset, limit := pageOptions(r)
+				runs, total, counts, err := index.ListRunPage(offset, limit+1, r.URL.Query().Get("q"), r.URL.Query().Get("state"), r.URL.Query().Get("sort"))
+				if err != nil {
+					writeError(w, 500, CodeStoreError, err.Error())
+					return
+				}
+				page := pageResult(runs, offset, limit, "runs")
+				page["total"] = total
+				page["states"] = counts
+				writeJSON(w, 200, page)
+				return
+			}
 		}
 		runs, err := store.ListRuns()
 		if err != nil {
@@ -383,26 +399,27 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
 				return
 			}
-			if _, err := store.GetRun(runID); err != nil {
+			if _, err := runHeader(store, runID); err != nil {
 				writeError(w, http.StatusNotFound, CodeNotFound, "run not found")
 				return
 			}
-			snapshots, err := state.ListSnapshots(store, runID, r.URL.Query().Get("activationId"), r.URL.Query().Get("attemptId"), r.URL.Query().Get("current") == "true")
+			after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+			if after < 0 {
+				after = 0
+			}
+			_, limit := pageOptions(r)
+			var page []state.Event
+			var err error
+			if views, ok := store.(state.RunViewStore); ok {
+				page, err = views.SnapshotPage(runID, r.URL.Query().Get("activationId"), r.URL.Query().Get("attemptId"), after, limit+1, r.URL.Query().Get("current") == "true")
+			} else {
+				err = fmt.Errorf("paged reads unavailable")
+			}
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+				writeError(w, 500, CodeStoreError, err.Error())
 				return
 			}
-			after, _ := strconv.Atoi(r.URL.Query().Get("after"))
-			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-			if limit <= 0 || limit > 200 {
-				limit = 200
-			}
-			page := make([]state.Event, 0)
-			for _, event := range snapshots {
-				if event.Seq > after {
-					page = append(page, event)
-				}
-			}
+
 			more := len(page) > limit
 			if more {
 				page = page[:limit]
@@ -436,6 +453,19 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			handleGetEvents(w, r, store, runID)
 			return
 		}
+		if len(parts) == 2 && parts[1] == "outputs" {
+			handleRunOutputs(w, r, store, runID)
+			return
+		}
+		if len(parts) == 3 && parts[1] == "activations" && r.Method == http.MethodGet {
+			a, err := store.GetActivation(parts[2])
+			if err != nil || a.RunID != runID {
+				writeError(w, 404, CodeNotFound, "activation not found")
+				return
+			}
+			writeJSON(w, 200, a)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "activations" {
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
@@ -461,6 +491,20 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeJSON(w, http.StatusOK, map[string]any{"resolved": true})
 			return
 		}
+		if len(parts) == 3 && parts[1] == "attempts" && r.Method == http.MethodGet {
+			views, ok := store.(state.RunViewStore)
+			if !ok {
+				writeError(w, 503, CodeStoreError, "paged reads unavailable")
+				return
+			}
+			a, err := views.GetAttempt(runID, parts[2])
+			if err != nil {
+				writeError(w, 404, CodeNotFound, "attempt not found")
+				return
+			}
+			writeJSON(w, 200, a)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "attempts" {
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
@@ -474,7 +518,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
 				return
 			}
-			handleGetGraph(w, store, runID)
+			handleGetGraph(w, r, store, runID)
 			return
 		}
 		if len(parts) == 2 && parts[1] == "logs" {
@@ -544,7 +588,7 @@ type workerRegistry interface {
 }
 
 func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
-	if _, err := store.GetRun(runID); err != nil {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
@@ -556,9 +600,21 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 			return
 		}
 	}
-	attempts, err := store.ListExecutionAttempts(runID, activationID)
+	var attempts []state.ExecutionAttempt
+	var err error
+	offset, limit := pageOptions(r)
+	paged := r.URL.Query().Has("limit")
+	if views, ok := store.(state.RunViewStore); ok && paged {
+		attempts, err = views.ListExecutionAttemptPage(runID, activationID, offset, limit+1, r.URL.Query().Get("details") != "false")
+	} else {
+		attempts, err = store.ListExecutionAttempts(runID, activationID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+		return
+	}
+	if paged {
+		writeJSON(w, 200, pageResult(attempts, offset, limit, "attempts"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
@@ -603,9 +659,19 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner) {
 }
 
 func handleGetRun(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
-	run, err := store.GetRun(runID)
+	var run *state.Run
+	var err error
+	if views, ok := store.(state.RunViewStore); ok && r.URL.Query().Get("summary") == "true" {
+		run, err = views.GetRunHeader(runID)
+	} else {
+		run, err = store.GetRun(runID)
+	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+		return
+	}
+	if r.URL.Query().Get("summary") == "true" {
+		handleRunSummary(w, r, store, run)
 		return
 	}
 	attempts, err := store.ListExecutionAttempts(runID, "")
@@ -635,11 +701,44 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, 
 			limit = n
 		}
 	}
-	if _, err := store.GetRun(runID); err != nil {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
-	events, err := store.GetEvents(runID, after, limit+1)
+	var events []state.Event
+	var err error
+	if r.URL.Query().Get("order") == "desc" {
+		views, ok := store.(state.RunViewStore)
+		if !ok {
+			writeError(w, 503, CodeStoreError, "paged reads unavailable")
+			return
+		}
+		_, limit = pageOptions(r)
+		before, _ := strconv.Atoi(r.URL.Query().Get("before"))
+		if before < 0 {
+			before = 0
+		}
+		events, err = views.EventsBefore(runID, before, limit+1)
+		if err != nil {
+			writeError(w, 500, CodeStoreError, err.Error())
+			return
+		}
+		more := len(events) > limit
+		if more {
+			events = events[:limit]
+		}
+		next := before
+		if len(events) > 0 {
+			next = events[len(events)-1].Seq
+		}
+		writeJSON(w, 200, map[string]any{"events": events, "nextBefore": next, "hasMore": more, "limit": limit})
+		return
+	}
+	if views, ok := store.(state.RunViewStore); ok && r.URL.Query().Get("tail") == "true" {
+		events, err = views.RecentEvents(runID, limit)
+	} else {
+		events, err = store.GetEvents(runID, after, limit+1)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
 		return
@@ -656,7 +755,7 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, 
 }
 
 func handleStreamEvents(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
-	if _, err := store.GetRun(runID); err != nil {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
@@ -708,7 +807,7 @@ func handleStreamEvents(w http.ResponseWriter, r *http.Request, store state.Stor
 		if len(events) == 100 {
 			continue
 		}
-		run, err := store.GetRun(runID)
+		run, err := runHeader(store, runID)
 		if err != nil || isTerminalRun(run.State) {
 			return
 		}
@@ -732,7 +831,7 @@ func isTerminalRun(state string) bool {
 }
 
 func handleGetActivations(w http.ResponseWriter, store state.Store, runID string) {
-	if _, err := store.GetRun(runID); err != nil {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
@@ -744,12 +843,34 @@ func handleGetActivations(w http.ResponseWriter, store state.Store, runID string
 	writeJSON(w, http.StatusOK, map[string]any{"activations": activations})
 }
 
-func handleGetGraph(w http.ResponseWriter, store state.Store, runID string) {
-	if _, err := store.GetRun(runID); err != nil {
+func handleGetGraph(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
-	activations, err := store.ListActivations(runID)
+	var activations []state.Activation
+	var err error
+	offset, limit := pageOptions(r)
+	paged := r.URL.Query().Has("limit")
+	if views, ok := store.(state.RunViewStore); ok && paged {
+		if r.URL.Query().Get("focus") == "true" {
+			offset, err = views.ActiveActivationOffset(runID, limit)
+		}
+		if err == nil {
+			activations, err = views.ListActivationPage(runID, offset, limit+1, false)
+		}
+	} else {
+		if views, ok := store.(state.RunViewStore); ok {
+			activations, err = views.ListActivationPage(runID, 0, -1, false)
+		} else {
+			activations, err = store.ListActivations(runID)
+		}
+	}
+	var response map[string]any
+	if paged {
+		response = pageResult(activations, offset, limit, "activations")
+		activations = response["activations"].([]state.Activation)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
 		return
@@ -769,11 +890,15 @@ func handleGetGraph(w http.ResponseWriter, store state.Store, runID string) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"scopes": scopes, "activations": activations})
+	if !paged {
+		response = map[string]any{"activations": activations}
+	}
+	response["scopes"] = scopes
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleGetLogs(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
-	if _, err := store.GetRun(runID); err != nil {
+	if _, err := runHeader(store, runID); err != nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
@@ -785,9 +910,21 @@ func handleGetLogs(w http.ResponseWriter, r *http.Request, store state.Store, ru
 			return
 		}
 	}
-	logs, err := store.GetLogChunks(runID, activationID)
+	var logs []state.LogChunk
+	var err error
+	offset, limit := pageOptions(r)
+	paged := r.URL.Query().Has("limit")
+	if views, ok := store.(state.RunViewStore); ok && paged {
+		logs, err = views.GetLogChunkPage(runID, activationID, offset, limit+1)
+	} else {
+		logs, err = store.GetLogChunks(runID, activationID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+		return
+	}
+	if paged {
+		writeJSON(w, 200, pageResult(logs, offset, limit, "logs"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": logs})

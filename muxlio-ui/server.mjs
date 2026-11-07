@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { isIP } from 'node:net';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const apiURL = new URL(process.env.MUXLIO_API_URL || 'http://127.0.0.1:7600');
@@ -27,38 +26,23 @@ function configuredToken() {
   } catch {}
   return '';
 }
-const apiToken = configuredToken();
 const port = Number(process.env.PORT || 7601);
 const host = process.env.HOST || '127.0.0.1';
-
-// Implicit operator credentials belong only to the same-origin local UI.
-export function localUIRequest(req) {
-  const loopback = value => {
-    const ip = value?.replace(/^::ffff:/i, '');
-    return ip === '::1' || (isIP(ip || '') === 4 && ip.startsWith('127.'));
-  };
-  if (!loopback(req.socket.remoteAddress)) return false;
-  try {
-    const local = new URL(`http://${req.headers.host}`);
-    if (local.hostname !== 'localhost' && !loopback(local.hostname.replace(/^\[|\]$/g, ''))) return false;
-    if (req.headers['sec-fetch-site'] === 'cross-site') return false;
-    if (req.headers.origin && req.headers.origin !== local.origin) return false;
-    return true;
-  } catch { return false; }
-}
 
 export function createUIServer({ coordinatorURL = apiURL, uiDirectory = directory } = {}) {
   const target = coordinatorURL instanceof URL ? coordinatorURL : new URL(coordinatorURL);
   return createServer(async (req, res) => {
-    const uiAPI = req.url?.startsWith('/_ui-api/v1/');
-    if (uiAPI || req.url === '/v1' || req.url?.startsWith('/v1/') || req.url === '/healthz') {
-      const upstreamPath = uiAPI ? req.url.slice('/_ui-api'.length) : req.url;
-      const proxy = httpRequest(new URL(upstreamPath, target), {
+    const apiRequest = req.url?.startsWith('/v1/');
+    if (apiRequest || req.url === '/v1' || req.url === '/healthz') {
+      // UI clients on the trusted local network do not need credentials.
+      // The coordinator may create or rotate credentials while the UI stays up.
+      const apiToken = apiRequest && !req.headers.authorization ? configuredToken() : '';
+      const proxy = httpRequest(new URL(req.url, target), {
         method: req.method,
         headers: {
           ...req.headers,
           host: target.host,
-          ...(uiAPI && apiToken && !req.headers.authorization && localUIRequest(req) ? { authorization: `Bearer ${apiToken}` } : {}),
+          ...(apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
         },
       }, (upstream) => {
         res.writeHead(upstream.statusCode || 502, upstream.headers);
@@ -82,12 +66,14 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
       '/workspace.css': 'text/css',
       '/workspace.js': 'text/javascript',
       '/js/core.js': 'text/javascript',
+      '/js/format.js': 'text/javascript',
       '/js/markdown.js': 'text/javascript',
       '/js/workbench.js': 'text/javascript',
       '/js/inspector.js': 'text/javascript',
       '/js/live.js': 'text/javascript',
       '/js/transcript.js': 'text/javascript',
       '/js/analytics.js': 'text/javascript',
+      '/js/operations.js': 'text/javascript',
       '/js/boot.js': 'text/javascript',
       '/logo.png': 'image/png',
       '/favicon.ico': 'image/x-icon',

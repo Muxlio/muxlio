@@ -1,0 +1,67 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+
+const source=readFileSync(new URL('./workspace.js',import.meta.url),'utf8');
+const listeners=[],panels=new Map(),calls=[],renders=[];
+let latestEvent=1000;
+const panel=id=>{if(!panels.has(id))panels.set(id,{innerHTML:'',hidden:false});return panels.get(id)};
+const context=vm.createContext({
+ document:{addEventListener:(type,fn)=>{if(type==='click')listeners.push(fn)},getElementById:panel},
+ esc:String,current:'large-run',selectedActivation:null,selectedActivationDetail:null,after:0,hasMore:false,wbHasMore:false,
+ openRun(){},stopTranscriptPoll(){},stopEventStream(){},renderRunOperations(){},renderLiveEvents(){},
+ connectionOK(){},connectionError(){},message(){},operationsRun:null,wbActiveTab:'graph',
+ renderWorkbench:(run,graph,events)=>renders.push({run,graph,events}),
+ api:async path=>{
+  calls.push(path);const url=new URL(path,'http://coordinator');
+  if(url.searchParams.get('summary')==='true')return {id:'large-run',state:'succeeded',overview:{activations:10000,latestEventSeq:99999}};
+  const offset=Number(url.searchParams.get('offset')||0),before=Number(url.searchParams.get('before')||0);
+  if(url.pathname.endsWith('/graph'))return {activations:Array.from({length:10000},(_,i)=>({id:`node-${i}`})),scopes:[]};
+  if(url.pathname.endsWith('/outputs'))return {outputs:[],offset,hasMore:true};
+  if(url.pathname.endsWith('/events')){const first=before?before-1:latestEvent;return {events:Array.from({length:50},(_,i)=>({seq:first-i})),nextBefore:first-49,hasMore:true};}
+  throw Error(`unexpected unbounded request ${path}`);
+ },
+});
+const prefix=source.slice(0,source.indexOf('// ── event renderer'));
+const merge=source.slice(source.indexOf('function mergeEvents'),source.indexOf('function stopEventStream'));
+const open=source.slice(source.indexOf('const _baseOpenRun='),source.indexOf('// ── connection status'));
+vm.runInContext(prefix+merge+open,context);
+await context.openRun('large-run');
+assert.equal(renders.length,1);
+assert.equal(renders[0].graph.activations.length,10000,'the graph includes all nodes');
+assert.equal(renders[0].events.length,50);
+await context.openRun('large-run');
+assert.equal(renders.at(-1).events[0].seq,1000,'the first page starts at the newest event');
+assert.ok(calls.some(path=>path.endsWith('/graph')),'the graph is loaded without paging');
+assert.ok(calls.filter(path=>path.includes('/events?')||path.includes('/outputs?')).every(path=>path.includes('limit=50')),'history reads remain bounded');
+async function page(key,direction){
+ const button={disabled:false,dataset:{runPage:key,direction:String(direction)}};
+ const event={target:{closest:selector=>selector==='[data-run-page]'?button:null}};
+ for(const listener of listeners)await listener(event);
+}
+await page('events',1);
+assert.equal(renders.at(-1).events[0].seq,950);
+assert.equal(renders.at(-1).events.length,50,'history pages replace rather than append');
+latestEvent=1001;
+await context.openRun('large-run');
+assert.equal(renders.at(-1).events[0].seq,950,'new events do not shift a historical page');
+await page('events',-1);
+assert.equal(renders.at(-1).events[0].seq,1001,'previous returns to the latest page');
+await page('outputs',1);
+assert.ok(calls.some(path=>path.includes('/outputs?offset=50')),'artifact pages advance independently');
+assert.equal(renders.at(-1).graph.activations.length,10000,'paging history never truncates the graph');
+
+const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
+const opsContext=vm.createContext({document:{addEventListener(){},getElementById:panel},esc:s=>String(s).replaceAll('<','&lt;'),fmtTokens:String,fmtDuration:String,date:String,stateClass:String});
+vm.runInContext(operations,opsContext);
+opsContext.renderRunOperations({id:'large-run',planDigest:'sha256:pinned',limits:{maxAttempts:100},overview:{attempts:20,heldAttempts:1,attemptStates:{detached:2,awaiting_reconciliation:1},usage:{tokens:{observed:0,unknown:2},costUsd:{estimated:1}}}});
+assert.match(panel('runAttention').innerHTML,/need reconciliation/);
+assert.match(panel('runAttention').innerHTML,/2 remote operations/);
+assert.match(panel('runContract').innerHTML,/<dt>Observed<\/dt><dd>0<\/dd>/,'reported zero stays distinct from missing usage');
+assert.match(panel('runContract').innerHTML,/<dt>Estimated<\/dt><dd>\$1\.0000<\/dd>/);
+assert.match(panel('runContract').innerHTML,/sha256:pinned/);
+assert.doesNotMatch(opsContext.attemptMetadataMarkup([{executor:'<script>',id:'attempt',state:'detached',operationRef:{id:'<img>'}}]),/<script>|<img>/);
+const row=opsContext.attemptRowMarkup({id:'attempt',executor:'generic',state:'succeeded',usage:{input:0},executionDurationMs:0});
+assert.match(row,/<dt>Input<\/dt><dd>0<\/dd>/);
+assert.match(row,/<dt>Output<\/dt><dd>Unavailable<\/dd>/);
+console.log('bounded run pages, stable refresh, and operational accounting checks passed');

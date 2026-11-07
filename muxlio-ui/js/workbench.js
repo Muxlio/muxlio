@@ -21,8 +21,7 @@ function sumRunTokenUsage(attempts){
   return anyReported?{input,output,cached}:null;
 }
 
-// fmtTokens formats a token count with a K suffix for readability.
-function fmtTokens(n){if(n>=1000)return `${(n/1000).toFixed(1)}K`;return String(n)}
+// Round token counts using the largest readable compact unit.
 
 // Prefer worker measurements; older attempts retain coordinator timestamps.
 // Sum attempt durations individually so parallel work and retries are included.
@@ -42,21 +41,21 @@ function sumExecutionTime(attempts){
   }
   return known?total:null;
 }
-function formatElapsed(start,end){if(!start||!end)return '—';const ms=Math.max(0,new Date(end)-new Date(start));if(ms<1000)return `${ms} ms`;if(ms<60000)return `${(ms/1000).toFixed(1)} s`;return `${Math.floor(ms/60000)}m ${Math.floor(ms%60000/1000)}s`}
 
 function buildWbStats(r,acts){
-  const total=acts.length,done=acts.filter(a=>a.state==='succeeded').length;
+  const total=r.overview?.activations??acts.length,done=r.overview?.completed??acts.filter(a=>a.state==='succeeded').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
-  const usage=sumRunTokenUsage(attempts);
-  const executionTime=sumExecutionTime(attempts);
+  const usage=r.overview?r.overview.tokens:sumRunTokenUsage(attempts);
+  const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
-  const tokIn =attempts.length?usage!=null?fmtTokens(usage.input):'Unavailable':'—';
-  const tokOut=attempts.length?usage!=null?fmtTokens(usage.output):'Unavailable':'—';
-  const tokCached=attempts.length?usage!=null?fmtTokens(usage.cached):'Unavailable':'—';
+  const tokIn =(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.input):'Unavailable':'—';
+  const tokOut=(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.output):'Unavailable':'—';
+  const tokCached=(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.cached):'Unavailable':'—';
+  const partial=r.overview?.usage?.tokens?.unknown>0?' · partial':'';
   const tokenStats=[
-    {val:tokIn,label:'Input tokens'},
-    {val:tokOut,label:'Output tokens'},
-    {val:tokCached,label:'Cached tokens'},
+    {val:tokIn,label:'Input tokens'+partial},
+    {val:tokOut,label:'Output tokens'+partial},
+    {val:tokCached,label:'Cached tokens'+partial},
   ];
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
@@ -68,7 +67,7 @@ function buildWbStats(r,acts){
     tokenStats.map(s=>`<div class="stat"><div class="stat-val">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
 }
 
-function graphMarkup(acts,scopes){
+function graphMarkup(acts,scopes,runComplete){
   activationDisplayNumbers.clear();
   function frameGraph(content,complete=false){
     const started=!!acts?.length;
@@ -172,7 +171,7 @@ function graphMarkup(acts,scopes){
     if(orphaned.length)html+=renderNestedScopes(orphaned);
     if(!html)html='<div class="graph-scope-empty">No activations in this scope.</div>';
     if(isRoot){
-      const allDone=acts.every(a=>a.state==='succeeded');
+      const allDone=runComplete??acts.every(a=>a.state==='succeeded');
       return frameGraph(html,allDone);
     }
     if(omitHeader)return `<div class="graph-scope-flow">${html}</div>`;
@@ -184,8 +183,8 @@ function graphMarkup(acts,scopes){
 function buildWbEvents(events){
   if(!events||!events.length)return '<div style="color:var(--muted);font-size:11px;padding:4px 0">No events recorded.</div>';
   // Cap at 100 most-recent events to prevent DOM bloat on long-running workflows.
-  return events.slice().reverse().slice(0,100).map(e=>{
-    const t=e.timestamp?new Date(e.timestamp).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'—';
+  return events.slice().sort((a,b)=>b.seq-a.seq).slice(0,100).map(e=>{
+    const t=MuxlioFormat.timestamp(e.timestamp,true);
     const label=eventLabel(e.type);
     return `<div class="event-row"><span class="event-time">${esc(t)}</span><span class="event-text"><strong>${esc(label)}</strong>${e.subjectId?` <span class="subtle">${esc(e.subjectId)}</span>`:''}</span></div>`;
   }).join('');
@@ -211,6 +210,7 @@ function buildWbArtifacts(acts){
 // workbench. Read by inspector.js to decide whether to show the retry
 // actions panel; must be set before renderWorkbench calls renderInspectorWb.
 let wbCurrentRunState='';
+let wbActiveTab='graph';
 function renderWorkbench(r,g,events){
   const acts=g.activations||[];
   activationData=acts;
@@ -230,10 +230,9 @@ function renderWorkbench(r,g,events){
   sb.textContent=({succeeded:'✓ Succeeded',failed:'✗ Failed',running:'⟳ Running',waiting:'Waiting',paused:'Ⅱ Paused',cancelled:'Cancelled'}[r.state]||r.state||'—');
 
   $('#wbStats').innerHTML=buildWbStats(r,acts);
-  replaceHTMLPreservingDetails($('#graphFlow'),graphMarkup(acts,g.scopes||[]));
-  replaceHTMLPreservingDetails($('#wbEventList'),buildWbEvents(events));
-  $('#wbArtifactList').innerHTML=buildWbArtifacts(acts);
-  $('#inspActivationCount').textContent=`${acts.length} nodes`;
+  replaceHTMLPreservingDetails($('#graphFlow'),graphMarkup(acts,g.scopes||[],r.overview?r.overview.completed===r.overview.activations:undefined));
+  if(!g.hasOwnProperty('offset'))$('#wbArtifactList').innerHTML=buildWbArtifacts(acts);
+  $('#inspActivationCount').textContent=`${r.overview?.activations??acts.length} nodes`;
 
   // timeline
   const tlEl=$('#wbTimeline');
@@ -243,9 +242,9 @@ function renderWorkbench(r,g,events){
   if(moreBtn)moreBtn.disabled=!wbHasMore;
 
   // run data
-  currentRunInput=r.input;currentRunOutput=r.output;
-  replaceHTMLPreservingDetails($('#runInputInspector'),inputMarkup(r.input));
-  replaceHTMLPreservingDetails($('#runOutputInspector'),outputMarkup(r.output,'run-output'));
+  if(!r.overview){currentRunInput=r.input;currentRunOutput=r.output;}
+  if(!r.overview)replaceHTMLPreservingDetails($('#runInputInspector'),inputMarkup(r.input));
+  if(!r.overview)replaceHTMLPreservingDetails($('#runOutputInspector'),outputMarkup(r.output,'run-output'));
 
   // node click handlers
   document.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>loadActivation(b.dataset.act));
@@ -255,14 +254,19 @@ function renderWorkbench(r,g,events){
   $('#nodeInspector').onclick=inspectorAction;
   $('#runOutputInspector').onclick=inspectorAction;
 
+  if(selectedActivation&&typeof selectedActivationDetail!=='undefined'&&selectedActivationDetail?.id===selectedActivation){const index=activationData.findIndex(a=>a.id===selectedActivation);if(index>=0)activationData[index]={...selectedActivationDetail,...activationData[index]};else activationData.push(selectedActivationDetail);}
   if(selectedActivation)renderInspector();
+  else {const body=$('#inspBody');if(body)body.innerHTML='<p class="inspector-placeholder">Select an execution to inspect its attempts and outputs.</p>';const identity=$('#inspIdentity');if(identity)identity.hidden=true;const actions=$('#inspActions');if(actions)actions.hidden=true;}
 }
 
 function showWbTab(tab){
-  for(const t of ['graph','events','data']){
+  wbActiveTab=tab;
+  for(const t of ['graph','events','artifacts','data','operations']){
     const el=$(`#wbTab${t[0].toUpperCase()+t.slice(1)}`);
     if(el)el.hidden=t!==tab;
   }
+  if(tab==='data'&&typeof loadRunData==='function')loadRunData();
+  if(tab==='operations'&&typeof loadRunOperations==='function')loadRunOperations();
   document.querySelectorAll('[data-wb-tab]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.wbTab===tab))});
 }
 

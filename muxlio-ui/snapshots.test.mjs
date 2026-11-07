@@ -22,10 +22,15 @@ const context={
 vm.createContext(context);
 vm.runInContext(source.slice(start,end),context);
 await context.loadInspectorSnapshots({id:'act',state:'failed'},'run');
+assert.equal(calls.length,1,'opening the inspector must fetch only one snapshot page');
+assert.match(calls[0],/limit=20/);
+assert.match(panel.innerHTML,/data-snapshot-page="1"/);
+vm.runInContext('snapshotPageIndex=1',context);
+await context.loadInspectorSnapshots({id:'act',state:'failed'},'run');
 assert.equal(calls.length,2);
 assert.match(calls[1],/after=3/);
 assert.match(panel.innerHTML,/not committed final outputs/);
-assert.match(panel.innerHTML,/Latest · seq 5/);
-assert.match(panel.innerHTML,/Historical · seq 3/);
+assert.match(panel.innerHTML,/seq 5/);
+assert.doesNotMatch(panel.innerHTML,/seq 3/,'pages replace previous snapshot DOM');
 assert.match(panel.innerHTML,/attempt/);
 console.log('snapshot inspector pagination and provenance checks passed');

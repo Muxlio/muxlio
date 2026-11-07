@@ -312,7 +312,7 @@ With the supervised service, static UI assets are served from the coordinator ad
 
 ```sh
 muxlio service start
-# Open http://127.0.0.1:7600/  (API under /v1/, UI proxies via /_ui-api/v1/)
+# Open http://127.0.0.1:7600/  (UI and clients use the API under /v1/)
 ```
 
 For a coordinator without the bundled UI, start the API and launch the UI helper on a second port:
@@ -627,7 +627,7 @@ Run `npm run build` before Go tests to include the real async compiler regressio
 
 ## Security notes
 
-- The coordinator requires a **Bearer token** on `/v1/*` API routes (including worker registration). `muxlio init` creates a token in `~/.muxlio/config.json`; the CLI attaches it for loopback URLs. Override with `MUXLIO_TOKEN`, `--token`, or `--token-file`. `/healthz` stays unauthenticated for liveness checks. Bind to loopback (`127.0.0.1:7600`) and use SSH port forwarding for remote access; forward the token to clients that call the forwarded port.
+- The UI assumes a trusted local network and requires no browser token. With UI serving enabled, requests to `/v1/*` without an explicit credential receive operator access, regardless of the client address or hostname. Explicit bearer tokens retain their configured permissions. Standalone coordinators still require a **Bearer token** on `/v1/*`; `muxlio init` creates one in `~/.muxlio/config.json`. The CLI attaches it for loopback URLs; override with `MUXLIO_TOKEN`, `--token`, or `--token-file`. `/healthz` stays public for liveness checks.
 - Any client that can reach the service with a valid token can submit plans that invoke advertised capabilities with your user permissions. Treat MCP and HTTP access as equivalent.
 - The service runs as your login user, never as root. A workspace is an execution target, not a filesystem sandbox. Native child processes receive a minimal environment with `HOME` set to the operator's real home by default (reusing existing provider logins such as `~/.codex`, `~/.cursor`); set an explicit `agentHome` to use a dedicated credential directory instead. Required isolation (OCI/bwrap/VM) uses a scratch HOME and mounts no provider credentials. For Cursor on headless macOS, see [muxlio-docs/service.md](muxlio-docs/service.md#configure-and-start) for the one-time credential store setup.
 - Remote workers may continue an operation already assigned to them after a run is cancelled, so external side effects can occur after cancellation. Recovery does not guarantee exactly-once execution for arbitrary external systems.
@@ -842,3 +842,23 @@ muxlio test-event --server https://coordinator.example \
 Use `--signature-header`, `--signature-prefix`, and `--signature-encoding` when
 the trigger uses custom signing settings. Repeating the command with the same
 key exercises deduplication.
+
+### Large-run operations in the UI
+
+The execution workbench pages executions, event history, attempt history,
+outputs and intermediate snapshots independently. Refresh preserves the selected
+history page; live events use a separate bounded feed. Artifact bytes, full
+attempt results, and run input/output values load when opened.
+
+The **Operations & usage** tab shows the pinned version, run limits, detached
+operations, reconciliation holds, and observed/estimated/unavailable accounting.
+Worker details expose readiness checks, capability contracts and placement
+labels. Persistent sessions expose supported input-delivery policies and receipts.
+Token counts automatically use K, M, or B units.
+
+Paged reads are opt-in for API clients: `/v1/runs?offset=0&limit=25`,
+`/v1/runs/:id/graph?offset=0&limit=50`, and
+`/v1/runs/:id/attempts?offset=0&limit=50&details=false` return `hasMore`
+and `nextOffset`. `/v1/runs/:id?summary=true` omits input/output bodies while
+preserving totals across the whole run. `/v1/runs/:id/outputs` lists port
+metadata; `/v1/outputs` lists file references across runs without inline bytes.

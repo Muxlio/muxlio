@@ -133,6 +133,12 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	executor.Executors = settings.Executors
 	executor.WorkerEnv = settings.WorkerEnv
 	executor.AgentHome = settings.AgentHome
+	isolationLabels, err := workers.IsolationLabels(settings.IsolationBackends)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
 	// Retain blocked reports for status, while matching excludes them before lease.
 	for i := range caps {
 		report := executor.Probe(context.Background(), caps[i].Name)
@@ -166,7 +172,7 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	fmt.Fprintf(os.Stderr, "muxlio worker %s connecting to %s (%s/%s, capacity=%d)\n", workerID, coordinator, runtime.GOOS, runtime.GOARCH, capacity)
 	executor.Context = context.Background()
 	executor.Workspace = workspace
-	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, ShutdownGracePeriod: 30 * time.Second}, executor)
+	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Labels: isolationLabels, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, ShutdownGracePeriod: 30 * time.Second}, executor)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "worker stopped:", err)
 		return 1

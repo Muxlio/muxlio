@@ -996,6 +996,10 @@ func (s *Store) ExpireInputRequests(now time.Time) (int, error) {
 	return int(n), nil
 }
 func (s *Store) GetLogChunks(runID, activationID string) ([]state.LogChunk, error) {
+	return s.GetLogChunkPage(runID, activationID, 0, -1)
+}
+
+func (s *Store) GetLogChunkPage(runID, activationID string, offset, limit int) ([]state.LogChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `SELECT run_id, activation_id, stream, seq, data, timestamp FROM log_chunks WHERE run_id=?`
@@ -1004,7 +1008,8 @@ func (s *Store) GetLogChunks(runID, activationID string) ([]state.LogChunk, erro
 		query += ` AND activation_id=?`
 		args = append(args, activationID)
 	}
-	query += ` ORDER BY activation_id, stream, seq`
+	query += ` ORDER BY activation_id, stream, seq LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -1181,6 +1186,14 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 }
 
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
+	return s.ListExecutionAttemptPage(runID, activationID, 0, -1, true)
+}
+
+func (s *Store) ListExecutionAttemptPage(runID, activationID string, offset, limit int, details bool) ([]state.ExecutionAttempt, error) {
+	return s.listExecutionAttemptPage(runID, activationID, offset, limit, details, "")
+}
+
+func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, limit int, details bool, attemptID string) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,measurements_json FROM execution_attempts WHERE run_id=?`
@@ -1189,7 +1202,19 @@ func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.Execu
 		query += ` AND activation_id=?`
 		args = append(args, activationID)
 	}
-	query += ` ORDER BY activation_id,retry_number,id`
+	if attemptID != "" {
+		query += ` AND id=?`
+		args = append(args, attemptID)
+	}
+	if !details && limit < 0 {
+		query = strings.Replace(query, "result_json", "NULL", 1)
+		query = strings.Replace(query, "operation_ref_json", "NULL", 1)
+		query = strings.Replace(query, "failure,usage_json", "'',usage_json", 1)
+	} else if !details {
+		query = strings.Replace(query, "result_json", "json_remove(result_json,'$.outputs','$.validationFailure.actual','$.validationFailure.expected')", 1)
+	}
+	query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -1307,11 +1332,17 @@ func (s *Store) CreateRun(run *state.Run) error {
 	return tx.Commit()
 }
 
-func (s *Store) GetRun(id string) (*state.Run, error) {
+func (s *Store) GetRun(id string) (*state.Run, error) { return s.getRun(id, true) }
+
+func (s *Store) getRun(id string, details bool) (*state.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	contents := "input_json, output_json"
+	if !details {
+		contents = "NULL,NULL"
+	}
 	row := s.db.QueryRow(
-		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
+		`SELECT id, workflow_name, state, `+contents+`, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
    (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json
    FROM runs WHERE id = ?`, id)
@@ -1633,9 +1664,17 @@ func (s *Store) GetActivation(id string) (*state.Activation, error) {
 }
 
 func (s *Store) ListActivations(runID string) ([]state.Activation, error) {
+	return s.ListActivationPage(runID, 0, -1, true)
+}
+
+func (s *Store) ListActivationPage(runID string, offset, limit int, details bool) ([]state.Activation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, outputs_json, error, attempt_base, inputs_json FROM activations WHERE run_id=? ORDER BY rowid`, runID)
+	columns := "outputs_json, error, attempt_base, inputs_json"
+	if !details {
+		columns = "NULL, error, attempt_base, NULL"
+	}
+	rows, err := s.db.Query(`SELECT id, run_id, scope_path_json, node_id, occurrence, state, `+columns+` FROM activations WHERE run_id=? ORDER BY rowid LIMIT ? OFFSET ?`, runID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package workers
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/muxlio/muxlio-core/internal/sandbox"
 	"github.com/muxlio/muxlio-core/internal/state"
@@ -76,4 +77,16 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 		}
 	}
 	return true
+}
+
+// IsolationLabels advertises only operator-enabled backends with a local launcher.
+func IsolationLabels(backends []string) (map[string]string, error) {
+	labels := make(map[string]string)
+	for _, backend := range backends {
+		if err := sandbox.CheckAvailable(backend); err != nil {
+			return nil, fmt.Errorf("isolationBackends: %s: %w", backend, err)
+		}
+		labels[IsolationLabelPrefix+backend] = "true"
+	}
+	return labels, nil
 }

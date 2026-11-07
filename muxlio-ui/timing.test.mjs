@@ -5,8 +5,8 @@ const core=readFileSync(new URL('./js/core.js',import.meta.url),'utf8');
 const wb=readFileSync(new URL('./js/workbench.js',import.meta.url),'utf8');
 let now=Date.parse('2026-01-01T00:01:00Z');
 class Clock extends Date { constructor(...args){super(...(args.length?args:[now]))} static now(){return now} }
-const context=vm.createContext({Date:Clock,document:{addEventListener(){}},runAttempts:[]});
-vm.runInContext(core+'\n'+wb,context);
+const context=vm.createContext({Date:Clock,document:{addEventListener(){}},location:{hash:'#runs'},get:()=>null,runAttempts:[]});
+vm.runInContext(readFileSync(new URL("./js/format.js",import.meta.url),"utf8")+core+'\n'+wb,context);
 const run={id:'r',state:'running',createdAt:'2026-01-01T00:00:00Z',updatedAt:'2026-01-01T00:00:10Z',totalExecutionTimeMs:0};
 context.run=run;
 const table=()=>vm.runInContext('runTable([run])',context);
@@ -31,7 +31,7 @@ assert.equal(context.sumExecutionTime([{executionDurationMs:30},{state:'running'
 context.runAttempts=[{executionDurationMs:70000},{executionDurationMs:80000}];
 assert.match(stats(),/2m 30s/,'parallel durations can exceed elapsed');
 // fetchRuns is shared by initial history, overview and periodic refresh.
-vm.runInContext(`api=async path=>path==='/v1/runs'?{runs:[{id:'r'}]}:{attempts:[{executionDurationMs:0}]}`,context);
+vm.runInContext(`api=async path=>path.startsWith('/v1/runs?')?{runs:[{id:'r'}],total:1,states:{succeeded:1}}:{overview:{executionDurationMs:0}}`,context);
 const first=await context.fetchRuns(), refreshed=await context.fetchRuns();
 assert.equal(first[0].totalExecutionTimeMs,0);
 assert.equal(refreshed[0].totalExecutionTimeMs,0,'refresh retains totals');

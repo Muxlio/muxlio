@@ -139,14 +139,27 @@ permissions. `steer` is reserved for session steering routes; it does not itself
 add a steering endpoint. Worker registration and protocol URLs must match the
 grant's worker ID. Artifact permissions require an explicit digest allowlist;
 read permission cannot request a PUT transfer plan. Empty scopes grant nothing.
-Unauthenticated requests from remote addresses fail closed even when no tokens
-are configured. Health checks remain public.
+Without UI serving, unauthenticated requests from remote addresses fail closed
+even when no tokens are configured. Health checks remain public.
 
-The embedded and standalone UI proxies preserve explicit bearer credentials,
-including scoped client and worker credentials. They supply the operator token
-implicitly only for local peers using a loopback/localhost Host and same-origin
-browser requests. Remote UI API requests must supply their own credentials;
-cross-origin requests cannot borrow the local UI's operator authority. Forwarded
-address headers do not establish local trust. A local reverse proxy is itself a
-trusted operator component and must preserve the original Host and enforce its
-own client authentication.
+The embedded and standalone UI assume a trusted local network. Browser clients
+do not need credentials: the server supplies the operator token for `/v1/`
+requests without an Authorization header, regardless of peer address, Host, or
+Origin. Explicit bearer credentials, including scoped client and worker tokens,
+retain their configured permissions. Standalone coordinators without UI serving
+continue to enforce API authentication.
+
+### Advertising available isolation backends
+
+Enable backends on each execution host in its operator-owned `config.json`:
+
+```json
+{"isolationBackends": ["bwrap"]}
+```
+
+Use `oci` on Linux for Podman/Docker, or `docker-vm` on macOS for Docker Desktop.
+Both embedded and standalone workers verify the platform and launcher before
+advertising `muxlio.dev/isolation/<backend>=true`. Missing launchers fail startup;
+execution still validates the daemon, image and boundaries for each attempt.
+VM tasks also require the existing task-level `enabled: true` opt-in. Installing
+a launcher alone does not enable a backend.

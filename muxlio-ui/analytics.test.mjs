@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const analyticsSource = readFileSync(new URL('./js/analytics.js', import.meta.url), 'utf8');
+const analyticsSource = readFileSync(new URL("./js/format.js", import.meta.url), "utf8") + "\n" + readFileSync(new URL('./js/analytics.js', import.meta.url), 'utf8');
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 
 // Build a minimal execution context that satisfies analytics.js dependencies.

@@ -4,6 +4,7 @@ package sandbox
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 )
 
 // Policy is workflow input. It selects a backend, never an executable or host
@@ -139,4 +140,37 @@ func guestEnvironment(c Config) []string {
 		return c.Environment
 	}
 	return []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + c.Scratch, "TMPDIR=" + c.Scratch, "LANG=C.UTF-8"}
+}
+
+// CheckAvailable verifies a configured backend's local launcher. Execution still
+// verifies the image, daemon and enforced boundaries for each invocation.
+func CheckAvailable(name string) error {
+	switch name {
+	case "bwrap":
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("bwrap requires Linux")
+		}
+		if _, err := exec.LookPath("bwrap"); err != nil {
+			return err
+		}
+	case "oci":
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("OCI isolation requires Linux")
+		}
+		if _, err := exec.LookPath("podman"); err != nil {
+			if _, err := exec.LookPath("docker"); err != nil {
+				return err
+			}
+		}
+	case "docker-vm", "macos-vm":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("Docker VM isolation requires macOS")
+		}
+		if _, err := exec.LookPath("docker"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown isolation backend %q", name)
+	}
+	return nil
 }

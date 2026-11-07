@@ -236,7 +236,7 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{OutputErrors: req.OutputErrors, AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}

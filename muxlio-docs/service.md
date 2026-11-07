@@ -272,7 +272,7 @@ muxlio submit --server http://127.0.0.1:17600 plan.json input.json
 muxlio status --server http://127.0.0.1:17600
 ```
 
-The API requires a Bearer token on `/v1/*` routes. The CLI attaches it automatically for loopback URLs from `~/.muxlio/config.json`; pass `--token` or set `MUXLIO_TOKEN` for forwarded ports. Do not expose the API directly to an untrusted network; use SSH forwarding or a trusted private network and firewall.
+With UI serving enabled, the service assumes a trusted local network and supplies operator access for `/v1/*` requests without a browser token. Explicit bearer credentials retain their scopes. Without UI serving, the API requires a Bearer token; the CLI attaches it automatically for loopback URLs from `~/.muxlio/config.json`. Pass `--token` or set `MUXLIO_TOKEN` for other endpoints.
 
 ## Recovery and limits
 

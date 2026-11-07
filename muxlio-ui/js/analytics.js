@@ -224,14 +224,6 @@ function analyticsUsage(usage) {
   return Object.values(values).some(value => value != null) ? values : null;
 }
 
-// Format token count with K/M suffix.
-function fmtTok(n) {
-  if (n == null) return 'Unavailable';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n || 0);
-}
-
 // Render a simple CSS bar chart from an array of {label, value} items.
 // maxValue is the scale reference; bars are percentage widths.
 function barChartMarkup(items, opts = {}) {
@@ -314,15 +306,6 @@ function tokenSparklineMarkup(tokenBuckets) {
     <div class="spark-bars">${bars}</div>
     <div class="spark-axis">${labels}</div>
   </div>`;
-}
-
-// Format a duration in milliseconds as a human-readable string.
-// Returns '—' for null/undefined, '0 ms' for zero.
-function fmtDuration(ms) {
-  if (ms == null) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
-  return `${Math.floor(ms / 60000)}m ${Math.floor(ms % 60000 / 1000)}s`;
 }
 
 // Keep provenance and unavailable measurements inspectable alongside the charts.

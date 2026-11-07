@@ -33,21 +33,21 @@ try {
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
   const html = await page.text();
-  const app = (await Promise.all(['markdown.js', 'core.js', 'workbench.js', 'inspector.js', 'live.js', 'boot.js'].map(async name => {
+  const app = (await Promise.all(['format.js', 'markdown.js', 'core.js', 'workbench.js', 'inspector.js', 'live.js', 'operations.js', 'boot.js'].map(async name => {
     const response = await fetch(`${baseURL}/js/${name}`);
     assert.equal(response.status, 200, name);
     return response.text();
   }))).join('\n');
-  for (const feature of ['Durable agent workflows', 'Overview', 'Runs', 'Live', 'Workers', 'Workflow graph', 'Event timeline', 'Click a node', 'aria-label="Main navigation"']) {
+  for (const feature of ['Durable agent workflows', 'Overview', 'Runs', 'Live', 'Workers', 'Workflow graph', 'Execution journal', 'Click a node', 'aria-label="Main navigation"']) {
     assert.ok(html.includes(feature), `app should render ${feature}`);
   }
   assert.match(html, /src="\/js\/core.js"/);
   assert.match(html, /href="\/app.css\?v=[^"\s]+"/);
   assert.match(html, /src="\/js\/workbench.js\?v=[^"\s]+"/);
-  assert.match(app, /function graphMarkup\(acts,scopes\)/, 'graph renderer should include root-scope activations');
+  assert.match(app, /function graphMarkup\(acts,scopes,runComplete\)/, 'graph renderer should include root-scope activations');
   assert.match(app, /function renderRuns\(\)/, 'run search, filter, and sort interactions should be wired');
   assert.match(app, /function paginate\(items,page,pageSize\)/, 'run history should use the reusable pager helper');
-  assert.match(app, /pagerMarkup\(page\.page,page\.pageCount,page\.total\)/, 'run history should render page navigation after filtering and sorting');
+  assert.match(app, /pagerMarkup\(runsPage,pageCount,total\)/, 'run history should render page navigation after filtering and sorting');
   const pagingSource = app.slice(app.indexOf('function paginate('), app.indexOf('async function loadRuns('));
   const paging = vm.runInNewContext(`${pagingSource};({paginate,pagerMarkup})`);
   const records = Array.from({length:51}, (_, index) => index + 1);
@@ -100,7 +100,7 @@ try {
   const pending = [];
   const inspector = {innerHTML: "", scrollTop: 35, scrollLeft: 7, isConnected: true};
   const labels = {textContent: ""};
-  const renderSource = app.slice(app.indexOf("function renderInspector()"), app.indexOf("function loadActivation("));
+  const renderSource = app.slice(app.indexOf("function renderInspector()"), app.indexOf("async function loadActivation("));
   const render = vm.runInNewContext(`let inspectorRequest=0; const selectedActivation="a",inspectorTab="logs",current="run",activationData=[{id:"a",nodeId:"task",state:"running"}];${renderSource};renderInspector`, {
     $(selector){return selector==="#inspectorContent"?inspector:labels},
     api(){return new Promise(resolve=>pending.push(resolve))},esc:String,date:String,
@@ -179,7 +179,7 @@ try {
   assert.match(css, /max-width:620px/);
   assert.match(css, /minmax\(0,1fr\)/);
   assert.match(css, /max-width:none/);
-  assert.match(html, /Load next events/);
+  assert.match(html, /id="eventsPager"/);
   assert.match(app, /e.target.closest\('#inspectorContent'\)/, 'artifact actions must use selected activation data');
   assert.match(app, /Copy failed:/);
   assert.match(app, /tab!==inspectorTab/, 'tab responses must be fenced');
@@ -192,10 +192,10 @@ try {
   polling.pause();polling.scheduleRefresh();assert.equal(timers.size,0);
   assert.match(workspace, /requestControllers\)c.abort/);
   assert.match(workspace, /if\(saved\)restoreDetail\(saved\)/);
-  const pagination = vm.runInNewContext(`let eventRecords=[],after=0,hasMore=false;${workspace.slice(workspace.indexOf('function mergeEvents'),workspace.indexOf('function stopEventStream'))};({mergeEvents,get:()=>({eventRecords,after,hasMore})})`);
+  const pagination = vm.runInNewContext(`const RUN_DETAIL_PAGE_SIZE=50;let eventRecords=[],after=0,hasMore=false,eventCursors=[0],eventPageIndex=0,wbHasMore=false;${workspace.slice(workspace.indexOf('function mergeEvents'),workspace.indexOf('function stopEventStream'))};({mergeEvents,get:()=>({eventRecords,after,hasMore})})`);
   pagination.mergeEvents({events:[{seq:2},{seq:1}],nextAfter:2,hasMore:true});
   pagination.mergeEvents({events:[{seq:2},{seq:3}],nextAfter:3,hasMore:false});
-  assert.deepEqual(Array.from(pagination.get().eventRecords,e=>e.seq),[1,2,3]);
+  assert.deepEqual(Array.from(pagination.get().eventRecords,e=>e.seq),[2,3]);
   assert.equal(pagination.get().after,3);
   assert.equal(pagination.get().hasMore,false);
 

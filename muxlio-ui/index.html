@@ -150,13 +150,16 @@
         </div>
       </div>
       <div class="stat-row" id="wbStats"></div>
+      <section class="notice run-attention" id="runAttention" hidden></section>
       <section class="panel" id="inputRequestsPanel" hidden aria-label="Input requests">
         <div class="panel-head"><h2>Input requests</h2></div>
         <div class="panel-body" id="inputRequests"></div>
       </section>
       <div class="tab-bar" role="tablist" aria-label="Workbench tabs">
-        <button class="tab-btn" role="tab" aria-selected="true" data-wb-tab="graph">Live graph</button>
-        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="events">Execution history</button>
+        <button class="tab-btn" role="tab" aria-selected="true" data-wb-tab="graph">Executions</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="events">Execution journal</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="artifacts">Artifacts</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="operations">Operations &amp; usage</button>
         <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="data">Run data</button>
       </div>
       <div class="wb-body">
@@ -179,37 +182,27 @@
           <div class="graph-canvas" id="graphCanvas">
             <div id="graphFlow" class="graph-flow"></div>
           </div>
-          <div class="wb-bottom">
-            <div class="bottom-panel">
-              <div class="bottom-head">
-                <h3>Recent events <span style="color:var(--muted2);font-weight:400">· execution journal</span></h3>
-              </div>
-              <div class="bottom-body">
-                <div class="event-list" id="wbEventList"></div>
-              </div>
-            </div>
-            <div class="bottom-panel">
-              <div class="bottom-head">
-                <h3>Artifacts <span style="color:var(--muted2);font-weight:400">· immutable revisions</span></h3>
-              </div>
-              <div class="bottom-body">
-                <div id="wbArtifactList"></div>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- Events tab -->
         <div id="wbTabEvents" class="graph-panel" hidden>
           <div class="wb-tab-body">
             <div class="panel-head" style="border-bottom:1px solid var(--border);margin-bottom:12px;padding:0 0 10px">
-              <h2 style="font-size:12px;font-weight:650;color:#e4eeee">Event timeline</h2>
-              <button class="btn" id="moreEventsWb" disabled style="font-size:10px;padding:4px 9px">Load next events</button>
+              <h2 style="font-size:12px;font-weight:650;color:#e4eeee">Execution journal · newest first</h2>
+              <div id="eventsPager"></div>
             </div>
             <ol id="wbTimeline" class="timeline" style="list-style:none;padding:2px 0 0 5px"></ol>
           </div>
         </div>
 
+        <div id="wbTabArtifacts" class="graph-panel" hidden>
+          <div class="wb-tab-body">
+            <div class="panel-head"><h2>Immutable revisions · newest first</h2><div id="outputsPager"></div></div>
+            <div id="wbArtifactList"></div>
+          </div>
+        </div>
+
+        <div id="wbTabOperations" class="graph-panel" hidden><div class="wb-tab-body"><div id="runContract"></div><h3>Execution attempts</h3><div id="runAttemptsPanel"></div></div></div>
         <!-- Data tab -->
         <div id="wbTabData" class="graph-panel" hidden>
           <div class="wb-tab-body wb-tab-body--grid">
@@ -271,7 +264,7 @@
       </div>
     </div>
     <div id="transcriptMeta" class="transcript-meta-block"></div>
-    <div class="transcript-body-wrap">
+    <div id="transcriptPager"></div><div class="transcript-body-wrap">
       <div class="transcript-page-body markdown-body" id="transcriptPageBody"></div>
     </div>
   </section>
@@ -417,6 +410,7 @@
   </div>
 </div>
 
+<script src="/js/format.js"></script>
 <script src="/js/markdown.js"></script>
 <script src="/js/core.js"></script>
 <script src="/js/workbench.js?v=control-flow-20261103"></script>
@@ -424,6 +418,7 @@
 <script src="/js/live.js"></script>
 <script src="/js/transcript.js"></script>
 <script src="/js/analytics.js"></script>
+<script src="/js/operations.js"></script>
 <script src="/js/boot.js"></script>
 <script src="/workspace.js"></script>
 </body>
