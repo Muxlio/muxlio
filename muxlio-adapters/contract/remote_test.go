@@ -56,3 +56,21 @@ func TestRemotePollingCapabilityAndIdentity(t *testing.T) {
 		t.Fatal("async execution accepted a legacy session in params")
 	}
 }
+
+func TestRemoteContextSurvivesResultAndRequestRoundTrip(t *testing.T) {
+	result, err := ParseResult([]byte(`{"remoteTask":{"id":"task","url":"https://example.test/rpc","contextId":"remote-context","pending":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(Request{Action: "poll", RemoteTask: result.RemoteTask})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request Request
+	if err := json.Unmarshal(raw, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.RemoteTask.ContextID != "remote-context" || request.RemoteTask.ID != "task" || request.RemoteTask.URL != "https://example.test/rpc" {
+		t.Fatalf("remote reference lost: %+v", request.RemoteTask)
+	}
+}

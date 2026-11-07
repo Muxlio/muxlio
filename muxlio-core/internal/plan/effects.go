@@ -52,6 +52,9 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	req.ConcurrencyKeys = nil
 	req.WorkspaceMode = ""
 	req.Workspace = ""
+	if err := narrowLookupPolicy(&req); err != nil {
+		return workers.ExecuteResult{}, false, err
+	}
 	labels := make(map[string]string, len(req.PlacementLabels))
 	for key, value := range req.PlacementLabels {
 		if key != workers.WorkspacePlacementLabel {
@@ -74,7 +77,7 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	query.Usage, query.Measurements = result.Usage, result.Measurements
 	query.ExecutionDurationMS = result.ExecutionDurationMS
 	if err != nil {
-		query.State, query.Failure = "failed", err.Error()
+		query.State, query.Failure = "failed", diagnostic.Redact(workers.RedactSecrets(err.Error(), req.Secrets))
 		var uncertain workers.UncertainExecutionError
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &uncertain) {
 			// A read-only query can still consume resources after local waiting
@@ -83,10 +86,21 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 			query.AwaitReconciliationReason = "reconciliation query completion unknown; explicit resolution required"
 		}
 	} else if result.Error != "" {
-		query.State, query.Failure = "failed", result.Error
+		query.State, query.Failure = "failed", diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets))
 	}
 	if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
 		return workers.ExecuteResult{}, false, recordErr
+	}
+	if err == nil && remoteTerminalFailure(result) && result.Reconciliation != nil && result.Reconciliation.Status == "completed" {
+		a.State, a.FinishedAt = "failed", time.Now()
+		a.Failure = diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets))
+		a.OperationRef, a.AwaitReconciliationReason = result.RemoteTask, ""
+		if err := e.store.RecordExecutionAttempt(a); err != nil {
+			return workers.ExecuteResult{}, false, err
+		}
+		// The lookup succeeded and confirmed an unsuccessful operation.
+		// Return the terminal result through the normal execution failure path.
+		return result, false, nil
 	}
 	if err == nil && result.Error == "" && result.Reconciliation != nil {
 		status := result.Reconciliation.Status

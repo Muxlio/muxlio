@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,13 +51,14 @@ func TestRemoteHourWaitReleasesExecutorAndResumesAfterRestart(t *testing.T) {
 		}
 		if req.Action == "" {
 			starts.Add(1)
-			if req.IdempotencyKey == "" {
-				return workers.ExecuteResult{}, fmt.Errorf("missing submission identity")
+			manifest := &contract.AdapterManifest{Executor: "test", ContractVersion: contract.Version, Capabilities: map[string]bool{contract.CapabilityRemoteTask: true, contract.CapabilityReconcile: true}}
+			if err := workers.CheckAdapterCapabilities(req, manifest); err != nil {
+				return workers.ExecuteResult{}, err
 			}
-			return workers.ExecuteResult{RemoteTask: &contract.RemoteTaskReference{ID: "remote-1", Pending: true, PollAt: pollAt}}, nil
+			return workers.ExecuteResult{RemoteTask: &contract.RemoteTaskReference{ID: "remote-1", ContextID: "context-1", Pending: true, PollAt: pollAt}}, nil
 		}
 		polls.Add(1)
-		if req.Action != "poll" || req.RemoteTask.ID != "remote-1" || req.IdempotencyKey != "run:node" || req.OperationAttemptID != "run:node-attempt-1" || len(req.ConcurrencyKeys) != 0 || req.Workspace != "" || req.TimeoutSeconds == nil {
+		if req.Action != "poll" || req.RemoteTask.ID != "remote-1" || req.RemoteTask.ContextID != "context-1" || req.IdempotencyKey != "" || req.OperationAttemptID != "run:node-attempt-1" || len(req.ConcurrencyKeys) != 0 || req.Workspace != "" || req.TimeoutSeconds == nil {
 			return workers.ExecuteResult{}, fmt.Errorf("invalid poll: %+v", req)
 		}
 		return workers.ExecuteResult{Outputs: map[string]any{"answer": "done"}}, nil
@@ -88,7 +90,7 @@ func TestRemoteHourWaitReleasesExecutorAndResumesAfterRestart(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if active.Load() != 0 || polls.Load() != 0 || detached.OperationRef.ID != "remote-1" || !detached.OperationRef.PollAt.Equal(pollAt) || detached.IdempotencyKey != "run:node" {
+	if active.Load() != 0 || polls.Load() != 0 || detached.OperationRef.ID != "remote-1" || detached.OperationRef.ContextID != "context-1" || !detached.OperationRef.PollAt.Equal(pollAt) || detached.IdempotencyKey != "" {
 		t.Fatalf("invalid durable handoff: %+v; active=%d polls=%d", detached, active.Load(), polls.Load())
 	}
 	if _, err := e.executeExecute("run", &Node{ID: "other", Executor: "test"}, nil, &EvalContext{}); err != nil {
@@ -147,7 +149,9 @@ func TestAmbiguousRemoteSubmissionReconcilesBeforePolling(t *testing.T) {
 		panic("unexpected action")
 	}}
 	e := NewEngine(&Plan{}, f)
-	outputs, err := e.executeExecute("run", remoteNode(), nil, &EvalContext{})
+	node := remoteNode()
+	node.Retry = &RetryPolicy{Effect: "idempotency-key", IdempotencyKey: "run:node"}
+	outputs, err := e.executeExecute("run", node, nil, &EvalContext{})
 	if err != nil || outputs["answer"] != true || fmt.Sprint(actions) != "[ reconcile poll]" {
 		t.Fatalf("ambiguous submission replayed: %v %v %v", outputs, err, actions)
 	}
@@ -289,6 +293,158 @@ func TestRemotePollNarrowsWorkspacePolicyToScratch(t *testing.T) {
 			e := NewEngine(&Plan{}, f)
 			if _, err := e.executeExecute("run", node, nil, &EvalContext{}); err != nil || polls != 1 || string(node.Params) != original {
 				t.Fatalf("poll failed or mutated the node: %v polls=%d params=%s", err, polls, node.Params)
+			}
+		})
+	}
+}
+
+func TestTerminalRemoteFailureEndsPollingWithoutResubmission(t *testing.T) {
+	for _, reconcile := range []bool{false, true} {
+		t.Run(fmt.Sprint(reconcile), func(t *testing.T) {
+			var starts, polls int
+			f := remoteExecutor{execute: func(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+				switch req.Action {
+				case "":
+					starts++
+					if reconcile {
+						return workers.ExecuteResult{}, workers.UncertainExecutionError{}
+					}
+					return workers.ExecuteResult{RemoteTask: &contract.RemoteTaskReference{ID: "remote", Pending: true, PollAt: time.Now().Add(-time.Second)}}, nil
+				case "poll", "reconcile":
+					polls++
+					result := workers.ExecuteResult{Error: "remote operation rejected", RemoteTask: &contract.RemoteTaskReference{ID: "remote"}}
+					if req.Action == "reconcile" {
+						result.Reconciliation = &contract.Reconciliation{Status: "completed"}
+					}
+					return result, nil
+				}
+				t.Fatalf("unexpected action: %q", req.Action)
+				return workers.ExecuteResult{}, nil
+			}}
+			e := NewEngine(&Plan{}, f)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			e.Context = ctx
+			_, err := e.executeExecute("run", remoteNode(), nil, &EvalContext{})
+			if err == nil || !strings.Contains(err.Error(), "remote operation rejected") || starts != 1 || polls != 1 {
+				t.Fatalf("terminal failure: %v starts=%d polls=%d", err, starts, polls)
+			}
+			attempts, err := e.store.ListExecutionAttempts("run", "run:node")
+			if err != nil || len(attempts) != 1 || attempts[0].State != "failed" {
+				t.Fatalf("failure not durable: %+v %v", attempts, err)
+			}
+		})
+	}
+}
+
+func TestRecoveredReconciliationPreservesTerminalRemoteFailure(t *testing.T) {
+	f := remoteExecutor{execute: func(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+		if req.Action != "reconcile" || req.RemoteTask == nil || req.RemoteTask.ID != "remote" {
+			t.Fatalf("recovery repeated submission or lost identity: %+v", req)
+		}
+		return workers.ExecuteResult{Error: "remote operation rejected", RemoteTask: &contract.RemoteTaskReference{ID: "remote"}, Reconciliation: &contract.Reconciliation{Status: "completed"}}, nil
+	}}
+	e := NewEngine(&Plan{}, f)
+	if err := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "run:node-attempt-1", RunID: "run", ActivationID: "run:node", Executor: "test", RetryNumber: 1, State: "running", Effect: "reconcilable", OperationRef: &contract.RemoteTaskReference{ID: "remote"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.executeExecute("run", remoteNode(), nil, &EvalContext{})
+	if err == nil || !strings.Contains(err.Error(), "remote operation rejected") {
+		t.Fatalf("recovered failure became success: %v", err)
+	}
+	attempts, err := e.store.ListExecutionAttempts("run", "run:node")
+	if err != nil || len(attempts) != 1 || attempts[0].State != "failed" || attempts[0].AwaitReconciliationReason != "" {
+		t.Fatalf("terminal failure not durable: %+v %v", attempts, err)
+	}
+}
+
+func TestSubmissionCanConfirmTerminalRemoteFailure(t *testing.T) {
+	calls := 0
+	f := remoteExecutor{execute: func(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+		calls++
+		if req.Action != "" {
+			t.Fatalf("confirmed outcome unnecessarily reconciled: %s", req.Action)
+		}
+		return workers.ExecuteResult{Error: "remote operation rejected", RemoteTask: &contract.RemoteTaskReference{ID: "remote"}}, nil
+	}}
+	e := NewEngine(&Plan{}, f)
+	_, err := e.executeExecute("run", remoteNode(), nil, &EvalContext{})
+	if err == nil || !strings.Contains(err.Error(), "remote operation rejected") || calls != 1 {
+		t.Fatalf("terminal submission: %v calls=%d", err, calls)
+	}
+}
+
+func TestReconciliationNarrowsWorkspacePolicyToScratch(t *testing.T) {
+	for _, filesystem := range []string{"workspace-read-only", "workspace-write"} {
+		t.Run(filesystem, func(t *testing.T) {
+			params := json.RawMessage(fmt.Sprintf(`{"executionPolicy":{"trust":"restricted","filesystem":%q},"isolation":{"mode":"required"},"jobOption":true}`, filesystem))
+			mode := "read-only"
+			if filesystem == "workspace-write" {
+				mode = "shared-write"
+			}
+			req, err := workers.GuardRequest(workers.ExecuteRequest{Executor: "test", Workspace: t.TempDir(), WorkspaceMode: mode, Params: params})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := remoteExecutor{execute: func(lookup workers.ExecuteRequest) (workers.ExecuteResult, error) {
+				if _, err := workers.GuardRequest(lookup); err != nil {
+					t.Fatalf("reconciliation policy rejected: %v", err)
+				}
+				if lookup.Action != "reconcile" || lookup.Policy.Filesystem != "scratch" || lookup.Workspace != "" || lookup.WorkspaceMode != "" {
+					t.Fatalf("invalid lookup: %+v", lookup)
+				}
+				var config struct {
+					JobOption bool `json:"jobOption"`
+				}
+				if err := json.Unmarshal(lookup.Params, &config); err != nil || !config.JobOption {
+					t.Fatalf("lost job parameters: %s", lookup.Params)
+				}
+				return workers.ExecuteResult{Reconciliation: &contract.Reconciliation{Status: "completed"}}, nil
+			}}
+			e := NewEngine(&Plan{}, f)
+			a := state.ExecutionAttempt{ID: "attempt", RunID: "run", ActivationID: "activation", Executor: "test", Effect: "reconcilable"}
+			if _, _, err := e.reconcileEffect(req, a, &Node{ID: "node"}); err != nil {
+				t.Fatal(err)
+			}
+			if req.Policy.Filesystem != filesystem || string(req.Params) != string(params) {
+				t.Fatal("lookup mutated submission policy")
+			}
+		})
+	}
+}
+
+func TestRemoteFailureDiagnosticsRedactSecrets(t *testing.T) {
+	for _, reconcile := range []bool{false, true} {
+		t.Run(fmt.Sprint(reconcile), func(t *testing.T) {
+			const secret = "private-remote-credential"
+			f := remoteExecutor{execute: func(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
+				result := workers.ExecuteResult{Error: "remote rejected " + secret, RemoteTask: &contract.RemoteTaskReference{ID: "remote"}}
+				if reconcile {
+					result.Reconciliation = &contract.Reconciliation{Status: "completed"}
+				}
+				return result, nil
+			}}
+			e := NewEngine(&Plan{}, f)
+			req := workers.ExecuteRequest{Executor: "test", Secrets: map[string]string{"TOKEN": secret}, RequiredCapabilities: map[string]string{contract.CapabilityRemoteTask: "1"}}
+			a := state.ExecutionAttempt{ID: "attempt", RunID: "run", ActivationID: "activation", Executor: "test", Effect: "reconcilable", OperationRef: &contract.RemoteTaskReference{ID: "remote", Pending: true, PollAt: time.Now().Add(-time.Second)}}
+			if reconcile {
+				if _, _, err := e.reconcileEffect(req, a, &Node{ID: "node"}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				_, err := e.pollRemote(req, a, &Node{ID: "node"})
+				if err == nil || strings.Contains(err.Error(), secret) {
+					t.Fatalf("unsafe poll error: %v", err)
+				}
+			}
+			attempts, err := e.store.ListExecutionAttempts("run", "")
+			if err != nil || len(attempts) != 2 {
+				t.Fatalf("missing attempts: %+v %v", attempts, err)
+			}
+			for _, attempt := range attempts {
+				if strings.Contains(attempt.Failure, secret) || strings.Contains(attempt.AwaitReconciliationReason, secret) {
+					t.Fatalf("credential persisted: %+v", attempt)
+				}
 			}
 		})
 	}

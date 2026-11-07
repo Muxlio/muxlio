@@ -52,9 +52,13 @@ func (m *Measurements) Validate() error {
 	return nil
 }
 
+// RemoteTaskReference is independent of provider task states. A non-pending
+// reference accompanying Result.Error confirms terminal operation failure.
 type RemoteTaskReference struct {
-	ID  string `json:"id"`
-	URL string `json:"url,omitempty"`
+	// ContextID retains the remote conversation context independently of local sessions.
+	ContextID string `json:"contextId,omitempty"`
+	ID        string `json:"id"`
+	URL       string `json:"url,omitempty"`
 	// Pending hands off a remote operation after the adapter process exits.
 	// PollAt schedules a read-only poll; zero uses the coordinator's interval.
 	Pending bool      `json:"pending,omitempty"`
@@ -77,11 +81,13 @@ type Result struct {
 	// executor completion. Outputs may retain rejected text for diagnostics.
 	OutputErrors map[string]string `json:"outputErrors,omitempty"`
 
-	Outputs             map[string]any       `json:"outputs"`
-	Error               string               `json:"error"`
-	Logs                string               `json:"logs,omitempty"`
-	Usage               *TokenUsage          `json:"usage,omitempty"`
-	SessionID           string               `json:"sessionId,omitempty"`
+	Outputs   map[string]any `json:"outputs"`
+	Error     string         `json:"error"`
+	Logs      string         `json:"logs,omitempty"`
+	Usage     *TokenUsage    `json:"usage,omitempty"`
+	SessionID string         `json:"sessionId,omitempty"`
+	// A non-pending reference alongside Error confirms a terminal remote
+	// operation failure. Lookup errors must not claim a terminal reference.
 	RemoteTask          *RemoteTaskReference `json:"remoteTask,omitempty"`
 	ExecutionDurationMS *int64               `json:"executionDurationMs,omitempty"`
 }

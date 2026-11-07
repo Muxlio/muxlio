@@ -6,7 +6,7 @@ test('async compilation preserves executor contract requirements', async () => {
   const requirements = {
     environment: { version: '1', digest: 'sha256:' + 'a'.repeat(64), protocolDigest: 'sha256:' + 'b'.repeat(64), runners: { runner: '1.2.3' }, packages: { tool: 'sha256:' + 'c'.repeat(64) }, containers: { sandbox: 'sha256:' + 'd'.repeat(64) }, skills: { review: 'sha256:' + 'e'.repeat(64) }, allowedEnvironment: ['PATH', 'HOME'], permissions: ['workspace-read'] },
     executorVersion: '2', contractVersion: '1', requiredCapabilities: { progress: '1' },
-    session: { mode: 'create' }, remoteTask: { id: 'task', url: 'https://example.test/task' },
+    session: { mode: 'create' }, remoteTask: { id: 'task', url: 'https://example.test/task', contextId: 'remote-context' },
   };
   const { plan } = await defineAsyncWorkflow({
     name: 'contract', run: async ctx => {

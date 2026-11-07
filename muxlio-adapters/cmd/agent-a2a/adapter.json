@@ -1,0 +1,13 @@
+{
+  "manifestVersion": "1",
+  "contractVersion": "1",
+  "executor": "agent/a2a",
+  "executorVersion": "1",
+  "capabilities": {
+    "artifacts": true,
+    "progress": true,
+    "remoteTask": true,
+    "reconcile": true
+  },
+  "probeVersion": "1"
+}

@@ -42,7 +42,7 @@ Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON do
 - **Fan-out and control flow** — `map` for bounded-concurrency fan-out, `branch` for conditionals, `loop` with finite iteration bounds, `wait` for external signals, `join` for aggregation, `child` for nested sub-runs.
 - **Durable execution** — SQLite-backed state, event-sourced history, and explicit recovery. Queued work is eligible for reassignment; effects that may have already happened are held for manual reconciliation rather than silently replayed.
 - **Retry and fallback** — Per-step retry policies (`maxAttempts`, bounded backoff) and fallback executors. Effect policies control whether repeating an operation is safe.
-- **Agent adapters** — Ship adapters for `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
+- **Agent adapters** — Ship adapters for `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
 - **Observability UI** — A web dashboard for run search, activation/scope graphs, event timelines, logs, artifacts, attempt history, worker status, a **Live** view that polls running activations for agent output, and a signal form for waiting runs.
 - **MCP server** — Exposes coordinator operations as MCP tools so any MCP-capable assistant (Codex, Cursor, Claude Code, Kiro) can build, check, submit, and inspect runs from its own chat.
 - **Fake executor for testing** — Validate plans and dataflow end to end without invoking real model calls. Fake outputs are keyed by node ID or executor name.
@@ -88,7 +88,7 @@ muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent g
 # --starter writes a sample workflow into the workspace; --agent installs muxlio-skills/SKILL.md for that agent.
 ```
 
-Default capabilities match the shipped adapters: `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
+Default capabilities match the shipped adapters: `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
 
 ### Install with Homebrew
 
@@ -224,6 +224,12 @@ muxlio run examples/batch.plan.json examples/batch.input.json \
 ```
 
 Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command` → `command`). The generic `command` executor passes `program` and `args` directly to the process without a shell. `task({ executor: 'command', ... })` automatically provides typed process outputs, so success is available as `result.passed`, including in `repeatUntil` conditions; no `outputs` declaration is needed. With `onNonZero: 'return'`, a nonzero exit produces `passed: false` so the workflow can run its fix step; `onNonZero: 'fail'` fails the step instead. Command details are also top-level outputs: `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`. Declare `outputs` only to add artifacts or customize a schema. `signal` is null unless the process was terminated by a signal, and stdout/stderr contain bounded previews. Declared files are collected from `MUXLIO_OUTPUT_DIR`.
+
+`agent/a2a` executes a remote agent using `params: { url: 'https://agent.example', stream: true, timeout: '30s' }`. It discovers `/.well-known/agent-card.json`; `cardUrl` can select another card on the same origin. This adapter supports [A2A 0.3.0 JSON-RPC](https://a2a-protocol.org/v0.3.0/specification/), including an advertised alternate JSON-RPC interface. Other versions, required extensions, unsupported input modes, and unsupported authentication fail explicitly. Only HTTP bearer authentication is supported; supply `A2A_TOKEN` through the shared request secret mechanism, never in workflow parameters or URLs. HTTPS is required except on loopback; redirects and cross-origin card endpoints are rejected. Discovery and authentication are checked at invocation, not by the readiness probe.
+
+Submissions use nonblocking `message/send`. The adapter publishes and returns the remote task ID, context ID and endpoint, allowing the worker process to exit while the task continues. Later polls use that reference without resubmitting. `stream: true` requires advertised streaming and uses `tasks/resubscribe` during polls, followed by a full `tasks/get` snapshot after disconnect or a bounded stream interval. The per-invocation timeout defaults to 30 seconds and cannot exceed one minute. Task and context identities must match on recovery. Configure `effect: 'reconcile'` and require `remoteTask: '1'` for durable remote execution. Known submissions reconcile through read-only task lookup; submissions without a task ID remain inconclusive, including when a task is not found. A2A message IDs do not promise deduplication, so this adapter does not advertise idempotency keys.
+
+Remote agents receive the task, inline inputs, and requested output port names/MIME types. They must return artifacts named after output ports. Scalar ports accept JSON data or JSON text; file ports import text or inline base64 bytes into worker scratch for the generic artifact uploader. URI downloads are unsupported, and responses/artifacts are bounded to 4 MiB. Token usage remains unavailable. Input/auth-required states produce explicit unsupported follow-up errors and remain inconclusive during reconciliation, since the remote task can still resume. Local sessions, push notifications, native typed generation, and remote cancellation are unsupported. Stopping a local invocation does not cancel remote work.
 
 `agent/acp` runs an ACP v1 agent over stdio using `params: { program: '/absolute/path/to/agent', args: ['--acp'], timeout: '10m' }`. Arguments are passed directly without a shell. The default executable is `acp-agent`; set `MUXLIO_ACP_PROGRAM` in the executor's configured environment to select another default (also used by the readiness probe). Explicitly authorize host execution with `executors: { "agent/acp": { allow: true } }`. Configure credentials through that executor's environment and authenticate the agent before running workflows. The probe verifies executable availability; ACP has no standard version or authentication-status command, so protocol and authentication errors are checked at invocation. Runner pins additionally require the configured executable to support `--version`.
 
@@ -381,7 +387,7 @@ muxlio worker start \
 
 Omit `--capabilities` to auto-detect executable adapters in `--adapters` (default `~/.muxlio/adapters`). For a release install, pass `--adapters ~/.muxlio/libexec/muxlio/adapters`; alternatively copy or symlink the adapters there. Pass a comma-separated list to advertise a subset. `--capacity` sets concurrent assignments (default 1; override with `MUXLIO_WORKER_CAPACITY`).
 
-Supported first-party executors (one adapter binary each): `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`.
+Supported first-party executors (one adapter binary each): `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`.
 
 ## MCP integration
 

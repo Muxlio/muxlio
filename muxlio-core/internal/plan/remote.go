@@ -8,9 +8,16 @@ import (
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
+
+// An error with a completed remote reference describes the operation outcome;
+// lookup failures omit that terminal reference and remain retryable reads.
+func remoteTerminalFailure(result workers.ExecuteResult) bool {
+	return result.Error != "" && result.RemoteTask != nil && result.RemoteTask.ID != "" && !result.RemoteTask.Pending
+}
 
 func remotePending(result workers.ExecuteResult) bool {
 	return result.RemoteTask != nil && result.RemoteTask.Pending
@@ -20,9 +27,9 @@ func remotePending(result workers.ExecuteResult) bool {
 // invocation, worker lease, subprocess, workspace, or concurrency reservation.
 // Each poll is a bounded, read-only invocation with a separate durable identity.
 func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt, node *Node) (workers.ExecuteResult, error) {
-	if req.RequiredCapabilities[contract.CapabilityRemoteTask] == "" || req.Session != nil || req.SessionID != "" || a.OperationRef == nil || a.OperationRef.ID == "" || a.IdempotencyKey == "" {
+	if req.RequiredCapabilities[contract.CapabilityRemoteTask] == "" || req.Session != nil || req.SessionID != "" || a.OperationRef == nil || a.OperationRef.ID == "" {
 		a.State = "awaiting_reconciliation"
-		a.AwaitReconciliationReason = "invalid remote handoff; remoteTask capability, remote identity and idempotency key required; local sessions cannot detach"
+		a.AwaitReconciliationReason = "invalid remote handoff; remoteTask capability and remote identity required; local sessions cannot detach"
 		if err := e.store.RecordExecutionAttempt(a); err != nil {
 			return workers.ExecuteResult{}, err
 		}
@@ -61,26 +68,8 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		// Polls run in scratch even when submission required a host workspace.
 		// Narrow that filesystem grant in both representations of the policy;
 		// otherwise worker validation rejects every poll after workspace removal.
-		if queryReq.Policy != nil && (queryReq.Policy.Filesystem == "workspace-read-only" || queryReq.Policy.Filesystem == "workspace-write") {
-			policy := *queryReq.Policy
-			policy.Filesystem = "scratch"
-			queryReq.Policy = &policy
-			if len(queryReq.Params) > 0 {
-				var params map[string]json.RawMessage
-				if err := json.Unmarshal(queryReq.Params, &params); err != nil {
-					return workers.ExecuteResult{}, err
-				}
-				if _, present := params["executionPolicy"]; present {
-					params["executionPolicy"], err = json.Marshal(policy)
-					if err != nil {
-						return workers.ExecuteResult{}, err
-					}
-					queryReq.Params, err = json.Marshal(params)
-					if err != nil {
-						return workers.ExecuteResult{}, err
-					}
-				}
-			}
+		if err := narrowLookupPolicy(&queryReq); err != nil {
+			return workers.ExecuteResult{}, err
 		}
 		queryReq.PlacementLabels = make(map[string]string)
 		for key, value := range req.PlacementLabels {
@@ -102,7 +91,7 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		}
 		query.State, query.FinishedAt = "succeeded", time.Now()
 		query.Usage, query.Measurements, query.ExecutionDurationMS = result.Usage, result.Measurements, result.ExecutionDurationMS
-		if err != nil || result.Error != "" {
+		if err != nil || (result.Error != "" && !remoteTerminalFailure(result)) {
 			query.State = "failed"
 			query.Failure = "remote poll failed; remote operation remains detached"
 			var uncertain workers.UncertainExecutionError
@@ -120,6 +109,17 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 			ref.PollAt = time.Time{}
 			a.OperationRef = &ref
 			continue
+		}
+		if remoteTerminalFailure(result) {
+			if result.RemoteTask.ID != ref.ID {
+				return workers.ExecuteResult{}, fmt.Errorf("remote poll changed task identity")
+			}
+			a.State, a.FinishedAt, a.Failure = "failed", time.Now(), diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets))
+			a.OperationRef = result.RemoteTask
+			if err := e.store.RecordExecutionAttempt(a); err != nil {
+				return workers.ExecuteResult{}, err
+			}
+			return result, fmt.Errorf("remote operation failed: %s", a.Failure)
 		}
 		if remotePending(result) {
 			if result.RemoteTask.ID != ref.ID {
@@ -147,4 +147,33 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		}
 		return result, nil
 	}
+}
+
+// narrowLookupPolicy removes workspace grants from read-only outcome lookups.
+// Keep the typed policy and its serialized representation consistent without
+// mutating the submission request's policy or parameters.
+func narrowLookupPolicy(req *workers.ExecuteRequest) error {
+	var err error
+	if req.Policy != nil && (req.Policy.Filesystem == "workspace-read-only" || req.Policy.Filesystem == "workspace-write") {
+		policy := *req.Policy
+		policy.Filesystem = "scratch"
+		req.Policy = &policy
+		if len(req.Params) > 0 {
+			var params map[string]json.RawMessage
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return err
+			}
+			if _, present := params["executionPolicy"]; present {
+				params["executionPolicy"], err = json.Marshal(policy)
+				if err != nil {
+					return err
+				}
+				req.Params, err = json.Marshal(params)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

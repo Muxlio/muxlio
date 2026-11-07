@@ -18,23 +18,24 @@ Wire and stored IDs are unchanged; coordinator and worker spans use the same dig
 
 An execute node opts into asynchronous handoff with
 `requiredCapabilities: {"remoteTask": "1"}`. Its adapter must support
-`remoteTask`, `reconcile`, and `idempotencyKey`. The coordinator persists a stable
-idempotency key before submission and treats an ambiguous submission as
-reconcilable, regardless of the node's retry policy. A failed submission response
+`remoteTask` and `reconcile`. Provider-side `idempotencyKey` support is independent
+and required only when a key is explicitly requested. The coordinator persists
+the submission attempt identity and treats an ambiguous submission as reconcilable,
+regardless of the node's retry policy. A failed submission response
 never authorizes blind resubmission: a read-only `action: "reconcile"` lookup
-receives the original `operationAttemptId` and key. Only `not-applied` authorizes
+receives the original `operationAttemptId`, remote reference, and any explicit key. Only `not-applied` authorizes
 a fresh submission within the retry budget.
 
 After submitting remote work, an adapter exits with a result such as
 `{"remoteTask":{"id":"job-123","pending":true,"pollAt":"2026-11-06T17:00:00Z"}}`.
 The worker persists this result before releasing the assignment and its slots.
-The interpreter checkpoints the task identity, key, and next poll time in a
+The interpreter checkpoints the task/context identity, any explicit key, and next poll time in a
 `detached` execution attempt. The wait consumes no worker subprocess slot. A
 missing poll time defaults to 30 seconds. Restart resumes the stored schedule
 and task identity, without submitting the job again.
 
 Each follow-up is a separate bounded `action: "poll"` invocation with the remote
-reference, key, and original operation attempt identity. Polling is read-only,
+reference, any explicit key, and original operation attempt identity. Polling is read-only,
 has a 30-second execution and queue timeout, and acquires no original workspace
 or concurrency keys. Return another pending reference to keep waiting, or a
 normal result with final outputs when complete. Failed lookups retry the lookup,
@@ -464,3 +465,9 @@ known idle session and recovery of an interrupted turn are distinct operations.
 Session invocations are not automatically retried after execution or output
 validation failure, even under a pure or idempotent retry policy. The provider
 may already have advanced the conversation before the failure was observed.
+
+A poll error accompanied by a non-pending remote reference confirms terminal
+operation failure; the reference must match the polled identity. Errors without
+a terminal reference describe failed lookups and leave the operation detached.
+The same terminal failure with `reconciliation.status: "completed"` ends an
+uncertain operation through the normal failure path.

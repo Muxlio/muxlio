@@ -88,7 +88,7 @@ export interface ExecutorRequirements {
   /** Omit for one-shot execution. Resume requires the exact returned handle. */
   session?: { mode: 'create' } | { mode: 'resume'; handle: ProviderSession };
   sessionId?: string;
-  remoteTask?: { id: string; url?: string };
+  remoteTask?: { id: string; url?: string; contextId?: string };
 }
 
 /** Shared security fields inside execute params. Restrictions fail closed;

@@ -21,6 +21,9 @@ import (
 // Fixture supplies a provider's wire format, never provider-specific assertions.
 // RawOutput executors accept arbitrary stdout and do not report model usage.
 type Fixture struct {
+	// Lifecycle supplies transport-owned fixtures for adapters that do not spawn
+	// a CLI. The shared harness still builds and validates their manifests.
+	Lifecycle                                func(t *testing.T, binary string, manifest *contract.AdapterManifest)
 	Executor, Binary, CLIName, SuccessStream string
 	// MalformedStreams are provider-shaped events with invalid payloads.
 	MalformedStreams []string
@@ -61,6 +64,10 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 			}
 			if manifest.Supports(contract.CapabilityUsage) == (f.RawOutput || f.UsageUnavailable) {
 				t.Fatal("usage declaration disagrees with fixture")
+			}
+			if f.Lifecycle != nil {
+				f.Lifecycle(t, filepath.Join(bin, f.Binary), manifest)
+				return
 			}
 			for _, capability := range []string{contract.CapabilitySession, contract.CapabilityRemoteTask, contract.CapabilityTypedResult} {
 				if err := manifest.Check(f.Executor, "", contract.Version, map[string]string{capability: "1"}); err == nil {

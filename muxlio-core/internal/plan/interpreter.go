@@ -628,13 +628,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	req.IdempotencyKey = idempotencyKey
 	actID := activationID(runID, scope, node.ID)
 	if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" {
-		// Remote submission is reconciled by its durable logical identity even
-		// when the transport loses the submission response.
+		// Reconcile uncertain submissions by the durable attempt/reference.
+		// Provider deduplication remains an independent optional capability.
 		req.Effect = "reconcilable"
-		if idempotencyKey == "" {
-			idempotencyKey = actID
-		}
-		req.IdempotencyKey = idempotencyKey
 	}
 	recoveredBase := 0
 	prior, priorErr := e.store.ListExecutionAttempts(runID, actID)
@@ -688,6 +684,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 				return nil, err
 			}
 			if !safe {
+				if remoteTerminalFailure(result) {
+					return nil, fmt.Errorf("remote operation failed: %s", diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets)))
+				}
 				if remotePending(result) {
 					a.OperationRef = result.RemoteTask
 					result, err = e.pollRemote(req, a, node)
@@ -757,7 +756,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})
 		}
 		result, err := workers.ExecuteAttempt(e.executor, guarded)
-		if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || result.Error != "") && e.context().Err() == nil {
+		if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || (result.Error != "" && !remoteTerminalFailure(result))) && e.context().Err() == nil {
 			err = workers.UncertainExecutionError{}
 		}
 		safeRedispatch := false
@@ -917,7 +916,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			return nil, err
 		}
 		heldReason := ""
-		if failure != "" && !safeRedispatch && (req.Effect == "manual" || req.Effect == "nonretryable" || req.Effect == "reconcile" || req.Effect == "reconcilable") {
+		if failure != "" && !safeRedispatch && !remoteTerminalFailure(result) && (req.Effect == "manual" || req.Effect == "nonretryable" || req.Effect == "reconcile" || req.Effect == "reconcilable") {
 			heldReason = awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)
 			attemptState = "awaiting_reconciliation"
 		}

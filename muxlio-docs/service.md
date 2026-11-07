@@ -21,8 +21,8 @@ bash scripts/build-release.sh "$HOME/.local/muxlio"
 export PATH="$HOME/.local/muxlio/bin:$PATH"
 ```
 
-The resulting prefix contains `bin/muxlio`, seven compiled adapters under
-`libexec/muxlio/adapters` (`agent-acp`, `agent-claude`, `agent-codex`, `agent-cursor`,
+The resulting prefix contains `bin/muxlio`, eight compiled adapters under
+`libexec/muxlio/adapters` (`agent-a2a`, `agent-acp`, `agent-claude`, `agent-codex`, `agent-cursor`,
 `agent-gemini-cli`, `agent-kiro`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
@@ -67,7 +67,7 @@ chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
 cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
-  "capabilities": ["agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
+  "capabilities": ["agent/a2a", "agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
   "mcp": {"listen": "127.0.0.1:7602"}
 }
@@ -455,3 +455,17 @@ Run `npm run build` before Go tests to include the real async compiler regressio
 Tests use temporary runtimes, ephemeral loopback ports and fake adapters. They
 do not install a service or control any existing coordinator. See `notes.md`
 for the exact results and any environment restrictions from this implementation.
+
+The bundled `agent/a2a` adapter discovers A2A 0.3.0 Agent Cards and uses
+JSON-RPC to submit remote tasks. Set `params.url` to the remote agent origin,
+optionally `cardUrl`, `stream: true`, and `timeout` (default `30s`, maximum `1m`).
+Use the shared request secret mechanism for `A2A_TOKEN` HTTP bearer credentials.
+Discovery, advertised capabilities, version and authentication are validated at
+invocation. The readiness probe does not contact an arbitrary remote agent.
+
+Use `effect: "reconcile"` and `requiredCapabilities: { remoteTask: "1" }`.
+Task/context references survive local adapter exit; polls and reconciliation
+query the known task without repeating submission. Streaming reconnects by task
+ID and fetches a complete snapshot to recover missed artifacts. Unknown
+submission outcomes without task IDs remain inconclusive; no provider-side
+idempotency is claimed. See the [adapter configuration and limitations](../README.md#run-with-real-adapters).
