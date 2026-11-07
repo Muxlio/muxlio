@@ -25,6 +25,12 @@ type Fixture struct {
 	// MalformedStreams are provider-shaped events with invalid payloads.
 	MalformedStreams []string
 	RawOutput        bool
+	// UsageUnavailable separates structured protocols without token usage from raw stdout.
+	UsageUnavailable bool
+	// Script and CancelScript supply interactive provider fixtures when needed.
+	Script          func(stream, stderr string, code int, scratch string) string
+	CancelScript    string
+	CancelReadyText string
 }
 
 // Run builds each adapter and exercises the same baseline lifecycle. The only
@@ -53,7 +59,7 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 			if err := manifest.Check(f.Executor, "", contract.Version, nil); err != nil {
 				t.Fatal(err)
 			}
-			if manifest.Supports(contract.CapabilityUsage) == f.RawOutput {
+			if manifest.Supports(contract.CapabilityUsage) == (f.RawOutput || f.UsageUnavailable) {
 				t.Fatal("usage declaration disagrees with fixture")
 			}
 			for _, capability := range []string{contract.CapabilitySession, contract.CapabilityRemoteTask, contract.CapabilityTypedResult} {
@@ -105,7 +111,7 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 						t.Fatal("secret leaked into diagnostics")
 					}
 					if tc.name == "success_with_stderr" || tc.name == "nonzero_exit" {
-						if f.RawOutput {
+						if f.RawOutput || f.UsageUnavailable {
 							if resp.Usage != nil {
 								t.Fatal("usage must be unavailable")
 							}
@@ -161,7 +167,7 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 					t.Fatal("malformed request accepted")
 				}
 			})
-			if !f.RawOutput {
+			if !f.RawOutput && !f.UsageUnavailable {
 				t.Run("usage_unavailable", func(t *testing.T) {
 					var lines []string
 					for _, line := range strings.Split(f.SuccessStream, "\n") {
@@ -226,7 +232,11 @@ func testGracefulCancel(t *testing.T, bin string, f Fixture) {
 	t.Helper()
 	workspace := t.TempDir()
 	cli := filepath.Join(workspace, f.CLIName)
-	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf 'started\\n'\nexec /bin/sleep 30\n"), 0700); err != nil {
+	script := "#!/bin/sh\nprintf 'started\\n'\nexec /bin/sleep 30\n"
+	if f.CancelScript != "" {
+		script = f.CancelScript
+	}
+	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	req := adapter.Request{Executor: f.Executor, Workspace: workspace, WorkDir: t.TempDir(), HostExecutionAllowed: true,
@@ -256,7 +266,11 @@ func testGracefulCancel(t *testing.T, bin string, f Fixture) {
 	_ = w.Close()
 	// Wait for actual child progress, so cancellation never races startup.
 	var progress contract.Progress
-	decodeErr := json.NewDecoder(r).Decode(&progress)
+	decoder := json.NewDecoder(r)
+	decodeErr := decoder.Decode(&progress)
+	for decodeErr == nil && f.CancelReadyText != "" && !strings.Contains(progress.Text, f.CancelReadyText) {
+		decodeErr = decoder.Decode(&progress)
+	}
 	signalErr := cmd.Process.Signal(os.Interrupt)
 	waitErr := cmd.Wait()
 	if decodeErr != nil || signalErr != nil || waitErr != nil {
@@ -281,6 +295,9 @@ func invoke(t *testing.T, bin string, f Fixture, stream, stderr string, code int
 		script += "kill -KILL $$\n"
 	} else {
 		script += fmt.Sprintf("exit %d\n", code)
+	}
+	if f.Script != nil {
+		script = "#!/bin/sh\n: > " + quote(marker) + "\n" + f.Script(stream, stderr, code, scratch)
 	}
 	cli := filepath.Join(fakeBin, f.CLIName)
 	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {

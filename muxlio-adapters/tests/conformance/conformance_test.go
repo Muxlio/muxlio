@@ -8,6 +8,7 @@ import (
 )
 
 var bundledAdapters = []conformancetest.Fixture{
+	acpFixture(),
 	{
 		Executor: "agent/claude",
 		Binary:   "agent-claude",

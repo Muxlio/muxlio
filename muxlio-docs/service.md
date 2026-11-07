@@ -21,8 +21,8 @@ bash scripts/build-release.sh "$HOME/.local/muxlio"
 export PATH="$HOME/.local/muxlio/bin:$PATH"
 ```
 
-The resulting prefix contains `bin/muxlio`, six compiled adapters under
-`libexec/muxlio/adapters` (`agent-claude`, `agent-codex`, `agent-cursor`,
+The resulting prefix contains `bin/muxlio`, seven compiled adapters under
+`libexec/muxlio/adapters` (`agent-acp`, `agent-claude`, `agent-codex`, `agent-cursor`,
 `agent-gemini-cli`, `agent-kiro`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
@@ -67,7 +67,7 @@ chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
 cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
-  "capabilities": ["agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
+  "capabilities": ["agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
   "mcp": {"listen": "127.0.0.1:7602"}
 }

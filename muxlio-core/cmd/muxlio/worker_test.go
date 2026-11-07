@@ -39,12 +39,9 @@ func TestDiscoverCapabilities(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("agent-claude", 0o755)
-	write("agent-codex", 0o755)
-	write("agent-cursor", 0o755)
-	write("agent-gemini-cli", 0o755)
-	write("agent-kiro", 0o755)
-	write("command", 0o755)
+	write("fixture-agent", 0o755)
+	write("fixture-tool", 0o755)
+	write("standalone", 0o755)
 	// Non-executable — must be skipped.
 	write("README.md", 0o644)
 	// Runtime descriptors are metadata, even if accidentally made executable.
@@ -65,7 +62,7 @@ func TestDiscoverCapabilities(t *testing.T) {
 		got[i] = c.Name
 	}
 	sort.Strings(got)
-	want := append([]string(nil), BundledExecutorCapabilities...)
+	want := []string{"fixture/agent", "fixture/tool", "standalone"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("discoverCapabilities = %v, want %v", got, want)
 	}

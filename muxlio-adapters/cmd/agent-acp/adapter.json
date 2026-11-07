@@ -1,0 +1,18 @@
+{
+  "manifestVersion": "1",
+  "contractVersion": "1",
+  "executor": "agent/acp",
+  "executorVersion": "1",
+  "capabilities": {
+    "artifacts": true,
+    "progress": true,
+    "usage": false,
+    "cancel": true,
+    "permission": false,
+    "session": false,
+    "remoteTask": false,
+    "typedResult": false
+  },
+  "requiresHostExecution": true,
+  "probeVersion": "1"
+}

@@ -31,6 +31,7 @@ func TestBundledAdapterBasenamesRoundTrip(t *testing.T) {
 
 func TestBundledExecutorCapabilitiesIncludeShippedAgents(t *testing.T) {
 	required := []string{
+		"agent/acp",
 		"agent/claude",
 		"agent/codex",
 		"agent/cursor",

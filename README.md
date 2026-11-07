@@ -42,7 +42,7 @@ Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON do
 - **Fan-out and control flow** — `map` for bounded-concurrency fan-out, `branch` for conditionals, `loop` with finite iteration bounds, `wait` for external signals, `join` for aggregation, `child` for nested sub-runs.
 - **Durable execution** — SQLite-backed state, event-sourced history, and explicit recovery. Queued work is eligible for reassignment; effects that may have already happened are held for manual reconciliation rather than silently replayed.
 - **Retry and fallback** — Per-step retry policies (`maxAttempts`, bounded backoff) and fallback executors. Effect policies control whether repeating an operation is safe.
-- **Agent adapters** — Ship adapters for `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
+- **Agent adapters** — Ship adapters for `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
 - **Observability UI** — A web dashboard for run search, activation/scope graphs, event timelines, logs, artifacts, attempt history, worker status, a **Live** view that polls running activations for agent output, and a signal form for waiting runs.
 - **MCP server** — Exposes coordinator operations as MCP tools so any MCP-capable assistant (Codex, Cursor, Claude Code, Kiro) can build, check, submit, and inspect runs from its own chat.
 - **Fake executor for testing** — Validate plans and dataflow end to end without invoking real model calls. Fake outputs are keyed by node ID or executor name.
@@ -88,7 +88,7 @@ muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent g
 # --starter writes a sample workflow into the workspace; --agent installs muxlio-skills/SKILL.md for that agent.
 ```
 
-Default capabilities match the shipped adapters: `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
+Default capabilities match the shipped adapters: `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
 
 ### Install with Homebrew
 
@@ -224,6 +224,10 @@ muxlio run examples/batch.plan.json examples/batch.input.json \
 ```
 
 Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command` → `command`). The generic `command` executor passes `program` and `args` directly to the process without a shell. `task({ executor: 'command', ... })` automatically provides typed process outputs, so success is available as `result.passed`, including in `repeatUntil` conditions; no `outputs` declaration is needed. With `onNonZero: 'return'`, a nonzero exit produces `passed: false` so the workflow can run its fix step; `onNonZero: 'fail'` fails the step instead. Command details are also top-level outputs: `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`. Declare `outputs` only to add artifacts or customize a schema. `signal` is null unless the process was terminated by a signal, and stdout/stderr contain bounded previews. Declared files are collected from `MUXLIO_OUTPUT_DIR`.
+
+`agent/acp` runs an ACP v1 agent over stdio using `params: { program: '/absolute/path/to/agent', args: ['--acp'], timeout: '10m' }`. Arguments are passed directly without a shell. The default executable is `acp-agent`; set `MUXLIO_ACP_PROGRAM` in the executor's configured environment to select another default (also used by the readiness probe). Explicitly authorize host execution with `executors: { "agent/acp": { allow: true } }`. Configure credentials through that executor's environment and authenticate the agent before running workflows. The probe verifies executable availability; ACP has no standard version or authentication-status command, so protocol and authentication errors are checked at invocation. Runner pins additionally require the configured executable to support `--version`.
+
+The adapter negotiates protocol version 1 and agent capabilities before `session/new`, sends a text prompt with Muxlio result-port paths, and validates the files through the shared output collector. Agent text, tool activity, plans and other session updates appear in live logs. Interrupts send `session/cancel`, with bounded cleanup if the agent does not respond. Permission requests are denied with an explicit unsupported error. Client filesystem/terminal services, durable sessions, session loading, remote tasks and native typed generation are unsupported, even if an agent advertises session loading. ACP session IDs and progress never become durable Muxlio checkpoints. Token usage remains unavailable; context-window and cost updates are not token totals. Keep using a native adapter when its provider-specific capabilities are needed. See the [ACP v1 initialization specification](https://agentclientprotocol.com/protocol/v1/initialization).
 
 Executor permissions and environment values are configured per executor in `~/.muxlio/config.json`. An adapter can declare `requiresHostExecution` in a descriptor beside its executable (`<executable>.json`). Workers apply that shared metadata when advertising and dispatching capabilities. Host execution requires explicit local authorization; workflow parameters cannot grant it. The bundled command adapter also checks the authorization in its runtime request, so missing metadata never enables it. Its `execution.isolation: "sandbox"` option fails closed because this release has no verified OCI command backend.
 
@@ -377,7 +381,7 @@ muxlio worker start \
 
 Omit `--capabilities` to auto-detect executable adapters in `--adapters` (default `~/.muxlio/adapters`). For a release install, pass `--adapters ~/.muxlio/libexec/muxlio/adapters`; alternatively copy or symlink the adapters there. Pass a comma-separated list to advertise a subset. `--capacity` sets concurrent assignments (default 1; override with `MUXLIO_WORKER_CAPACITY`).
 
-Supported first-party executors (one adapter binary each): `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`.
+Supported first-party executors (one adapter binary each): `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`.
 
 ## MCP integration
 

@@ -6,6 +6,7 @@ import "strings"
 // with muxlio. It must stay aligned with adapter binaries under
 // libexec/muxlio/adapters (see bundledAdapterBasenames).
 var BundledExecutorCapabilities = []string{
+	"agent/acp",
 	"agent/claude",
 	"agent/codex",
 	"agent/cursor",
