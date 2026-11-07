@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="#license">Apache-2.0 License</a> &middot; <a href="muxlio-docs/mcp.md">MCP Integration</a> &middot; <a href="muxlio-docs/service.md">Service Guide</a>
+  <a href="#license">Apache-2.0 License</a> &middot; <a href="muxlio-docs/mcp.md">MCP Integration</a> &middot; <a href="muxlio-docs/service.md">Service Guide</a> &middot; <a href="muxlio-docs/benchmarks.md">Reference Benchmarks</a>
 </p>
 
 ---
