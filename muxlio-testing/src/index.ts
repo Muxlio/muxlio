@@ -9,7 +9,12 @@
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+export * from './evaluation.js';
 import type { Plan, CompiledWorkflow } from '@muxlio/sdk';
 
 // --- Fake executor configuration ---
@@ -53,6 +58,20 @@ export interface TestResult {
   events: unknown[];
   plan: Plan;
   durationMs: number;
+  error?: string;
+  /** Measurements reported by execution; absent means unavailable. */
+  usage?: UsageSummary;
+}
+
+export interface UsageTotal {
+  observed: number | null;
+  estimated: number | null;
+  unknown: number;
+}
+
+export interface UsageSummary {
+  tokens: UsageTotal;
+  costUsd: UsageTotal;
 }
 
 /**
@@ -96,11 +115,26 @@ export async function testWorkflow(
     if (opts.executors?.byExecutor) fakeConfig.byExecutor = opts.executors.byExecutor;
     writeFileSync(fakeConfigPath, JSON.stringify(fakeConfig, null, 2));
 
-    const cmd = `${cliPath} run ${planPath} ${inputPath} --json --fake-config ${fakeConfigPath}`;
-    const stdout = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync(cliPath, [
+        'run', planPath, inputPath, '--json', '--fake-config', fakeConfigPath,
+        '--data-dir', join(dir, 'state'),
+      ], { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }));
+    } catch (error) {
+      // Failed workflows still emit a structured result. Launch failures and
+      // malformed output remain harness errors rather than execution states.
+      const failed = error as { stdout?: string };
+      if (!failed.stdout) throw error;
+      const result = JSON.parse(failed.stdout);
+      if (typeof result.runId !== 'string' || typeof result.state !== 'string') throw error;
+      stdout = failed.stdout;
+    }
     const result = JSON.parse(stdout);
 
     return {
+      error: result.error || undefined,
+      usage: result.usage,
       runId: result.runId,
       state: result.state,
       output: result.output,

@@ -447,6 +447,67 @@ const result = await testWorkflow(compiled, {
 if (result.state !== 'succeeded') throw new Error(`Run state: ${result.state}`);
 ```
 
+## Workflow evaluations
+
+`@muxlio/testing` can compare compiled workflow versions over typed datasets.
+Cases are normalized before any run starts; expected outputs are optional.
+Unchanged datasets returned by `defineDataset` retain their normalized values
+when reused, including values produced by transforming parsers. Scorers
+run only after successful execution and output validation. A zero score or a
+scorer error does not change execution success.
+
+```ts
+import { defineDataset, evaluateWorkflow } from '@muxlio/testing';
+
+const dataset = defineDataset({
+  id: 'summaries/v1',
+  input: z.object({ text: z.string() }),
+  output: z.string(),
+  cases: [{
+    id: 'greeting',
+    input: { text: 'Hello world' },
+    expected: 'Hello',
+  }],
+});
+
+const report = await evaluateWorkflow({
+  dataset,
+  versions: [
+    { id: 'baseline', workflow: baseline },
+    { id: 'candidate', workflow: candidate },
+  ],
+  concurrency: 4,
+  configuration: { executors: fakeExecutor.byExecutor({
+    summarize: { outputs: { summary: 'Hello' } },
+  }) },
+  scorers: [{
+    id: 'exact-match/v1',
+    score: ({ output, expected }) => Number(output === expected),
+  }],
+});
+```
+
+The default runner uses the CLI with fake executors. For real experiments,
+provide `runner: { id: 'my-runner/v1', async run(workflow, options) { ... } }`
+that executes `workflow.plan` with `options.input` and returns the shared
+`EvaluationExecution` shape (`state`, `output`, optional `runId`, `error`, and
+`usage`). Configuration is passed to each run. Give runners and scorers new
+versioned IDs when their implementations change, and version the dataset ID
+when its schema changes. Inputs, plans, expectations, and configuration must
+be JSON serializable with finite numbers. Functions, symbols, bigint values,
+and undefined array entries are rejected before execution.
+
+The report includes ordered case/version results, execution duration, errors,
+usage, and named scores. Missing usage is `null`; measured zero remains zero.
+Usage retains the shared observed/estimated/unknown fields without inferring
+tokens. The manifest contains copied plans, recomputed plan digests, a dataset
+digest (including expected outputs), a configuration digest, runner/scorer IDs,
+and a content-derived evaluation ID. Plans, cases, and configuration are copied
+before execution so caller or runner mutations cannot change subsequent runs.
+Returned execution output and usage are also copied to isolate each result.
+These identities pin the experiment specification; external model behavior and
+services can still vary. Keep the dataset alongside the manifest for replay.
+
 ## Monorepo structure
 
 | Path | Language | Description |

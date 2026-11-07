@@ -679,6 +679,12 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 				"output":      run.Output,
 				"events":      formatEvents(mustEvents(engine.Store(), runID)),
 			})
+			// Preserve the typed numeric usage summary outside diagnostic key
+			// redaction, which treats any key containing "token" as a secret.
+			var response map[string]any
+			_ = json.Unmarshal(out, &response)
+			response["usage"] = state.SummarizeUsage(attempts)
+			out, _ = json.Marshal(response)
 			fmt.Println(string(out))
 			return 1
 		}
@@ -690,7 +696,9 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 	events := mustEvents(engine.Store(), runID)
 
 	if jsonOut {
+		attempts, _ := engine.Store().ListExecutionAttempts(runID, "")
 		out, _ := json.MarshalIndent(map[string]any{
+			"usage":  state.SummarizeUsage(attempts),
 			"runId":  runID,
 			"state":  run.State,
 			"output": run.Output,

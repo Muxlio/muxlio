@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo 'tests are in muxlio-tests'"
+    "test": "npm run build && node --test test/*.test.mjs && tsc --noEmit -p test/tsconfig.json"
   },
   "dependencies": {
     "@muxlio/sdk": "*"
