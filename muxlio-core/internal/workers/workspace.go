@@ -49,8 +49,8 @@ func ValidateWorkspaceContract(mode string, keys []string) error {
 }
 
 // prepareAttemptWorkspace never exposes the source as writable by default.
-// Snapshots contain independent regular files, require no Git repository, and
-// reject symlinks and special files rather than leaking access to host paths.
+// Snapshots contain independent files, require no Git repository, and preserve
+// relative symlinks only when their targets stay within the source tree.
 func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest, error) {
 	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
 		return req, err
@@ -96,6 +96,22 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 						return filepath.SkipDir
 					}
 					return nil
+				}
+				if entry.Type()&os.ModeSymlink != 0 {
+					link, err := root.Readlink(rel)
+					if err != nil {
+						return err
+					}
+					resolved := filepath.Clean(filepath.Join(filepath.Dir(rel), link))
+					if filepath.IsAbs(link) || resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+						return fmt.Errorf("workspace snapshot rejects symlink outside workspace %q", rel)
+					}
+					// Root.Stat follows the complete chain while enforcing source
+					// containment, including links in intermediate directories.
+					if _, err := root.Stat(rel); err != nil {
+						return fmt.Errorf("workspace snapshot rejects symlink %q: %w", rel, err)
+					}
+					return os.Symlink(link, filepath.Join(dst, rel))
 				}
 				info, err := entry.Info()
 				if err != nil {

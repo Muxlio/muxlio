@@ -55,8 +55,9 @@ Both SDK authoring APIs preserve these declarations.
 * `snapshot` (default): the script executor copies regular files from the selected
   worker workspace into an attempt-owned writable directory. With no source it
   creates an empty workspace. No Git repository is required. Git metadata is
-  excluded; symbolic links and special files fail preparation. Workspace inputs
-  are rebound to the private copy. The source remains untouched.
+  excluded; relative symbolic links resolving within the source are preserved.
+  Absolute, escaping, dangling, or cyclic links and special files fail preparation.
+  Workspace inputs are rebound to the private copy. The source remains untouched.
 * `read-only`: mounts the source read-only through a required isolation backend.
   Native execution rejects this mode because it cannot enforce it.
 * `shared-write`: explicitly exposes the source as writable. Requires at least

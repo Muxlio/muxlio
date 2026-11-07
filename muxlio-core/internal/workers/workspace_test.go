@@ -86,6 +86,74 @@ func TestWorkspaceModesFailClosed(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSnapshotPreservesInternalSymlinks(t *testing.T) {
+	source := t.TempDir()
+	bin := filepath.Join(source, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(source, "node_modules", "tool")
+	if err := os.WriteFile(tool, []byte("original"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"node_modules/.bin/tool": "../tool",
+		"bin":                    "node_modules/.bin",
+		"tool":                   "bin/tool",
+	} {
+		if err := os.Symlink(target, filepath.Join(source, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req, err := prepareAttemptWorkspace(ExecuteRequest{Workspace: source}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := os.Readlink(filepath.Join(req.Workspace, "node_modules", ".bin", "tool"))
+	if err != nil || link != "../tool" {
+		t.Fatalf("link not preserved: %q %v", link, err)
+	}
+	info, err := os.Stat(filepath.Join(req.Workspace, "tool"))
+	if err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("executable target not preserved: %v %v", info, err)
+	}
+	if err := os.WriteFile(filepath.Join(req.Workspace, "tool"), []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(tool)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("write through snapshot link changed source: %q %v", data, err)
+	}
+}
+
+func TestWorkspaceSnapshotRejectsUnsafeSymlinks(t *testing.T) {
+	for _, kind := range []string{"absolute", "escape", "chain", "dangling", "cycle"} {
+		t.Run(kind, func(t *testing.T) {
+			source := t.TempDir()
+			target := "missing"
+			switch kind {
+			case "absolute":
+				target = source
+			case "escape":
+				target = ".."
+			case "chain":
+				if err := os.Symlink("..", filepath.Join(source, "z-escape")); err != nil {
+					t.Fatal(err)
+				}
+				target = "z-escape"
+			case "cycle":
+				target = "link"
+			}
+			if err := os.Symlink(target, filepath.Join(source, "link")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := prepareAttemptWorkspace(ExecuteRequest{Workspace: source}, t.TempDir()); err == nil {
+				t.Fatal("snapshot accepted unsafe symlink")
+			}
+		})
+	}
+}
+
 func TestRequiredIsolationAdmissionNeedsEligibleBackend(t *testing.T) {
 	caps := []state.WorkerCapability{{Name: "test"}}
 	req := []byte(`{"params":{"isolation":{"mode":"required","runtime":"bwrap"}}}`)
