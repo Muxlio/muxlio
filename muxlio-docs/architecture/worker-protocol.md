@@ -58,6 +58,9 @@ Both SDK authoring APIs preserve these declarations.
   excluded; relative symbolic links resolving within the source are preserved.
   Absolute, escaping, dangling, or cyclic links and special files fail preparation.
   Workspace inputs are rebound to the private copy. The source remains untouched.
+* `empty`: creates an attempt-owned writable directory without copying the worker
+  workspace or requiring it to exist. Workspace inputs are rebound to this empty
+  directory. Pure steps can opt into fork output reuse with this mode.
 * `read-only`: mounts the source read-only through a required isolation backend.
   Native execution rejects this mode because it cannot enforce it.
 * `shared-write`: explicitly exposes the source as writable. Requires at least

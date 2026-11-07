@@ -48,7 +48,7 @@ func ValidatePermissions(req ExecuteRequest) error {
 	if isolated && (p.Trust == "trusted-native" || p.Network == "host") {
 		return errors.New("isolation driver cannot grant requested native or network access")
 	}
-	if p.Filesystem == "scratch" && req.WorkspaceMode != "" && req.WorkspaceMode != "snapshot" {
+	if p.Filesystem == "scratch" && req.WorkspaceMode != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "empty" {
 		return errors.New("scratch permission forbids host workspace mounts")
 	}
 	if p.Filesystem == "workspace-read-only" && req.WorkspaceMode != "read-only" {
@@ -58,7 +58,7 @@ func ValidatePermissions(req ExecuteRequest) error {
 		return errors.New("workspace write permission requires shared-write workspace admission")
 	}
 	// Restricted attempts default to scratch-only filesystem access.
-	if p.Trust == "restricted" && p.Filesystem == "" && req.WorkspaceMode != "" && req.WorkspaceMode != "snapshot" {
+	if p.Trust == "restricted" && p.Filesystem == "" && req.WorkspaceMode != "" && req.WorkspaceMode != "snapshot" && req.WorkspaceMode != "empty" {
 		return errors.New("restricted host workspace access must be explicitly declared")
 	}
 	return nil

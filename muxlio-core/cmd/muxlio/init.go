@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,13 +30,15 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		fmt.Fprintln(os.Stderr, "error: --mcp-listen must be host:port")
 		return 2
 	}
-	setMCPListen, setWorkerPath := false, false
+	setMCPListen, setWorkerPath, setWorkspace := false, false, false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "mcp-listen":
 			setMCPListen = true
 		case "worker-path":
 			setWorkerPath = true
+		case "workspace":
+			setWorkspace = true
 		}
 	})
 	root := *dataDir
@@ -110,6 +113,20 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 	configChanged := false
+	if setWorkspace {
+		value, _ := json.Marshal(ws)
+		if !bytes.Equal(bytes.TrimSpace(config["workspace"]), value) {
+			config["workspace"] = value
+			configChanged = true
+		}
+	} else if raw := config["workspace"]; len(raw) > 0 {
+		// Repeated setup preserves the selected workspace and installs skills
+		// there, even when invoked from a different working directory.
+		if err := json.Unmarshal(raw, &ws); err != nil {
+			fmt.Fprintln(os.Stderr, "error: workspace must be a string")
+			return 1
+		}
+	}
 	if _, exists := config["mcp"]; !exists || setMCPListen {
 		mcpConfig := map[string]json.RawMessage{}
 		if raw := config["mcp"]; len(raw) > 0 && string(raw) != "null" {

@@ -47,14 +47,14 @@ func (e *Engine) ForkRun(sourceID string, input json.RawMessage, reuse []string)
 
 func reusableNode(n *Node) bool {
 	// Sessions and remote tasks mutate state even when the prompt is labelled pure.
-	return n.Retry != nil && n.Retry.Effect == "pure" && n.Session == nil && n.SessionID == "" && n.RemoteTask == nil && len(n.RequiredCapabilities) == 0 && len(n.ConcurrencyKeys) == 0 && n.WorkspaceMode == ""
+	return n.Retry != nil && n.Retry.Effect == "pure" && n.Session == nil && n.SessionID == "" && n.RemoteTask == nil && len(n.RequiredCapabilities) == 0 && len(n.ConcurrencyKeys) == 0 && (n.WorkspaceMode == "" || n.WorkspaceMode == "empty")
 }
 
 // fingerprint includes all resolved dependencies, including ordering dependencies,
 // the complete node contract, the pinned plan, and the structural scope. Including
 // the whole plan deliberately invalidates reuse after even unrelated plan changes.
 func (e *Engine) dependencyFingerprint(n *Node, scope []string, ctx *EvalContext, inputs map[string]any) (string, error) {
-	raw, err := json.Marshal([]any{"fork-v1", e.plan.Digest, n, scope, ctx.subgraph, ctx.Input, ctx.Item, ctx.State, ctx.Outputs, inputs})
+	raw, err := json.Marshal([]any{"fork-v2", e.plan.Digest, n, scope, ctx.subgraph, ctx.Input, ctx.Item, ctx.State, ctx.Outputs, inputs})
 	if err != nil {
 		return "", err
 	}
@@ -73,6 +73,11 @@ func (e *Engine) forkOutput(runID string, n *Node, scope []string, ctx *EvalCont
 		if run.Fork != nil {
 			return nil, false, fmt.Errorf("muxlio: fork blocked execution of %q: only explicitly pure, stateless steps may execute", n.ID)
 		}
+		return nil, false, nil
+	}
+	// The default workspace is mutable state outside the plan fingerprint.
+	// Such steps may execute in a fork, but must never reuse prior outputs.
+	if n.WorkspaceMode != "empty" {
 		return nil, false, nil
 	}
 	fingerprint, err := e.dependencyFingerprint(n, scope, ctx, inputs)

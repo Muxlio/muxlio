@@ -24,9 +24,13 @@ func PrepareRemoteDispatch(req ExecuteRequest) ExecuteRequest {
 // workspace that is missing on this worker, execution fails instead of falling
 // back to the worker default checkout.
 func ApplyWorkerWorkspace(req ExecuteRequest, workerWorkspace string) (ExecuteRequest, error) {
+	if req.WorkspaceMode == "empty" {
+		req.Workspace = ""
+		return req, nil
+	}
 	// A read-only remote poll needs only its durable operation reference. Do
 	// not rebind it to an input workspace or copy the worker's default checkout.
-	if req.Action == "poll" {
+	if req.Action == "poll" || req.Action == "reconcile" {
 		req.Workspace = ""
 		return req, nil
 	}

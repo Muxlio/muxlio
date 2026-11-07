@@ -37,7 +37,7 @@ func ValidateWorkspaceContract(mode string, keys []string) error {
 		}
 	}
 	switch mode {
-	case "", "snapshot", "read-only":
+	case "", "snapshot", "empty", "read-only":
 	case "shared-write":
 		if len(keys) == 0 {
 			return fmt.Errorf("shared-write workspace requires an exclusive concurrency key")
@@ -56,12 +56,12 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 		return req, err
 	}
 	switch req.WorkspaceMode {
-	case "", "snapshot":
+	case "", "snapshot", "empty":
 		dst := filepath.Join(scratch, "workspace")
 		if err := os.Mkdir(dst, 0o700); err != nil {
 			return req, err
 		}
-		if req.Workspace != "" {
+		if req.WorkspaceMode != "empty" && req.Workspace != "" {
 			source, err := filepath.EvalSymlinks(req.Workspace)
 			if err != nil {
 				return req, err

@@ -67,7 +67,7 @@ func (r *serverRunner) StartPersistedRun(id string) error {
 	if err != nil {
 		return err
 	}
-	if run.State != plan.RunCreated {
+	if run.State != plan.RunCreated && run.State != plan.RunRunning {
 		return nil
 	}
 	var p plan.Plan
@@ -189,6 +189,9 @@ func (r *serverRunner) ControlRun(runID, action string) error {
 		}
 		if engine != nil {
 			engine.Resume()
+		} else {
+			r.mu.Unlock()
+			return r.StartPersistedRun(runID)
 		}
 	case "cancel":
 		if run.State == plan.RunSucceeded || run.State == plan.RunFailed || run.State == plan.RunCancelled {

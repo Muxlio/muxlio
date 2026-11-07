@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,15 +23,25 @@ func TestReleaseUpgradeRemovesObsoleteAdapter(t *testing.T) {
 	obsolete := filepath.Join(adapters, "command-go-test")
 	custom := filepath.Join(adapters, "custom-tool")
 	config := filepath.Join(prefix, "config.json")
-	for _, path := range []string{obsolete, custom, config} {
+	legacy := filepath.Join(adapters, "agent-gemini-cli")
+	for _, path := range []string{obsolete, custom, legacy, legacy + ".json"} {
 		if err := os.WriteFile(path, []byte("preserve existing content\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(config, []byte(`{"capabilities":["agent/gemini-cli","custom/tool"],"executors":{"agent/gemini-cli":{"allow":false}},"token":"preserve-existing-token","custom":{"keep":true}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	// Exercise the real installer with a stub compiler: this test concerns
 	// upgrades and discovery, without rebuilding every Go binary in the suite.
 	stubDir := t.TempDir()
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUXLIO_TEST_GO", goBinary)
 	stub := `#!/bin/sh
+if [ "$1" = run ]; then exec "$MUXLIO_TEST_GO" "$@"; fi
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     shift
@@ -58,11 +69,37 @@ exit 1
 		if allowed, err := executor.CanExecute("command"); err != nil || allowed {
 			t.Fatalf("release did not install the host-authorization descriptor: allowed=%v error=%v", allowed, err)
 		}
-		for _, path := range []string{custom, config} {
+		for _, path := range []string{custom} {
 			content, err := os.ReadFile(path)
 			if err != nil || string(content) != "preserve existing content\n" {
 				t.Fatalf("installer changed %s: %q, %v", path, content, err)
 			}
+		}
+		for _, path := range []string{legacy, legacy + ".json"} {
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("legacy Gemini artifact still installed: %s %v", path, err)
+			}
+		}
+		raw, err := os.ReadFile(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var migrated struct {
+			Capabilities []string `json:"capabilities"`
+			Executors    map[string]struct {
+				Allow bool `json:"allow"`
+			} `json:"executors"`
+			Token  string          `json:"token"`
+			Custom map[string]bool `json:"custom"`
+		}
+		if err := json.Unmarshal(raw, &migrated); err != nil {
+			t.Fatal(err)
+		}
+		if len(migrated.Capabilities) != 2 || migrated.Capabilities[0] != "agent/gemini" || migrated.Capabilities[1] != "custom/tool" || migrated.Token != "preserve-existing-token" || !migrated.Custom["keep"] {
+			t.Fatalf("upgrade lost configuration: %+v", migrated)
+		}
+		if permission, ok := migrated.Executors["agent/gemini"]; !ok || permission.Allow {
+			t.Fatal("upgrade lost executor deny permission")
 		}
 		capabilities, err := discoverCapabilities(adapters)
 		if err != nil {

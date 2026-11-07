@@ -616,7 +616,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	if node.Retry != nil {
 		req.Effect = node.Retry.Effect
 	}
-	if ws := workspaceFromInputs(inputs); ws != "" {
+	if ws := workspaceFromInputs(inputs); ws != "" && node.WorkspaceMode != "empty" {
 		req.Workspace = ws
 		if req.PlacementLabels == nil {
 			req.PlacementLabels = make(map[string]string)

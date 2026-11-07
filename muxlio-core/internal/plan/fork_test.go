@@ -16,7 +16,7 @@ import (
 func forkTestPlan(t *testing.T, effect string) *Plan {
 	t.Helper()
 	var p Plan
-	if err := json.Unmarshal([]byte(`{"irVersion":"1.0","name":"fork-test","root":"root","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"test","retry":{"effect":"`+effect+`"},"outputs":{"result":{}}}],"output":{"result":{"ref":{"node":"work","port":"result"}}}}}}`), &p); err != nil {
+	if err := json.Unmarshal([]byte(`{"irVersion":"1.0","name":"fork-test","root":"root","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"test","workspaceMode":"empty","retry":{"effect":"`+effect+`"},"outputs":{"result":{}}}],"output":{"result":{"ref":{"node":"work","port":"result"}}}}}}`), &p); err != nil {
 		t.Fatal(err)
 	}
 	return &p
@@ -220,7 +220,7 @@ func TestForkRejectsLiveSourceAndForeignCandidate(t *testing.T) {
 func TestForkDependencyOutputInvalidatesReuse(t *testing.T) {
 	s := state.New()
 	var p Plan
-	if err := json.Unmarshal([]byte(`{"irVersion":"1.0","name":"dependencies","root":"root","subgraphs":{"root":{"nodes":[{"id":"first","kind":"execute","executor":"test","retry":{"effect":"pure"}},{"id":"second","kind":"execute","executor":"test","retry":{"effect":"pure"},"inputs":{"dependency":{"ref":{"node":"first","port":"result"}}}}]}}}`), &p); err != nil {
+	if err := json.Unmarshal([]byte(`{"irVersion":"1.0","name":"dependencies","root":"root","subgraphs":{"root":{"nodes":[{"id":"first","kind":"execute","executor":"test","workspaceMode":"empty","retry":{"effect":"pure"}},{"id":"second","kind":"execute","executor":"test","workspaceMode":"empty","retry":{"effect":"pure"},"inputs":{"dependency":{"ref":{"node":"first","port":"result"}}}}]}}}`), &p); err != nil {
 		t.Fatal(err)
 	}
 	originalExec := workers.NewFake().ByNode("first", workers.ExecuteResult{Outputs: map[string]any{"result": "old-dependency"}}).ByNode("second", workers.ExecuteResult{Outputs: map[string]any{"result": "old"}})

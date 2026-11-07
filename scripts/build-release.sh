@@ -21,6 +21,9 @@ for adapter in agent-a2a agent-acp agent-claude agent-codex agent-cursor agent-g
     cp "$repo/muxlio-adapters/cmd/$adapter/adapter.json" "$destination/libexec/muxlio/adapters/$adapter.json"
   fi
 done
+# Migrate operator settings before retiring an adapter name. Conflicting
+# settings stop the upgrade while the legacy binary is still available.
+go run "$repo/scripts/migrate-executor.go" "$destination/config.json" agent/gemini-cli agent/gemini
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"
 # Remove the retired Gemini adapter name when upgrading an existing prefix.

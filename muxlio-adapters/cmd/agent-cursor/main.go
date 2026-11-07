@@ -17,6 +17,11 @@ import (
 )
 
 func main() {
+	// Probes and pinned-version checks must use the same credential store as
+	// execution. This environment belongs only to the adapter subprocess.
+	if err := os.Setenv("AGENT_CLI_CREDENTIAL_STORE", "file"); err != nil {
+		adapter.Fail("agent-cursor: configuring credential store: %v", err)
+	}
 	if adapter.ProbeRequested(os.Args) {
 		cli, _ := resolveCursorAgent()
 		adapter.RunProbe(adapter.RunnerChecks(cli, "status")...)
@@ -220,9 +225,6 @@ func cursorAgentEnv() []string {
 	env := adapter.CleanEnvForChild()
 	// Force on-disk credential storage so the Cursor agent CLI does not attempt
 	// to unlock the macOS keychain in headless environments (SSH, launchd).
-	// The muxlio worker also injects this variable via script.go environment();
-	// setting it here ensures the same behaviour when the adapter is invoked
-	// directly (e.g. during development or in standalone tests).
 	return upsertEnvVar(env, "AGENT_CLI_CREDENTIAL_STORE", "file")
 }
 

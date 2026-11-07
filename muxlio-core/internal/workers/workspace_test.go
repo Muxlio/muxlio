@@ -71,6 +71,29 @@ func TestParallelAttemptSnapshotsOwnWritableTrees(t *testing.T) {
 	}
 }
 
+func TestEmptyWorkspaceDoesNotCopyWorkerSource(t *testing.T) {
+	for _, source := range []string{t.TempDir(), filepath.Join(t.TempDir(), "missing")} {
+		if info, err := os.Stat(source); err == nil && info.IsDir() {
+			if err := os.WriteFile(filepath.Join(source, "source.txt"), []byte("private source"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		req := ExecuteRequest{Workspace: source, WorkspaceMode: "empty", Inputs: map[string]any{"workspace": source}}
+		req, err := ApplyWorkerWorkspace(req, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err = prepareAttemptWorkspace(req, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(req.Workspace)
+		if err != nil || len(entries) != 0 || req.Inputs["workspace"] != req.Workspace {
+			t.Fatalf("workspace was not empty and rebound: %+v %v %v", req, entries, err)
+		}
+	}
+}
+
 func TestWorkspaceModesFailClosed(t *testing.T) {
 	for _, req := range []ExecuteRequest{{WorkspaceMode: "shared-write"}, {WorkspaceMode: "read-only"}, {WorkspaceMode: "unknown"}, {ConcurrencyKeys: []string{""}}} {
 		if _, err := prepareAttemptWorkspace(req, t.TempDir()); err == nil {

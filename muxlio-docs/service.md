@@ -30,6 +30,12 @@ removing or moving the checkout. Relative resource discovery uses the installed
 executable, never its build directory. No SDK is required to execute compiled
 plans. Use the SDK/compiler from a development checkout to author plans.
 
+Building over an existing prefix migrates `agent/gemini-cli` capabilities,
+executor permissions, and admission settings to `agent/gemini` before removing
+the retired adapter. Capacity group names remain unchanged. Conflicting old and
+new executor settings stop the upgrade for operator resolution; the config and
+legacy adapter are preserved.
+
 For a local Homebrew formula, first create a source archive of this tree (not
 just HEAD: include the implemented files):
 

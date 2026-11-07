@@ -253,11 +253,20 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		if !ok {
 			continue
 		}
-		if filepath.Clean(ref.Path) != filepath.Clean(filepath.Join(workDir, filepath.Base(decl.Path))) {
+		rel, err := declaredOutputPath(decl.Path)
+		if err != nil {
+			return ExecuteResult{Error: fmt.Sprintf("muxlio: output %q has invalid declared path", port)}, nil
+		}
+		if filepath.Clean(ref.Path) != filepath.Clean(filepath.Join(workDir, rel)) || filepath.Clean(filePath) != filepath.Clean(filepath.Join(workDir, rel)) {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: output %q path does not match its declaration", port)}, nil
 		}
-		f, err := os.Open(filePath)
+		root, err := os.OpenRoot(workDir)
 		if err != nil {
+			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output workspace: %v", err)}, nil
+		}
+		f, err := root.Open(rel)
+		if err != nil {
+			_ = root.Close()
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output %q: %v", port, err)}, nil
 		}
 		// Stage the exact scanned bytes so concurrent adapter writes cannot swap
@@ -266,6 +275,7 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		staged, err := os.CreateTemp(workDir, ".publish-*")
 		if err != nil {
 			f.Close()
+			_ = root.Close()
 			return ExecuteResult{}, err
 		}
 		defer os.Remove(staged.Name())
@@ -274,6 +284,7 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		scanner := &credentialWriter{dst: io.MultiWriter(staged, h), secrets: executionSecrets(req)}
 		size, err := io.Copy(scanner, io.LimitReader(f, artifacts.MaxTransferBytes+1))
 		_ = f.Close()
+		_ = root.Close()
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: read output %q: %v", port, err)}, nil
 		}
@@ -302,6 +313,17 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 	return result, nil
 }
 
+func declaredOutputPath(name string) (string, error) {
+	if name == "" || filepath.IsAbs(name) {
+		return "", fmt.Errorf("path must be relative")
+	}
+	clean := filepath.Clean(name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes workspace")
+	}
+	return clean, nil
+}
+
 func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, decl OutputDecl) (ArtifactRef, string, bool) {
 	if raw, ok := result.Outputs[port]; ok {
 		if ref, ok := artifactRefFromValue(raw); ok && ref.Path != "" {
@@ -319,7 +341,14 @@ func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, de
 				if name == "" {
 					name = port
 				}
-				path := filepath.Join(workDir, filepath.Base(name))
+				rel, err := declaredOutputPath(name)
+				if err != nil {
+					return ArtifactRef{}, "", false
+				}
+				path := filepath.Join(workDir, rel)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return ArtifactRef{}, "", false
+				}
 				_ = os.WriteFile(path, []byte(data), 0o644)
 				return ArtifactRef{Mime: decl.Mime, Path: path}, path, true
 			}
@@ -329,7 +358,11 @@ func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, de
 	if name == "" {
 		name = port
 	}
-	path := filepath.Join(workDir, filepath.Base(name))
+	rel, err := declaredOutputPath(name)
+	if err != nil {
+		return ArtifactRef{}, "", false
+	}
+	path := filepath.Join(workDir, rel)
 	if _, err := os.Stat(path); err != nil {
 		return ArtifactRef{}, "", false
 	}

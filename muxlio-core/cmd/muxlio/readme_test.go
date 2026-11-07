@@ -50,7 +50,8 @@ func TestReadmeDocumentsProductBasics(t *testing.T) {
 	}
 
 	for _, claim := range []string{
-		"Setup authorizes `~/.muxlio` itself as the workspace",
+		"Fresh setup uses this checkout as the workspace",
+		"repeated setup preserves the configured workspace",
 		"The module must default-export an object with a `plan` property",
 		"workflow code and its side effects run during compilation",
 		"default `~/.muxlio/adapters`",

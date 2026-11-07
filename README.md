@@ -63,7 +63,7 @@ npm run setup          # builds release prefix under ~/.muxlio and muxlio init
 npm run release        # build CLI, adapters, and UI into ~/.muxlio (no init)
 ```
 
-`npm run setup` runs `scripts/setup.sh`: `scripts/build-release.sh` (Go CLI, six adapters, UI assets), copies the CLI to `.bin/muxlio` for this checkout, and runs `muxlio init` to create `~/.muxlio/config.json` with a coordinator bearer token. Setup authorizes `~/.muxlio` itself as the workspace; use `muxlio init --workspace /absolute/path/to/project` afterward to select a project workspace. Authoring workflows from this checkout still requires `npm run build` once to compile the TypeScript workspaces (`muxlio-sdk`, `muxlio-compiler`, `muxlio-testing`). Override the runtime root with `MUXLIO_HOME`.
+`npm run setup` runs `scripts/setup.sh`: `scripts/build-release.sh` (Go CLI, eight adapters, UI assets), copies the CLI to `.bin/muxlio` for this checkout, and runs `muxlio init` to create `~/.muxlio/config.json` with a coordinator bearer token. Fresh setup uses this checkout as the workspace; repeated setup preserves the configured workspace. Set `MUXLIO_WORKSPACE=/absolute/path/to/project` during setup or use `muxlio init --workspace /absolute/path/to/project` afterward to select another workspace. Authoring workflows from this checkout still requires `npm run build` once to compile the TypeScript workspaces (`muxlio-sdk`, `muxlio-compiler`, `muxlio-testing`). Override the runtime root with `MUXLIO_HOME`.
 
 `npm run release` runs the same `scripts/build-release.sh` install into `~/.muxlio` (or `MUXLIO_HOME`) without `muxlio init`, SDK workspace builds, or copying the CLI into this checkout’s `.bin/muxlio`. Use it to refresh binaries and UI assets in an existing runtime.
 
@@ -541,8 +541,11 @@ blocked even when labelled pure. Unsafe steps fail with a diagnostic before
 any dispatch; external effects, attempts, signals, and session state are never
 copied. The original history remains unchanged.
 
-Selected outputs are reused only when the recorded dependency fingerprint
-matches. This first version fingerprints the full pinned plan, node contract,
+Selected outputs are reused only for steps declaring `workspaceMode: "empty"`
+and only when the recorded dependency fingerprint matches. Steps using the
+default workspace recompute because its source can change between runs.
+Empty mode creates a private workspace without copying the worker checkout;
+it does not restrict arbitrary host access by native code. This version fingerprints the full pinned plan, node contract,
 resolved dependencies, inputs, and structural scope; any plan change disables
 reuse. Legacy outputs without fingerprints are recomputed. File outputs require
 content-addressed artifact references. Each reuse appends an

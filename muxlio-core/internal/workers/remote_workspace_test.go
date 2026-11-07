@@ -36,6 +36,13 @@ func TestRemotePollDoesNotBindWorkerOrInputWorkspace(t *testing.T) {
 	}
 }
 
+func TestRemoteReconcileDoesNotBindWorkspace(t *testing.T) {
+	got, err := ApplyWorkerWorkspace(ExecuteRequest{Action: "reconcile", Inputs: map[string]any{"workspace": filepath.Join(t.TempDir(), "removed-worktree")}}, "")
+	if err != nil || got.Workspace != "" {
+		t.Fatalf("reconciliation rebound workspace: %+v %v", got, err)
+	}
+}
+
 func TestApplyWorkerWorkspaceIgnoresMissingCoordinatorPath(t *testing.T) {
 	coordinatorPath := filepath.Join(t.TempDir(), "only-on-coordinator")
 	workerPath := t.TempDir()

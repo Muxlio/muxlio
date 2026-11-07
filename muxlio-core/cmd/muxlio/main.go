@@ -81,6 +81,8 @@ Options:
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "init":
+			os.Exit(cmdInit(os.Args[2:], defaultRuntime(), false))
 		case "test-event":
 			os.Exit(cmdTestEvent(os.Args[2:]))
 		case "service":

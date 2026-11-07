@@ -183,6 +183,53 @@ func TestPublishOutputsSkipsScalars(t *testing.T) {
 	_ = store // silence unused-import warning
 }
 
+func TestPublishOutputsAllowsNestedDeclaredPath(t *testing.T) {
+	scratch := t.TempDir()
+	path := filepath.Join(scratch, "reports", "result.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := testArtifactPublisher()
+	result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: "reports/result.txt"}}}, ExecuteResult{Outputs: map[string]any{"report": map[string]any{"path": path}}})
+	if err != nil || result.Error != "" {
+		t.Fatalf("nested declared output rejected: %+v %v", result, err)
+	}
+}
+
+func TestPublishOutputsRejectsSymlinkOutsideScratch(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "host-private.txt")
+	if err := os.WriteFile(outside, []byte("host-private-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	path := filepath.Join(scratch, "result.txt")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+	a := testArtifactPublisher()
+	result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: "result.txt"}}}, ExecuteResult{Outputs: map[string]any{"report": map[string]any{"path": path}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error == "" || !strings.Contains(result.Error, "open output") {
+		t.Fatalf("outside symlink was not rejected: %+v", result)
+	}
+}
+
+func testArtifactPublisher() ArtifactTransferExecutor {
+	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if strings.HasSuffix(req.URL.Path, "/transfer") {
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/v1/artifacts/"), "/transfer"), URL: "/bytes", Method: req.URL.Query().Get("method"), Mode: "proxy"})
+		}
+		return w.Result(), nil
+	})}
+	return ArtifactTransferExecutor{Client: artifacts.Client{BaseURL: "http://coordinator", HTTP: client}}
+}
+
 // stubExecutor always returns a fixed result.
 type stubExecutor struct{ result ExecuteResult }
 

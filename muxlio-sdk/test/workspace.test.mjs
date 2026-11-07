@@ -12,3 +12,12 @@ test('both authoring APIs preserve workspace ownership and exclusive keys', () =
     assert.deepEqual(node.concurrencyKeys, opts.concurrencyKeys);
   }
 });
+
+test('both authoring APIs preserve an explicitly empty workspace', () => {
+  const opts = { executor: 'test', workspaceMode: 'empty' };
+  const symbolic = workflow('empty-workspace', { build: ({ step }) => { step('work', task(opts), {}); } });
+  const builder = defineWorkflow({ name: 'empty-workspace', build: (g) => { g.execute('work', opts); } });
+  for (const { plan } of [symbolic, builder]) {
+    assert.equal(plan.subgraphs.root.nodes[0].workspaceMode, 'empty');
+  }
+});
