@@ -62,6 +62,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	registerSchedules(mux, store)
 	registerSubscriptions(mux, store)
 	registerTriggers(mux, store, runner)
+	registerOperations(mux, store, artifactDriver)
 	if artifactDriver != nil {
 		planner := artifacts.PlannerFromDriver(artifactDriver)
 		mux.HandleFunc("/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
@@ -568,7 +569,11 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		}
 		registered := make([]state.Worker, 0)
 		if registry, ok := store.(workerRegistry); ok {
-			registered, err = registry.ListWorkers(time.Now().Add(-WorkerHeartbeatWindow))
+			since := time.Now().Add(-WorkerHeartbeatWindow)
+			if r.URL.Query().Get("includeStale") == "true" {
+				since = time.Time{}
+			}
+			registered, err = registry.ListWorkers(since)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
 				return
@@ -577,7 +582,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				registered = []state.Worker{}
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"workers": assignments, "registeredWorkers": registered})
+		writeJSON(w, http.StatusOK, map[string]any{"workers": assignments, "registeredWorkers": registered, "heartbeatWindowSeconds": WorkerHeartbeatWindow.Seconds(), "serverTime": time.Now().UTC()})
 	})
 
 	return mux

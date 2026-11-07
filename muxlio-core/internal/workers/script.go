@@ -3,7 +3,6 @@ package workers
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
+	"github.com/muxlio/muxlio-core/internal/runtimefiles"
 	"github.com/muxlio/muxlio-core/internal/sandbox"
 	"github.com/muxlio/muxlio-core/internal/telemetry"
 )
@@ -349,22 +349,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	return result, nil
 }
 
-func safePathPart(value string) string {
-	var cleaned strings.Builder
-	for _, r := range value {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			cleaned.WriteRune(r)
-		}
-	}
-	if cleaned.String() != value {
-		return fmt.Sprintf("~%x", sha256.Sum256([]byte(value)))
-	}
-	value = cleaned.String()
-	if value == "" {
-		return "unknown"
-	}
-	return value
-}
+func safePathPart(value string) string { return runtimefiles.PathPart(value) }
 
 // launch delegates all runtime protocols and boundary descriptions to sandbox.
 func (s *ScriptExecutor) launch(req ExecuteRequest, script, workDir string, arguments ...string) (sandbox.Launch, error) {

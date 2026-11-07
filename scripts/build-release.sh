@@ -24,7 +24,7 @@ done
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"
 cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/server.mjs" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favicon.ico" \
-  "$repo/muxlio-ui/app.css" "$repo/muxlio-ui/workspace.css" "$repo/muxlio-ui/workspace.js" \
+  "$repo/muxlio-ui/app.css" "$repo/muxlio-ui/workspace.css" "$repo/muxlio-ui/operations.css" "$repo/muxlio-ui/workspace.js" \
   "$destination/share/muxlio/ui/"
 mkdir -p "$destination/share/muxlio/ui/js"
 cp "$repo/muxlio-ui/js/"*.js "$destination/share/muxlio/ui/js/"

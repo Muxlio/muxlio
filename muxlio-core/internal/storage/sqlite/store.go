@@ -24,6 +24,8 @@ import (
 )
 
 var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS automation_switches (kind TEXT NOT NULL,id TEXT NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(kind,id))`,
+	`CREATE TABLE IF NOT EXISTS operational_reports (id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,imported_at TEXT NOT NULL,document BLOB NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS retention_pins (kind TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(kind,id))`,
 	`CREATE TABLE IF NOT EXISTS run_retention (run_id TEXT PRIMARY KEY REFERENCES runs(id), parent_id TEXT REFERENCES runs(id), retained_until TEXT)`,
 	`CREATE TABLE IF NOT EXISTS event_watermarks (run_id TEXT PRIMARY KEY REFERENCES runs(id), seq INTEGER NOT NULL)`,
@@ -103,6 +105,8 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS trigger_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_id TEXT NOT NULL, idempotency_key TEXT NOT NULL DEFAULT '', run_id TEXT, workflow_digest TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL, FOREIGN KEY(trigger_id) REFERENCES triggers(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_dedup ON trigger_deliveries(trigger_id, idempotency_key, state, timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_run ON trigger_deliveries(run_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_events_operational_type ON events(type,timestamp)`,
+	`CREATE INDEX IF NOT EXISTS idx_attempts_operational_state ON execution_attempts(state,started_at)`,
 }
 
 var _ state.Store = (*Store)(nil)

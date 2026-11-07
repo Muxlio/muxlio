@@ -64,6 +64,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
     const staticAssets = {
       '/app.css': 'text/css',
       '/workspace.css': 'text/css',
+      '/operations.css': 'text/css',
       '/workspace.js': 'text/javascript',
       '/js/core.js': 'text/javascript',
       '/js/format.js': 'text/javascript',
@@ -74,6 +75,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
       '/js/transcript.js': 'text/javascript',
       '/js/analytics.js': 'text/javascript',
       '/js/operations.js': 'text/javascript',
+      '/js/operations-hub.js': 'text/javascript',
       '/js/boot.js': 'text/javascript',
       '/logo.png': 'image/png',
       '/favicon.ico': 'image/x-icon',

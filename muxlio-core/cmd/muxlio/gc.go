@@ -25,6 +25,7 @@ func cmdGC(args []string, dataDir string) int {
 	logs := fs.Duration("logs", defaults.StdoutStderr, "stdout/stderr retention (0 disables)")
 	objects := fs.Duration("artifacts", defaults.Artifacts, "artifact retention and orphan grace period (0 disables)")
 	caches := fs.Duration("caches", defaults.Caches, "unreferenced plan cache retention (0 disables)")
+	workspaces := fs.Duration("workspaces", defaults.Workspaces, "terminal run workspace retention (0 disables)")
 	pinArtifact := fs.String("pin-artifact", "", "pin a local artifact digest")
 	unpinArtifact := fs.String("unpin-artifact", "", "unpin an artifact digest")
 	pinRun := fs.String("pin-run", "", "pin a run")
@@ -127,7 +128,7 @@ func cmdGC(args []string, dataDir string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	report, err := db.CollectGarbage(local, state.Retention{EventHistory: *events, StdoutStderr: *logs, Artifacts: *objects, Caches: *caches}, time.Now(), *approval)
+	report, err := db.CollectGarbage(local, state.Retention{EventHistory: *events, StdoutStderr: *logs, Artifacts: *objects, Caches: *caches, Workspaces: *workspaces}, time.Now(), *approval, filepath.Join(*root, "runs"))
 	if report != nil {
 		if encodeErr := json.NewEncoder(os.Stdout).Encode(report); encodeErr != nil {
 			fmt.Fprintln(os.Stderr, encodeErr)

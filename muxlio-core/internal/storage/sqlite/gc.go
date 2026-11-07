@@ -6,24 +6,27 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/muxlio/muxlio-core/internal/artifacts"
+	"github.com/muxlio/muxlio-core/internal/runtimefiles"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 // GCReport is a deterministic preview. Apply requires its token and recalculates
 // reachability; a changed candidate set requires another operator review.
 type GCReport struct {
-	ArtifactStorage string                `json:"artifactStorage"`
-	Artifacts       []artifacts.Candidate `json:"artifacts"`
-	Events          map[string]int        `json:"events"`
-	Logs            map[string]int        `json:"stdoutStderr"`
-	Plans           []string              `json:"cachedPlans"`
-	Token           string                `json:"token"`
-	Applied         bool                  `json:"applied"`
+	ArtifactStorage string                            `json:"artifactStorage"`
+	Artifacts       []artifacts.Candidate             `json:"artifacts"`
+	Events          map[string]int                    `json:"events"`
+	Logs            map[string]int                    `json:"stdoutStderr"`
+	Plans           []string                          `json:"cachedPlans"`
+	Token           string                            `json:"token"`
+	Applied         bool                              `json:"applied"`
+	Workspaces      []runtimefiles.WorkspaceCandidate `json:"workspaces,omitempty"`
 }
 
 // PinRetention pins a run, plan, or artifact and its transitive references.
@@ -116,8 +119,18 @@ func (s *Store) SetRunRetention(id, parent string, until *time.Time) error {
 // uploads and execution cannot race the mark/sweep. It also holds a SQLite write
 // transaction across preview validation and deletion to exclude other writers.
 // Empty approval is always read-only. Zero durations disable their category.
-func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, now time.Time, approval string) (*GCReport, error) {
-	if policy.EventHistory < 0 || policy.StdoutStderr < 0 || policy.Artifacts < 0 || policy.Caches < 0 {
+func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, now time.Time, approval string, workspaceRoots ...string) (*GCReport, error) {
+	return s.collectGarbage(local, policy, now, approval, false, workspaceRoots...)
+}
+
+// CollectIdleGarbage requires the caller's HTTP maintenance gate. It refuses
+// cleanup while an engine or unfinished assignment could publish artifacts.
+func (s *Store) CollectIdleGarbage(local *artifacts.Local, policy state.Retention, now time.Time, approval string, workspaceRoot string) (*GCReport, error) {
+	return s.collectGarbage(local, policy, now, approval, true, workspaceRoot)
+}
+
+func (s *Store) collectGarbage(local *artifacts.Local, policy state.Retention, now time.Time, approval string, idleOnly bool, workspaceRoots ...string) (*GCReport, error) {
+	if policy.EventHistory < 0 || policy.StdoutStderr < 0 || policy.Artifacts < 0 || policy.Caches < 0 || policy.Workspaces < 0 {
 		return nil, fmt.Errorf("negative retention duration")
 	}
 	s.mu.Lock()
@@ -127,6 +140,15 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 		return nil, err
 	}
 	defer tx.Rollback()
+	if idleOnly {
+		var busy bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM runs WHERE state IN ('running','waiting')) OR EXISTS(SELECT 1 FROM assignments WHERE state IN ('active','uncertain'))`).Scan(&busy); err != nil {
+			return nil, err
+		}
+		if busy {
+			return nil, nil
+		}
+	}
 	if _, err := tx.Exec(`UPDATE coordinator_meta SET value=value WHERE key='epoch'`); err != nil {
 		return nil, err
 	}
@@ -166,7 +188,7 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 	}
 	// A terminal run may still have an unfinished worker or an effect awaiting
 	// reconciliation. Those scopes remain live independently of the run deadline.
-	if err := gcRows(tx, `SELECT run_id FROM execution_attempts WHERE state NOT IN ('succeeded','failed','cancelled') OR await_reconciliation_reason<>'' UNION SELECT run_id FROM assignments WHERE state IN ('active','uncertain')`, func(rows *sql.Rows) error {
+	if err := gcRows(tx, `SELECT run_id FROM execution_attempts WHERE state NOT IN ('succeeded','failed','cancelled','resolved') OR await_reconciliation_reason<>'' UNION SELECT run_id FROM assignments WHERE state IN ('active','uncertain')`, func(rows *sql.Rows) error {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return err
@@ -180,7 +202,7 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 	}
 	protected := map[string]bool{}
 	for id, rec := range runs {
-		if !policy.ExpiredFor(&rec.run, policy.Artifacts, now) || !policy.ExpiredFor(&rec.run, policy.EventHistory, now) || !policy.ExpiredFor(&rec.run, policy.StdoutStderr, now) {
+		if !policy.ExpiredFor(&rec.run, policy.Artifacts, now) || !policy.ExpiredFor(&rec.run, policy.EventHistory, now) || !policy.ExpiredFor(&rec.run, policy.StdoutStderr, now) || (policy.Workspaces > 0 && !policy.ExpiredFor(&rec.run, policy.Workspaces, now)) {
 			for next := id; next != "" && !protected[next]; {
 				protected[next] = true
 				ancestor, ok := runs[next]
@@ -213,6 +235,17 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 	plans := map[string]bool{}
 	expiredArtifacts := map[string]bool{}
 	expiredEvents := map[string]bool{}
+	workspaceRoot := ""
+	if len(workspaceRoots) > 0 {
+		workspaceRoot = workspaceRoots[0]
+	}
+	if workspaceRoot != "" {
+		if info, err := os.Lstat(workspaceRoot); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		} else if err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+			return nil, fmt.Errorf("invalid workspace root")
+		}
+	}
 	for id, rec := range runs {
 		r := rec.run
 		if ancestors[id] {
@@ -230,6 +263,15 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 		}
 		if policy.ExpiredFor(&r, policy.StdoutStderr, now) {
 			report.Logs[id] = 0
+		}
+		if workspaceRoot != "" && policy.ExpiredFor(&r, policy.Workspaces, now) {
+			candidate, err := runtimefiles.WorkspacePreview(workspaceRoot, id)
+			if err != nil {
+				return nil, err
+			}
+			if candidate != nil {
+				report.Workspaces = append(report.Workspaces, *candidate)
+			}
 		}
 	}
 	// Scan references from persisted scopes, execution results and pending inputs.
@@ -405,6 +447,7 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 		}
 	}
 	sort.Strings(report.Plans)
+	sort.Slice(report.Workspaces, func(i, j int) bool { return report.Workspaces[i].RunID < report.Workspaces[j].RunID })
 	before := now.Add(-policy.Artifacts)
 	if policy.Artifacts == 0 {
 		before = time.Time{}
@@ -428,6 +471,11 @@ func (s *Store) CollectGarbage(local *artifacts.Local, policy state.Retention, n
 	}
 	if approval != report.Token {
 		return report, fmt.Errorf("GC preview changed; review the new dry-run report")
+	}
+	for _, candidate := range report.Workspaces {
+		if err := runtimefiles.RemoveWorkspace(workspaceRoot, candidate); err != nil {
+			return report, err
+		}
 	}
 	for _, candidate := range report.Artifacts {
 		if err := local.Expire(candidate.Digest); err != nil {

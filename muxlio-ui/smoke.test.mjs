@@ -33,7 +33,7 @@ try {
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
   const html = await page.text();
-  const app = (await Promise.all(['format.js', 'markdown.js', 'core.js', 'workbench.js', 'inspector.js', 'live.js', 'operations.js', 'boot.js'].map(async name => {
+  const app = (await Promise.all(['format.js', 'markdown.js', 'core.js', 'workbench.js', 'inspector.js', 'live.js', 'operations.js', 'operations-hub.js', 'boot.js'].map(async name => {
     const response = await fetch(`${baseURL}/js/${name}`);
     assert.equal(response.status, 200, name);
     return response.text();

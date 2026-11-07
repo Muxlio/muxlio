@@ -94,11 +94,15 @@ muxlio gc --data-dir ~/.muxlio
 muxlio gc --data-dir ~/.muxlio --apply <token-from-reviewed-report>
 ```
 
-Default retention after a run becomes terminal is seven days for event history,
-three days for stdout/stderr, and thirty days for artifacts. Unreferenced compiled
-plan cache entries expire fourteen days after registration. Override these
-independently with `--events 168h`, `--logs 72h`, `--artifacts 720h`, and
-`--caches 336h`; use the same flags for preview and apply. Zero disables cleanup
+Default retention is 24 hours for terminal-run event history, stdout/stderr,
+artifacts, disposable run workspaces, and unreferenced compiled plan caches.
+The local service checks every 15 minutes and cleans only while idle, behind an
+exclusive HTTP maintenance gate. Active, pinned, uncertain, and reachable ancestor
+data remains protected. Workspaces outside the known runtime run directories are
+never candidates, and cleanup does not follow symlinks into a project workspace.
+Override a manual invocation independently with `--events 24h`, `--logs 24h`,
+`--artifacts 24h`, `--workspaces 24h`, and `--caches 24h`; use the same flags for
+preview and apply. Zero disables cleanup in that invocation
 for that category. Negative durations are rejected. Unreferenced local artifacts
 also receive the artifact duration as a grace period after their file modification
 time, protecting uploads that have not yet acquired a reference.

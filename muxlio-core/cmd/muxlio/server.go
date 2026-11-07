@@ -364,6 +364,8 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	if config != nil {
 		handler = serviceUI(handler, config.UI, authToken)
 	}
+	var maintenanceGate sync.RWMutex
+	handler = withMaintenanceGate(handler, &maintenanceGate)
 
 	tlsCert, tlsKey := "", ""
 	if config != nil {
@@ -434,6 +436,11 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	}()
 	schedulesDone := make(chan struct{})
 	go func() { defer close(schedulesDone); runner.runSchedules() }()
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		runRetentionMaintenance(ctx, store, artifactDriver, dataDir, &maintenanceGate)
+	}()
 	workerDone := make(chan struct{})
 	if config != nil {
 		executor := workers.NewScriptExecutor(config.Adapters, filepath.Join(dataDir, "work"))
@@ -528,6 +535,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 		}
 	}
 	stop()
+	<-retentionDone
 	<-schedulesDone
 	<-subscriptionsDone
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -568,22 +576,24 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			return
 		}
 		assets := map[string]string{
-			"/":                 "index.html",
-			"/app.css":          "app.css",
-			"/workspace.js":     "workspace.js",
-			"/workspace.css":    "workspace.css",
-			"/js/markdown.js":   "js/markdown.js",
-			"/js/core.js":       "js/core.js",
-			"/js/format.js":     "js/format.js",
-			"/js/workbench.js":  "js/workbench.js",
-			"/js/inspector.js":  "js/inspector.js",
-			"/js/live.js":       "js/live.js",
-			"/js/transcript.js": "js/transcript.js",
-			"/js/analytics.js":  "js/analytics.js",
-			"/js/operations.js": "js/operations.js",
-			"/js/boot.js":       "js/boot.js",
-			"/logo.png":         "logo.png",
-			"/favicon.ico":      "favicon.ico",
+			"/operations.css":       "operations.css",
+			"/":                     "index.html",
+			"/app.css":              "app.css",
+			"/workspace.js":         "workspace.js",
+			"/workspace.css":        "workspace.css",
+			"/js/markdown.js":       "js/markdown.js",
+			"/js/core.js":           "js/core.js",
+			"/js/format.js":         "js/format.js",
+			"/js/workbench.js":      "js/workbench.js",
+			"/js/inspector.js":      "js/inspector.js",
+			"/js/live.js":           "js/live.js",
+			"/js/transcript.js":     "js/transcript.js",
+			"/js/analytics.js":      "js/analytics.js",
+			"/js/operations.js":     "js/operations.js",
+			"/js/operations-hub.js": "js/operations-hub.js",
+			"/js/boot.js":           "js/boot.js",
+			"/logo.png":             "logo.png",
+			"/favicon.ico":          "favicon.ico",
 		}
 		name, ok := assets[r.URL.Path]
 		if !ok {

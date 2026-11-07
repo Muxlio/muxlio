@@ -18,15 +18,18 @@ type Retention struct {
 	Artifacts time.Duration `json:"artifacts"`
 	// Caches is how long an unreferenced cached plan version is kept before GC.
 	Caches time.Duration `json:"caches"`
+	// Workspaces retains disposable attempt workspaces after the producing run ends.
+	Workspaces time.Duration `json:"workspaces"`
 }
 
-// DefaultRetention returns a conservative policy used when none is configured.
+// DefaultRetention keeps one day of terminal, unpinned runtime data.
 func DefaultRetention() Retention {
 	return Retention{
-		EventHistory: 7 * 24 * time.Hour,
-		StdoutStderr: 3 * 24 * time.Hour,
-		Artifacts:    30 * 24 * time.Hour,
-		Caches:       14 * 24 * time.Hour,
+		EventHistory: 24 * time.Hour,
+		StdoutStderr: 24 * time.Hour,
+		Artifacts:    24 * time.Hour,
+		Caches:       24 * time.Hour,
+		Workspaces:   24 * time.Hour,
 	}
 }
 

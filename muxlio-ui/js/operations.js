@@ -48,7 +48,7 @@ document.addEventListener('click',event=>{
 
 async function openAttemptDetails(id){
  const run=current;
- try{const attempt=await api(`/v1/runs/${encodeURIComponent(run)}/attempts/${encodeURIComponent(id)}`);if(current===run)showArtifactOutput(attempt,`Attempt ${id}`);}
+ try{const attempt=await api(`/v1/runs/${encodeURIComponent(run)}/attempts/${encodeURIComponent(id)}`);if(current===run)showArtifactOutput(null,`Attempt ${id}`,attempt);}
  catch(err){if(current===run)message(err.message,true);}
 }
 function attemptMetadataMarkup(attempts){

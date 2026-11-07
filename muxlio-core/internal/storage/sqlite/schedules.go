@@ -64,7 +64,7 @@ func scheduleTime(t *time.Time) any {
 func (s *Store) ListSchedules() ([]schedule.Schedule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT definition_json,next_fire FROM schedules ORDER BY id`)
+	rows, err := s.db.Query(`SELECT definition_json,next_fire,EXISTS(SELECT 1 FROM automation_switches x WHERE x.kind='schedules' AND x.id=schedules.id AND x.enabled=0) FROM schedules ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (s *Store) ListSchedules() ([]schedule.Schedule, error) {
 		var item schedule.Schedule
 		var raw []byte
 		var next sql.NullString
-		if err := rows.Scan(&raw, &next); err != nil {
+		if err := rows.Scan(&raw, &next, &item.Paused); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(raw, &item.Definition); err != nil {
@@ -139,7 +139,7 @@ func (s *Store) TickSchedules(now time.Time) ([]string, error) {
 	if _, err := tx.Exec(`UPDATE schedules SET next_fire=next_fire`); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(`SELECT definition_json,plan_json,next_fire FROM schedules ORDER BY id`)
+	rows, err := tx.Query(`SELECT definition_json,plan_json,next_fire FROM schedules WHERE NOT EXISTS(SELECT 1 FROM automation_switches x WHERE x.kind='schedules' AND x.id=schedules.id AND x.enabled=0) ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

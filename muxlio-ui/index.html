@@ -6,6 +6,7 @@
 
 <link rel="stylesheet" href="/app.css?v=control-flow-20261103">
 <link rel="stylesheet" href="/workspace.css">
+<link rel="stylesheet" href="/operations.css">
 </head>
 <body>
 <div class="shell">
@@ -19,13 +20,16 @@
   <div class="nav-label">Workspace</div>
   <nav class="nav" aria-label="Main navigation">
     <a href="#overview" id="overviewNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg></span>Workflow</a>
-    <a href="#runs" id="runsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg></span>Run history</a>
     <a href="#live" id="liveNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg></span>Live</a>
+    <a href="#runs" id="runsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg></span>Run history</a>
+    <a href="#operations" id="operationsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M1.5 8h3l2-5 3 10 2-5h3"/></svg></span>Operations</a>
+    <a href="#automation" id="automationNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m9.5 1.5-6 7H8l-1.5 6 6-8H8z"/></svg></span>Automation</a>
     <a href="#workers" id="workersNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 14h4M8 11v3"/></svg></span>Workers</a>
     <a href="#analytics" id="analyticsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 12l3-4 3 2 3-5 3 3"/><path d="M2 14h12"/></svg></span>Analytics</a>
   </nav>
   <div class="nav-label" style="margin-top:18px">Library</div>
   <nav class="nav" aria-label="Library navigation">
+    <a href="#retention" id="retentionNav"><span class="nav-icon" aria-hidden="true">◇</span>Retention</a>
     <a href="#workflows" id="workflowsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 3.5h4.2L9 5.5H13v7H3z"/></svg></span>Workflows</a>
     <a href="#artifacts" id="artifactsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3V13.5H4z"/><path d="M9 2.5V6h3"/></svg></span>Artifacts</a>
   </nav>
@@ -54,6 +58,27 @@
 <!-- ─── MAIN ───────────────────────────────────── -->
 <main class="content">
   <div id="message" role="status" aria-live="polite"></div>
+
+  <section id="operationsView" class="page" hidden>
+    <div class="page-head"><div><div class="eyebrow">Coordinator</div><h1>Operations</h1><p>Recorded queue, attention, detached work, and recovery state.</p></div><button class="btn" data-ops-action="refresh-operations">Refresh</button></div>
+    <div id="operationsSummary" class="ops-metrics"></div>
+    <div class="ops-toolbar"><label>Show<select id="operationKind"><option value="attention">Needs reconciliation</option><option value="queue">Queued work</option><option value="detached">Detached operations</option><option value="recovery">Recovery history</option><option value="runs">Active and failed runs</option></select></label></div>
+    <div id="operationsList" aria-live="polite"></div>
+  </section>
+
+  <section id="automationView" class="page" hidden>
+    <div class="page-head"><div><div class="eyebrow">Durable automation</div><h1>Automation</h1><p>Scheduled runs, inbound webhooks, and signed lifecycle deliveries.</p></div><button class="btn" data-ops-action="refresh-automation">Refresh</button></div>
+    <div class="ops-toolbar" role="group" aria-label="Automation category"><button class="btn" data-automation-tab="schedules">Schedules</button><button class="btn" data-automation-tab="triggers">Webhooks</button><button class="btn" data-automation-tab="subscriptions">Subscriptions</button><button class="btn" data-automation-tab="deadletters">Dead letters</button></div>
+    <div class="section-head"><h2 id="automationTitle">Schedules</h2><button class="btn primary" id="createAutomation" data-ops-action="create-automation">Create schedule</button></div>
+    <div id="automationList" aria-live="polite"></div><div id="automationHistory"></div>
+  </section>
+
+  <section id="retentionView" class="page" hidden>
+    <div class="page-head"><div><div class="eyebrow">Data lifecycle</div><h1>Retention</h1><p>Pins protect data from cleanup. Expiry describes eligibility, not proof of deletion.</p></div><button class="btn" data-ops-action="refresh-retention">Refresh</button></div>
+    <div id="retentionPolicy" class="ops-metrics"></div>
+    <div class="ops-toolbar"><button class="btn" data-ops-action="add-pin">Pin data</button><button class="btn" data-ops-action="set-retention">Set run retention deadline</button></div>
+    <div id="retentionPins"></div>
+  </section>
 
   <!-- ═══ OVERVIEW ═══════════════════════════════ -->
   <section id="overviewView" class="page">
@@ -199,10 +224,11 @@
           <div class="wb-tab-body">
             <div class="panel-head"><h2>Immutable revisions · newest first</h2><div id="outputsPager"></div></div>
             <div id="wbArtifactList"></div>
+            <div class="section-head"><h2>Intermediate revisions · newest first</h2></div><div id="runRevisionsPanel"></div>
           </div>
         </div>
 
-        <div id="wbTabOperations" class="graph-panel" hidden><div class="wb-tab-body"><div id="runContract"></div><h3>Execution attempts</h3><div id="runAttemptsPanel"></div></div></div>
+        <div id="wbTabOperations" class="graph-panel" hidden><div class="wb-tab-body"><div id="runOperationalControls"></div><div id="runContract"></div><h3>Execution attempts</h3><div id="runAttemptsPanel"></div></div></div>
         <!-- Data tab -->
         <div id="wbTabData" class="graph-panel" hidden>
           <div class="wb-tab-body wb-tab-body--grid">
@@ -275,7 +301,7 @@
       <div>
         <div class="eyebrow">Compute</div>
         <h1>Workers</h1>
-        <p>Registered workers within the coordinator heartbeat window and their active assignments.</p>
+        <p>Worker capacity, readiness, heartbeat health, and independently leased assignments.</p>
       </div>
       <button class="btn" id="refreshWorkers">
         <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
@@ -283,13 +309,21 @@
       </button>
     </div>
     <div class="section-head">
-      <div><h2>Available workers</h2><p>Workers that have heartbeated within the last 90 seconds.</p></div>
+      <div><h2>Registered workers</h2><p>Live and stale workers, including draining workers.</p></div>
     </div>
-    <div id="workerRoster"></div>
+    <div id="workerCapacitySummary" class="ops-metrics"></div><div id="workerRoster"></div>
     <div class="section-head">
       <div><h2>Active assignments</h2><p class="workers-caption">Each row links the worker lease to the run and activation being processed.</p></div>
     </div>
     <div id="workerList"></div>
+  </section>
+
+  <section id="workerCapabilityView" class="page" hidden>
+    <div class="page-head">
+      <div><div class="eyebrow">Compute · Workers</div><h1>Capability details</h1><p>Readiness, supported features, and execution environment reported by the worker.</p></div>
+      <a class="btn ghost" href="#workers">← Back to workers</a>
+    </div>
+    <div id="workerCapabilityContent" aria-live="polite"></div>
   </section>
 
   <!-- ═══ WORKFLOWS ════════════════════════════════ -->
@@ -351,6 +385,7 @@
       </div>
     </div>
     <div id="artifactList"></div>
+    <div class="section-head"><h2>Run revision history</h2></div><form id="artifactRevisionsForm" class="ops-form ops-compare-form"><label>Run ID<input name="run" required placeholder="Inspect immutable intermediate revisions"></label><button class="btn" type="submit">Load revisions</button></form><div id="globalRevisions"></div>
   </section>
 
 
@@ -419,6 +454,7 @@
 <script src="/js/transcript.js"></script>
 <script src="/js/analytics.js"></script>
 <script src="/js/operations.js"></script>
+<script src="/js/operations-hub.js"></script>
 <script src="/js/boot.js"></script>
 <script src="/workspace.js"></script>
 </body>

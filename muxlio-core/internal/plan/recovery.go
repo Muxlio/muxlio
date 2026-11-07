@@ -53,6 +53,9 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 			continue
 		}
 		fail := func(reason string) error {
+			if err := store.AppendEvent(run.ID, "run.recovery_blocked", run.ID, map[string]any{"reason": reason}); err != nil {
+				return err
+			}
 			return store.SetRunError(run.ID, fmt.Errorf("muxlio: recovery requires manual reconciliation: %s", reason))
 		}
 		var p Plan
@@ -130,8 +133,10 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 		// Reset activations that are safe to replay. Execute activations with
 		// uncertain dispatches are left as-is; the engine polls via
 		// Coordinator.Execute until the worker delivers its result.
+		preserved, requeued, uncertain := 0, 0, 0
 		for _, act := range acts {
 			if act.State == ActSucceeded {
+				preserved++
 				continue
 			}
 			if executeIDs[act.NodeID] {
@@ -145,6 +150,7 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 					claimed = !unclaimed
 				}
 				if claimed {
+					uncertain++
 					// Dispatch was claimed (uncertain): leave the activation in
 					// its current state so the engine polls for the result.
 					// Do NOT reset or re-dispatch — the worker may already have
@@ -155,11 +161,13 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 				if err := store.SetActivationState(act.ID, ActQueued); err != nil {
 					return nil, err
 				}
+				requeued++
 			} else {
 				// Non-execute (pure/structural) node: always safe to replay.
 				if err := store.SetActivationState(act.ID, ActQueued); err != nil {
 					return nil, err
 				}
+				requeued++
 			}
 		}
 
@@ -172,6 +180,9 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 		}
 
 		engines[run.ID] = NewEngineWithStore(&p, executor, store)
+		if err := store.AppendEvent(run.ID, "run.recovered", run.ID, map[string]any{"preservedActivations": preserved, "requeuedActivations": requeued, "uncertainExecutions": uncertain}); err != nil {
+			return nil, err
+		}
 	}
 	return engines, nil
 }

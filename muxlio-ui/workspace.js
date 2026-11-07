@@ -14,7 +14,7 @@ function renderRunPagers(graph,outputs,events){
 document.addEventListener('click',async event=>{
  if(event.target.closest('#focusCurrent')){const node=document.querySelector('.node-card.running,.node-card.waiting,.node-card.queued,.node-card.failed');if(node){for(let parent=node.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;node.scrollIntoView({block:'center',inline:'center',behavior:'smooth'});node.focus({preventScroll:true});}return;}
  const output=event.target.closest('[data-open-output]');
- if(output){const act=await loadActivation(output.dataset.openOutput);if(act&&current===act.runId)showArtifactOutput(act.outputs?.[output.dataset.outputName],output.dataset.outputName);return;}
+ if(output){const act=await loadActivation(output.dataset.openOutput);if(act&&current===act.runId){const value=act.outputs?.[output.dataset.outputName];showArtifactOutput(artifactData(value),output.dataset.outputName,value);}return;}
  const button=event.target.closest('[data-run-page]');if(!button||button.disabled)return;
  if(['attempts','artifact-index'].includes(button.dataset.runPage))return;
  const direction=Number(button.dataset.direction);
@@ -281,7 +281,7 @@ function connectionError(err){lastRefresh=lastRefresh||null;}
 
 // ── auto-refresh ──────────────────────────────────────────────────────────
 function stopRefresh(){clearTimeout(refreshTimer);refreshTimer=null;}
-function scheduleRefresh(){stopRefresh();if(location.hash!=='#analytics'&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
+function scheduleRefresh(){stopRefresh();if(!['#analytics','#compare','#evidence','#retention'].some(hash=>location.hash.startsWith(hash))&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
 async function refreshWorkspace(){
   if(refreshBusy){scheduleRefresh();return;}
   refreshBusy=true;
@@ -293,6 +293,8 @@ async function refreshWorkspace(){
       if(parts.length>=2&&typeof refreshTranscriptState==='function')
         await refreshTranscriptState(decodeURIComponent(parts[0]),decodeURIComponent(parts[1]));
     }
+    else if(location.hash==='#operations')await loadOpsDashboard();
+    else if(location.hash==='#automation')await loadAutomation();
     else if(location.hash==='#workers')await loadWorkers();
     else if(location.hash==='#live'&&typeof loadLive==='function')await loadLive();
     else if(location.hash==='#runs')await loadRuns();

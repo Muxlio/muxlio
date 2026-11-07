@@ -24,6 +24,7 @@ type Definition struct {
 
 type Schedule struct {
 	Definition
+	Paused   bool       `json:"paused"`
 	NextFire *time.Time `json:"nextFire"`
 }
 

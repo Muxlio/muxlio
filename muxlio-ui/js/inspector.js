@@ -220,6 +220,7 @@ async function loadArtifactBlob(ref){
   if(ref.data!=null)return new Blob([typeof ref.data==='string'?ref.data:JSON.stringify(ref.data,null,2)],{type:mime});
   if(!ref.digest)throw Error('No artifact content or digest recorded.');
   const response=await uiFetch(`/v1/artifacts/${encodeURIComponent(ref.digest)}`);
+  if(response.status===410)throw Error('This artifact has expired under the retention policy.');
   if(!response.ok)throw Error(`Unable to load artifact (HTTP ${response.status}).`);
   return new Blob([await response.arrayBuffer()],{type:mime});
 }
@@ -393,12 +394,24 @@ function formatWorkerCapability(cap){
   if(typeof cap==='object'&&cap.name)return cap.version?`${cap.name}@${cap.version}`:cap.name;
   return String(cap);
 }
-function workerCapabilityMarkup(cap){
- if(typeof cap==='string')return esc(cap);
- const report=cap.readiness,contract=cap.contract||{};
- const state=report?(report.ready?'Ready':'Blocked'):'Readiness unavailable';
- const checks=(report?.checks||[]).map(check=>`<li>${check.passed?'✓':'✕'} ${esc(check.name)} · ${esc(check.message||'')}</li>`).join('');
- return `<details><summary>${esc(formatWorkerCapability(cap))} · ${state}</summary><p>Contract ${esc(contract.contractVersion||'Unavailable')}</p>${contract.environment?.digest?`<p>Environment <code>${esc(contract.environment.digest)}</code></p>`:''}<p>${esc(Object.entries(contract.capabilities||{}).filter(([,enabled])=>enabled).map(([name])=>name).join(', ')||'Baseline capabilities')}</p>${checks?`<ul>${checks}</ul>`:''}</details>`;
+function workerCapabilityMarkup(cap,workerID=''){
+ if(!cap)return '';
+ if(typeof cap==='string')cap={name:cap};
+ const readiness=cap.readiness?.ready===true?'ready':cap.readiness?.ready===false?'blocked':'unknown';
+ const label={ready:'Ready',blocked:'Blocked',unknown:'Readiness unavailable'}[readiness];
+ return `<a href="#worker-capability/${encodeURIComponent(workerID)}/${encodeURIComponent(cap.name||'')}/${encodeURIComponent(cap.version||'')}" class="worker-capability-chip worker-capability-chip--${readiness}" title="${esc(cap.name||'Unnamed capability')} · ${label}" aria-label="Inspect ${esc(cap.name||'unnamed capability')}: ${label}"><span class="worker-capability-dot" aria-hidden="true"></span><span>${esc(cap.name||'Unnamed capability')}</span></a>`;
+}
+function workerCapabilityDetailMarkup(cap,workerID=''){
+ if(!cap)return '';
+ if(typeof cap==='string')cap={name:cap};
+ const report=cap.readiness,contract=cap.contract||{},checks=report?.checks||[];
+ const readiness=report?.ready===true?'ready':report?.ready===false?'blocked':'unknown';
+ const label={ready:'Ready',blocked:'Blocked',unknown:'Unavailable'}[readiness];
+ const failed=checks.filter(check=>check.passed===false).length;
+ const title=value=>String(value).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[-_]/g,' ').replace(/^./,c=>c.toUpperCase());
+ const featureLabels={artifacts:'Artifacts',cancel:'Cancellation',progress:'Live progress',remoteTask:'Remote tasks',session:'Sessions',typedResult:'Typed results',usage:'Usage reporting'};
+ const features=Object.entries(contract.capabilities||{}).filter(([,enabled])=>enabled===true).map(([name])=>`<span class="worker-feature">${esc(featureLabels[name]||title(name))}</span>`).join('');
+ return `<details class="worker-capability" data-preserve-key="capability:${esc(workerID)}:${esc(cap.name||'unknown')}:${esc(cap.version||'')}"><summary><span class="worker-capability-identity"><strong>${esc(cap.name||'Unnamed capability')}</strong><span>${cap.version?`Version ${esc(cap.version)}`:'Version unavailable'}${failed?` · ${failed} ${failed===1?'check needs':'checks need'} attention`:''}</span></span><span class="worker-readiness worker-readiness--${readiness}"><span aria-hidden="true"></span>${label}</span><svg class="worker-capability-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></summary><div class="worker-capability-body"><div class="worker-features">${features||'<span class="subtle">Optional features unavailable</span>'}</div><dl class="worker-capability-meta"><div><dt>Contract</dt><dd>${esc(contract.contractVersion||'Unavailable')}</dd></div>${contract.environment?.digest?`<div><dt>Environment</dt><dd><code title="${esc(contract.environment.digest)}">${esc(contract.environment.digest)}</code></dd></div>`:''}</dl>${checks.length?`<div class="worker-readiness-checks">${checks.map(check=>{const state=check.passed===true?'passed':check.passed===false?'failed':'unknown';return `<div class="worker-readiness-check worker-readiness-check--${state}"><span class="worker-check-icon" aria-label="${state==='passed'?'Passed':state==='failed'?'Failed':'Not reported'}">${state==='passed'?'✓':state==='failed'?'!':'—'}</span><div><strong>${esc(title(check.name||'Check'))}</strong><p>${esc(check.message||'No details reported.')}</p></div></div>`}).join('')}</div>`:'<p class="subtle worker-check-empty">No readiness check details reported.</p>'}</div></details>`;
 }
 async function loadWorkers(){
   try{
@@ -408,7 +421,7 @@ async function loadWorkers(){
     const busy=new Set(assignments.filter(x=>x.state==='active').map(x=>x.workerId));
     const rosterEl=$('#workerRoster');
     if(rosterEl){
-      rosterEl.innerHTML=roster.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>${roster.map(x=>{const anchor=encodeURIComponent(x.workerId),id=esc(x.workerId),status=x.draining?'draining':busy.has(x.workerId)?'busy':'idle',caps=(x.capabilities||[]).map(workerCapabilityMarkup).filter(Boolean).join(', ')||'—';return `<tr id="worker-roster-${anchor}"><td class="primary-cell"><strong>${id}</strong>${Object.keys(x.labels||{}).length?`<details><summary>Placement &amp; isolation labels</summary><pre>${esc(pretty(x.labels))}</pre></details>`:''}</td><td><span class="state ${status==='busy'?'running':'queued'}">${status}</span></td><td class="num">${esc(x.capacity)}</td><td class="mono">${caps}</td><td class="num">${esc(date(x.lastSeen))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No workers available</strong>No workers have heartbeated within the coordinator window. Start a worker and register it with the coordinator.</div>';
+      rosterEl.innerHTML=roster.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>${roster.map(x=>{const anchor=encodeURIComponent(x.workerId),id=esc(x.workerId),status=x.draining?'draining':busy.has(x.workerId)?'busy':'idle',caps=(x.capabilities||[]).map(cap=>workerCapabilityMarkup(cap,x.workerId)).filter(Boolean).join(', ')||'—';return `<tr id="worker-roster-${anchor}"><td class="primary-cell"><strong>${id}</strong>${Object.keys(x.labels||{}).length?`<details><summary>Placement &amp; isolation labels</summary><pre>${esc(pretty(x.labels))}</pre></details>`:''}</td><td><span class="state ${status==='busy'?'running':'queued'}">${status}</span></td><td class="num">${esc(x.capacity)}</td><td class="mono">${caps}</td><td class="num">${esc(date(x.lastSeen))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No workers available</strong>No workers have heartbeated within the coordinator window. Start a worker and register it with the coordinator.</div>';
     }
     const workerLink=id=>`<a href="#worker-roster-${encodeURIComponent(id)}" style="color:var(--teal)"><strong>${esc(id)}</strong></a>`;
     $('#workerList').innerHTML=assignments.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Run</th><th>Activation</th><th>Generation</th><th>Lease until</th><th>State</th></tr></thead><tbody>${assignments.map(x=>`<tr><td class="primary-cell">${workerLink(x.workerId)}</td><td><a href="#run/${encodeURIComponent(x.runId)}" style="color:var(--teal)">${esc(x.runId)}</a></td><td class="mono">${esc(x.activationId)}</td><td>${esc(x.generation)}</td><td style="color:var(--muted)">${esc(date(x.leaseUntil))}</td><td><span class="state ${esc(x.state)}">${esc(x.state)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No active assignments</strong>The coordinator is not reporting any active worker assignments right now.</div>';
