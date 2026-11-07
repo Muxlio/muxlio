@@ -25,7 +25,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 	}
 	adapters := t.TempDir()
 	build := exec.Command("go", "build", "-o", adapters+string(os.PathSeparator),
-		"./cmd/agent-claude", "./cmd/agent-codex", "./cmd/agent-cursor", "./cmd/agent-gemini-cli", "./cmd/agent-kiro")
+		"./cmd/agent-claude", "./cmd/agent-codex", "./cmd/agent-cursor", "./cmd/agent-gemini", "./cmd/agent-kiro")
 	build.Dir = filepath.Join(root, "muxlio-adapters")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build adapters: %v\n%s", err, out)
@@ -45,7 +45,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 {"type":"turn.completed","usage":null}`, reported},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
 {"type":"result"}`, reported},
-		{"agent/gemini-cli", "gemini", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
+		{"agent/gemini", "gemini", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
 {"type":"result","status":"success"}`, reported},
 		{"agent/kiro", "kiro-cli", string(kiroEvents), nil},
 	} {

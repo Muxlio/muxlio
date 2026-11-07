@@ -1,4 +1,4 @@
-// agent-gemini-cli adapter for muxlio.
+// agent-gemini adapter for muxlio.
 //
 // Reads an adapter.Request from stdin, invokes the Google Gemini CLI
 // non-interactively, collects declared output files and the final assistant
@@ -6,7 +6,7 @@
 //
 // Params (via node.params JSON):
 //
-//	model   string   Gemini model name, e.g. "gemini-2.0-flash", "gemini-2.5-pro" (default)
+//	model   string   Optional Gemini model override; otherwise use the CLI's configured default
 //
 // Special input port:
 //
@@ -26,7 +26,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,19 +37,19 @@ import (
 func main() {
 	if adapter.ProbeRequested(os.Args) {
 		checks := adapter.RunnerChecks(resolveGeminiCLI(), "--version")
-		checks[2] = contract.ProbeCheck{Name: contract.ProbeAuthentication, Passed: os.Getenv("GEMINI_API_KEY") != "", Message: "GEMINI_API_KEY must be configured; interactive authentication cannot be verified safely"}
+		checks[2] = geminiAuthenticationCheck()
 		adapter.RunProbe(checks...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
-		adapter.Fail("agent-gemini-cli: %v", err)
+		adapter.Fail("agent-gemini: %v", err)
 	}
 	if err := adapter.CheckRunnerEnvironment(req, resolveGeminiCLI()); err != nil {
-		adapter.Fail("agent-gemini-cli: %v", err)
+		adapter.Fail("agent-gemini: %v", err)
 	}
 
-	model := "gemini-2.5-pro"
+	model := ""
 	if req.Params != nil {
 		var p struct {
 			Model string `json:"model"`
@@ -61,9 +60,9 @@ func main() {
 	}
 
 	geminiCLI := resolveGeminiCLI()
-	repoRoot, err := adapter.WorkspaceRoot(req)
+	workDir, err := adapter.WorkingDir(req)
 	if err != nil {
-		adapter.Fail("agent-gemini-cli: finding repo root: %v", err)
+		adapter.Fail("agent-gemini: finding working directory: %v", err)
 	}
 
 	prompt := buildPrompt(req)
@@ -75,22 +74,26 @@ func main() {
 	args := []string{
 		"--prompt", prompt,
 		"--output-format", "stream-json",
-		"--model", model,
 		"--approval-mode", "yolo",
+		"--skip-trust",
+		"--include-directories", req.WorkDir,
+	}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 
 	cmd := exec.Command(geminiCLI, args...)
-	cmd.Dir = repoRoot
+	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
 	cmd.Stderr = stderr
 	cmd.Env = adapter.CleanEnvForChild()
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		adapter.Fail("agent-gemini-cli: stdout pipe: %v", err)
+		adapter.Fail("agent-gemini: stdout pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		adapter.Fail("agent-gemini-cli: starting gemini CLI: %v\n(hint: install the Google Gemini CLI or set $GEMINI_CLI)", err)
+		adapter.Fail("agent-gemini: starting gemini CLI: %v\n(hint: install the Google Gemini CLI or set $GEMINI_CLI)", err)
 	}
 
 	// Parse the newline-delimited stream-json event stream.
@@ -177,7 +180,7 @@ func main() {
 			var status string
 			_ = json.Unmarshal(ev["status"], &status)
 			if strings.EqualFold(status, "error") {
-				runErr = appendFailure(runErr, "gemini-cli reported a terminal error")
+				runErr = appendFailure(runErr, "gemini reported a terminal error")
 			}
 			if raw, ok := ev["error"]; ok && len(raw) > 0 && string(raw) != "null" {
 				var detail struct {
@@ -196,7 +199,7 @@ func main() {
 			var isErr bool
 			_ = json.Unmarshal(ev["is_error"], &isErr)
 			if isErr {
-				runErr = appendFailure(runErr, "gemini-cli reported a terminal error")
+				runErr = appendFailure(runErr, "gemini reported a terminal error")
 			}
 			for _, key := range []string{"subtype"} {
 				if raw, ok := ev[key]; ok && len(raw) > 0 && string(raw) != "null" {
@@ -232,11 +235,11 @@ func main() {
 	}
 	if err := scanner.Err(); err != nil {
 		_ = cmd.Process.Kill()
-		runErr = appendFailure(runErr, fmt.Sprintf("reading gemini-cli stdout: %v", err))
+		runErr = appendFailure(runErr, fmt.Sprintf("reading gemini stdout: %v", err))
 	}
 
 	if err := cmd.Wait(); err != nil {
-		runErr = appendFailure(runErr, fmt.Sprintf("gemini-cli process error: %v", err))
+		runErr = appendFailure(runErr, fmt.Sprintf("gemini process error: %v", err))
 	}
 	adapter.AppendLogChunk("stderr", stderr.String())
 	if !completed {
@@ -248,7 +251,7 @@ func main() {
 		// not estimated as zero/unavailable. usage is nil when no usage
 		// event was parsed, which omitempty reports as absent (matching
 		// Fail).
-		adapter.FailWithUsage(usage, "agent-gemini-cli: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithUsage(usage, "agent-gemini: %s", withStderr(runErr, stderr.String()))
 	}
 
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
@@ -262,7 +265,7 @@ func main() {
 	errMsg := ""
 	if len(missing) > 0 {
 		errMsg = withStderr(
-			fmt.Sprintf("gemini-cli did not write expected output files: %s", strings.Join(missing, ", ")),
+			fmt.Sprintf("gemini did not write expected output files: %s", strings.Join(missing, ", ")),
 			stderr.String(),
 		)
 	}
@@ -307,65 +310,7 @@ func extractAssistantText(raw json.RawMessage) []string {
 // buildPrompt constructs the full prompt from the request, expanding the
 // optional "feature" input and declaring output file paths.
 func buildPrompt(req *adapter.Request) string {
-	var sb strings.Builder
-	sb.WriteString(req.Task)
-	sb.WriteString("\n\nWorkspace rule: keep all generated notes, plans, scratch files, and other artifacts inside the run workspace at ")
-	sb.WriteString(req.WorkDir)
-	sb.WriteString(". Do not create incidental files in the source repository. If an output is declared below, write it to that exact path.")
-
-	// Expand "feature" input.
-	if fv, ok := req.Inputs["feature"]; ok {
-		switch feature := fv.(type) {
-		case map[string]any:
-			sb.WriteString("\n")
-			if title, _ := feature["title"].(string); title != "" {
-				sb.WriteString(fmt.Sprintf("\nFeature title: %s", title))
-			}
-			if files, ok := feature["files"].([]any); ok && len(files) > 0 {
-				sb.WriteString("\nFiles to read first:")
-				for _, f := range files {
-					if s, ok := f.(string); ok {
-						sb.WriteString(fmt.Sprintf("\n  - %s", s))
-					}
-				}
-			}
-			if spec, _ := feature["spec"].(string); spec != "" {
-				sb.WriteString(fmt.Sprintf("\n\nSpec:\n%s", spec))
-			}
-		case string:
-			sb.WriteString(fmt.Sprintf("\n\nFeature input:\n%s", feature))
-		}
-	}
-
-	// Expand any non-feature input port carrying a "data" string.
-	for name, val := range req.Inputs {
-		if name == "feature" {
-			continue
-		}
-		switch v := val.(type) {
-		case map[string]any:
-			if data, _ := v["data"].(string); data != "" {
-				sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, data))
-			}
-		case string:
-			sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, v))
-		}
-	}
-
-	// Declare output file paths.
-	if len(req.Outputs) > 0 {
-		sb.WriteString("\n\nIMPORTANT: write these output files using their exact absolute paths:")
-		for port, decl := range req.Outputs {
-			name := decl.Path
-			if name == "" {
-				name = port
-			}
-			sb.WriteString(fmt.Sprintf("\n  %s/%s  (mime: %s)", req.WorkDir, name, decl.Mime))
-		}
-	}
-
-	sb.WriteString(fmt.Sprintf("\n\nNode ID: %s", req.NodeID))
-	return sb.String()
+	return adapter.ComposePrompt(req)
 }
 
 // resolveGeminiCLI returns the path to the Gemini CLI executable.

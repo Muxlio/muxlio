@@ -82,7 +82,7 @@ Set `MUXLIO_API_URL` to change the coordinator URL (default `http://127.0.0.1:76
 
 The UI provides run search and state filters, input/output/error and timing details, the materialized activation/scope graph, logs, execution attempt history, a cursor-paginated event timeline, active worker assignments, a **Live** page for streaming attempt logs from running activations, retry controls for failed runs, and a send-signal form for waiting runs.
 
-The adapter executors included here are `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini-cli`, `agent/kiro`, and `command`. The generic command adapter accepts `params.program`, `params.args`, and `params.cwd`; for Go tests, use `program: 'go'`, `args: ['test', './...', '-timeout', '120s']`, and `cwd: 'muxlio-core'`. Command tasks automatically infer `passed`, `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`; use `onNonZero: 'return'` to handle failures in the workflow. Other executor strings can be used by custom adapters or fake configuration, but do not name a bundled real adapter.
+The adapter executors included here are `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini`, `agent/kiro`, and `command`. The generic command adapter accepts `params.program`, `params.args`, and `params.cwd`; for Go tests, use `program: 'go'`, `args: ['test', './...', '-timeout', '120s']`, and `cwd: 'muxlio-core'`. Command tasks automatically infer `passed`, `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`; use `onNonZero: 'return'` to handle failures in the workflow. Other executor strings can be used by custom adapters or fake configuration, but do not name a bundled real adapter.
 
 ## Testing with fake executors
 

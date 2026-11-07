@@ -23,7 +23,7 @@ export PATH="$HOME/.local/muxlio/bin:$PATH"
 
 The resulting prefix contains `bin/muxlio`, eight compiled adapters under
 `libexec/muxlio/adapters` (`agent-a2a`, `agent-acp`, `agent-claude`, `agent-codex`, `agent-cursor`,
-`agent-gemini-cli`, `agent-kiro`, and `command`), and UI assets under
+`agent-gemini`, `agent-kiro`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
 removing or moving the checkout. Relative resource discovery uses the installed
@@ -67,7 +67,7 @@ chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
 cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
-  "capabilities": ["agent/a2a", "agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini-cli", "agent/kiro", "command"],
+  "capabilities": ["agent/a2a", "agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
   "mcp": {"listen": "127.0.0.1:7602"}
 }

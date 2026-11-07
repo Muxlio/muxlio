@@ -36,7 +36,7 @@ func TestBundledExecutorCapabilitiesIncludeShippedAgents(t *testing.T) {
 		"agent/claude",
 		"agent/codex",
 		"agent/cursor",
-		"agent/gemini-cli",
+		"agent/gemini",
 		"agent/kiro",
 		"command",
 	}

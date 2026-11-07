@@ -33,8 +33,8 @@ var bundledAdapters = []conformancetest.Fixture{
 		SuccessStream: `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40},"result":"Cursor done."}`,
 	},
 	{
-		Executor: "agent/gemini-cli",
-		Binary:   "agent-gemini-cli",
+		Executor: "agent/gemini",
+		Binary:   "agent-gemini",
 		CLIName:  "gemini",
 		// stream-json: result event with stats (documented headless format).
 		SuccessStream: `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0},"result":"Gemini done."}`,

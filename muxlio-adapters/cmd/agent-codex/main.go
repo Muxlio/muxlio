@@ -33,8 +33,8 @@ func main() {
 
 	prompt := adapter.ComposePrompt(req)
 
-	// Run codex in the per-step workspace when one is supplied (e.g. a git
-	// worktree from a prior "prepare" step), otherwise the authorized workspace.
+	// Run codex in the per-step workspace when one is supplied, otherwise the
+	// authorized workspace. Attempt snapshots deliberately omit Git metadata.
 	workDir, err := adapter.WorkingDir(req)
 	if err != nil {
 		adapter.Fail("agent-codex: finding working directory: %v", err)
@@ -49,6 +49,8 @@ func main() {
 		"--json",
 		"--approve-for-me",
 		"--ephemeral",
+		"--skip-git-repo-check",
+		"--add-dir", req.WorkDir,
 		"-c", "shell_environment_policy.inherit=all",
 		prompt,
 	)

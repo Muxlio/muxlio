@@ -90,6 +90,31 @@ func runCodexAdapter(t *testing.T, fakeScript string) ([]byte, *os.ProcessState)
 	return out, cmd.ProcessState
 }
 
+func TestAgentCodexAdapterRunsWithoutGitMetadata(t *testing.T) {
+	script := `#!/bin/sh
+if [ -e .git ]; then
+  echo 'test workspace unexpectedly contains Git metadata' >&2
+  exit 1
+fi
+for arg in "$@"; do
+  if [ "$arg" = "--skip-git-repo-check" ]; then
+    echo '{"type":"turn.completed"}'
+    exit 0
+  fi
+done
+echo 'Not inside a trusted directory and --skip-git-repo-check was not specified.' >&2
+exit 1
+`
+	out, _ := runCodexAdapter(t, script)
+	var resp adapter.Response
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("Codex rejected workspace without Git metadata: %s", resp.Error)
+	}
+}
+
 // TestAgentCodexAdapterReportsUsageOnSuccess verifies the adapter maps the
 // provider-reported token counts from the turn.completed event into the
 // shared attempt-level usage record on a successful run. Missing counts are

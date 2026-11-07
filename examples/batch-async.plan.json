@@ -66,7 +66,7 @@
         {
           "id": "gather",
           "kind": "execute",
-          "executor": "agent/gemini-cli",
+          "executor": "agent/gemini",
           "task": "Investigate the topic.",
           "inputs": {},
           "outputs": {
@@ -117,7 +117,7 @@
     }
   },
   "requiredExecutors": [
-    "agent/gemini-cli",
+    "agent/gemini",
     "agent/claude"
   ],
   "digest": "sha256:a72330ca3ab6db249db3ea45bd06aa962599e5b3d7e1f3e93d48e67c798ddb95"

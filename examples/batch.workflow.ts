@@ -36,7 +36,7 @@ const { plan } = defineWorkflow({
       maxItems: 100,
       body: (ctx) => {
         const gather = ctx.execute('gather', {
-          executor: 'agent/gemini-cli',
+          executor: 'agent/gemini',
           task: 'Investigate the topic and write findings to findings.md.',
           outputs: { findings: { mime: 'text/markdown', path: 'findings.md' } },
         });

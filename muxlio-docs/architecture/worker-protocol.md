@@ -289,7 +289,7 @@ muxlio worker start \
   --worker-id worker-a \
   --workspace /path/to/workspace \
   --worker-token-file ~/.muxlio/worker-token \
-  --capabilities agent/claude,agent/codex,agent/cursor,agent/gemini-cli,agent/kiro,command \
+  --capabilities agent/claude,agent/codex,agent/cursor,agent/gemini,agent/kiro,command \
   --capacity 2 \
   --adapters ~/.muxlio/adapters
 ```

@@ -58,9 +58,9 @@ func main() {
 	}
 
 	claudeCLI := resolveClaudeCLI()
-	repoRoot, err := adapter.WorkspaceRoot(req)
+	workDir, err := adapter.WorkingDir(req)
 	if err != nil {
-		adapter.Fail("agent-claude: finding repo root: %v", err)
+		adapter.Fail("agent-claude: finding working directory: %v", err)
 	}
 
 	prompt := buildPrompt(req)
@@ -68,16 +68,19 @@ func main() {
 	// --print          non-interactive scripted mode
 	// --output-format  stream-json for machine-readable streaming events
 	// --model          selects the model
-	// --no-verbose     suppress extra informational output to keep stdout clean
+	// --verbose        required by stream-json in print mode
+	// --add-dir        allow declared outputs in the separate scratch directory
 	args := []string{
+		"--add-dir", req.WorkDir,
 		"--print",
+		"--verbose",
 		"--output-format", "stream-json",
 		"--model", model,
 		prompt,
 	}
 
 	cmd := exec.Command(claudeCLI, args...)
-	cmd.Dir = repoRoot
+	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
 	cmd.Stderr = stderr
 	cmd.Env = adapter.CleanEnvForChild()
@@ -253,65 +256,7 @@ func extractAssistantText(raw json.RawMessage) []string {
 // buildPrompt constructs the full prompt from the request, expanding the
 // optional "feature" input and declaring output file paths.
 func buildPrompt(req *adapter.Request) string {
-	var sb strings.Builder
-	sb.WriteString(req.Task)
-	sb.WriteString("\n\nWorkspace rule: keep all generated notes, plans, scratch files, and other artifacts inside the run workspace at ")
-	sb.WriteString(req.WorkDir)
-	sb.WriteString(". Do not create incidental files in the source repository. If an output is declared below, write it to that exact path.")
-
-	// Expand "feature" input.
-	if fv, ok := req.Inputs["feature"]; ok {
-		switch feature := fv.(type) {
-		case map[string]any:
-			sb.WriteString("\n")
-			if title, _ := feature["title"].(string); title != "" {
-				sb.WriteString(fmt.Sprintf("\nFeature title: %s", title))
-			}
-			if files, ok := feature["files"].([]any); ok && len(files) > 0 {
-				sb.WriteString("\nFiles to read first:")
-				for _, f := range files {
-					if s, ok := f.(string); ok {
-						sb.WriteString(fmt.Sprintf("\n  - %s", s))
-					}
-				}
-			}
-			if spec, _ := feature["spec"].(string); spec != "" {
-				sb.WriteString(fmt.Sprintf("\n\nSpec:\n%s", spec))
-			}
-		case string:
-			sb.WriteString(fmt.Sprintf("\n\nFeature input:\n%s", feature))
-		}
-	}
-
-	// Expand any non-feature input port carrying a "data" string.
-	for name, val := range req.Inputs {
-		if name == "feature" {
-			continue
-		}
-		switch v := val.(type) {
-		case map[string]any:
-			if data, _ := v["data"].(string); data != "" {
-				sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, data))
-			}
-		case string:
-			sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, v))
-		}
-	}
-
-	// Declare output file paths.
-	if len(req.Outputs) > 0 {
-		sb.WriteString("\n\nIMPORTANT: write these output files using their exact absolute paths:")
-		for port, decl := range req.Outputs {
-			name := decl.Path
-			if name == "" {
-				name = port
-			}
-			sb.WriteString(fmt.Sprintf("\n  %s/%s  (mime: %s)", req.WorkDir, name, decl.Mime))
-		}
-	}
-
-	sb.WriteString(fmt.Sprintf("\n\nNode ID: %s", req.NodeID))
-	return sb.String()
+	return adapter.ComposePrompt(req)
 }
 
 // resolveClaudeCLI returns the path to the Claude CLI executable.

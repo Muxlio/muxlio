@@ -97,8 +97,8 @@ func TestBuildPromptDeclaresOutputs(t *testing.T) {
 	}
 }
 
-func TestAgentGeminiCLIAdapterCLIError(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterCLIError(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -110,7 +110,7 @@ func TestAgentGeminiCLIAdapterCLIError(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -131,7 +131,7 @@ func TestAgentGeminiCLIAdapterCLIError(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini-cli:") {
+	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "gemini-stream.jsonl")); !os.IsNotExist(err) {
@@ -139,8 +139,8 @@ func TestAgentGeminiCLIAdapterCLIError(t *testing.T) {
 	}
 }
 
-func TestAgentGeminiCLIAdapterGeminiResultErrorStatus(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterGeminiResultErrorStatus(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -151,7 +151,7 @@ func TestAgentGeminiCLIAdapterGeminiResultErrorStatus(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -174,8 +174,8 @@ func TestAgentGeminiCLIAdapterGeminiResultErrorStatus(t *testing.T) {
 	}
 }
 
-func TestAgentGeminiCLIAdapterCollectsOutputs(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterCollectsOutputs(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	outFile := filepath.Join(workDir, "notes.md")
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
@@ -188,7 +188,7 @@ func TestAgentGeminiCLIAdapterCollectsOutputs(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "write notes",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -223,12 +223,12 @@ func TestAgentGeminiCLIAdapterCollectsOutputs(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiCLIAdapterReportsUsageFromResultStats verifies the adapter
+// TestAgentGeminiAdapterReportsUsageFromResultStats verifies the adapter
 // maps provider-reported token counts from the terminal result event's
 // "stats" object (the documented Gemini CLI stream-json contract) into the
 // shared attempt-level usage record on a successful run.
-func TestAgentGeminiCLIAdapterReportsUsageFromResultStats(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterReportsUsageFromResultStats(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -239,7 +239,7 @@ func TestAgentGeminiCLIAdapterReportsUsageFromResultStats(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -269,12 +269,12 @@ func TestAgentGeminiCLIAdapterReportsUsageFromResultStats(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiCLIAdapterReportsUsageFromUsageEvent verifies the adapter
+// TestAgentGeminiAdapterReportsUsageFromUsageEvent verifies the adapter
 // captures usage from a dedicated "usage" event whose provider-reported
 // counts use camelCase field names at the top level of the event object,
 // matching the Gemini CLI's internal AgentEvent format.
-func TestAgentGeminiCLIAdapterReportsUsageFromUsageEvent(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterReportsUsageFromUsageEvent(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -286,7 +286,7 @@ func TestAgentGeminiCLIAdapterReportsUsageFromUsageEvent(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -316,12 +316,12 @@ func TestAgentGeminiCLIAdapterReportsUsageFromUsageEvent(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiCLIAdapterPreservesUsageOnFailure verifies that a terminal
+// TestAgentGeminiAdapterPreservesUsageOnFailure verifies that a terminal
 // result event which reports both an error and usage keeps the real token
 // counts in the failure response, so failed attempts are not recorded as
 // unavailable when the provider returned usage.
-func TestAgentGeminiCLIAdapterPreservesUsageOnFailure(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterPreservesUsageOnFailure(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -333,7 +333,7 @@ func TestAgentGeminiCLIAdapterPreservesUsageOnFailure(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -355,7 +355,7 @@ func TestAgentGeminiCLIAdapterPreservesUsageOnFailure(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini-cli:") {
+	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
 	if resp.Usage == nil {
@@ -366,11 +366,11 @@ func TestAgentGeminiCLIAdapterPreservesUsageOnFailure(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiCLIAdapterUsageAbsentWhenNotReported verifies the adapter
+// TestAgentGeminiAdapterUsageAbsentWhenNotReported verifies the adapter
 // does not estimate or synthesize usage when the provider does not report it
 // — the usage field stays absent (nil) rather than being reported as zero.
-func TestAgentGeminiCLIAdapterUsageAbsentWhenNotReported(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterUsageAbsentWhenNotReported(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -381,7 +381,7 @@ func TestAgentGeminiCLIAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -403,11 +403,11 @@ func TestAgentGeminiCLIAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiCLIAdapterUsageAbsentOnFailureWhenNotReported verifies that
+// TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported verifies that
 // a failed run which never reported usage omits the usage field entirely
 // rather than synthesising a zero-valued record.
-func TestAgentGeminiCLIAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
-	bin := buildAgentGeminiCLI(t)
+func TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
+	bin := buildAgentGemini(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "gemini")
 	script := "#!/bin/sh\n" +
@@ -418,7 +418,7 @@ func TestAgentGeminiCLIAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) 
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini-cli",
+		"executor":  "agent/gemini",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -439,9 +439,49 @@ func TestAgentGeminiCLIAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) 
 	}
 }
 
-func buildAgentGeminiCLI(t *testing.T) string {
+func TestGeminiUsesConfiguredModelUnlessOverridden(t *testing.T) {
+	bin := buildAgentGemini(t)
+	for _, model := range []string{"", "fixture-model"} {
+		t.Run("model="+model, func(t *testing.T) {
+			workspace := t.TempDir()
+			cli := filepath.Join(t.TempDir(), "gemini")
+			script := `#!/bin/sh
+found=false
+previous=''
+for arg in "$@"; do
+  if [ "$previous" = '--model' ]; then
+    [ -n "$EXPECTED_MODEL" ] && [ "$arg" = "$EXPECTED_MODEL" ] || exit 1
+    found=true
+  fi
+  previous=$arg
+done
+if [ -n "$EXPECTED_MODEL" ]; then $found || exit 1; else $found && exit 1; fi
+echo '{"type":"result","status":"success","result":"done"}'
+`
+			if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			params, _ := json.Marshal(map[string]string{"model": model})
+			req := adapter.Request{Executor: "agent/gemini", Workspace: workspace, WorkDir: workspace, Params: params, Task: "do nothing"}
+			input, _ := json.Marshal(req)
+			cmd := exec.Command(bin)
+			cmd.Env = []string{"PATH=/bin:/usr/bin", "HOME=" + workspace, "GEMINI_CLI=" + cli, "EXPECTED_MODEL=" + model}
+			cmd.Stdin = strings.NewReader(string(input))
+			raw, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("adapter process: %v\n%s", err, raw)
+			}
+			var resp adapter.Response
+			if err := json.Unmarshal(raw, &resp); err != nil || resp.Error != "" {
+				t.Fatalf("model selection: %v %+v", err, resp)
+			}
+		})
+	}
+}
+
+func buildAgentGemini(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "agent-gemini-cli")
+	bin := filepath.Join(t.TempDir(), "agent-gemini")
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +490,7 @@ func buildAgentGeminiCLI(t *testing.T) string {
 	cmd.Dir = wd
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go build agent-gemini-cli: %v\n%s", err, out)
+		t.Fatalf("go build agent-gemini: %v\n%s", err, out)
 	}
 	return bin
 }

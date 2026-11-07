@@ -49,7 +49,7 @@ func main() {
 		adapter.Fail("agent-cursor: finding working directory: %v", err)
 	}
 
-	cmd := exec.Command(cli, "--print", "--yolo", "--trust", "--output-format", "stream-json", "--model", model, adapter.ComposePrompt(req))
+	cmd := exec.Command(cli, "--print", "--yolo", "--trust", "--add-dir", req.WorkDir, "--output-format", "stream-json", "--model", model, adapter.ComposePrompt(req))
 	cmd.Dir = workDir
 	var diagnostics adapter.BoundedBuffer
 	cmd.Stderr = &diagnostics

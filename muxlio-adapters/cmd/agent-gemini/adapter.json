@@ -1,7 +1,7 @@
 {
   "manifestVersion": "1",
   "contractVersion": "1",
-  "executor": "agent/gemini-cli",
+  "executor": "agent/gemini",
   "executorVersion": "1",
   "capabilities": {
     "artifacts": true,
