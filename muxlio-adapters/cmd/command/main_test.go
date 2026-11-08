@@ -52,7 +52,7 @@ func TestCommandRuntimeAuthorizationAndIsolation(t *testing.T) {
 	}
 }
 
-func commandResponse(t *testing.T, params map[string]any) (adapter.Response, string) {
+func commandResponse(t *testing.T, params map[string]any, inputs ...map[string]any) (adapter.Response, string) {
 	t.Helper()
 	workspace, workDir := t.TempDir(), t.TempDir()
 	input, err := os.CreateTemp(t.TempDir(), "request-*.json")
@@ -61,6 +61,9 @@ func commandResponse(t *testing.T, params map[string]any) (adapter.Response, str
 	}
 	defer input.Close()
 	req := map[string]any{"workspace": workspace, "workDir": workDir, "executor": "command", "hostExecutionAllowed": true, "params": params, "outputs": map[string]any{"passed": map[string]any{"mime": "application/json"}}}
+	if len(inputs) > 0 {
+		req["inputs"] = inputs[0]
+	}
 	if err = json.NewEncoder(input).Encode(req); err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +179,39 @@ func TestRenderArgTemplateUsesTaskInput(t *testing.T) {
 	got, err := renderArgTemplate("feat({{feature.id}}): {{feature.feature}}", map[string]any{"feature": map[string]any{"id": "F-7", "feature": "add cache"}})
 	if err != nil || got != "feat(F-7): add cache" {
 		t.Fatalf("rendered=%q err=%v", got, err)
+	}
+}
+
+func TestRenderArgTemplateTreatsResolvedValuesAsLiteralData(t *testing.T) {
+	for _, value := range []string{
+		`Create a trigger with inputMapping "{{/n}}".`,
+		`{{other.value}}`,
+		`unfinished {{ or unmatched }}`,
+		`{"nested":{"value":7}}`,
+	} {
+		got, err := renderArgTemplate("Review: {{feedback}}", map[string]any{"feedback": value})
+		if err != nil || got != "Review: "+value {
+			t.Errorf("literal value %q: rendered=%q err=%v", value, got, err)
+		}
+	}
+}
+
+func TestCommandExecutesWithLiteralTemplateSyntaxInInput(t *testing.T) {
+	feedback := `Use inputMapping "{{/n}}"; do not expand {{other.value}}.`
+	response, _ := commandResponse(t, map[string]any{
+		"program": "/bin/echo", "args": []string{""},
+		"argTemplates": []string{"{{feedback}}"}, "onNonZero": "return",
+	}, map[string]any{"feedback": feedback})
+	if response.Error != "" || response.Outputs["passed"] != true || response.Outputs["stdout"] != feedback+"\n" {
+		t.Fatalf("literal input was rejected or changed: %+v", response)
+	}
+}
+
+func TestRenderArgTemplateStillRejectsMalformedSourceAndMissingInputs(t *testing.T) {
+	for _, template := range []string{"{{feedback", "feedback}}", "{{/feedback}}", "{{}}", "{{feedback}} {{missing}}"} {
+		if _, err := renderArgTemplate(template, map[string]any{"feedback": "valid"}); err == nil {
+			t.Errorf("invalid template %q was accepted", template)
+		}
 	}
 }
 

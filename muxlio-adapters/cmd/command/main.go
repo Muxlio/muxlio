@@ -261,6 +261,12 @@ func main() {
 var argPlaceholder = regexp.MustCompile(`\{\{([A-Za-z0-9_.-]+)\}\}`)
 
 func renderArgTemplate(template string, inputs map[string]any) (string, error) {
+	// Validate the template source, not the rendered data. Input strings can
+	// legitimately contain braces (for example webhook mapping examples).
+	unmatched := argPlaceholder.ReplaceAllString(template, "")
+	if strings.Contains(unmatched, "{{") || strings.Contains(unmatched, "}}") {
+		return "", fmt.Errorf("malformed placeholder")
+	}
 	var renderErr error
 	out := argPlaceholder.ReplaceAllStringFunc(template, func(token string) string {
 		path := argPlaceholder.FindStringSubmatch(token)[1]
@@ -290,9 +296,6 @@ func renderArgTemplate(template string, inputs map[string]any) (string, error) {
 	})
 	if renderErr != nil {
 		return "", renderErr
-	}
-	if strings.Contains(out, "{{") || strings.Contains(out, "}}") {
-		return "", fmt.Errorf("malformed placeholder")
 	}
 	return out, nil
 }
