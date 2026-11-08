@@ -10,6 +10,9 @@ import (
 type ExecutorConfig struct {
 	Allow *bool             `json:"allow,omitempty"`
 	Env   map[string]string `json:"env,omitempty"`
+	// TimeoutSeconds overrides the worker's default adapter timeout for this
+	// executor capability. Workflow attempt timeouts can still be shorter.
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 	// SecretEnv maps opaque handles to operator environment variable names.
 	SecretEnv map[string]string `json:"secretEnv,omitempty"`
 }
@@ -19,6 +22,9 @@ func (c ExecutorConfig) ExplicitlyAllowed() bool { return c.Allow != nil && *c.A
 // ValidateExecutorConfigs validates the shared runtime configuration contract.
 func ValidateExecutorConfigs(configs map[string]ExecutorConfig) error {
 	for name, config := range configs {
+		if config.TimeoutSeconds < 0 || config.TimeoutSeconds > 86400 {
+			return fmt.Errorf("executor %q timeoutSeconds must be between 0 and 86400", name)
+		}
 		for handle, key := range config.SecretEnv {
 			if handle == "" || key == "" || strings.ContainsAny(key, "=\x00") {
 				return fmt.Errorf("invalid secret handle configuration")

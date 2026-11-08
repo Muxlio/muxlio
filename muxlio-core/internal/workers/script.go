@@ -228,6 +228,9 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
+	if seconds := s.Executors[req.Executor].TimeoutSeconds; seconds > 0 {
+		timeout = time.Duration(seconds) * time.Second
+	}
 	parent := req.Context
 	if parent == nil {
 		parent = s.Context

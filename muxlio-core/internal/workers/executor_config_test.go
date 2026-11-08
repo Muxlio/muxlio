@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecutorEnvironmentIsConfiguredAndScoped(t *testing.T) {
@@ -124,6 +125,37 @@ func TestConfiguredEnvironmentRejectsManagedVariablesAndUnsafePaths(t *testing.T
 		}
 		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"custom/tool": {Env: env}}); err == nil {
 			t.Fatalf("invalid executor environment accepted: %v", env)
+		}
+	}
+}
+
+func TestExecutorTimeoutOverridesGlobalButNotWorkflowLimit(t *testing.T) {
+	s := testScript(t, "sleep 0.2\nprintf '%s' '{\"outputs\":{\"ok\":true}}'\n")
+	s.Timeout = 50 * time.Millisecond
+	s.Executors = map[string]ExecutorConfig{"test": {TimeoutSeconds: 2}}
+
+	result, err := s.Execute(ExecuteRequest{Executor: "test"})
+	if err != nil || result.Error != "" || result.Outputs["ok"] != true {
+		t.Fatalf("capability timeout did not override global default: %+v, %v", result, err)
+	}
+
+	// An explicit workflow attempt timeout remains an upper bound.
+	seconds := 0.05
+	result, err = ExecuteAttempt(s, ExecuteRequest{Executor: "test", TimeoutSeconds: &seconds})
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("workflow timeout was not enforced: %+v, %v", result, err)
+	}
+}
+
+func TestExecutorTimeoutConfigurationBounds(t *testing.T) {
+	for _, seconds := range []int{-1, 86401} {
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/kiro": {TimeoutSeconds: seconds}}); err == nil {
+			t.Errorf("accepted timeoutSeconds=%d", seconds)
+		}
+	}
+	for _, seconds := range []int{0, 1, 86400} {
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/kiro": {TimeoutSeconds: seconds}}); err != nil {
+			t.Errorf("rejected timeoutSeconds=%d: %v", seconds, err)
 		}
 	}
 }

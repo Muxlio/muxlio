@@ -75,6 +75,7 @@ cat > "$HOME/.muxlio/config.json" <<EOF
   "workspace": "$HOME/.muxlio/workspaces/overnight",
   "capabilities": ["agent/a2a", "agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
+  "executors": {"agent/kiro": {"timeoutSeconds": 3600}},
   "mcp": {"listen": "127.0.0.1:7602"}
 }
 EOF
@@ -86,7 +87,9 @@ muxlio service start
 client and worker tokens. It preserves existing credentials and MCP settings.
 For a LAN listener, use `muxlio init --mcp-listen 0.0.0.0:7602` and restart the
 service. MCP starts, stops, and restarts with the service; no second process is
-needed. Set `mcp` to `null` to disable it. See [MCP configuration](mcp.md#network-transport-streamable-http)
+needed. Per-executor `timeoutSeconds` overrides the shared adapter timeout for
+that capability; explicit workflow timeouts can still impose a shorter limit.
+Set `mcp` to `null` to disable it. See [MCP configuration](mcp.md#network-transport-streamable-http)
 for TLS, separate listener credentials, and client setup. Treat plain HTTP as
 trusted-network access; use MCP TLS or a trusted TLS proxy for encrypted access.
 
