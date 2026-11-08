@@ -169,6 +169,10 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("muxlio: migrating sqlite schema: %w", err)
 		}
 	}
+	if err := normalizeLeaseTimestamps(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("muxlio: migrating lease timestamps: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -266,7 +270,7 @@ func (s *Store) ClaimAssignment(a state.Assignment) (int64, error) {
 		return 0, err
 	}
 	generation++
-	_, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, a.ActivationID, a.RunID, a.WorkerID, generation, rfc3339(a.LeaseUntil), a.AssignmentID, a.AttemptID)
+	_, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, a.ActivationID, a.RunID, a.WorkerID, generation, leaseTimestamp(a.LeaseUntil), a.AssignmentID, a.AttemptID)
 	if err != nil {
 		return 0, err
 	}
@@ -341,7 +345,7 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 	if cancelled != 0 {
 		return false, nil
 	}
-	res, err := tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND generation=? AND assignment_id=? AND attempt_id=? AND state='active' AND lease_until>? AND coordinator_epoch=?`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.Generation, a.AssignmentID, a.AttemptID, rfc3339(now), a.CoordinatorEpoch)
+	res, err := tx.Exec(`UPDATE assignments SET state=? WHERE activation_id=? AND run_id=? AND worker_id=? AND generation=? AND assignment_id=? AND attempt_id=? AND state='active' AND lease_until>? AND coordinator_epoch=?`, terminalState, a.ActivationID, a.RunID, a.WorkerID, a.Generation, a.AssignmentID, a.AttemptID, leaseTimestamp(now), a.CoordinatorEpoch)
 	if err != nil {
 		return false, err
 	}
@@ -655,7 +659,7 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		return nil, 0, err
 	}
 	generation++
-	if _, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, selected.ActivationID, selected.RunID, workerID, generation, rfc3339(lease), selected.AssignmentID, selected.AttemptID); err != nil {
+	if _, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, selected.ActivationID, selected.RunID, workerID, generation, leaseTimestamp(lease), selected.AssignmentID, selected.AttemptID); err != nil {
 		return nil, 0, err
 	}
 	if _, err = tx.Exec(`UPDATE assignments SET coordinator_epoch=? WHERE activation_id=?`, epoch, selected.ActivationID); err != nil {

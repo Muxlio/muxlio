@@ -29,7 +29,7 @@ func checkCoordinatorEpoch(tx *sql.Tx, epoch int64) error {
 // recoverLostDispatches releases execution capacity, but only explicitly pure
 // operations may be replayed. Unknown effect policies fail closed.
 func recoverLostDispatches(tx *sql.Tx) error {
-	if _, err := tx.Exec(`UPDATE assignments SET state='uncertain' WHERE state='active' AND lease_until<=?`, rfc3339(time.Now())); err != nil {
+	if _, err := tx.Exec(`UPDATE assignments SET state='uncertain' WHERE state='active' AND lease_until<=?`, leaseTimestamp(time.Now())); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE dispatches SET state='uncertain' WHERE state='assigned' AND activation_id IN (SELECT activation_id FROM assignments WHERE state='uncertain')`); err != nil {
@@ -110,7 +110,7 @@ func (s *Store) RenewWorkerLeases(workerID string, leases []state.AssignmentLeas
 		if err := checkCoordinatorEpoch(tx, lease.CoordinatorEpoch); err != nil {
 			continue
 		}
-		if _, err := tx.Exec(`UPDATE assignments SET lease_until=? WHERE worker_id=? AND assignment_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?`, rfc3339(until), workerID, lease.AssignmentID, lease.Generation, lease.CoordinatorEpoch, rfc3339(now)); err != nil {
+		if _, err := tx.Exec(`UPDATE assignments SET lease_until=? WHERE worker_id=? AND assignment_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?`, leaseTimestamp(until), workerID, lease.AssignmentID, lease.Generation, lease.CoordinatorEpoch, leaseTimestamp(now)); err != nil {
 			return err
 		}
 	}
@@ -136,7 +136,7 @@ func (s *Store) AppendWorkerLogChunk(a state.Assignment, chunk state.LogChunk) (
 		return false, err
 	}
 	var valid bool
-	err = tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?)`, a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.CoordinatorEpoch, rfc3339(time.Now())).Scan(&valid)
+	err = tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?)`, a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.CoordinatorEpoch, leaseTimestamp(time.Now())).Scan(&valid)
 	if err != nil || !valid {
 		return false, err
 	}
@@ -186,4 +186,50 @@ func persistProgress(tx *sql.Tx, c state.LogChunk) error {
 	}
 	_, err := tx.Exec(`INSERT INTO log_chunks(run_id,activation_id,stream,seq,data,timestamp) SELECT ?,?,?,coalesce(max(seq),0)+1,?,? FROM log_chunks WHERE activation_id=? AND stream=?`, c.RunID, c.ActivationID, c.Stream, c.Data, rfc3339(c.Timestamp), c.ActivationID, c.Stream)
 	return err
+}
+
+// Lease predicates compare TEXT, so all operands must have the same fractional
+// width. Keep nanoseconds: SQLite date functions would lose expiry precision.
+func leaseTimestamp(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
+}
+
+// Normalize old RFC3339Nano values before any lease predicate can run. Only
+// lease timestamps change; unrelated timestamp encodings remain untouched.
+func normalizeLeaseTimestamps(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT activation_id,lease_until FROM assignments WHERE lease_until NOT GLOB '????-??-??T??:??:??.?????????Z'`)
+	if err != nil {
+		return err
+	}
+	type leaseRow struct{ id, timestamp string }
+	var updates []leaseRow
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("assignment %q: %w", id, err)
+		}
+		updates = append(updates, leaseRow{id, leaseTimestamp(parsed)})
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, row := range updates {
+		if _, err := tx.Exec(`UPDATE assignments SET lease_until=? WHERE activation_id=?`, row.timestamp, row.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
