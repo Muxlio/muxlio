@@ -45,6 +45,8 @@ test('every verification attempt reviews the diff and passes review verdict to t
   assert.deepEqual(node('verify').inputs.approved.ref, { node: 'review', port: 'approved' });
   assert.deepEqual(node('verify').inputs.feedback.ref, { node: 'review', port: 'feedback' });
   assert.equal(node('verify').params.onNonZero, 'return');
+  assert.equal(node('verify').params.timeout, '10m', 'verification must respect the command adapter timeout limit');
+  assert.equal(node('verify').timeoutSeconds, 600);
   assert.equal(node('verify').outputs.report.path, 'checks.json');
   assert.equal(node('verify').outputs.passed.schema.type, 'boolean');
   assert.deepEqual(node('fix-verification').inputs.failures.expr.fields.stdout,

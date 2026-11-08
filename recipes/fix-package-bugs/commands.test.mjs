@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { verifyScript, commitScript } from './commands.ts';
+import { verify as verifyTask } from './tasks.ts';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'muxlio-package-bugs-'));
@@ -60,6 +61,32 @@ test('npm workspaces use their declared workspace target', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(report.checks[0].args, ['run', 'build', '--workspace', '@muxlio/sdk']);
   assert.deepEqual(report.checks[1].args, ['test', '--workspace', '@muxlio/sdk']);
+});
+
+test('verification task passes real command adapter validation and executes checks', {
+  skip: process.env.MUXLIO_COMMAND_ADAPTER ? false : 'Set MUXLIO_COMMAND_ADAPTER to a built command adapter',
+}, t => {
+  const root = fixture(t);
+  for (const path of ['bin', 'scratch', 'muxlio-core', 'muxlio-adapters']) mkdirSync(join(root, path));
+  symlinkSync(process.execPath, join(root, 'bin', 'node'));
+  for (const program of ['npm', 'go']) writeFileSync(join(root, 'bin', program), `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  const request = {
+    executor: 'command', hostExecutionAllowed: true, workspace: root, workDir: join(root, 'scratch'),
+    params: verifyTask.def.params,
+    inputs: { package: { kind: 'go', path: 'muxlio-core', target: './internal/workers' }, approved: true, feedback: 'Independent review approved' },
+    outputs: { report: { mime: 'application/json', path: 'checks.json' } },
+  };
+  const result = spawnSync(process.env.MUXLIO_COMMAND_ADAPTER, [], {
+    input: JSON.stringify(request), encoding: 'utf8',
+    env: { ...process.env, PATH: join(root, 'bin') },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const response = JSON.parse(result.stdout);
+  assert.ok(!response.error, result.stdout);
+  assert.equal(response.outputs.passed, true);
+  const report = JSON.parse(readFileSync(join(root, 'scratch', 'checks.json'), 'utf8'));
+  assert.equal(report.passed, true);
+  assert.equal(report.checks.length, 7);
 });
 
 function git(root, args) {

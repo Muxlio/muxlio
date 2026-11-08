@@ -73,10 +73,10 @@ export const verify = task({
     program: 'node',
     args: ['-e', verifyScript, '', '', '', '', ''],
     argTemplates: [null, null, '{{package.kind}}', '{{package.path}}', '{{package.target}}', '{{approved}}', '{{feedback}}'],
-    cwd: '.', onNonZero: 'return', timeout: '90m',
+    cwd: '.', onNonZero: 'return', timeout: '10m',
   },
   outputs: { report: artifact.json('checks.json') },
-  timeoutSeconds: 5500,
+  timeoutSeconds: 600,
   queueTimeoutSeconds: 1800,
   retry: { maxAttempts: 1, effect: 'nonretryable' },
 });
