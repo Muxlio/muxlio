@@ -1548,8 +1548,24 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 			return nil, fmt.Errorf("muxlio: wait node %q: signalName required for input wait", node.ID)
 		}
 		reqID := inputRequestID(actID, node.SignalName)
-		// Create the durable input request. Creation is idempotent, so a run
-		// retry reuses the same request and any already-accepted response.
+		// Explicit retry creates a successor for a cancelled wait. Follow only
+		// persisted successors; ordinary recovery must not reopen closed waits.
+		requests, err := e.store.ListInputRequests(runID)
+		if err != nil {
+			return nil, fmt.Errorf("muxlio: loading input requests: %w", err)
+		}
+		byID := make(map[string]state.InputRequest, len(requests))
+		for _, request := range requests {
+			byID[request.RequestID] = request
+		}
+		for byID[reqID].State == state.InputRequestCancelled {
+			nextID := state.RetriedInputRequestID(reqID)
+			if _, exists := byID[nextID]; !exists {
+				break
+			}
+			reqID = nextID
+		}
+		// Idempotent creation preserves any already-accepted response.
 		req := &state.InputRequest{
 			RunID:        runID,
 			ActivationID: actID,

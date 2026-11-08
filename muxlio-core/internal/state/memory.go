@@ -137,6 +137,21 @@ func (s *Memory) RetryRun(id string) error {
 			return fmt.Errorf("attempt %s awaits reconciliation: %s", attempt.ID, attempt.AwaitReconciliationReason)
 		}
 	}
+	incomplete := make(map[string]bool)
+	for _, act := range s.activations {
+		if act.RunID == id && act.State != "succeeded" {
+			incomplete[act.ID] = true
+		}
+	}
+	var requests []InputRequest
+	for _, req := range s.inputRequests {
+		if req.RunID == id {
+			requests = append(requests, *req)
+		}
+	}
+	for _, req := range RenewCancelledInputs(requests, incomplete, time.Now()) {
+		s.inputRequests[inputRequestKey(id, req.RequestID)] = &req
+	}
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
 			for _, attempt := range s.attempts {
@@ -490,6 +505,11 @@ func (s *Memory) CreateInputRequest(req *InputRequest) error {
 		req.CreatedAt = time.Now()
 	}
 	clone := cloneInputRequest(req)
+	// Cancellation and creation share the run-state lock. Keep a closed
+	// identity for late creation so explicit retry can renew this wait.
+	if run := s.runs[req.RunID]; run != nil && run.State == "cancelled" && clone.State == InputRequestPending {
+		clone.State = InputRequestCancelled
+	}
 	s.inputRequests[key] = &clone
 	return nil
 }
@@ -540,6 +560,11 @@ func (s *Memory) SubmitInputResponse(runID, requestID string, response any, resp
 			clone := cloneInputRequest(req)
 			return &clone, false, nil // idempotent replay
 		}
+		return nil, false, ErrInputRequestNotAccepting
+	}
+	// Preserve replay above, but fence first acceptance against durable
+	// cancellation even before CancelRunWork has closed pending requests.
+	if run := s.runs[runID]; run != nil && run.State == "cancelled" {
 		return nil, false, ErrInputRequestNotAccepting
 	}
 	if req.State == InputRequestPending && req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {

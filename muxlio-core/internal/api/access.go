@@ -51,7 +51,7 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 		if g.WorkerID == "" || !g.permits("worker") || !isWorkerProtocolPath(r.URL.Path, r.Method) {
 			return false
 		}
-		if parts[1] != "register" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/workers/register" {
 			return parts[1] == g.WorkerID
 		}
 		// Registration must bind the body identity too, before calling a backend.

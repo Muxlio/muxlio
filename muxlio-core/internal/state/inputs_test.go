@@ -164,3 +164,147 @@ func TestInputRequestConcurrentConnections(t *testing.T) {
 		t.Fatalf("accepted %d times across connections", accepted.Load())
 	}
 }
+
+func TestRetryRenewsCancelledInputs(t *testing.T) {
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			var s state.Store = state.New()
+			if backend == "sqlite" {
+				db, err := sqlite.Open(filepath.Join(t.TempDir(), "retry.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				s = db
+			}
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			must(s.CreateRun(&state.Run{ID: "r"}))
+			must(s.CreateActivation(&state.Activation{ID: "ask", NodeID: "ask", RunID: "r", State: "waiting"}))
+			must(s.CreateActivation(&state.Activation{ID: "answered", NodeID: "answered", RunID: "r", State: "waiting"}))
+			due := time.Now().Add(time.Hour)
+			must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: "pending", ActivationID: "ask", Name: "approval", Schema: []byte(`{"type":"boolean"}`), Permissions: []string{"approve"}, ExpiresAt: &due}))
+			must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: "fulfilled", ActivationID: "answered", Name: "approval"}))
+			_, accepted, err := s.SubmitInputResponse("r", "fulfilled", false, "human", "key")
+			must(err)
+			if !accepted {
+				t.Fatal("first response rejected")
+			}
+			must(s.SetRunState("r", "cancelled"))
+			must(s.CancelRunWork("r"))
+			must(s.RetryRun("r"))
+			requests, err := s.ListInputRequests("r")
+			must(err)
+			var renewed *state.InputRequest
+			for i := range requests {
+				if requests[i].State == state.InputRequestPending {
+					renewed = &requests[i]
+				}
+			}
+			if renewed == nil || renewed.RequestID == "pending" {
+				t.Fatalf("no renewed identity: %+v", requests)
+			}
+			if renewed.ActivationID != "ask" || renewed.Name != "approval" || string(renewed.Schema) != `{"type":"boolean"}` || len(renewed.Permissions) != 1 || renewed.Permissions[0] != "approve" || renewed.ExpiresAt == nil || !renewed.ExpiresAt.After(due) {
+				t.Fatalf("lost request contract: %+v", renewed)
+			}
+			_, _, err = s.SubmitInputResponse("r", "pending", true, "human", "stale")
+			if !errors.Is(err, state.ErrInputRequestNotAccepting) {
+				t.Fatalf("old request accepted: %v", err)
+			}
+			got, accepted, err := s.SubmitInputResponse("r", "fulfilled", true, "human", "key")
+			must(err)
+			if accepted || got.Response != false {
+				t.Fatalf("fulfilled response lost: %+v accepted=%v", got, accepted)
+			}
+			_, accepted, err = s.SubmitInputResponse("r", renewed.RequestID, true, "human", "new")
+			must(err)
+			if !accepted {
+				t.Fatal("renewed request not answerable")
+			}
+			_, accepted, err = s.SubmitInputResponse("r", renewed.RequestID, true, "human", "new")
+			must(err)
+			if accepted {
+				t.Fatal("duplicate accepted")
+			}
+		})
+	}
+}
+
+// Cancellation must fence first acceptance before the separate work cleanup,
+// while responses accepted before cancellation remain replayable. Use separate
+// SQLite connections so a process-local mutex cannot satisfy the contract.
+func TestInputResponseFencedByRunCancellation(t *testing.T) {
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			var s, canceller state.Store
+			s = state.New()
+			canceller = s
+			if backend == "sqlite" {
+				path := filepath.Join(t.TempDir(), "cancel.db")
+				first, err := sqlite.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer first.Close()
+				second, err := sqlite.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer second.Close()
+				s, canceller = first, second
+			}
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			must(s.CreateRun(&state.Run{ID: "r"}))
+			must(s.SetRunState("r", "running"))
+			for _, id := range []string{"pending", "answered"} {
+				must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: id}))
+			}
+			_, accepted, err := s.SubmitInputResponse("r", "answered", false, "human", "first")
+			must(err)
+			if !accepted {
+				t.Fatal("first response rejected")
+			}
+			changed, err := canceller.TransitionRunState("r", []string{"running"}, "cancelled")
+			must(err)
+			if !changed {
+				t.Fatal("cancel rejected")
+			}
+			// Deliberately do not call CancelRunWork yet.
+			_, accepted, err = s.SubmitInputResponse("r", "pending", true, "human", "late")
+			if accepted || !errors.Is(err, state.ErrInputRequestNotAccepting) {
+				t.Fatalf("accepted after durable cancel: %v %v", accepted, err)
+			}
+			got, accepted, err := s.SubmitInputResponse("r", "answered", true, "human", "first")
+			must(err)
+			if accepted || got.Response != false {
+				t.Fatalf("lost replay: %+v %v", got, accepted)
+			}
+			_, _, err = s.SubmitInputResponse("r", "answered", true, "human", "different")
+			if !errors.Is(err, state.ErrInputRequestNotAccepting) {
+				t.Fatalf("conflicting replay: %v", err)
+			}
+			must(canceller.CancelRunWork("r"))
+			must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: "late"}))
+			got, err = s.GetInputRequest("r", "late")
+			must(err)
+			if got.State != state.InputRequestCancelled {
+				t.Fatalf("late creation left open: %+v", got)
+			}
+			must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: "answered"}))
+			got, err = s.GetInputRequest("r", "answered")
+			must(err)
+			if got.State != state.InputRequestFulfilled || got.Response != false {
+				t.Fatalf("creation clobbered response: %+v", got)
+			}
+		})
+	}
+}

@@ -894,8 +894,10 @@ func (s *Store) CreateInputRequest(req *state.InputRequest) error {
 	if req.ExpiresAt != nil {
 		expiresAt = rfc3339(*req.ExpiresAt)
 	}
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,response_json,responder_id,created_at,fulfilled_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
-		req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permJSON), req.State, nullableJSON(nil), req.ResponderID, rfc3339(req.CreatedAt), req.IdempotencyKey)
+	// Fence late creation in the INSERT itself, including across connections.
+	// Retain a cancelled identity for explicit retry to renew.
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,response_json,responder_id,created_at,fulfilled_at,idempotency_key) VALUES(?,?,?,?,?,?,?,CASE WHEN ?='pending' AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state='cancelled') THEN 'cancelled' ELSE ? END,?,?,?,NULL,?)`,
+		req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permJSON), req.State, req.RunID, req.State, nullableJSON(nil), req.ResponderID, rfc3339(req.CreatedAt), req.IdempotencyKey)
 	return err
 }
 
@@ -968,8 +970,10 @@ func (s *Store) SubmitInputResponse(runID, requestID string, response any, respo
 		return nil, false, err
 	}
 	now := time.Now()
-	res, err := s.db.Exec(`UPDATE input_requests SET state='fulfilled', response_json=?, responder_id=?, fulfilled_at=?, idempotency_key=? WHERE run_id=? AND request_id=? AND state='pending' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))`,
-		string(respJSON), responderID, rfc3339(now), idempotencyKey, runID, requestID, rfc3339(now))
+	// The run-state predicate makes first acceptance atomic with durable
+	// cancellation across connections. Already accepted replay remains valid.
+	res, err := s.db.Exec(`UPDATE input_requests SET state='fulfilled', response_json=?, responder_id=?, fulfilled_at=?, idempotency_key=? WHERE run_id=? AND request_id=? AND state='pending' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state<>'cancelled')`,
+		string(respJSON), responderID, rfc3339(now), idempotencyKey, runID, requestID, rfc3339(now), runID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1478,6 +1482,42 @@ func (s *Store) RetryRun(id string) error {
 		return err
 	}
 	rows.Close()
+	// Renew cancelled waits in the same transaction as requeuing activations.
+	inputRows, err := tx.Query(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=?`, id)
+	if err != nil {
+		return err
+	}
+	var requests []state.InputRequest
+	for inputRows.Next() {
+		req, err := scanInputRequest(inputRows)
+		if err != nil {
+			inputRows.Close()
+			return err
+		}
+		requests = append(requests, req)
+	}
+	if err := inputRows.Err(); err != nil {
+		inputRows.Close()
+		return err
+	}
+	inputRows.Close()
+	incomplete := make(map[string]bool, len(queued))
+	for _, act := range queued {
+		incomplete[act.id] = true
+	}
+	for _, req := range state.RenewCancelledInputs(requests, incomplete, time.Now()) {
+		permissions, err := json.Marshal(req.Permissions)
+		if err != nil {
+			return err
+		}
+		var expiresAt any
+		if req.ExpiresAt != nil {
+			expiresAt = rfc3339(*req.ExpiresAt)
+		}
+		if _, err := tx.Exec(`INSERT INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permissions), req.State, rfc3339(req.CreatedAt)); err != nil {
+			return err
+		}
+	}
 	if len(queued) > 0 {
 		activationIDs := make([]string, len(queued))
 		for i, a := range queued {

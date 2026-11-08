@@ -184,3 +184,63 @@ func TestInputWaitSurvivesCoordinatorRestart(t *testing.T) {
 		t.Fatalf("recovered identities: %v %v", requests, err)
 	}
 }
+
+func TestInputWaitReusesFulfilledResponseAfterRetry(t *testing.T) {
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			var s state.Store = state.New()
+			if backend == "sqlite" {
+				db, err := sqlite.Open(filepath.Join(t.TempDir(), "retry.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				s = db
+			}
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			must(s.CreateRun(&state.Run{ID: "r"}))
+			must(s.CreateActivation(&state.Activation{ID: "r:ask", RunID: "r", NodeID: "ask", State: ActWaiting}))
+			original := inputRequestID("r:ask", "approval")
+			must(s.CreateInputRequest(&state.InputRequest{RunID: "r", RequestID: original, ActivationID: "r:ask", Name: "approval"}))
+			must(s.SetRunState("r", RunCancelled))
+			must(s.CancelRunWork("r"))
+			must(s.RetryRun("r"))
+			requests, err := s.ListInputRequests("r")
+			must(err)
+			var renewed string
+			for _, req := range requests {
+				if req.State == state.InputRequestPending {
+					renewed = req.RequestID
+				}
+			}
+			if renewed == "" {
+				t.Fatal("no renewed input")
+			}
+			_, _, err = s.SubmitInputResponse("r", renewed, false, "human", "delivery")
+			must(err)
+			node := &Node{ID: "ask", Kind: KindWait, WaitFor: "input", SignalName: "approval"}
+			for i := 0; i < 2; i++ {
+				engine := NewEngineWithStore(&Plan{}, nil, s)
+				out, err := engine.executeWait("r", node, nil, &EvalContext{})
+				if err != nil || out["response"] != false {
+					t.Fatalf("recovery: %v %v", out, err)
+				}
+			}
+			requests, err = s.ListInputRequests("r")
+			must(err)
+			if len(requests) != 2 {
+				t.Fatalf("recovery created more requests: %+v", requests)
+			}
+			_, accepted, err := s.SubmitInputResponse("r", renewed, true, "human", "delivery")
+			must(err)
+			if accepted {
+				t.Fatal("recovery allowed duplicate acceptance")
+			}
+		})
+	}
+}

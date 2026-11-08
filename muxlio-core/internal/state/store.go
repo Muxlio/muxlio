@@ -27,6 +27,8 @@ type Store interface {
 	GetRun(id string) (*Run, error)
 	SetRunState(id, state string) error
 	TransitionRunState(id string, expected []string, next string) (bool, error)
+	// RetryRun atomically requeues incomplete work and renews cancelled input
+	// waits under new identities. Fulfilled responses and closed identities remain.
 	RetryRun(id string) error
 	SetRunOutput(id string, output any) error
 	SetRunError(id string, err error) error
@@ -67,7 +69,8 @@ type Store interface {
 	//
 	// CreateInputRequest is idempotent: a second call for the same run+requestID
 	// is a no-op, so the interpreter can (re)create a request on run retry without
-	// losing an already-accepted response.
+	// losing an already-accepted response. A new pending request created after
+	// durable run cancellation must be persisted as cancelled for retry renewal.
 	CreateInputRequest(req *InputRequest) error
 	GetInputRequest(runID, requestID string) (*InputRequest, error)
 	ListInputRequests(runID string) ([]InputRequest, error)
@@ -76,6 +79,8 @@ type Store interface {
 	// the request, false when it was an idempotent replay of an already-accepted
 	// response (same idempotency key). A request that is already fulfilled with
 	// a different key, or expired/cancelled, returns ErrInputRequestNotAccepting.
+	// First acceptance must be atomic with durable run cancellation and reject
+	// a cancelled run. Replay of responses accepted before cancellation remains valid.
 	SubmitInputResponse(runID, requestID string, response any, responderID, idempotencyKey string) (*InputRequest, bool, error)
 	// ExpireInputRequests marks pending requests past now as expired and
 	// returns the number transitioned. The interpreter uses it to fail waits
