@@ -1764,6 +1764,14 @@ func (s *Store) SetActivationState(id, st string) error {
 }
 
 func (s *Store) SetActivationOutputs(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "succeeded")
+}
+
+func (s *Store) CheckpointActivation(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "waiting")
+}
+
+func (s *Store) setActivationOutputs(id string, outputs map[string]any, next string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	raw, err := marshalJSON(outputs)
@@ -1797,10 +1805,10 @@ func (s *Store) SetActivationOutputs(id string, outputs map[string]any) error {
 	if current == "cancelled" || current == "succeeded" || current == "failed" {
 		return nil
 	}
-	if _, err := tx.Exec(`UPDATE activations SET outputs_json = ?, state = 'succeeded' WHERE id = ?`, raw, id); err != nil {
+	if _, err := tx.Exec(`UPDATE activations SET outputs_json = ?, state = ? WHERE id = ?`, raw, next, id); err != nil {
 		return err
 	}
-	if err := appendEvent(tx, runID, state.EventActivationSucceeded, id, map[string]any{
+	if err := appendEvent(tx, runID, state.EventTypeForActivationState(next), id, map[string]any{
 		"ports": stateKeys(outputs),
 	}); err != nil {
 		return err
@@ -1808,7 +1816,9 @@ func (s *Store) SetActivationOutputs(id string, outputs map[string]any) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	coordinatorlog.ActivationFinished(runID, id, "succeeded")
+	if next == "succeeded" {
+		coordinatorlog.ActivationFinished(runID, id, next)
+	}
 	return nil
 }
 

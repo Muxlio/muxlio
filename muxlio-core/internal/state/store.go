@@ -39,6 +39,10 @@ type Store interface {
 	ListActivations(runID string) ([]Activation, error)
 	SetActivationState(id, state string) error
 	SetActivationOutputs(id string, outputs map[string]any) error
+	// CheckpointActivation atomically saves outputs and marks the activation
+	// waiting, without publishing a successful completion. Terminal activations
+	// are unchanged; a cancelled run rejects the write.
+	CheckpointActivation(id string, outputs map[string]any) error
 	SetActivationError(id string, err error) error
 
 	GetEvents(runID string, after, limit int) ([]Event, error)

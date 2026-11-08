@@ -134,7 +134,7 @@ func TestChildNestingAndOutputResolution(t *testing.T) {
 	for _, act := range acts {
 		seen[act.ID] = true
 	}
-	if !seen[runID+":invoke"] || !seen[runID+":child:middle:nested"] || !seen[runID+":child:middle:child:leaf:echo"] {
+	if !seen[runID+":invoke"] || !seen[runID+":child%3Amiddle:invoke%3Ainvoke:nested"] || !seen[runID+":child%3Amiddle:invoke%3Ainvoke:child%3Aleaf:invoke%3Anested:echo"] {
 		t.Fatalf("unexpected child activation scopes: %+v", acts)
 	}
 }

@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -12,6 +13,24 @@ import (
 // picked up by any worker, making it safe to replay.
 type unclaimedProver interface {
 	UnclaimedDispatch(activationID string) (bool, error)
+}
+
+// checkActivationHistoryCompatibility rejects histories whose child invocations lack
+// ownership, or IDs written with ambiguous delimiter joining. Ignoring these
+// rows under the new identities could repeat effects.
+// Recovery, retry and direct execution must all enforce this before changing work.
+func checkActivationHistoryCompatibility(acts []state.Activation) error {
+	for _, act := range acts {
+		for i, part := range act.ScopePath {
+			if strings.HasPrefix(part, "child:") && (i+1 == len(act.ScopePath) || !strings.HasPrefix(act.ScopePath[i+1], "invoke:")) {
+				return fmt.Errorf("legacy child activation scopes have ambiguous invocation ownership; manual reconciliation required")
+			}
+		}
+		if act.ID != activationID(act.RunID, act.ScopePath, act.NodeID) {
+			return fmt.Errorf("legacy activation identity uses ambiguous delimiters; manual reconciliation required")
+		}
+	}
+	return nil
 }
 
 // RecoverRuns reconstructs pinned engines for all non-terminal runs after a
@@ -87,6 +106,12 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 		if err != nil {
 			return nil, err
 		}
+		if err := checkActivationHistoryCompatibility(acts); err != nil {
+			if err := fail(err.Error()); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		// Collect the set of execute node IDs across all subgraphs so we can
 		// distinguish effectful nodes from pure structural ones.
@@ -136,6 +161,13 @@ func RecoverRuns(store state.Store, executor workers.Executor) (map[string]*Engi
 		preserved, requeued, uncertain := 0, 0, 0
 		for _, act := range acts {
 			if act.State == ActSucceeded {
+				preserved++
+				continue
+			}
+			// An exhausted loop has a durable waiting checkpoint. Preserve
+			// that status, including when the run was already paused; the
+			// interpreter re-enters waiting activations when execution resumes.
+			if _, _, checkpoint := loopProgressFromOutputs(act.Outputs); act.State == ActWaiting && checkpoint {
 				preserved++
 				continue
 			}

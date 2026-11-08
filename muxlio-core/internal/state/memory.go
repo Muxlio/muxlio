@@ -279,6 +279,14 @@ func (s *Memory) SetActivationState(id, state string) error {
 }
 
 func (s *Memory) SetActivationOutputs(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "succeeded")
+}
+
+func (s *Memory) CheckpointActivation(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "waiting")
+}
+
+func (s *Memory) setActivationOutputs(id string, outputs map[string]any, next string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.activations[id]
@@ -297,8 +305,8 @@ func (s *Memory) SetActivationOutputs(id string, outputs map[string]any) error {
 		return err
 	}
 	a.Outputs = snapshot
-	a.State = "succeeded"
-	s.appendEventLocked(a.RunID, EventActivationSucceeded, id, map[string]any{
+	a.State = next
+	s.appendEventLocked(a.RunID, EventTypeForActivationState(next), id, map[string]any{
 		"ports": outputKeys(outputs),
 	})
 	return nil

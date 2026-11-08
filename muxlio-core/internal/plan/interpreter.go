@@ -31,11 +31,21 @@ func generateRunID() string {
 // errRunPaused stops subgraph execution after a loop marks the run paused.
 var errRunPaused = errors.New("muxlio: run paused")
 
+// Escape both the delimiter and its escape character so component boundaries
+// cannot be forged by accepted node IDs or scope values. Keep ScopePath readable
+// and separate from its durable ID encoding (including recursive depth markers).
+func identityComponent(value string) string {
+	return strings.NewReplacer("%", "%25", ":", "%3A").Replace(value)
+}
+
 func activationID(runID string, scope []string, nodeID string) string {
-	if len(scope) == 0 {
-		return runID + ":" + nodeID
+	parts := make([]string, 0, len(scope)+2)
+	parts = append(parts, identityComponent(runID))
+	for _, part := range scope {
+		parts = append(parts, identityComponent(part))
 	}
-	return runID + ":" + strings.Join(scope, ":") + ":" + nodeID
+	parts = append(parts, identityComponent(nodeID))
+	return strings.Join(parts, ":")
 }
 
 // inputRequestID returns a stable, URL-safe request ID for an input wait. The
@@ -194,6 +204,13 @@ func (e *Engine) Retry(runID string) error {
 	if pinned.Digest == "" || pinned.Digest != run.PlanDigest {
 		return fmt.Errorf("muxlio: retry: pinned plan digest mismatch")
 	}
+	acts, err := e.store.ListActivations(runID)
+	if err != nil {
+		return fmt.Errorf("muxlio: retry: listing activations: %w", err)
+	}
+	if err := checkActivationHistoryCompatibility(acts); err != nil {
+		return fmt.Errorf("muxlio: retry: %w", err)
+	}
 	e.plan = &pinned
 	// Reset incomplete activations and transition the run atomically. This
 	// also clears stale activation errors while preserving successful outputs.
@@ -233,6 +250,13 @@ func (e *Engine) Run(runID string) (runErr error) {
 			return fmt.Errorf("muxlio: pinned plan digest mismatch")
 		}
 		e.plan = &pinned
+	}
+	acts, err := e.store.ListActivations(runID)
+	if err != nil {
+		return fmt.Errorf("muxlio: run: listing activations: %w", err)
+	}
+	if err := checkActivationHistoryCompatibility(acts); err != nil {
+		return fmt.Errorf("muxlio: run: %w", err)
 	}
 	if e.plan.DeadlineSeconds != nil && *e.plan.DeadlineSeconds > 0 {
 		e.applyRunDeadline(run.CreatedAt.Add(time.Duration(*e.plan.DeadlineSeconds * float64(time.Second))))
@@ -387,7 +411,11 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 		node := &order[i]
 		actID := activationID(runID, scope, node.ID)
 		if existing, err := e.store.GetActivation(actID); err == nil {
-			if existing.State == ActSucceeded {
+			// Older coordinators saved exhausted-loop progress using the
+			// completion API. Such a checkpoint must still re-enter the loop
+			// and enforce its exhaustion policy after recovery.
+			_, _, loopCheckpoint := loopProgressFromOutputs(existing.Outputs)
+			if existing.State == ActSucceeded && !(node.Kind == KindLoop && loopCheckpoint) {
 				ctx.Outputs[node.ID] = existing.Outputs
 				continue
 			}
@@ -541,7 +569,9 @@ func (e *Engine) executeChild(runID string, node *Node, scope []string, ctx *Eva
 	if depth >= *node.MaxDepth {
 		return nil, fmt.Errorf("muxlio: child node %q exceeds maxDepth %d", node.ID, *node.MaxDepth)
 	}
-	childScope := append(append([]string{}, scope...), "child:"+node.ChildRef)
+	// Keep the subgraph marker for recursive depth accounting and include
+	// the caller so sibling invocations have independent durable histories.
+	childScope := append(append([]string{}, scope...), "child:"+node.ChildRef, "invoke:"+node.ID)
 	output, err := e.executeSubgraph(runID, node.ChildRef, sg, childScope, &EvalContext{
 		traceContext: ctx.traceContext,
 		Input:        ctx.Input, Item: ctx.Item, State: ctx.State,
@@ -1102,7 +1132,7 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 	results := make([]any, len(items))
 	if concurrency <= 1 {
 		for i, item := range items {
-			itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", node.ID, keys[i]))
+			itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", identityComponent(node.ID), identityComponent(keys[i])))
 			itemCtx := &EvalContext{
 				traceContext: ctx.traceContext,
 				Input:        ctx.Input,
@@ -1131,7 +1161,7 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 			go func(index int, item any) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", node.ID, keys[index]))
+				itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", identityComponent(node.ID), identityComponent(keys[index])))
 				itemCtx := &EvalContext{
 					traceContext: ctx.traceContext,
 					Input:        ctx.Input,
@@ -1241,8 +1271,10 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 
 	iteration := 0
 	var currentState any
+	restoredCheckpoint := false
 	if existing, err := e.store.GetActivation(actID); err == nil && existing.Outputs != nil {
 		if prog, state, ok := loopProgressFromOutputs(existing.Outputs); ok {
+			restoredCheckpoint = true
 			switch v := prog["iteration"].(type) {
 			case float64:
 				iteration = int(v)
@@ -1252,7 +1284,8 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 			currentState = state
 		}
 	}
-	if currentState == nil && node.InitState != nil {
+	// A restored JSON null is durable state, not a missing checkpoint.
+	if !restoredCheckpoint && node.InitState != nil {
 		val, err := node.InitState.Eval(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("muxlio: evaluating loop initState: %w", err)
@@ -1360,10 +1393,7 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 					"exhausted": true,
 				},
 			}
-			if err := e.store.SetActivationOutputs(actID, checkpoint); err != nil {
-				return nil, err
-			}
-			if err := e.store.SetActivationState(actID, ActWaiting); err != nil {
+			if err := e.store.CheckpointActivation(actID, checkpoint); err != nil {
 				return nil, err
 			}
 			if _, err := e.store.TransitionRunState(runID, []string{RunRunning, RunWaiting}, RunPaused); err != nil {
