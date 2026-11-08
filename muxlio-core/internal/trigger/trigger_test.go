@@ -276,3 +276,39 @@ func TestMappingLiteralOutsideFloatRange(t *testing.T) {
 		t.Fatalf("literal changed: %s %v", out, err)
 	}
 }
+
+func TestNormalizeSignatureTransport(t *testing.T) {
+	for _, header := range []string{"Host", "hOsT", "Content-Length", "Transfer-Encoding", "Trailer", "Expect", "eXpEcT"} {
+		t.Run(header, func(t *testing.T) {
+			tr := validTrigger("transport", "0123456789abcdef")
+			tr.SignatureHeader = header
+			if err := tr.Normalize(); err == nil {
+				t.Fatal("accepted transport header")
+			}
+		})
+	}
+	for c := byte(0); c <= 0x7f; c++ {
+		if c >= 0x20 && c != 0x7f || c == '\t' {
+			continue
+		}
+		tr := validTrigger("transport", "0123456789abcdef")
+		tr.SignaturePrefix = "sha" + string(c) + "256="
+		if err := tr.Normalize(); err == nil {
+			t.Errorf("accepted prefix control byte %x", c)
+		}
+	}
+	for _, prefix := range []string{" sha256=", "\tsha256="} {
+		tr := validTrigger("transport", "0123456789abcdef")
+		tr.SignaturePrefix = prefix
+		if err := tr.Normalize(); err == nil {
+			t.Errorf("accepted leading whitespace %q", prefix)
+		}
+	}
+	for _, prefix := range []string{"", "sha256=", "sha 256= ", "sha\t256="} {
+		tr := validTrigger("transport", "0123456789abcdef")
+		tr.SignaturePrefix = prefix
+		if err := tr.Normalize(); err != nil {
+			t.Errorf("rejected transport-safe prefix %q: %v", prefix, err)
+		}
+	}
+}

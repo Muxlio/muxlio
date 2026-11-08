@@ -216,7 +216,7 @@ func ExclusiveDispatchKeys(req ExecuteRequest) []string {
 // MatchWorkerDispatch adds nonportable session ownership to generic matching.
 func MatchWorkerDispatch(workerID, executor string, raw []byte, caps []state.WorkerCapability, labels map[string]string) bool {
 	var req ExecuteRequest
-	if json.Unmarshal(raw, &req) != nil {
+	if contract.DecodeJSON(raw, &req) != nil {
 		return false
 	}
 	if req.Session != nil && req.Session.Mode == "resume" {

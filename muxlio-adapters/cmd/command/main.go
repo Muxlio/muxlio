@@ -287,6 +287,8 @@ func renderArgTemplate(template string, inputs map[string]any) (string, error) {
 		switch v := value.(type) {
 		case string:
 			return v
+		case json.Number:
+			return v.String()
 		case float64, bool:
 			return fmt.Sprint(v)
 		default:

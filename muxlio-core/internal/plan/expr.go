@@ -1,10 +1,10 @@
 package plan
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 )
 
 // Expr is a pure expression in the Muxlio expression language. It is a
@@ -119,7 +119,12 @@ func (e *Expr) Eval(ctx *EvalContext) (any, error) {
 
 func (e *Expr) literalValue() (any, error) {
 	var v any
-	if err := json.Unmarshal(e.Value, &v); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(e.Value))
+	decoder.UseNumber()
+	if !json.Valid(e.Value) {
+		return nil, fmt.Errorf("muxlio: bad literal in expression: invalid JSON")
+	}
+	if err := decoder.Decode(&v); err != nil {
 		return nil, fmt.Errorf("muxlio: bad literal in expression: %w", err)
 	}
 	return v, nil
@@ -214,7 +219,7 @@ func (e *Expr) evalEquality(ctx *EvalContext) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	eq := reflect.DeepEqual(l, r)
+	eq := equalValues(l, r)
 	if e.Op == "ne" {
 		return !eq, nil
 	}

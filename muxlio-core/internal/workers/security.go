@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 )
 
@@ -201,7 +202,7 @@ func sanitizeJSON(input, output any, secrets map[string]string) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(raw, output)
+	return contract.DecodeJSON(raw, output)
 }
 
 func redactValues(value string, secrets map[string]string) string {

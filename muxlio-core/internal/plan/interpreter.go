@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,7 +128,7 @@ func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (s
 	}
 	e.plan = &snapshot
 	var inputVal any
-	if err := json.Unmarshal(input, &inputVal); err != nil {
+	if err := contract.DecodeJSON(input, &inputVal); err != nil {
 		return "", fmt.Errorf("muxlio: invalid input JSON: %w", err)
 	}
 	runID := generateRunID()
@@ -457,7 +460,7 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 			if err == nil {
 				var inputs map[string]any
 				if len(act.Inputs) > 0 {
-					err = json.Unmarshal(act.Inputs, &inputs)
+					err = decodeExecutionInputs(act.Inputs, &inputs)
 				} else {
 					inputs, err = EvalBindings(node.Inputs, ctx)
 				}
@@ -592,12 +595,23 @@ func unwrapSubgraphOutput(output map[string]any) any {
 	return output
 }
 
+// decodeExecutionInputs preserves JSON numbers across activation persistence and
+// per-attempt copies. Inputs may contain numbers outside the float64 range.
+func decodeExecutionInputs(raw []byte, inputs *map[string]any) error {
+	if !json.Valid(raw) {
+		return fmt.Errorf("muxlio: invalid execution input JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(inputs)
+}
+
 // executeExecute resolves inputs, calls the executor, and returns outputs.
 // It honours the node's RetryPolicy for retryable failures.
 func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
 	var inputs map[string]any
 	if act, getErr := e.store.GetActivation(activationID(runID, scope, node.ID)); getErr == nil && len(act.Inputs) > 0 {
-		if err := json.Unmarshal(act.Inputs, &inputs); err != nil {
+		if err := decodeExecutionInputs(act.Inputs, &inputs); err != nil {
 			return nil, err
 		}
 	} else {
@@ -770,7 +784,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		req.Inputs = nil
-		if err := json.Unmarshal(inputSnapshot, &req.Inputs); err != nil {
+		if err := decodeExecutionInputs(inputSnapshot, &req.Inputs); err != nil {
 			return nil, err
 		}
 		if attempt > 1 {
@@ -945,13 +959,13 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			}
 			d.Identify()
 			var safeDiagnostic diagnostic.Diagnostic
-			if decodeErr := json.Unmarshal(diagnostic.WithSecrets(&d, guarded.Secrets), &safeDiagnostic); decodeErr != nil {
+			if decodeErr := contract.DecodeJSON(diagnostic.WithSecrets(&d, guarded.Secrets), &safeDiagnostic); decodeErr != nil {
 				return nil, fmt.Errorf("decode sanitized diagnostic: %w", decodeErr)
 			}
 			attemptResult.Diagnostic = &safeDiagnostic
 			sanitized := diagnostic.WithSecrets(attemptResult, guarded.Secrets)
 			var safeResult state.AttemptResult
-			if decodeErr := json.Unmarshal(sanitized, &safeResult); decodeErr != nil {
+			if decodeErr := contract.DecodeJSON(sanitized, &safeResult); decodeErr != nil {
 				return nil, fmt.Errorf("decode sanitized attempt diagnostic: %w", decodeErr)
 			}
 			// Keep the returned typed validation error safe even if the combined
@@ -1260,6 +1274,35 @@ func (e *Engine) executeBranch(runID string, node *Node, scope []string, ctx *Ev
 // loopProgressKey is stored on loop activation outputs when a loop pauses exhausted.
 const loopProgressKey = "__muxlioLoopProgress"
 
+// loopCheckpointIteration checks durable counters before converting to the
+// platform's int. A malformed checkpoint must never restart the loop at zero.
+func loopCheckpointIteration(value any) (int, error) {
+	var n int64
+	switch v := value.(type) {
+	case json.Number:
+		var err error
+		n, err = v.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("muxlio: invalid loop checkpoint iteration: %w", err)
+		}
+	case int:
+		n = int64(v)
+	case int64:
+		n = v
+	case float64:
+		if math.IsNaN(v) || v < 0 || v >= math.Ldexp(1, strconv.IntSize-1) || math.Trunc(v) != v {
+			return 0, fmt.Errorf("muxlio: invalid loop checkpoint iteration %v", v)
+		}
+		n = int64(v)
+	default:
+		return 0, fmt.Errorf("muxlio: invalid loop checkpoint iteration %v", value)
+	}
+	if n < 0 || int64(int(n)) != n {
+		return 0, fmt.Errorf("muxlio: loop checkpoint iteration out of range: %v", value)
+	}
+	return int(n), nil
+}
+
 // executeLoop runs the body subgraph repeatedly with loop-carried state.
 func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
 	maxIter := 0
@@ -1275,11 +1318,10 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 	if existing, err := e.store.GetActivation(actID); err == nil && existing.Outputs != nil {
 		if prog, state, ok := loopProgressFromOutputs(existing.Outputs); ok {
 			restoredCheckpoint = true
-			switch v := prog["iteration"].(type) {
-			case float64:
-				iteration = int(v)
-			case int:
-				iteration = v
+			var err error
+			iteration, err = loopCheckpointIteration(prog["iteration"])
+			if err != nil {
+				return nil, err
 			}
 			currentState = state
 		}

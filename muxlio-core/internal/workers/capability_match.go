@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/sandbox"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -26,7 +27,7 @@ func MatchDispatch(executor string, requestJSON []byte, caps []state.WorkerCapab
 	}
 	var req ExecuteRequest
 	if len(requestJSON) > 0 {
-		if json.Unmarshal(requestJSON, &req) != nil {
+		if contract.DecodeJSON(requestJSON, &req) != nil {
 			return false
 		}
 	}

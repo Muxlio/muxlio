@@ -50,7 +50,7 @@ func TestRemoteWorkerDrainFlushesLiveInputReceipts(t *testing.T) {
 	var polled, offered atomic.Bool
 	var receiptAttempts atomic.Int32
 	handle := &contract.SessionHandle{ID: "session", Executor: "test", RunnerVersion: "1", OwnerWorker: "worker", OwnerEnvironment: "env", ExpiresAt: time.Now().Add(time.Hour)}
-	raw, err := json.Marshal(ExecuteRequest{Executor: "test", Session: &contract.SessionRequest{Mode: "resume", Handle: handle}})
+	raw, err := json.Marshal(ExecuteRequest{Executor: "test", Inputs: map[string]any{"number": json.Number("1e400")}, Session: &contract.SessionRequest{Mode: "resume", Handle: handle}})
 	if err != nil {
 		t.Fatal(err)
 	}

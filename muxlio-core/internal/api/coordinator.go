@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"sync"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/telemetry"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -539,7 +540,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 			return workers.ExecuteResult{}, false, nil
 		}
 		var result workers.ExecuteResult
-		err = json.Unmarshal(raw, &result)
+		err = contract.DecodeJSON(raw, &result)
 		if err == nil {
 			persisted, lookupErr := c.assignmentRequest(req.AttemptID)
 			if lookupErr != nil {
@@ -556,7 +557,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 			var envelope struct {
 				Diagnostic *diagnostic.Diagnostic `json:"diagnostic"`
 			}
-			if json.Unmarshal(raw, &envelope) == nil && envelope.Diagnostic != nil && result.Error != "" {
+			if contract.DecodeJSON(raw, &envelope) == nil && envelope.Diagnostic != nil && result.Error != "" {
 				return result, true, envelope.Diagnostic
 			}
 		}

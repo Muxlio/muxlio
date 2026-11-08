@@ -325,7 +325,7 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 	}
 	if requestErr == nil {
 		var req workers.ExecuteRequest
-		if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		if err := decodePersistedValue(requestJSON, &req); err != nil {
 			return false, err
 		}
 		if (req.ExecutionDeadline != nil && !now.Before(*req.ExecutionDeadline)) || (req.Deadline != nil && !now.Before(*req.Deadline)) {
@@ -482,7 +482,7 @@ func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 // EnqueueDispatch durably records an execute envelope for worker polling.
 func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 	var request workers.ExecuteRequest
-	if err := json.Unmarshal(d.Request, &request); err != nil {
+	if err := decodePersistedValue(string(d.Request), &request); err != nil {
 		return err
 	}
 	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
@@ -600,7 +600,7 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 			return nil, 0, err
 		}
 		var envelope workers.ExecuteRequest
-		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		if err := decodePersistedValue(raw, &envelope); err != nil {
 			rows.Close()
 			return nil, 0, err
 		}
@@ -1251,7 +1251,7 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 			return nil, err
 		}
 		if resultJSON.Valid {
-			if err := json.Unmarshal([]byte(resultJSON.String), &a.Result); err != nil {
+			if err := decodePersistedValue(resultJSON.String, &a.Result); err != nil {
 				return nil, err
 			}
 		}
@@ -2004,12 +2004,12 @@ func scanRun(row rowScanner) (*state.Run, error) {
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	if input.Valid && input.String != "" {
-		if err := json.Unmarshal([]byte(input.String), &r.Input); err != nil {
+		if err := decodePersistedValue(input.String, &r.Input); err != nil {
 			return nil, err
 		}
 	}
 	if output.Valid && output.String != "" {
-		if err := json.Unmarshal([]byte(output.String), &r.Output); err != nil {
+		if err := decodePersistedValue(output.String, &r.Output); err != nil {
 			return nil, err
 		}
 	}
@@ -2033,11 +2033,23 @@ func scanActivation(row rowScanner) (*state.Activation, error) {
 		}
 	}
 	if outputs.Valid && outputs.String != "" {
-		if err := json.Unmarshal([]byte(outputs.String), &a.Outputs); err != nil {
+		if err := decodePersistedValue(outputs.String, &a.Outputs); err != nil {
 			return nil, err
 		}
 	}
 	return &a, nil
+}
+
+// decodePersistedValue preserves the full JSON number range in arbitrary run,
+// activation and execution-attempt values. Validate the entire document before decoding so trailing
+// JSON or malformed data cannot be silently accepted by Decoder.Decode.
+func decodePersistedValue(raw string, dest any) error {
+	if !json.Valid([]byte(raw)) {
+		return fmt.Errorf("muxlio: invalid persisted value JSON")
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(dest)
 }
 
 func marshalJSON(v any) ([]byte, error) {

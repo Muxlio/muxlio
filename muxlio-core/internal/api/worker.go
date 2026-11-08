@@ -300,6 +300,7 @@ func validLeaseTime(value string) bool {
 func decodeWorkerJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	d := json.NewDecoder(r.Body)
+	d.UseNumber()
 	if err := d.Decode(target); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
 		return false

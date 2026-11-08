@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -190,7 +191,7 @@ console.log(JSON.stringify(compiled.plan));`)
 					if _, wrapped := a.Outputs["_result"]; wrapped {
 						t.Fatalf("unexpected wrapper output: %#v", a.Outputs)
 					}
-					if a.Outputs["passed"] != (a.Outputs["exitCode"] == float64(0)) || a.Outputs["signal"] != nil {
+					if a.Outputs["passed"] != (a.Outputs["exitCode"] == json.Number("0")) || a.Outputs["signal"] != nil {
 						t.Fatalf("flat command details: %#v", a.Outputs)
 					}
 				}
@@ -201,7 +202,7 @@ console.log(JSON.stringify(compiled.plan));`)
 			_, finishErr := os.Stat(filepath.Join(workspace, "finished"))
 			if tc.state == plan.RunSucceeded {
 				output, ok := run.Output.(map[string]any)
-				if finishErr != nil || !ok || output["passed"] != true || output["attempts"] != float64(tc.verifies) || output["stdout"] != "verification\n" {
+				if finishErr != nil || !ok || output["passed"] != true || output["attempts"] != json.Number(strconv.Itoa(tc.verifies)) || output["stdout"] != "verification\n" {
 					t.Fatalf("successful output = %#v, finish error = %v", run.Output, finishErr)
 				}
 			} else if !os.IsNotExist(finishErr) || counts["finish"] != 0 {

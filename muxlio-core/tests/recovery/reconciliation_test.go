@@ -177,8 +177,12 @@ func TestExhaustedLoopCheckpointRestart(t *testing.T) {
 						t.Fatalf("run=%+v err=%v downstream calls=%d", run, err, len(executor.Calls()))
 					}
 					act, err := s.GetActivation(id + ":loop")
-					if err != nil || act.State != plan.ActWaiting || act.Outputs["__muxlioLoopProgress"] == nil || act.Outputs["result"] != float64(1) {
+					if err != nil || act.State != plan.ActWaiting || act.Outputs["__muxlioLoopProgress"] == nil {
 						t.Fatalf("lost loop progress: activation=%+v err=%v", act, err)
+					}
+					result, err := json.Marshal(act.Outputs["result"])
+					if err != nil || string(result) != "1" {
+						t.Fatalf("loop result=%s want 1: %v", result, err)
 					}
 				})
 			}

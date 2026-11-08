@@ -161,7 +161,7 @@ func (c *Coordinator) assignmentRequest(id string) (*workers.ExecuteRequest, err
 		return nil, err
 	}
 	var req workers.ExecuteRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := contract.DecodeJSON(raw, &req); err != nil {
 		return nil, err
 	}
 	return &req, nil

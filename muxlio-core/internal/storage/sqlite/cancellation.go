@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -48,7 +47,7 @@ func (s *Store) ExpireQueuedAttempt(attemptID string, now time.Time) (bool, erro
 		return false, err
 	}
 	var req workers.ExecuteRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+	if err := decodePersistedValue(raw, &req); err != nil {
 		return false, err
 	}
 	if req.ExecutionDeadline != nil || req.QueueDeadline == nil || now.Before(*req.QueueDeadline) {
@@ -80,7 +79,7 @@ func (s *Store) ExpireExecutingAttempt(attemptID string, now time.Time) (bool, e
 		return false, err
 	}
 	var req workers.ExecuteRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+	if err := decodePersistedValue(raw, &req); err != nil {
 		return false, err
 	}
 	if req.ExecutionDeadline == nil || now.Before(*req.ExecutionDeadline) {

@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -622,4 +623,50 @@ func openTemp(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { st.Close() })
 	return st
+}
+
+// Persisted arbitrary values must retain exact numbers without accepting a
+// valid prefix followed by another document or malformed trailing data.
+func TestDecodePersistedValue(t *testing.T) {
+	for _, raw := range []string{`9007199254740993`, `1e400`, `7`, `0`, `{"values":[9007199254740993,1e400,7,0]}`, `null`} {
+		t.Run(raw, func(t *testing.T) {
+			var value any
+			if err := decodePersistedValue(raw, &value); err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(value)
+			if err != nil || string(got) != raw {
+				t.Fatalf("value=%s want %s: %v", got, raw, err)
+			}
+		})
+	}
+	for _, raw := range []string{`1 2`, `{"value":7} {}`, `{"value":7} trailing`, `{"value":01}`, `{"value":`, ``} {
+		t.Run(raw, func(t *testing.T) {
+			var value any
+			if err := decodePersistedValue(raw, &value); err == nil {
+				t.Fatal("accepted invalid document")
+			}
+			var outputs map[string]any
+			if err := decodePersistedValue(raw, &outputs); err == nil {
+				t.Fatal("accepted invalid outputs document")
+			}
+		})
+	}
+}
+
+func TestDecodePersistedAttemptResult(t *testing.T) {
+	raw := `{"executionSucceeded":true,"outputs":{"value":[9007199254740993,1e400,0]}}`
+	var result state.AttemptResult
+	if err := decodePersistedValue(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(result)
+	if err != nil || string(got) != raw {
+		t.Fatalf("result=%s err=%v", got, err)
+	}
+	for _, suffix := range []string{` {}`, ` trailing`} {
+		if err := decodePersistedValue(raw+suffix, &result); err == nil {
+			t.Fatal("accepted trailing attempt result JSON")
+		}
+	}
 }

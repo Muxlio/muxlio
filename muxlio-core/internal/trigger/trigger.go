@@ -172,6 +172,22 @@ func (t *Trigger) Normalize() error {
 			return errors.New("muxlio: signatureHeader must be a valid HTTP header name")
 		}
 	}
+	// These fields are consumed or interpreted by net/http rather than
+	// exposed as an arbitrary signature value in Request.Header.
+	switch strings.ToLower(t.SignatureHeader) {
+	case "host", "content-length", "transfer-encoding", "trailer", "expect":
+		return errors.New("muxlio: signatureHeader must not be an HTTP transport field")
+	}
+	// HTTP strips leading SP/HTAB; the verifier must see the exact prefix.
+	if strings.HasPrefix(t.SignaturePrefix, " ") || strings.HasPrefix(t.SignaturePrefix, "\t") {
+		return errors.New("muxlio: signaturePrefix must not start with HTTP whitespace")
+	}
+	for i := 0; i < len(t.SignaturePrefix); i++ {
+		c := t.SignaturePrefix[i]
+		if c < 0x20 && c != '\t' || c == 0x7f {
+			return errors.New("muxlio: signaturePrefix must be a valid HTTP header value")
+		}
+	}
 	switch t.SignatureEncoding {
 	case "":
 		t.SignatureEncoding = EncodingHex

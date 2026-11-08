@@ -207,6 +207,69 @@ func TestCommandExecutesWithLiteralTemplateSyntaxInInput(t *testing.T) {
 	}
 }
 
+func TestCommandArgumentTemplatesFromJSONRequest(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "command")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	for _, tc := range []struct {
+		name, inputs, template, want, wantError string
+	}{
+		{"ordinary", `{"value":7}`, "{{value}}", "7", ""},
+		{"zero", `{"value":0}`, "{{value}}", "0", ""},
+		{"large integer", `{"value":9007199254740993}`, "{{value}}", "9007199254740993", ""},
+		{"extreme exponent", `{"value":1e400}`, "{{value}}", "1e400", ""},
+		{"decimal", `{"value":7.0}`, "{{value}}", "7.0", ""},
+		{"exponent", `{"value":70e-1}`, "{{value}}", "70e-1", ""},
+		{"nested", `{"nested":{"value":9007199254740993}}`, "value={{nested.value}}", "value=9007199254740993", ""},
+		{"string", `{"value":"7"}`, "{{value}}", "7", ""},
+		{"boolean", `{"value":true}`, "{{value}}", "true", ""},
+		{"false", `{"value":false}`, "{{value}}", "false", ""},
+		{"literal data", `{"value":"{{other}}; $(touch nope)"}`, "{{value}}", "{{other}}; $(touch nope)", ""},
+		{"object", `{"value":{"n":7}}`, "{{value}}", "", "is not a scalar"},
+		{"array", `{"value":[7]}`, "{{value}}", "", "is not a scalar"},
+		{"null", `{"value":null}`, "{{value}}", "", "is not a scalar"},
+		{"missing", `{}`, "{{value}}", "", "was not found"},
+		{"missing nested", `{"nested":{}}`, "{{nested.value}}", "", "was not found"},
+		{"malformed", `{"value":7}`, "{{value", "", "malformed placeholder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			raw, err := json.Marshal(map[string]any{
+				"executor": "command", "hostExecutionAllowed": true,
+				"workspace": workspace, "workDir": t.TempDir(),
+				"params": map[string]any{"program": "/bin/echo", "args": []string{""}, "argTemplates": []string{tc.template}},
+				"inputs": json.RawMessage(tc.inputs),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bin)
+			cmd.Stdin = strings.NewReader(string(raw))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("command: %v\n%s", err, out)
+			}
+			var resp adapter.Response
+			if err := json.Unmarshal(out, &resp); err != nil {
+				t.Fatalf("response: %s, %v", out, err)
+			}
+			if tc.wantError != "" {
+				if !strings.Contains(resp.Error, tc.wantError) || len(resp.Outputs) != 0 {
+					t.Fatalf("expected template rejection %q before execution: %+v", tc.wantError, resp)
+				}
+				return
+			}
+			if resp.Error != "" || resp.Outputs["stdout"] != tc.want+"\n" || resp.Outputs["passed"] != true || resp.Outputs["exitCode"] != float64(0) || resp.Outputs["signal"] != nil || resp.Outputs["stderr"] != "" {
+				t.Fatalf("expected exact argv %q and successful process: %+v", tc.want, resp)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, "nope")); !os.IsNotExist(err) {
+				t.Fatalf("input was interpreted by a shell: %v", err)
+			}
+		})
+	}
+}
+
 func TestRenderArgTemplateStillRejectsMalformedSourceAndMissingInputs(t *testing.T) {
 	for _, template := range []string{"{{feedback", "feedback}}", "{{/feedback}}", "{{}}", "{{feedback}} {{missing}}"} {
 		if _, err := renderArgTemplate(template, map[string]any{"feedback": "valid"}); err == nil {

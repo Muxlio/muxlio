@@ -543,7 +543,14 @@ func TestLoopWithState(t *testing.T) {
 type incrementExecutor struct{}
 
 func (incrementExecutor) Execute(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
-	current, _ := req.Inputs["current"].(float64)
+	number, ok := req.Inputs["current"].(json.Number)
+	if !ok {
+		return workers.ExecuteResult{}, fmt.Errorf("expected JSON number, got %T", req.Inputs["current"])
+	}
+	current, err := number.Float64()
+	if err != nil {
+		return workers.ExecuteResult{}, err
+	}
 	return workers.ExecuteResult{
 		Outputs: map[string]any{"next": current + 1},
 	}, nil

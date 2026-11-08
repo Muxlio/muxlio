@@ -531,7 +531,7 @@ func markJSON(raw string, reachable map[string]bool) error {
 		return nil
 	}
 	var value any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+	if err := decodePersistedValue(raw, &value); err != nil {
 		return fmt.Errorf("invalid JSON in GC roots: %w", err)
 	}
 	var walk func(any)

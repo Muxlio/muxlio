@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -195,7 +199,10 @@ func (a ArtifactTransferExecutor) materializeInputs(req *ExecuteRequest) error {
 		return err
 	}
 	for name, value := range req.Inputs {
-		ref, ok := artifactRefFromValue(value)
+		ref, ok, err := artifactRefFromValue(value)
+		if err != nil {
+			return fmt.Errorf("muxlio: artifact %q: %w", name, err)
+		}
 		if !ok {
 			continue
 		}
@@ -333,14 +340,15 @@ func declaredOutputPath(name string) (string, error) {
 
 func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, decl OutputDecl) (ArtifactRef, string, bool, error) {
 	if raw, ok := result.Outputs[port]; ok {
-		if ref, ok := artifactRefFromValue(raw); ok && ref.Path != "" {
+		ref, ok, err := artifactRefFromValue(raw)
+		if err != nil {
+			return ArtifactRef{}, "", false, err
+		}
+		if ok && ref.Path != "" {
 			return ref, ref.Path, true, nil
 		}
 		if m, ok := raw.(map[string]any); ok {
 			if path, _ := m["path"].(string); path != "" {
-				if ref, ok := artifactRefFromValue(m); ok {
-					return ref, path, true, nil
-				}
 				return ArtifactRef{Path: path}, path, true, nil
 			}
 			if data, ok := m["data"].(string); ok {
@@ -392,14 +400,14 @@ func (a ArtifactTransferExecutor) workDir(req ExecuteRequest) (string, error) {
 	return newAttemptScratch(req, a.WorkBase)
 }
 
-func artifactRefFromValue(value any) (ArtifactRef, bool) {
+func artifactRefFromValue(value any) (ArtifactRef, bool, error) {
 	m, ok := value.(map[string]any)
 	if !ok {
-		return ArtifactRef{}, false
+		return ArtifactRef{}, false, nil
 	}
 	digest, _ := m["digest"].(string)
 	if digest == "" || !strings.HasPrefix(digest, "sha256:") {
-		return ArtifactRef{}, false
+		return ArtifactRef{}, false, nil
 	}
 	ref := ArtifactRef{Digest: digest}
 	if mime, ok := m["mime"].(string); ok {
@@ -408,15 +416,75 @@ func artifactRefFromValue(value any) (ArtifactRef, bool) {
 	if path, ok := m["path"].(string); ok {
 		ref.Path = path
 	}
-	switch size := m["size"].(type) {
-	case float64:
-		ref.Size = int64(size)
-	case int64:
-		ref.Size = size
-	case int:
-		ref.Size = int64(size)
+	if size, present := m["size"]; present {
+		n, err := artifactSize(size)
+		if err != nil {
+			return ArtifactRef{}, true, err
+		}
+		ref.Size = n
 	}
-	return ref, true
+	return ref, true, nil
+}
+
+// artifactSize rejects invalid sizes rather than turning them into an omitted
+// integrity constraint. JSON numbers arrive unchanged from execution inputs.
+func artifactSize(value any) (int64, error) {
+	var n int64
+	switch size := value.(type) {
+	case json.Number:
+		var err error
+		n, err = integralArtifactSize(size)
+		if err != nil {
+			return 0, fmt.Errorf("invalid artifact size: %w", err)
+		}
+	case float64:
+		if math.IsNaN(size) || size < 0 || size >= 0x1p63 || math.Trunc(size) != size {
+			return 0, fmt.Errorf("invalid artifact size %v", size)
+		}
+		n = int64(size)
+	case int64:
+		n = size
+	case int:
+		n = int64(size)
+	default:
+		return 0, fmt.Errorf("invalid artifact size %v", value)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("invalid artifact size %v", value)
+	}
+	return n, nil
+}
+
+// integralArtifactSize converts decimal JSON exactly, keeping the exponent
+// separate so enormous exponents cannot cause magnitude-sized allocations.
+func integralArtifactSize(number json.Number) (int64, error) {
+	text := string(number)
+	if !json.Valid([]byte(text)) || len(text) == 0 || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) {
+		return 0, fmt.Errorf("invalid JSON number %q", text)
+	}
+	negative := strings.HasPrefix(text, "-")
+	text = strings.TrimPrefix(text, "-")
+	exponent := new(big.Int)
+	if i := strings.IndexAny(text, "eE"); i >= 0 {
+		if _, ok := exponent.SetString(text[i+1:], 10); !ok {
+			return 0, fmt.Errorf("invalid JSON exponent")
+		}
+		text = text[:i]
+	}
+	if i := strings.IndexByte(text, '.'); i >= 0 {
+		exponent.Sub(exponent, big.NewInt(int64(len(text)-i-1)))
+		text = text[:i] + text[i+1:]
+	}
+	text = strings.TrimLeft(text, "0")
+	if text == "" {
+		return 0, nil
+	}
+	coefficient := strings.TrimRight(text, "0")
+	exponent.Add(exponent, big.NewInt(int64(len(text)-len(coefficient))))
+	if negative || exponent.Sign() < 0 || len(coefficient) > 19 || exponent.Cmp(big.NewInt(int64(19-len(coefficient)))) > 0 {
+		return 0, fmt.Errorf("artifact size is not a nonnegative int64")
+	}
+	return strconv.ParseInt(coefficient+strings.Repeat("0", int(exponent.Int64())), 10, 64)
 }
 
 // VerifyOutputArtifacts ensures every declared digest exists in the store.
@@ -425,7 +493,10 @@ func VerifyOutputArtifacts(driver artifacts.Driver, outputs map[string]any) erro
 		return nil
 	}
 	for port, value := range outputs {
-		ref, ok := artifactRefFromValue(value)
+		ref, ok, err := artifactRefFromValue(value)
+		if err != nil {
+			return fmt.Errorf("muxlio: output artifact %q: %w", port, err)
+		}
 		if !ok {
 			continue
 		}
@@ -444,7 +515,7 @@ func VerifyOutputArtifacts(driver artifacts.Driver, outputs map[string]any) erro
 // SanitizeExecuteJSON removes inline artifact bytes from a marshalled execute request.
 func SanitizeExecuteJSON(raw []byte) ([]byte, error) {
 	var req ExecuteRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := contract.DecodeJSON(raw, &req); err != nil {
 		return nil, err
 	}
 	req = StripInlineArtifactBytes(req)

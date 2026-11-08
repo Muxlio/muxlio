@@ -2,6 +2,7 @@ package conformance_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/muxlio/muxlio-core/internal/plan"
@@ -58,7 +59,7 @@ func TestProbeChildInheritsMapItem(t *testing.T) {
 			}, Output: map[string]plan.Binding{"value": bRef("kid", "result")}},
 			"echo": {Nodes: []plan.Node{
 				{ID: "do", Kind: plan.KindExecute, Executor: "test/echo",
-					Inputs: map[string]plan.Binding{"n": bExpr(exprItem())},
+					Inputs:  map[string]plan.Binding{"n": bExpr(exprItem())},
 					Outputs: map[string]plan.OutputDecl{"out": {}}},
 			}, Output: map[string]plan.Binding{"value": bRef("do", "out")}},
 		},
@@ -91,7 +92,14 @@ func TestProbeChildInheritsMapItem(t *testing.T) {
 type itemEchoExecutor struct{}
 
 func (itemEchoExecutor) Execute(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
-	n, _ := req.Inputs["n"].(float64)
+	number, ok := req.Inputs["n"].(json.Number)
+	if !ok {
+		return workers.ExecuteResult{}, fmt.Errorf("expected JSON number, got %T", req.Inputs["n"])
+	}
+	n, err := number.Float64()
+	if err != nil {
+		return workers.ExecuteResult{}, err
+	}
 	return workers.ExecuteResult{Outputs: map[string]any{"out": n}}, nil
 }
 

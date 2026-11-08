@@ -80,6 +80,7 @@ var responseSecrets map[string]string
 func ReadRequest() (*Request, error) {
 	var req *Request
 	decoder := json.NewDecoder(os.Stdin)
+	decoder.UseNumber()
 	if err := decoder.Decode(&req); err != nil {
 		return nil, fmt.Errorf("adapter: reading request: %w", err)
 	}

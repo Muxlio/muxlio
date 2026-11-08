@@ -72,3 +72,50 @@ func TestWebhookDeduplicationPersistsAndExpires(t *testing.T) {
 		t.Fatalf("partial run committed: %d %v", len(runs), err)
 	}
 }
+
+func TestWebhookNumericInputReadableAfterReopen(t *testing.T) {
+	for _, input := range []string{`9007199254740993`, `1e400`, `{"values":[9007199254740993,1e400,7,0]}`} {
+		t.Run(input, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "webhooks.db")
+			s, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { s.Close() }()
+			tr := trigger.Trigger{ID: "numbers", WorkflowDigest: "pin", Secret: "0123456789abcdef", Enabled: true}
+			if err := tr.Normalize(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.CreateTrigger(tr); err != nil {
+				t.Fatal(err)
+			}
+			req := trigger.WebhookDeliveryRequest{TriggerID: tr.ID, IdempotencyKey: "delivery", WorkflowDigest: "pin", WorkflowName: "numbers", PlanJSON: []byte(`{"digest":"pin"}`), Input: json.RawMessage(input), DeduplicationSeconds: 60}
+			first, err := s.DeliverWebhook(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retry, err := s.DeliverWebhook(req)
+			if err != nil || !retry.Duplicate || retry.RunID != first.RunID {
+				t.Fatalf("retry=%+v: %v", retry, err)
+			}
+			runs, err := s.ListRuns()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(runs) != 1 {
+				t.Fatalf("runs=%d", len(runs))
+			}
+			got, err := json.Marshal(runs[0].Input)
+			if err != nil || string(got) != input {
+				t.Fatalf("input=%s want %s: %v", got, input, err)
+			}
+		})
+	}
+}

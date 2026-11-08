@@ -100,7 +100,7 @@ func ParseResult(raw []byte) (Result, error) {
 	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
 		return result, fmt.Errorf("executor result must be a JSON object")
 	}
-	if err := json.Unmarshal(raw, &result); err != nil {
+	if err := DecodeJSON(raw, &result); err != nil {
 		return Result{}, fmt.Errorf("executor result: %w", err)
 	}
 	if u := result.Usage; u != nil && (u.Input < 0 || u.Output < 0 || u.Cached < 0) {

@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
@@ -124,7 +129,7 @@ func TestAuthenticatedPinnedWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned, _ := s.GetWorkflowVersion(digest)
-	if run.PlanDigest != digest || !bytes.Equal(run.PlanJSON, pinned) || run.Input.(map[string]any)["count"] != float64(7) {
+	if run.PlanDigest != digest || !bytes.Equal(run.PlanJSON, pinned) || run.Input.(map[string]any)["count"] != json.Number("7") {
 		t.Fatalf("pin/input mismatch: %+v", run)
 	}
 	// A new version never changes the trigger's pin.
@@ -150,5 +155,101 @@ func TestAuthenticatedPinnedWebhooks(t *testing.T) {
 	runs, _ = s.ListRuns()
 	if len(runs) != 2 {
 		t.Fatal("unkeyed delivery did not create run")
+	}
+}
+
+// Use a real HTTP connection: direct ServeHTTP calls do not normalize headers.
+func TestWebhookSignatureConfigurationOverHTTP(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "webhooks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p := &plan.Plan{Name: "wire", IRVersion: "1.0", Root: "root", Subgraphs: map[string]plan.Subgraph{"root": {Nodes: []plan.Node{{ID: "task", Kind: plan.KindExecute, Executor: "test/task"}}}}}
+	digest, err := p.ComputeDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(p)
+	if err := s.SaveWorkflowVersion(digest, raw); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewRouter(s, nil))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 5 * time.Second
+	const secret = "0123456789abcdef"
+	for i, tc := range []struct {
+		name, header, prefix, encoding string
+		valid                          bool
+	}{
+		{"host", "Host", "", "hex", false},
+		{"mixed-case-host", "hOsT", "", "hex", false},
+		{"content-length", "Content-Length", "", "hex", false},
+		{"transfer-encoding", "Transfer-Encoding", "", "hex", false},
+		{"trailer", "Trailer", "", "hex", false},
+		{"expect", "Expect", "", "hex", false},
+		{"mixed-case-expect", "eXpEcT", "", "hex", false},
+		{"newline", "X-Signature", "sha256=\r\n", "hex", false},
+		{"leading-space", "X-Signature", " sha256=", "hex", false},
+		{"leading-tab", "X-Signature", "\tsha256=", "hex", false},
+		{"nul", "X-Signature", "sha\x00256=", "hex", false},
+		{"del", "X-Signature", "sha\x7f256=", "hex", false},
+		{"custom-hex", "X-Signature", "sha256=", "hex", true},
+		{"mixed-case-base64", "x-SiGnAtUrE", "sha256=", "base64", true},
+		{"empty-prefix", "X-Event-Signature", "", "hex", true},
+		{"internal-space", "X-Signature", "sha 256= ", "hex", true},
+		{"internal-tab", "X-Signature", "sha\t256=", "hex", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := fmt.Sprintf("wire-%d", i)
+			def, _ := json.Marshal(map[string]any{"id": id, "workflowDigest": digest, "secret": secret, "signatureHeader": tc.header, "signaturePrefix": tc.prefix, "signatureEncoding": tc.encoding})
+			resp, err := client.Post(server.URL+"/v1/triggers", "application/json", bytes.NewReader(def))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if !tc.valid && resp.StatusCode == 400 {
+				return
+			}
+			if resp.StatusCode != 201 {
+				t.Fatalf("create: %d %s", resp.StatusCode, result)
+			}
+			body := []byte(`7`)
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write(body)
+			sig := hex.EncodeToString(mac.Sum(nil))
+			if tc.encoding == "base64" {
+				sig = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+			}
+			req, err := http.NewRequest("POST", server.URL+"/webhooks/"+id, bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set(tc.header, tc.prefix+sig)
+			if strings.EqualFold(tc.header, "Host") {
+				req.Host = tc.prefix + sig
+			}
+			delivery, err := client.Do(req)
+			if !tc.valid {
+				if err != nil {
+					t.Errorf("accepted unusable config: delivery error: %v", err)
+				} else {
+					result, _ := io.ReadAll(delivery.Body)
+					delivery.Body.Close()
+					t.Errorf("accepted unusable config: delivery status %d: %s", delivery.StatusCode, result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer delivery.Body.Close()
+			if delivery.StatusCode != 201 {
+				result, _ := io.ReadAll(delivery.Body)
+				t.Fatalf("delivery: %d %s", delivery.StatusCode, result)
+			}
+		})
 	}
 }

@@ -328,7 +328,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		// Only pathless ports are JSON results; file artifacts retain their bytes.
 		if decl.Path == "" {
 			var parsed any
-			if err := json.Unmarshal(data, &parsed); err == nil {
+			if err := contract.DecodeJSON(data, &parsed); err == nil {
 				result.Outputs[port] = parsed
 			} else {
 				result.Outputs[port] = string(data)

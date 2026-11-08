@@ -358,7 +358,7 @@ func AttemptDiagnostics(attempts []ExecutionAttempt) []diagnostic.Diagnostic {
 		return nil
 	}
 	var bounded []diagnostic.Diagnostic
-	if json.Unmarshal(raw, &bounded) != nil {
+	if contract.DecodeJSON(raw, &bounded) != nil {
 		return nil
 	}
 	return bounded

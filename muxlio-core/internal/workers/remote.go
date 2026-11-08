@@ -355,7 +355,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			return nil
 		}
 		var executeReq ExecuteRequest
-		if err := json.Unmarshal(assignment.Request, &executeReq); err != nil {
+		if err := contract.DecodeJSON(assignment.Request, &executeReq); err != nil {
 			return reject(fmt.Errorf("invalid assignment request: %w", err))
 		}
 		executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID = assignment.RunID, assignment.ActivationID, assignment.AttemptID
@@ -591,7 +591,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 					continue
 				}
 				var req ExecuteRequest
-				if json.Unmarshal(child.assignment.Request, &req) != nil || req.Session == nil || req.Session.Mode != "resume" {
+				if contract.DecodeJSON(child.assignment.Request, &req) != nil || req.Session == nil || req.Session.Mode != "resume" {
 					continue
 				}
 				req.Action, req.SessionInputs, req.Context = "steer", command.SessionInput.Inputs, child.inputContext
@@ -706,7 +706,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				var d *diagnostic.Diagnostic
 				if errors.As(execErr, &d) {
 					var safe diagnostic.Diagnostic
-					if json.Unmarshal(diagnostic.WithSecrets(d, executeReq.Secrets), &safe) == nil {
+					if contract.DecodeJSON(diagnostic.WithSecrets(d, executeReq.Secrets), &safe) == nil {
 						completion.Error.Diagnostic = &safe
 					}
 				}

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // WorkingDir returns the directory an agent should run in. If an input port
@@ -75,7 +77,7 @@ func CollectOutputs(req *Request) (map[string]any, []string, map[string]string) 
 			// Scalar output: return the parsed JSON value so downstream control
 			// flow (booleans, strings, numbers) works against the raw value.
 			var parsed any
-			if err := json.Unmarshal(data, &parsed); err == nil {
+			if err := contract.DecodeJSON(data, &parsed); err == nil {
 				outputs[port] = parsed
 			} else {
 				outputs[port] = string(data)

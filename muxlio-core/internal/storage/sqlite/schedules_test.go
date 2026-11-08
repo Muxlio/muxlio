@@ -79,7 +79,7 @@ func TestScheduleRestartPolicies(t *testing.T) {
 					t.Fatalf("lost committed run %s", id)
 				}
 				r, err := s.GetRun(id)
-				if err != nil || r.PlanDigest != d.WorkflowDigest || string(r.PlanJSON) == "" || r.Input != float64(42) {
+				if err != nil || r.PlanDigest != d.WorkflowDigest || string(r.PlanJSON) == "" || r.Input != json.Number("42") {
 					t.Fatalf("pin/input=%+v err=%v", r, err)
 				}
 			}

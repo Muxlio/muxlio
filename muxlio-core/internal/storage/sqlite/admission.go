@@ -103,7 +103,7 @@ func readAdmissionConfig(tx *sql.Tx) (state.AdmissionConfig, error) {
 // are interpreter waits, have no dispatch, and never create a reservation.
 func admissionReason(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, demand state.AdmissionDemand, workerID string, workerCap int, now time.Time) (string, error) {
 	var request workers.ExecuteRequest
-	if err := json.Unmarshal(d.Request, &request); err != nil {
+	if err := decodePersistedValue(string(d.Request), &request); err != nil {
 		return "", err
 	}
 	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
@@ -179,7 +179,7 @@ func admissionTokens(tx *sql.Tx, key string, rate state.AdmissionRate, now time.
 
 func reserveAdmission(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, demand state.AdmissionDemand, now time.Time) error {
 	var request workers.ExecuteRequest
-	if err := json.Unmarshal(d.Request, &request); err != nil {
+	if err := decodePersistedValue(string(d.Request), &request); err != nil {
 		return err
 	}
 	// Reservations outlive revocation and lease expiry. Only confirmed

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,7 +51,10 @@ func TestScriptArtifactTransferSharesUniqueInvocationScratch(t *testing.T) {
 		if err != nil || result.Error != "" {
 			t.Fatalf("file artifact transfer failed: %+v %v", result, err)
 		}
-		ref, ok := artifactRefFromValue(result.Outputs["result"])
+		ref, ok, parseErr := artifactRefFromValue(result.Outputs["result"])
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
 		if !ok || ref.Path != "result.txt" || ref.Size != 7 {
 			t.Fatalf("missing uploaded artifact: %+v", result)
 		}
@@ -323,7 +327,10 @@ func TestInlineOutputMaterializesNestedPath(t *testing.T) {
 	if err != nil || result.Error != "" {
 		t.Fatalf("inline output failed: %+v %v", result, err)
 	}
-	ref, ok := artifactRefFromValue(result.Outputs["report"])
+	ref, ok, parseErr := artifactRefFromValue(result.Outputs["report"])
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
 	want := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("replacement")))
 	if !ok || ref.Digest != want || ref.Size != 11 || *uploads != 1 {
 		t.Fatalf("wrong inline artifact: %+v uploads=%d", result, *uploads)
@@ -414,5 +421,22 @@ func TestInlineOutputContainsConcurrentSymlinkReplacement(t *testing.T) {
 				t.Errorf("concurrent replacement created outside directory: %v", err)
 			}
 		})
+	}
+}
+
+func TestArtifactReferenceSize(t *testing.T) {
+	for _, value := range []any{json.Number("7"), json.Number("7.0"), json.Number("7e0"), json.Number("70e-1"), json.Number("0.0"), json.Number("0e999999999999999999999"), json.Number("-0"), json.Number("9223372036854775807.0"), int(7), int64(7), float64(7), json.Number("9223372036854775807"), json.Number("0")} {
+		ref, ok, err := artifactRefFromValue(map[string]any{"digest": "sha256:test", "size": value})
+		if !ok || err != nil {
+			t.Errorf("%v (%T): ref=%+v ok=%v err=%v", value, value, ref, ok, err)
+		}
+	}
+	for _, value := range []any{json.Number("9223372036854775808"), json.Number("1.5"), json.Number("7.0000000000000000001"), json.Number("1e-999999999999999999"), json.Number("1e999999999999999999"), json.Number("1e400"), json.Number("-1"), float64(-1), float64(0x1p63), 1.5, math.Inf(1), math.NaN(), "7", nil} {
+		if _, _, err := artifactRefFromValue(map[string]any{"digest": "sha256:test", "size": value}); err == nil {
+			t.Errorf("accepted %v (%T)", value, value)
+		}
+	}
+	if ref, ok, err := artifactRefFromValue(map[string]any{"digest": "sha256:test"}); !ok || err != nil || ref.Size != 0 {
+		t.Fatalf("absent size: ref=%+v ok=%v err=%v", ref, ok, err)
 	}
 }

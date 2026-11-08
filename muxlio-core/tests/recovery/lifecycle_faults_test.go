@@ -638,7 +638,7 @@ func TestLifecycleRestartWithOnePausedMapChild(t *testing.T) {
 	inner := workers.NewScriptExecutor(adapters, t.TempDir())
 	paused := make(chan struct{}, 1)
 	gate := lifecycleExecutor(func(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
-		if req.Inputs["item"] == float64(1) {
+		if req.Inputs["item"] == json.Number("1") {
 			paused <- struct{}{}
 			<-req.Context.Done()
 			return workers.ExecuteResult{}, req.Context.Err()
