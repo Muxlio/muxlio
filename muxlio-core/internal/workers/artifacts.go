@@ -130,18 +130,22 @@ func (a ArtifactTransferExecutor) startSnapshots(req ExecuteRequest) func() {
 				if decl.Path == "" || seq >= state.MaxAttemptSnapshots || remaining <= 0 || ctx.Err() != nil {
 					continue
 				}
-				path := filepath.Join(req.attemptScratch, filepath.Base(decl.Path))
-				info, err := os.Lstat(path)
-				if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+				rel, err := declaredOutputPath(decl.Path)
+				if err != nil {
 					continue
 				}
-				// os.Root rejects symlinks escaping the attempt directory, including
-				// a replacement between Lstat and Open.
+				// Keep both inspection and reads rooted in the attempt directory,
+				// including concurrent symlink replacements.
 				root, err := os.OpenRoot(req.attemptScratch)
 				if err != nil {
 					continue
 				}
-				f, err := root.Open(filepath.Base(decl.Path))
+				info, err := root.Lstat(rel)
+				if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+					root.Close()
+					continue
+				}
+				f, err := root.Open(rel)
 				root.Close()
 				if err != nil {
 					continue
@@ -249,7 +253,10 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		if decl.Path == "" {
 			continue
 		}
-		ref, filePath, ok := outputFile(req, result, workDir, port, decl)
+		ref, filePath, ok, err := outputFile(req, result, workDir, port, decl)
+		if err != nil {
+			return ExecuteResult{Error: fmt.Sprintf("muxlio: materialize output %q: %v", port, err)}, nil
+		}
 		if !ok {
 			continue
 		}
@@ -324,17 +331,17 @@ func declaredOutputPath(name string) (string, error) {
 	return clean, nil
 }
 
-func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, decl OutputDecl) (ArtifactRef, string, bool) {
+func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, decl OutputDecl) (ArtifactRef, string, bool, error) {
 	if raw, ok := result.Outputs[port]; ok {
 		if ref, ok := artifactRefFromValue(raw); ok && ref.Path != "" {
-			return ref, ref.Path, true
+			return ref, ref.Path, true, nil
 		}
 		if m, ok := raw.(map[string]any); ok {
 			if path, _ := m["path"].(string); path != "" {
 				if ref, ok := artifactRefFromValue(m); ok {
-					return ref, path, true
+					return ref, path, true, nil
 				}
-				return ArtifactRef{Path: path}, path, true
+				return ArtifactRef{Path: path}, path, true, nil
 			}
 			if data, ok := m["data"].(string); ok {
 				name := decl.Path
@@ -343,14 +350,23 @@ func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, de
 				}
 				rel, err := declaredOutputPath(name)
 				if err != nil {
-					return ArtifactRef{}, "", false
+					return ArtifactRef{}, "", false, err
+				}
+				root, err := os.OpenRoot(workDir)
+				if err != nil {
+					return ArtifactRef{}, "", false, err
+				}
+				defer root.Close()
+				// Rooted operations enforce containment during directory creation
+				// and truncation, even if the executor replaces a symlink.
+				if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+					return ArtifactRef{}, "", false, err
+				}
+				if err := root.WriteFile(rel, []byte(data), 0o644); err != nil {
+					return ArtifactRef{}, "", false, err
 				}
 				path := filepath.Join(workDir, rel)
-				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-					return ArtifactRef{}, "", false
-				}
-				_ = os.WriteFile(path, []byte(data), 0o644)
-				return ArtifactRef{Mime: decl.Mime, Path: path}, path, true
+				return ArtifactRef{Mime: decl.Mime, Path: path}, path, true, nil
 			}
 		}
 	}
@@ -360,13 +376,13 @@ func outputFile(_ ExecuteRequest, result ExecuteResult, workDir, port string, de
 	}
 	rel, err := declaredOutputPath(name)
 	if err != nil {
-		return ArtifactRef{}, "", false
+		return ArtifactRef{}, "", false, nil
 	}
 	path := filepath.Join(workDir, rel)
 	if _, err := os.Stat(path); err != nil {
-		return ArtifactRef{}, "", false
+		return ArtifactRef{}, "", false, nil
 	}
-	return ArtifactRef{Mime: decl.Mime, Path: path}, path, true
+	return ArtifactRef{Mime: decl.Mime, Path: path}, path, true, nil
 }
 
 func (a ArtifactTransferExecutor) workDir(req ExecuteRequest) (string, error) {

@@ -3,7 +3,9 @@ package workers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -134,5 +136,93 @@ func TestProgressCoalescesChattyStreamsAndCapsBytes(t *testing.T) {
 	}
 	if total != 1<<20 {
 		t.Fatalf("progress budget: %d", total)
+	}
+}
+
+func TestSnapshotsHonorFullDeclaredPaths(t *testing.T) {
+	for _, rootDecoy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("root-decoy=%v", rootDecoy), func(t *testing.T) {
+			scratch := t.TempDir()
+			outputs := map[string]OutputDecl{
+				"report": {Path: "reports/result.txt"},
+				"other":  {Path: "other/result.txt"},
+			}
+			for name, decl := range outputs {
+				path := filepath.Join(scratch, decl.Path)
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if rootDecoy {
+				if err := os.WriteFile(filepath.Join(scratch, "result.txt"), []byte("unrelated"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, uploads := countingArtifactPublisher()
+			snapshots := map[string]state.ArtifactSnapshot{}
+			a.SnapshotInterval = time.Hour
+			a.Snapshot = func(_ int, s state.ArtifactSnapshot) error { snapshots[s.Name] = s; return nil }
+			stop := a.startSnapshots(ExecuteRequest{attemptScratch: scratch, Outputs: outputs})
+			stop() // Synchronous final capture avoids ticker timing dependencies.
+			if len(snapshots) != 2 || *uploads != 2 {
+				t.Fatalf("missing snapshots: %+v uploads=%d", snapshots, *uploads)
+			}
+			for name := range outputs {
+				want := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(name)))
+				if snapshots[name].Digest != want {
+					t.Errorf("%s snapshot uses wrong file: %+v", name, snapshots[name])
+				}
+			}
+		})
+	}
+}
+
+func TestSnapshotsKeepNestedPathGuards(t *testing.T) {
+	for _, kind := range []string{"escaping-parent", "invalid-path", "oversized", "credential"} {
+		t.Run(kind, func(t *testing.T) {
+			scratch := t.TempDir()
+			decl := "reports/result.txt"
+			if err := os.Mkdir(filepath.Join(scratch, "reports"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(scratch, decl)
+			switch kind {
+			case "escaping-parent":
+				outside := t.TempDir()
+				if err := os.WriteFile(filepath.Join(outside, "result.txt"), []byte("outside"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				decl = "escape/result.txt"
+				if err := os.Symlink(outside, filepath.Join(scratch, "escape")); err != nil {
+					t.Fatal(err)
+				}
+			case "invalid-path":
+				decl = "../result.txt"
+				// The old basename behavior would incorrectly snapshot this decoy.
+				if err := os.WriteFile(filepath.Join(scratch, "result.txt"), []byte("decoy"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "credential":
+				if err := os.WriteFile(path, []byte("private-test-credential"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "oversized":
+				if err := os.WriteFile(path, bytes.Repeat([]byte("x"), (4<<20)+1), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, uploads := countingArtifactPublisher()
+			a.SnapshotInterval = time.Hour
+			a.Snapshot = func(_ int, s state.ArtifactSnapshot) error { t.Errorf("unsafe snapshot: %+v", s); return nil }
+			req := ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: decl}}, Secrets: map[string]string{"TEST_SECRET": "private-test-credential"}}
+			stop := a.startSnapshots(req)
+			stop()
+			if *uploads != 0 {
+				t.Errorf("uploaded unsafe snapshot: %d", *uploads)
+			}
+		})
 	}
 }

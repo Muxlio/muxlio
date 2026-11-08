@@ -236,3 +236,183 @@ type stubExecutor struct{ result ExecuteResult }
 func (s *stubExecutor) Execute(_ ExecuteRequest) (ExecuteResult, error) {
 	return s.result, nil
 }
+
+func TestInlineOutputRejectsEscapingSymlinksBeforeMutation(t *testing.T) {
+	for _, kind := range []string{"leaf", "parent", "nested-parent"} {
+		t.Run(kind, func(t *testing.T) {
+			scratch, outside := t.TempDir(), t.TempDir()
+			victim := filepath.Join(outside, "victim.txt")
+			if err := os.WriteFile(victim, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			decl := "result.txt"
+			link, target := filepath.Join(scratch, decl), victim
+			if kind != "leaf" {
+				link, target = filepath.Join(scratch, "reports"), outside
+				decl = "reports/victim.txt"
+				if kind == "nested-parent" {
+					decl = "reports/new/deep/result.txt"
+				}
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			a, uploads := countingArtifactPublisher()
+			result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: decl}}}, inlineReportResult())
+			if err == nil && result.Error == "" {
+				t.Error("escaping inline output succeeded")
+			}
+			if *uploads != 0 {
+				t.Errorf("uploaded rejected output: %d", *uploads)
+			}
+			data, err := os.ReadFile(victim)
+			if err != nil || string(data) != "original" {
+				t.Errorf("outside victim changed: %q, %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+				t.Errorf("created outside directory: %v", err)
+			}
+		})
+	}
+}
+
+func TestInlineOutputMaterializationErrorsFailPublication(t *testing.T) {
+	for _, kind := range []string{"read-only-leaf", "blocked-parent", "directory-leaf", "invalid-path"} {
+		t.Run(kind, func(t *testing.T) {
+			scratch := t.TempDir()
+			decl := "result.txt"
+			switch kind {
+			case "read-only-leaf":
+				path := filepath.Join(scratch, decl)
+				if err := os.WriteFile(path, []byte("stale"), 0400); err != nil {
+					t.Fatal(err)
+				}
+				// Permission-based failure is unavailable to privileged test processes.
+				if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+					f.Close()
+					t.Skip("process can write read-only files")
+				}
+			case "blocked-parent":
+				if err := os.WriteFile(filepath.Join(scratch, "reports"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				decl = "reports/result.txt"
+			case "directory-leaf":
+				if err := os.Mkdir(filepath.Join(scratch, decl), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "invalid-path":
+				decl = "../result.txt"
+			}
+			a, uploads := countingArtifactPublisher()
+			result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: decl}}}, inlineReportResult())
+			if err == nil && result.Error == "" {
+				t.Errorf("materialization failure reported success: %+v", result)
+			}
+			if *uploads != 0 {
+				t.Errorf("uploaded failed inline output: %d", *uploads)
+			}
+		})
+	}
+}
+
+func TestInlineOutputMaterializesNestedPath(t *testing.T) {
+	scratch := t.TempDir()
+	a, uploads := countingArtifactPublisher()
+	result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: "reports/new/result.txt"}}}, inlineReportResult())
+	if err != nil || result.Error != "" {
+		t.Fatalf("inline output failed: %+v %v", result, err)
+	}
+	ref, ok := artifactRefFromValue(result.Outputs["report"])
+	want := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("replacement")))
+	if !ok || ref.Digest != want || ref.Size != 11 || *uploads != 1 {
+		t.Fatalf("wrong inline artifact: %+v uploads=%d", result, *uploads)
+	}
+}
+
+func inlineReportResult() ExecuteResult {
+	return ExecuteResult{Outputs: map[string]any{"report": map[string]any{"data": "replacement"}}}
+}
+
+func countingArtifactPublisher() (ArtifactTransferExecutor, *int) {
+	uploads := new(int)
+	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if strings.HasSuffix(req.URL.Path, "/transfer") {
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/v1/artifacts/"), "/transfer"), URL: "/bytes", Method: req.URL.Query().Get("method"), Mode: "proxy"})
+		} else if req.Method == http.MethodPut {
+			*uploads++
+			_, _ = io.Copy(io.Discard, req.Body)
+			_ = req.Body.Close()
+		}
+		return w.Result(), nil
+	})}
+	return ArtifactTransferExecutor{Client: artifacts.Client{BaseURL: "http://coordinator", HTTP: client}}, uploads
+}
+
+func TestInlineOutputContainsConcurrentSymlinkReplacement(t *testing.T) {
+	for _, parent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parent=%v", parent), func(t *testing.T) {
+			scratch, outside := t.TempDir(), t.TempDir()
+			victim := filepath.Join(outside, "victim.txt")
+			if err := os.WriteFile(victim, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			decl, insideTarget, outsideTarget := "result.txt", "inside.txt", victim
+			link := filepath.Join(scratch, "result.txt")
+			if parent {
+				decl, insideTarget, outsideTarget = "reports/new/result.txt", "inside", outside
+				link = filepath.Join(scratch, "reports")
+				if err := os.Mkdir(filepath.Join(scratch, "inside"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(insideTarget, link); err != nil {
+				t.Fatal(err)
+			}
+			stop, done, ready := make(chan struct{}), make(chan error, 1), make(chan struct{})
+			go func() {
+				close(ready)
+				for {
+					for _, target := range []string{outsideTarget, insideTarget} {
+						select {
+						case <-stop:
+							done <- nil
+							return
+						default:
+						}
+						next := filepath.Join(scratch, "next-link")
+						if err := os.Symlink(target, next); err != nil {
+							done <- err
+							return
+						}
+						if err := os.Rename(next, link); err != nil {
+							done <- err
+							return
+						}
+					}
+				}
+			}()
+			<-ready
+			a, uploads := countingArtifactPublisher()
+			for range 100 {
+				before := *uploads
+				result, err := a.publishOutputs(ExecuteRequest{attemptScratch: scratch, Outputs: map[string]OutputDecl{"report": {Path: decl}}}, inlineReportResult())
+				if (err != nil || result.Error != "") && *uploads != before {
+					t.Error("failed publication uploaded bytes")
+				}
+			}
+			close(stop)
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(victim)
+			if err != nil || string(data) != "original" {
+				t.Errorf("concurrent replacement changed outside victim: %q %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+				t.Errorf("concurrent replacement created outside directory: %v", err)
+			}
+		})
+	}
+}
