@@ -88,7 +88,18 @@ func (p Planner) Plan(ctx context.Context, digest, method string, size int64, _ 
 		Method:         method,
 		ThresholdBytes: p.Threshold,
 	}
-	if size >= p.Threshold && p.S3 != nil {
+	// A verified local copy must remain reachable even when object storage
+	// is unavailable. Use the driver's proxy recovery path for these GETs.
+	localCopy := false
+	if method == http.MethodGet {
+		switch d := p.Driver.(type) {
+		case Tiered:
+			localCopy = d.Local.Has(digest)
+		case Fallback:
+			localCopy = d.Local.Has(digest)
+		}
+	}
+	if size >= p.Threshold && p.S3 != nil && !localCopy {
 		expires := transferTTL
 		direct, err := p.S3.PresignedURL(ctx, method, digest, expires)
 		if err != nil {
@@ -127,9 +138,9 @@ type Client struct {
 
 func (c Client) httpClient() *http.Client {
 	if c.HTTP != nil {
-		return c.HTTP
+		return containedHTTPClient(c.HTTP)
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return containedHTTPClient(&http.Client{Timeout: 30 * time.Second})
 }
 
 func (c Client) downloadVerified(ctx context.Context, target string, proxy bool, digest string, size int64, headers map[string]string, dest io.Writer) error {

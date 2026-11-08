@@ -2,6 +2,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -232,25 +233,11 @@ func (r *contextReader) Read(p []byte) (int, error) {
 }
 
 func (s *Local) Put(data []byte, mime string) (*Blob, error) {
-	sum := sha256.Sum256(data)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
-	path, _ := s.path(digest)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	ref, err := s.PutStream(context.Background(), bytes.NewReader(data), mime, "")
+	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	if err := s.clearExpired(digest); err != nil {
-		return nil, err
-	}
-	return &Blob{Digest: digest, Data: append([]byte(nil), data...), Mime: mime, Size: int64(len(data))}, nil
+	return &Blob{Digest: ref.Digest, Data: append([]byte(nil), data...), Mime: ref.Mime, Size: ref.Size}, nil
 }
 
 func (s *Local) Get(digest string) (*Blob, error) {

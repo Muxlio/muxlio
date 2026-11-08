@@ -97,7 +97,7 @@ func (s *S3) request(ctx context.Context, method, digest string, body io.Reader,
 	signingKey := hmacSHA(serviceKey, "aws4_request")
 	sig := hex.EncodeToString(hmacSHA(signingKey, stringToSign))
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.config.AccessKey+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+sig)
-	return s.client.Do(req)
+	return containedHTTPClient(s.client).Do(req)
 }
 
 func hmacSHA(key []byte, value string) []byte {
@@ -195,7 +195,8 @@ func (s *S3) PutStream(ctx context.Context, src io.Reader, mime, expected string
 		tmp.Close()
 		return Ref{}, err
 	}
-	resp, err := s.request(ctx, http.MethodPut, digest, tmp, digest[7:])
+	// Keep ownership of the staging file; the transport closes only the wrapper.
+	resp, err := s.request(ctx, http.MethodPut, digest, io.NopCloser(tmp), digest[7:])
 	closeErr := tmp.Close()
 	if err != nil {
 		return Ref{}, fmt.Errorf("muxlio: S3 upload failed")

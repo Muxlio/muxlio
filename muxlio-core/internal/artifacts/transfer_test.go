@@ -21,7 +21,7 @@ func digestOf(data string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func artifactTestServer(t *testing.T, local *Local, planner Planner) *httptest.Server {
+func artifactTestServer(t *testing.T, local Driver, planner Planner) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		remainder := strings.TrimPrefix(r.URL.Path, "/v1/artifacts/")
