@@ -573,7 +573,7 @@ cannot reveal another run through comparison.
 | `muxlio-skills` | Markdown | Workflow authoring guide |
 | `muxlio-docs` | Markdown | Architecture, MCP, and service documentation |
 | `examples` | TypeScript | Example workflows (batch fan-out, audit-coverage with branch/map) |
-| `recipes` | TypeScript | Ready-to-use recipes (implement-features) |
+| `recipes` | TypeScript | Ready-to-use recipes ([implement-features](recipes/implement-features/workflow.ts), [package bug sweep](recipes/fix-package-bugs/README.md)) |
 | `scripts` | Shell | Build, setup, start, upgrade, and install verification scripts |
 
 ## CLI reference
