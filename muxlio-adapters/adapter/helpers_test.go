@@ -313,6 +313,36 @@ func TestComposePromptInlinesArtifactInput(t *testing.T) {
 	}
 }
 
+func TestComposePromptPreservesStructuredAndScalarInputs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.txt")
+	if err := os.WriteFile(path, []byte("file bytes must not replace domain fields"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := &Request{
+		Task: "Inspect the supplied item.", WorkDir: t.TempDir(),
+		Inputs: map[string]any{
+			"item":     map[string]any{"id": "fixture", "path": path, "kind": "sample", "data": "domain value"},
+			"failures": map[string]any{"passed": false, "exitCode": 7, "stderr": "check failed"},
+			"approved": false,
+			"count":    0,
+			"targets":  []any{"one", "two"},
+		},
+	}
+	prompt := ComposePrompt(req)
+	for name, value := range req.Inputs {
+		encoded, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !contains(prompt, "--- "+name+" ---\n"+string(encoded)) {
+			t.Errorf("input %q was omitted or truncated: %s", name, prompt)
+		}
+	}
+	if contains(prompt, "file bytes must not replace domain fields") {
+		t.Fatal("structured input path was mistaken for an artifact")
+	}
+}
+
 func TestComposePromptListsOutputFiles(t *testing.T) {
 	req := &Request{
 		Task:    "Do work.",

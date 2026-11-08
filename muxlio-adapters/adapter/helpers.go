@@ -160,16 +160,30 @@ func ComposePrompt(req *Request) string {
 		}
 	}
 
-	// Inline the content of other input ports carried as inline data or
-	// materialized artifact files. "feature" is expanded above and "workspace"
-	// selects the working directory, so both are excluded here.
+	// Include every input port, inlining artifacts and serializing structured
+	// JSON values. "feature" is expanded above and "workspace" selects the
+	// working directory, so both are excluded here.
 	for name, val := range req.Inputs {
 		if name == "feature" || name == "workspace" {
 			continue
 		}
-		if content, ok := InputContent(val); ok {
-			sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, content))
+		var content string
+		var inline bool
+		object, structured := val.(map[string]any)
+		_, artifact := object["mime"]
+		// A domain object may have a path or data field without being an
+		// artifact. Keep all its fields instead of reading that path.
+		if !structured || artifact {
+			content, inline = InputContent(val)
 		}
+		if !inline {
+			encoded, err := json.MarshalIndent(val, "", "  ")
+			if err != nil {
+				continue
+			}
+			content = string(encoded)
+		}
+		sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, content))
 	}
 
 	// Declared outputs — split into scalars and file artifacts so the agent

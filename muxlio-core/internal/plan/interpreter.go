@@ -1272,6 +1272,7 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 				whileCtx := &EvalContext{
 					traceContext: ctx.traceContext,
 					Input:        ctx.Input,
+					Item:         ctx.Item,
 					State:        currentState,
 					Outputs:      ctx.Outputs,
 				}
@@ -1290,6 +1291,7 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		whileCtx := &EvalContext{
 			traceContext: ctx.traceContext,
 			Input:        ctx.Input,
+			Item:         ctx.Item,
 			State:        currentState,
 			Outputs:      ctx.Outputs,
 		}
@@ -1310,6 +1312,7 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		iterCtx := &EvalContext{
 			traceContext: ctx.traceContext,
 			Input:        ctx.Input,
+			Item:         ctx.Item,
 			State:        currentState,
 			Outputs:      inheritOutputs(ctx),
 		}
