@@ -47,7 +47,7 @@ function scheduleTranscriptPoll(act,runId){
   async function tick(){
     if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
     try{
-      const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=0&limit=20`);
+      const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
       if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
       updateTranscriptPanel(mergeActivationLogs(actId,d.logs||[]),act.state==='running');
     }catch{}

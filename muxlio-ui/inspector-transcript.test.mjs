@@ -220,3 +220,41 @@ context.renderInspectorWb({id:'command',nodeId:'prepare',executor:'command',stat
 assert.match(workbenchMarkup, /<dt>Executor<\/dt><dd>command<\/dd>/);
 assert.doesNotMatch(workbenchMarkup, /<dt>Agent<\/dt>|<dt>Skill<\/dt>/);
 assert.match(workbenchMarkup, /Waiting for capacity/);
+
+// ── live transcript polling must not cap log chunks ─────────────────────────
+import { readFileSync } from 'node:fs';
+const prodInspector = readFileSync(new URL('./js/inspector.js', import.meta.url), 'utf8');
+const prodTranscript = readFileSync(new URL('./js/transcript.js', import.meta.url), 'utf8');
+const inspectorPoll = prodInspector.slice(
+  prodInspector.indexOf('function scheduleTranscriptPoll'),
+  prodInspector.indexOf('function activationHasTranscript'),
+);
+assert.doesNotMatch(inspectorPoll, /limit=20/, 'workbench transcript polling must request the full log stream');
+const transcriptPoll = prodTranscript.slice(
+  prodTranscript.indexOf('function scheduleTranscriptPagePoll'),
+  prodTranscript.indexOf('async function refreshTranscriptState'),
+);
+assert.match(transcriptPoll, /tpageActState === 'running'/, 'transcript page must treat running activations as streaming');
+const streamingBranch = transcriptPoll.match(
+  /\? `\/v1\/runs\/\$\{encodeURIComponent\(runId\)\}\/logs\?activationId=\$\{encodeURIComponent\(actId\)\}`/
+)?.[0] || '';
+assert.ok(streamingBranch, 'transcript page must fetch unbounded logs while streaming');
+assert.doesNotMatch(streamingBranch, /limit=/, 'streaming transcript polls must not page one chunk at a time');
+assert.match(transcriptPoll, /wasRunning && tpageActState !== 'running'[\s\S]*?scheduleTranscriptPagePoll\(runId, actId\)/,
+  'a running-to-terminal transition must fetch the terminal page so the history pager appears');
+
+const prodMerge = vm.runInNewContext(
+  `const activationTranscripts=new Map();\n${prodInspector.slice(prodInspector.indexOf('function decodeLogData'), prodInspector.indexOf('function stopTranscriptPoll'))}; mergeActivationLogs`,
+  { TextDecoder, Uint8Array, atob: globalThis.atob },
+);
+const chunks = Array.from({ length: 25 }, (_, i) => ({
+  stream: 'agent',
+  seq: i + 1,
+  data: Buffer.from(`c${i + 1} `).toString('base64'),
+}));
+const firstPage = chunks.slice(0, 20);
+assert.equal(prodMerge('stream-cap-partial', firstPage).trimEnd(), chunks.slice(0, 20).map((_, i) => `c${i + 1}`).join(' '),
+  'first poll page alone omits chunks beyond the coordinator limit');
+assert.equal(prodMerge('stream-cap-full', chunks).trimEnd(), chunks.map((_, i) => `c${i + 1}`).join(' '),
+  'full log fetch accumulates the entire streamed transcript');
+console.log('live transcript polling regression checks passed');

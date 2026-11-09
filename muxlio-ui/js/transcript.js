@@ -56,12 +56,18 @@ function scheduleTranscriptPagePoll(runId, actId) {
   async function tick() {
     if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
     try {
-      const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=${tpageLogOffset}&limit=1`);
+      const streaming = tpageActState === 'running';
+      const d = await api(streaming
+        ? `/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`
+        : `/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=${tpageLogOffset}&limit=1`);
       if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
-      activationTranscripts.delete(actId);
+      if (!streaming) activationTranscripts.delete(actId);
       const text = mergeActivationLogs(actId, d.logs || []);
       const pager=document.getElementById('transcriptPager');
-      if(pager){pager.innerHTML=`<nav class="pager" aria-label="Transcript pages"><span>Page ${tpageLogOffset+1}</span><button class="btn ghost" data-transcript-page="-1"${tpageLogOffset===0?' disabled':''}>Previous</button><button class="btn ghost" data-transcript-page="1"${!d.hasMore?' disabled':''}>Next</button></nav>`;pager.querySelectorAll('[data-transcript-page]').forEach(button=>button.onclick=()=>{tpageLogOffset=Math.max(0,tpageLogOffset+Number(button.dataset.transcriptPage));scheduleTranscriptPagePoll(runId,actId);});}
+      if(pager){
+        pager.innerHTML=streaming?'':`<nav class="pager" aria-label="Transcript pages"><span>Page ${tpageLogOffset+1}</span><button class="btn ghost" data-transcript-page="-1"${tpageLogOffset===0?' disabled':''}>Previous</button><button class="btn ghost" data-transcript-page="1"${!d.hasMore?' disabled':''}>Next</button></nav>`;
+        if(!streaming)pager.querySelectorAll('[data-transcript-page]').forEach(button=>button.onclick=()=>{tpageLogOffset=Math.max(0,tpageLogOffset+Number(button.dataset.transcriptPage));scheduleTranscriptPagePoll(runId,actId);});
+      }
       transcriptPageLogs.set(`${runId}:${actId}`, text);
       updateTranscriptPageBody(text, tpageActState === 'running');
     } catch {}
@@ -73,7 +79,16 @@ function scheduleTranscriptPagePoll(runId, actId) {
       try {
         const act = await api(`/v1/runs/${encodeURIComponent(runId)}/activations/${encodeURIComponent(actId)}`);
         if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
-        if (act) tpageActState = act.state || tpageActState;
+        if (act) {
+          const wasRunning = tpageActState === 'running';
+          tpageActState = act.state || tpageActState;
+          // A poll that began as streaming hides the history pager. Fetch once
+          // more in paged mode after completion so the terminal view can expose it.
+          if (wasRunning && tpageActState !== 'running') {
+            scheduleTranscriptPagePoll(runId, actId);
+            return;
+          }
+        }
       } catch {}
     }
     if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
