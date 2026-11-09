@@ -197,14 +197,14 @@ async function loadInspectorSnapshots(act,runId){
    return `<section class="artifact snapshot-artifact"><div class="snapshot-title"><strong>${esc(ref.name)}</strong><span class="subtle">seq ${esc(event.seq)}</span></div><div class="snapshot-subject" title="${esc(event.subjectId)}">${esc(event.subjectId)}</div><time class="snapshot-time">${esc(date(event.timestamp))}</time><details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">${esc(ref.digest)}</code><button class="btn ghost" data-copy-value="${esc(ref.digest)}">Copy digest</button></details><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
   }).join('')+(!snapshots.length?'<div class="subtle">No snapshots recorded.</div>':'')+
   `<nav class="pager" aria-label="Snapshot pages"><span>Page ${snapshotPageIndex+1}</span><button class="btn ghost" data-snapshot-page="-1"${snapshotPageIndex===0?' disabled':''}>Previous</button><button class="btn ghost" data-snapshot-page="1"${!data.hasMore?' disabled':''}>Next</button></nav>`;
-  if(el._snapshotMarkup!==markup){el._snapshotMarkup=markup;replaceHTMLPreservingDetails(el,markup)}
+  if(el._snapshotMarkup!==markup){el._snapshotMarkup=markup;if(typeof replaceHTMLPreservingDetails==='function')replaceHTMLPreservingDetails(el,markup);else el.innerHTML=markup;}
   for(const button of el.querySelectorAll('[data-snapshot-seq]'))button.onclick=()=>{
    const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);
    if(event)showArtifactOutput(event.payload.snapshot,event.payload.snapshot.name);
   };
   for(const button of el.querySelectorAll('[data-snapshot-page]'))button.onclick=()=>{snapshotPageIndex+=Number(button.dataset.snapshotPage);loadInspectorSnapshots(act,runId);};
  }catch{const el=$('#inspSnapshots');if(el&&token===snapshotPollToken)el.textContent='Unable to load intermediate snapshots.';}
- const liveAct=activationData.find(item=>item.id===act.id);
+ const liveAct=(typeof activationData!=='undefined'?activationData:[]).find(item=>item.id===act.id);
  if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&liveAct?.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(liveAct,runId),SNAPSHOT_POLL_MS);
 }
 

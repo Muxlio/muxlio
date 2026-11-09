@@ -367,12 +367,12 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 				Fix:     "Add the referenced subgraph or fix the name.",
 			})
 		}
-		if node.MaxIterations == nil {
+		if node.MaxIterations == nil || *node.MaxIterations <= 0 {
 			errs = append(errs, ValidationError{
 				Code: "MUXLIO_UNBOUNDED_LOOP", Severity: "error", Phase: "plan",
 				Subgraph: sgName, NodeID: node.ID,
-				Message: "loop node is missing maxIterations",
-				Fix:     "Set maxIterations to a hard upper bound.",
+				Message: "loop node maxIterations must be a positive integer",
+				Fix:     "Set maxIterations to a positive hard upper bound.",
 			})
 		}
 

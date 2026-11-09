@@ -1355,7 +1355,11 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 				if err != nil {
 					return nil, fmt.Errorf("muxlio: evaluating loop while: %w", err)
 				}
-				if cond, ok := condVal.(bool); ok && cond {
+				cond, ok := condVal.(bool)
+				if !ok {
+					return nil, fmt.Errorf("muxlio: loop while must be boolean, got %T", condVal)
+				}
+				if cond {
 					exhausted = true
 				}
 			}
