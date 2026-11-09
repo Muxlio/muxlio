@@ -32,6 +32,10 @@ const MuxlioFormat=Object.freeze({
 
 // Existing views share these names rather than maintain separate formatters.
 function fmtTokens(value){return MuxlioFormat.tokens(value)}
+function fmtCostUsd(value){
+ if(typeof value!=='number'||!Number.isFinite(value)||value<0)return 'Unavailable';
+ return '$'+value.toFixed(4);
+}
 function fmtTok(value){return MuxlioFormat.tokens(value)}
 function fmtDuration(value){return MuxlioFormat.duration(value)}
 function duration(start,end){return MuxlioFormat.elapsed(start,end)}
