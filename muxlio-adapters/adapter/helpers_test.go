@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestParseTokenUsageRejectsMixedValidAndInvalidCounts(t *testing.T) {
+	for _, raw := range []string{
+		`{"input_tokens":-1,"output_tokens":5}`,
+		`{"input_tokens":null,"output_tokens":5}`,
+		`{"inputTokens":100,"outputTokens":40,"cachedTokens":"many"}`,
+	} {
+		if got := ParseTokenUsage(json.RawMessage(raw)); got != nil {
+			t.Fatalf("invalid usage field must make whole usage unavailable: %s -> %+v", raw, got)
+		}
+	}
+}
+
 func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
 	for _, raw := range []string{
 		`{"input_tokens":null,"output_tokens":null,"cached_input_tokens":null}`,

@@ -43,6 +43,13 @@ type TokenUsage = contract.TokenUsage
 // object using camelCase field names (inputTokens, outputTokens,
 // cachedTokens) and the raw usageMetadata names (promptTokenCount,
 // candidatesTokenCount, cachedContentTokenCount).
+var parseTokenUsageKeys = []string{
+	"input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount",
+	"output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount",
+	"cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens",
+	"cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached",
+}
+
 func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -50,6 +57,16 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	var values map[string]json.RawMessage
 	if json.Unmarshal(raw, &values) != nil {
 		return nil
+	}
+	for _, key := range parseTokenUsageKeys {
+		b, ok := values[key]
+		if !ok {
+			continue
+		}
+		var n *int64
+		if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
+			return nil
+		}
 	}
 	var u TokenUsage
 	var found bool

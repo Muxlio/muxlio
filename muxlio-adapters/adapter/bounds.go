@@ -61,8 +61,20 @@ func ResolveOutput(workDir, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	full, err := filepath.Abs(filepath.Join(root, name))
+	clean := filepath.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("output path escapes the work directory")
+	}
+	full, err := filepath.Abs(filepath.Join(root, clean))
 	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(full); os.IsNotExist(err) {
+		if err := ValidateOutputPath(root, clean); err != nil {
+			return "", err
+		}
+		return full, nil
+	} else if err != nil {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(full)
@@ -91,20 +103,31 @@ func ValidateOutputPath(workDir, name string) error {
 	if err != nil {
 		return err
 	}
-	parent := filepath.Dir(filepath.Join(root, clean))
-	for {
-		if resolved, e := filepath.EvalSymlinks(parent); e == nil {
+	current := root
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, e := os.Lstat(current)
+		if os.IsNotExist(e) {
+			// Once a component is missing, no later path component can exist.
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, e := filepath.EvalSymlinks(current)
+			if e != nil {
+				return e
+			}
 			rel, e := filepath.Rel(root, resolved)
 			if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("output path escapes the work directory")
 			}
-			break
+			current = resolved
 		}
-		next := filepath.Dir(parent)
-		if next == parent {
-			break
-		}
-		parent = next
 	}
 	return nil
 }
