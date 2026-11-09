@@ -19,6 +19,7 @@ import type {
   Node,
   OutputDecl,
   Plan,
+  RetryPolicy,
   Subgraph,
 } from '@muxlio/sdk';
 
@@ -44,7 +45,24 @@ function createTraced(binding: Binding): any {
 }
 
 function isTraced(v: unknown): v is { __binding: Binding; __expr: Expr } {
-  return v !== null && typeof v === 'object' && (v as any).__isTraced === true;
+  if (v === null || typeof v !== 'object' || (v as any).__isTraced !== true) return false;
+  return (v as any).__binding !== undefined;
+}
+
+function assertLiteralParams(params: unknown): void {
+  const visit = (value: unknown): void => {
+    if (isTraced(value)) {
+      throw new Error('muxlio: traced values belong in inputs, not params');
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value !== null && typeof value === 'object') {
+      for (const item of Object.values(value as Record<string, unknown>)) visit(item);
+    }
+  };
+  if (params !== undefined) visit(params);
 }
 
 function bindingToExpr(b: Binding): Expr {
@@ -87,7 +105,7 @@ function createExecuteResult(nodeId: string, outputDecls: Record<string, OutputD
   for (const port of Object.keys(outputDecls)) {
     outputs[port] = createTraced({ ref: { node: nodeId, port } });
   }
-  return { __isTraced: true, __nodeId: nodeId, outputs };
+  return { __nodeId: nodeId, outputs };
 }
 
 // --- Recording context ---
@@ -102,7 +120,22 @@ interface LoopOpts {
   initState?: unknown;
   maxIterations: number;
   stateRef?: string;
+  onExhausted?: 'pause' | 'fail';
 }
+
+type ExecuteOpts = ExecutorRequirements & {
+  executor: string;
+  fallbackExecutors?: string[];
+  workspaceMode?: 'snapshot' | 'empty' | 'read-only' | 'shared-write';
+  concurrencyKeys?: string[];
+  task?: string;
+  params?: unknown;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, OutputDecl>;
+  timeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
+  retry?: RetryPolicy;
+};
 
 class RecordingContext {
   private nodes: Node[] = [];
@@ -118,14 +151,12 @@ class RecordingContext {
     return `${base}__${this.counter.value++}`;
   }
 
-  execute(id: string, opts: ExecutorRequirements & {
-    executor: string;
-    task?: string;
-    params?: unknown;
-    inputs?: Record<string, unknown>;
-    outputs?: Record<string, OutputDecl>;
-  }): any {
+  execute(id: string, opts: ExecuteOpts): any {
     this.requiredExecutors.add(opts.executor);
+    for (const fallback of opts.fallbackExecutors ?? []) {
+      this.requiredExecutors.add(fallback);
+    }
+    assertLiteralParams(opts.params);
     const outputDecls = { ...(opts.outputs || {}) };
     if (opts.executor === 'command') {
       for (const port of ['passed', 'exitCode', 'signal', 'stdout', 'stderr', 'durationMs']) {
@@ -138,7 +169,7 @@ class RecordingContext {
         inputs[name] = toBinding(val);
       }
     }
-    this.nodes.push({
+    const node: Node = {
       id,
       kind: 'execute',
       executor: opts.executor,
@@ -149,11 +180,20 @@ class RecordingContext {
       session: opts.session,
       sessionId: opts.sessionId,
       remoteTask: opts.remoteTask,
+      workspaceMode: opts.workspaceMode,
+      concurrencyKeys: opts.concurrencyKeys,
       task: opts.task,
       params: opts.params,
       inputs,
       outputs: outputDecls,
-    });
+      timeoutSeconds: opts.timeoutSeconds,
+      queueTimeoutSeconds: opts.queueTimeoutSeconds,
+      retry: opts.retry,
+    };
+    if (opts.fallbackExecutors?.length) {
+      node.fallbackExecutors = opts.fallbackExecutors;
+    }
+    this.nodes.push(node);
     return createExecuteResult(id, outputDecls);
   }
 
@@ -262,6 +302,7 @@ class RecordingContext {
       initState: initStateExpr,
       maxIterations: opts.maxIterations,
       stateRef: opts.stateRef,
+      onExhausted: opts.onExhausted,
       bodyRef: bodyName,
     });
 
