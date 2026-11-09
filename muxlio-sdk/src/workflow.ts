@@ -111,6 +111,41 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
     const options = (schema as any)._def.options as z.ZodTypeAny[];
     return { anyOf: options.map(zodTypeToJsonSchema) };
   }
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    const options = (schema as any)._def.options as z.ZodTypeAny[];
+    return { anyOf: options.map(zodTypeToJsonSchema) };
+  }
+  if (schema instanceof z.ZodEffects) {
+    return zodTypeToJsonSchema((schema as any)._def.schema);
+  }
+  if (schema instanceof z.ZodIntersection) {
+    const def = (schema as any)._def;
+    return {
+      allOf: [zodTypeToJsonSchema(def.left), zodTypeToJsonSchema(def.right)],
+    };
+  }
+  if (schema instanceof z.ZodRecord) {
+    const def = (schema as any)._def;
+    return {
+      type: 'object',
+      additionalProperties: zodTypeToJsonSchema(def.valueType),
+    };
+  }
+  if (schema instanceof z.ZodTuple) {
+    const def = (schema as any)._def;
+    const items = (def.items ?? []) as z.ZodTypeAny[];
+    const out: JSONSchema = {
+      type: 'array',
+      items: items.map(zodTypeToJsonSchema),
+      minItems: items.length,
+    };
+    if (def.rest) {
+      out['additionalItems'] = zodTypeToJsonSchema(def.rest);
+    } else {
+      out['maxItems'] = items.length;
+    }
+    return out;
+  }
   if (schema instanceof z.ZodLiteral) {
     return { const: (schema as any)._def.value };
   }

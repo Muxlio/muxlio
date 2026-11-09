@@ -415,7 +415,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
         output: collected.output,
       },
     },
-    requiredExecutors: [...collected.requiredExecutors],
+    requiredExecutors: [...collected.requiredExecutors].sort(),
   };
 
   // Merge nested subgraphs into the plan.

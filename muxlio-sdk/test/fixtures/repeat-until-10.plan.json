@@ -24,7 +24,7 @@
               "passed": false,
               "attempts": 0,
               "value_passed": null,
-              "value_output": null
+              "value_report": null
             }
           },
           "maxIterations": 10,
@@ -44,7 +44,7 @@
             "failures": {
               "ref": {
                 "node": "loop__cap",
-                "port": "value_output"
+                "port": "value_report"
               }
             }
           },
@@ -84,7 +84,10 @@
           "executor": "test/verify",
           "outputs": {
             "passed": {
-              "mime": "application/json"
+              "mime": "application/json",
+              "schema": {
+                "type": "boolean"
+              }
             },
             "report": {
               "mime": "text/markdown",
@@ -109,7 +112,7 @@
                 "port": "passed"
               }
             },
-            "value_output": {
+            "value_report": {
               "ref": {
                 "node": "verify",
                 "port": "report"
@@ -193,10 +196,10 @@
                 "port": "value_passed"
               }
             },
-            "value_output": {
+            "value_report": {
               "ref": {
                 "node": "loop__cap",
-                "port": "value_output"
+                "port": "value_report"
               }
             }
           }
@@ -221,10 +224,10 @@
             "port": "value_passed"
           }
         },
-        "value_output": {
+        "value_report": {
           "ref": {
             "node": "loop__state",
-            "port": "value_output"
+            "port": "value_report"
           }
         }
       }
@@ -234,5 +237,5 @@
     "test/fix",
     "test/verify"
   ],
-  "digest": "sha256:765ca18e18d221205b446b4d3574d601a28292b488aaba80bd5a0943b0c8d483"
+  "digest": "sha256:0489a12ede6db578aa5efb0d4d83f1c3344f802806ff3d6c098ddf281dc6e71b"
 }

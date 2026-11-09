@@ -14,5 +14,5 @@ test('repeatUntil fixture wires fix failures to capture report ref', () => {
   assert.equal(branch.condition.op, 'and');
   const fixSG = plan.subgraphs[branch.thenRef];
   const fix = fixSG.nodes.find((n) => n.id === 'fix');
-  assert.deepEqual(fix.inputs.failures.ref, { node: 'loop__cap', port: 'value_output' });
+  assert.deepEqual(fix.inputs.failures.ref, { node: 'loop__cap', port: 'value_report' });
 });
