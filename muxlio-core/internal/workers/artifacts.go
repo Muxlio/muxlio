@@ -210,8 +210,16 @@ func (a ArtifactTransferExecutor) materializeInputs(req *ExecuteRequest) error {
 		if fileName == "" {
 			fileName = name
 		}
-		fileName = filepath.Base(fileName)
-		destPath := filepath.Join(workDir, fileName)
+		rel := filepath.Base(fileName)
+		if declared, pathErr := declaredOutputPath(fileName); pathErr == nil && strings.Contains(declared, string(filepath.Separator)) {
+			rel = declared
+		}
+		destPath := filepath.Join(workDir, rel)
+		if dir := filepath.Dir(destPath); dir != workDir {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("muxlio: prepare input artifact %q: %w", name, err)
+			}
+		}
 		f, err := os.Create(destPath)
 		if err != nil {
 			return fmt.Errorf("muxlio: create input artifact %q: %w", name, err)

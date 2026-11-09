@@ -64,6 +64,61 @@ func TestScriptArtifactTransferSharesUniqueInvocationScratch(t *testing.T) {
 	}
 }
 
+func TestMaterializeInputsPreservesDistinctDeclaredPaths(t *testing.T) {
+	leftDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("left-bytes")))
+	rightDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("right-bytes")))
+	payloads := map[string]string{leftDigest: "left-bytes", rightDigest: "right-bytes"}
+	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if strings.HasSuffix(req.URL.Path, "/transfer") {
+			digest := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/v1/artifacts/"), "/transfer")
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: digest, URL: "/bytes/" + digest[7:], Method: req.URL.Query().Get("method"), Mode: "proxy"})
+			return w.Result(), nil
+		}
+		if strings.HasPrefix(req.URL.Path, "/bytes/") {
+			hex := strings.TrimPrefix(req.URL.Path, "/bytes/")
+			for digest, payload := range payloads {
+				if strings.HasSuffix(digest, hex) {
+					_, _ = io.WriteString(w, payload)
+					return w.Result(), nil
+				}
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		return w.Result(), nil
+	})}
+	a := ArtifactTransferExecutor{Client: artifacts.Client{BaseURL: "http://coordinator", HTTP: client}, WorkBase: t.TempDir()}
+	req := ExecuteRequest{
+		RunID: "run", ActivationID: "act", AttemptID: "attempt",
+		Inputs: map[string]any{
+			"left":  map[string]any{"digest": leftDigest, "size": json.Number("10"), "path": "foo/bar.txt"},
+			"right": map[string]any{"digest": rightDigest, "size": json.Number("11"), "path": "baz/bar.txt"},
+		},
+	}
+	if err := a.materializeInputs(&req); err != nil {
+		t.Fatal(err)
+	}
+	for side, want := range map[string]string{"left": "left-bytes", "right": "right-bytes"} {
+		ref, ok := req.Inputs[side].(map[string]any)
+		if !ok {
+			t.Fatalf("%s input not a map", side)
+		}
+		path, _ := ref["path"].(string)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s path %q: %v", side, path, err)
+		}
+		if string(data) != want {
+			t.Fatalf("%s = %q, want %q", side, data, want)
+		}
+	}
+	leftPath := req.Inputs["left"].(map[string]any)["path"].(string)
+	rightPath := req.Inputs["right"].(map[string]any)["path"].(string)
+	if leftPath == rightPath {
+		t.Fatalf("inputs aliased to the same file: %q", leftPath)
+	}
+}
+
 func TestStripInlineArtifactBytes(t *testing.T) {
 	req := ExecuteRequest{Inputs: map[string]any{
 		"doc": map[string]any{
