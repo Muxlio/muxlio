@@ -643,12 +643,12 @@ func (s *Memory) AppendLogChunk(c LogChunk) error {
 	} else if count >= MaxAttemptProgressEvents || size+len(c.Data) > MaxAttemptProgressBytes {
 		return nil
 	}
-	s.appendEventLocked(c.RunID, kind, subject, payload)
 	if c.Stream == "operation" {
 		ref, ok := payload["operationRef"].(contract.RemoteTaskReference)
 		if !ok {
 			return fmt.Errorf("invalid operation reference")
 		}
+		s.appendEventLocked(c.RunID, kind, subject, payload)
 		for i := range s.attempts {
 			if s.attempts[i].ID == c.AttemptID {
 				s.attempts[i].OperationRef = &ref
@@ -656,6 +656,7 @@ func (s *Memory) AppendLogChunk(c LogChunk) error {
 		}
 		return nil
 	}
+	s.appendEventLocked(c.RunID, kind, subject, payload)
 	if c.Snapshot != nil {
 		return nil
 	}
