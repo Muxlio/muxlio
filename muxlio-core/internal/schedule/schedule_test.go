@@ -48,6 +48,28 @@ func TestInvalidCron(t *testing.T) {
 	}
 }
 
+func TestCronDomStepCombinesWithWeekdayOR(t *testing.T) {
+	// Only a bare * is an unconstrained day field; */n is still specified and ORs with dow.
+	start := instant(t, "2026-02-01T12:00:00Z")
+	d := Definition{Kind: "cron", Cron: "0 0 */5 * 0", Timezone: "UTC", StartAt: start}
+	first, err := d.First()
+	if err != nil || first == nil {
+		t.Fatalf("first=%v err=%v", first, err)
+	}
+	want := instant(t, "2026-02-06T00:00:00Z") // day 6 matches */5; treating */5 as * wrongly ANDed with Sunday until mid-February.
+	if !first.Equal(want) {
+		t.Fatalf("first=%v want=%v", first, want)
+	}
+	next, err := d.Next(*first)
+	if err != nil || next == nil {
+		t.Fatalf("next=%v err=%v", next, err)
+	}
+	wantNext := instant(t, "2026-02-08T00:00:00Z") // Sunday matches the restricted weekday field.
+	if !next.Equal(wantNext) {
+		t.Fatalf("next=%v want=%v", next, wantNext)
+	}
+}
+
 func TestIntervalUsesAbsoluteAnchor(t *testing.T) {
 	d := Definition{Kind: "interval", StartAt: instant(t, "2026-03-08T01:30:00.5-05:00"), IntervalSeconds: 3600}
 	for _, tc := range []struct{ after, want string }{

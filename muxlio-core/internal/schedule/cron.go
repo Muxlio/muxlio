@@ -19,7 +19,7 @@ func parseCron(expression string) (*cron, error) {
 	if len(parts) != 5 {
 		return nil, fmt.Errorf("cron requires five numeric fields")
 	}
-	c := &cron{dayAny: strings.HasPrefix(parts[2], "*"), weekAny: strings.HasPrefix(parts[4], "*")}
+	c := &cron{dayAny: parts[2] == "*", weekAny: parts[4] == "*"}
 	mins := [5]int{0, 0, 1, 1, 0}
 	maxs := [5]int{59, 23, 31, 12, 7}
 	for i, part := range parts {
