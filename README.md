@@ -323,7 +323,18 @@ muxlio ui --server http://127.0.0.1:7600 --port 7601
 # Open http://127.0.0.1:7601/
 ```
 
-From a development checkout you can also run `npm --prefix muxlio-ui start` with `MUXLIO_API_URL=http://127.0.0.1:7600`. The dashboard provides run search and state filters, input/output/error and timing details, the materialized activation/scope graph, logs, execution attempt history, a cursor-paginated event timeline, active worker assignments, a **Live** page for streaming attempt logs from running activations, and a send-signal form for waiting runs.
+To run the UI locally against a remote coordinator, point `--server` at the coordinator's reachable URL:
+
+```sh
+muxlio ui --server http://192.168.1.1:7600 --port 7601
+# Open http://127.0.0.1:7601/
+```
+
+The UI helper binds to `127.0.0.1` by default and proxies API requests to the remote coordinator. It uses `MUXLIO_TOKEN` when set, otherwise the token in the local `~/.muxlio/config.json` (including the default server profile). Make sure that token belongs to the coordinator you selected. From a development checkout, the equivalent is `MUXLIO_API_URL=http://192.168.1.1:7600 npm --prefix muxlio-ui start`.
+
+If a UI is already running on port 7601, stop that process before starting it with a different coordinator URL; the CLI reuses an existing UI process.
+
+The dashboard provides run search and state filters, input/output/error and timing details, the materialized activation/scope graph, logs, execution attempt history, a cursor-paginated event timeline, active worker assignments, a **Live** page for streaming attempt logs from running activations, and a send-signal form for waiting runs.
 
 ### OpenTelemetry export
 

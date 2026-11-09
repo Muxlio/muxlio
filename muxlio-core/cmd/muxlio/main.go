@@ -264,7 +264,7 @@ func main() {
 		os.Exit(cmdRuns(dataDir, stateFilters, jsonOut))
 
 	case "ui":
-		os.Exit(cmdUI(args[1:], jsonOut))
+		os.Exit(cmdUI(forwardServerFlag(args[1:], serverFlag), jsonOut))
 
 	case "env":
 		os.Exit(cmdEnv(args[1:], dataDir, jsonOut))
@@ -305,6 +305,13 @@ func main() {
 		fmt.Print(usage)
 		os.Exit(2)
 	}
+}
+
+func forwardServerFlag(args []string, server string) []string {
+	if server == "" {
+		return args
+	}
+	return append(args, "--server", server)
 }
 
 func die(msg string) {

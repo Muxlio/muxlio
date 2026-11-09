@@ -1,0 +1,5 @@
+# Pinned dependencies for the Docs workflow (.github/workflows/docs.yml).
+# Update these versions together and commit the change.
+# To regenerate with hashes: pip-compile --generate-hashes requirements-docs.in
+mkdocs==1.6.1
+mkdocs-material==9.8.1

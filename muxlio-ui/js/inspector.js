@@ -1,5 +1,6 @@
 /* ── inspector render ─────────────────────────── */
 const TRANSCRIPT_POLL_MS=1200;
+const SNAPSHOT_POLL_MS=5000;
 const activationTranscripts=new Map();
 let transcriptPollTimer=null,transcriptPollToken=0;
 let selectedActivationDetail=null,attemptOffset=0,attemptPageMore=false;
@@ -145,8 +146,8 @@ function renderInspectorWb(act){
         <dt>Status</dt><dd class="${stateClass(act.state)||''}">${esc(act.state)} ${act.occurrence?`· iteration ${act.occurrence}`:''}`.trimEnd()+'</dd>'+
         `${act.queueReason?`<dt>Queue reason</dt><dd>${esc(act.queueReason)}</dd>`:""}<dt>Executor</dt><dd>${esc(agent)}</dd>
         ${act.skill?`<dt>Skill</dt><dd>${esc(skill)}</dd>`:""}
-        <dt>Inputs</dt><dd>${esc(inRef)}</dd>
-        <dt>Output</dt><dd>${esc(outRef)}</dd>
+        <dt>Inputs</dt><dd class="insp-value-id" title="${esc(inRef)}">${esc(inRef)}</dd>
+        <dt>Output</dt><dd class="insp-value-id" title="${esc(outRef)}">${esc(outRef)}</dd>
       </dl>
       ${hasTranscript?`<div class="insp-detail-actions"><a href="${transcriptUrl}" class="btn ghost"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h7l3 3v11H5zM12 3v4h3M8 10h4M8 13h4"/></svg>View transcript<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg></a></div>`:''}
     </div>
@@ -154,7 +155,7 @@ function renderInspectorWb(act){
     <div class="insp-section">
       <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Evidence and decision</div>
       <div class="evidence-list">${evidences.map(ev=>`<div class="evidence-item">${esc(ev)}</div>`).join('')}</div>
-      ${route?`<div class="evidence-route">route: <code>${esc(route)}</code></div>`:''}
+      ${route?`<div class="evidence-route">route: <code title="${esc(route)}">${esc(route)}</code></div>`:''}
     </div>`:''}
     ${act.outputs?`
     <div class="insp-section">
@@ -191,18 +192,20 @@ async function loadInspectorSnapshots(act,runId){
   const snapshots=data.snapshots||[];
   snapshotCursors[snapshotPageIndex+1]=data.nextAfter||0;
   const el=$('#inspSnapshots');if(!el)return;
-  el.innerHTML='<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>'+snapshots.map(event=>{
+  const markup='<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>'+snapshots.map(event=>{
    const ref=event.payload.snapshot;
-   return `<section class="artifact"><strong>${esc(ref.name)}</strong> <span class="subtle">seq ${esc(event.seq)}</span><div class="subtle">${esc(event.subjectId)} · ${esc(date(event.timestamp))}</div><code>${esc(ref.digest)}</code><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
+   return `<section class="artifact snapshot-artifact"><div class="snapshot-title"><strong>${esc(ref.name)}</strong><span class="subtle">seq ${esc(event.seq)}</span></div><div class="snapshot-subject" title="${esc(event.subjectId)}">${esc(event.subjectId)}</div><time class="snapshot-time">${esc(date(event.timestamp))}</time><details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">${esc(ref.digest)}</code><button class="btn ghost" data-copy-value="${esc(ref.digest)}">Copy digest</button></details><button class="btn ghost" data-snapshot-seq="${esc(event.seq)}">View snapshot</button></section>`;
   }).join('')+(!snapshots.length?'<div class="subtle">No snapshots recorded.</div>':'')+
   `<nav class="pager" aria-label="Snapshot pages"><span>Page ${snapshotPageIndex+1}</span><button class="btn ghost" data-snapshot-page="-1"${snapshotPageIndex===0?' disabled':''}>Previous</button><button class="btn ghost" data-snapshot-page="1"${!data.hasMore?' disabled':''}>Next</button></nav>`;
+  if(el._snapshotMarkup!==markup){el._snapshotMarkup=markup;replaceHTMLPreservingDetails(el,markup)}
   for(const button of el.querySelectorAll('[data-snapshot-seq]'))button.onclick=()=>{
    const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);
    if(event)showArtifactOutput(event.payload.snapshot,event.payload.snapshot.name);
   };
   for(const button of el.querySelectorAll('[data-snapshot-page]'))button.onclick=()=>{snapshotPageIndex+=Number(button.dataset.snapshotPage);loadInspectorSnapshots(act,runId);};
  }catch{const el=$('#inspSnapshots');if(el&&token===snapshotPollToken)el.textContent='Unable to load intermediate snapshots.';}
- if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&act.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(act,runId),TRANSCRIPT_POLL_MS);
+ const liveAct=activationData.find(item=>item.id===act.id);
+ if(token===snapshotPollToken&&selectedActivation===act.id&&current===runId&&liveAct?.state==='running')snapshotPollTimer=setTimeout(()=>loadInspectorSnapshots(liveAct,runId),SNAPSHOT_POLL_MS);
 }
 
 /* ── shared helpers (kept from original) ─────── */
@@ -213,7 +216,7 @@ function inputMarkup(value){if(value===undefined||value===null)return `<div clas
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
 function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
 function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT}}
-function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>${esc(path||name)}</strong><div class="artifact-subtitle">${esc(name)}</div></div></div></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="${esc(name)}">View</button><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div></section>`}).join('')}`}
+function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>${esc(path||name)}</strong><div class="artifact-subtitle">${esc(name)}</div></div></div></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd title="${k==='Digest'?'':esc(v)}">${k==='Digest'?`<details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">${esc(v)}</code><button class="btn ghost" data-copy-value="${esc(v)}">Copy digest</button></details>`:esc(v)}</dd>`).join('')}</dl>`:''}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="${esc(name)}">View</button><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div></section>`}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
 async function loadArtifactBlob(ref){
   const mime=ref.mime||ref.mimeType||'application/octet-stream';
@@ -252,6 +255,8 @@ document.addEventListener('keydown',e=>{
   }
 });
 async function inspectorAction(e){
+  const copyValue=e.target.closest('[data-copy-value]');
+  if(copyValue){try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(copyValue.dataset.copyValue);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const copyLogs=e.target.closest('[data-copylogs]');
   if(copyLogs){const out=$('#inspectorContent'),text=out&&out._copyLogsText;if(!text)return;try{await navigator.clipboard.writeText(text);message('Logs copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const view=e.target.closest('[data-view-artifact]');

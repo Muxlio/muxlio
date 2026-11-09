@@ -1,6 +1,6 @@
 # Reference workflow benchmarks
 
-The open [reference suite](../muxlio-core/benchmarks/) runs incident processing
+The open [reference suite](https://github.com/Muxlio/muxlio/tree/main/muxlio-core/benchmarks) runs incident processing
 workflows through the real Plan interpreter, SQLite store and executor contract.
 It retains individual observations and execution evidence. It is a reproducibility
 tool, not evidence that one provider or orchestration system is faster than another.
@@ -19,7 +19,7 @@ latency, production scale, distributed dispatch or provider quality.
 | `agent-authored` | An agent writes a bounded map/project Plan IR workflow. Execute that generated workflow on the corpus, an empty array and an unseen record, checking exact output preservation. Retain generated source and verification traces. |
 
 The inspectable corpus, prompts, verifiers and plan constructors are in
-[workloads.go](../muxlio-core/benchmarks/workloads.go). Agent workflow generation
+[workloads.go](https://github.com/Muxlio/muxlio/blob/main/muxlio-core/benchmarks/workloads.go). Agent workflow generation
 uses an explicit IR recipe; it measures following and executing that recipe,
 not autonomous workflow design. Its verifier accepts only bounded structural
 nodes, rejects recursion and imposes a deadline.

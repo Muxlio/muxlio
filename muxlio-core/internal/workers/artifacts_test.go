@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -116,8 +115,8 @@ func TestArtifactTransferExecutorRespectsContextCancel(t *testing.T) {
 	_, _ = wrap.Execute(ExecuteRequest{Executor: "test", Context: ctx})
 	select {
 	case pid := <-pidReady:
-		if err := syscall.Kill(-pid, 0); err != syscall.ESRCH {
-			t.Fatalf("process group still exists: %v", err)
+		if processGroupHasLiveMembers(pid) {
+			t.Fatal("process group still has a live process")
 		}
 	default:
 		t.Fatal("adapter never started")

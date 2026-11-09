@@ -477,4 +477,4 @@ Task/context references survive local adapter exit; polls and reconciliation
 query the known task without repeating submission. Streaming reconnects by task
 ID and fetches a complete snapshot to recover missed artifacts. Unknown
 submission outcomes without task IDs remain inconclusive; no provider-side
-idempotency is claimed. See the [adapter configuration and limitations](../README.md#run-with-real-adapters).
+idempotency is claimed. See the [adapter configuration and limitations](https://github.com/Muxlio/muxlio#run-with-real-adapters).

@@ -44,6 +44,7 @@ Thumbs.db
 dist/
 build/
 out/
+site/
 
 # ---- Local environment and credentials ----
 .env

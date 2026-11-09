@@ -1,0 +1,69 @@
+site_name: Muxlio
+site_description: >-
+  A durable workflow execution engine that coordinates AI coding agents
+  through compiled, content-addressed plans.
+site_url: https://muxlio.github.io/muxlio/
+repo_url: https://github.com/Muxlio/muxlio
+repo_name: Muxlio/muxlio
+edit_uri: edit/main/muxlio-docs/
+
+docs_dir: muxlio-docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.annotate
+    - content.tabs.link
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Service Guide: service.md
+  - MCP Integration: mcp.md
+  - Observability UI: ui-operations.md
+  - Benchmarks: benchmarks.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Durable Execution: architecture/durable-execution.md
+      - Worker Protocol: architecture/worker-protocol.md
+      - Artifact Storage: architecture/artifact-storage.md
+      - Environment Manifests: architecture/environment-manifests.md
+      - Execution Security: architecture/execution-security.md
+  - Error Reference: errors/errors.md
