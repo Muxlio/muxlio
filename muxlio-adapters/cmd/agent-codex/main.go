@@ -73,7 +73,7 @@ func main() {
 	// --json`. Each line is a top-level thread event keyed by "type":
 	//   thread.started, turn.started, turn.completed, turn.failed, error,
 	//   item.started, item.updated, item.completed.
-	var textChunks adapter.BoundedBuffer
+	var assistant codexAgentText
 	var runErr string
 	var completed bool
 	var usage *adapter.TokenUsage
@@ -100,17 +100,19 @@ func main() {
 
 		switch evType {
 		case "item.completed":
-			// agent_message items carry the assistant's final answer text;
-			// capture it for live streaming.
+			// A turn may emit several agent_message items (commentary,
+			// final_answer, or phase-less). Concatenating them misstates the
+			// answer; match Codex SDK final-answer selection instead.
 			var item struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type  string `json:"type"`
+				Text  string `json:"text"`
+				Phase string `json:"phase"`
 			}
 			if raw, ok := ev["item"]; ok {
 				_ = json.Unmarshal(raw, &item)
 			}
-			if item.Type == "agent_message" && item.Text != "" {
-				adapter.CaptureAgentText(&textChunks, item.Text)
+			if item.Type == "agent_message" {
+				assistant.observe(item.Phase, item.Text)
 			}
 		case "turn.completed":
 			completed = true
@@ -175,7 +177,7 @@ func main() {
 	// Collect declared outputs. Scalar ports (no file path) are returned as
 	// parsed JSON values; file-artifact ports as {mime, path, data} maps.
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
-	outputs["_text"] = map[string]any{"mime": "text/plain", "data": textChunks.String()}
+	outputs["_text"] = map[string]any{"mime": "text/plain", "data": assistant.result()}
 
 	errMsg := ""
 	if len(missing) > 0 {
@@ -183,6 +185,38 @@ func main() {
 	}
 
 	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
+}
+
+// codexAgentText tracks assistant messages from the Codex JSONL stream.
+// Prefer final_answer; otherwise the last non-empty message with no phase.
+// Empty agent_message items are ignored so a trailing blank does not erase the answer.
+type codexAgentText struct {
+	finalAnswer string
+	hasFinal    bool
+	lastNoPhase string
+}
+
+func (s *codexAgentText) observe(phase, text string) {
+	if text == "" {
+		return
+	}
+	adapter.AppendStreamText(text)
+	switch phase {
+	case "commentary":
+		// Commentary is useful live progress, but is not the turn answer.
+	case "final_answer":
+		s.finalAnswer = text
+		s.hasFinal = true
+	case "":
+		s.lastNoPhase = text
+	}
+}
+
+func (s *codexAgentText) result() string {
+	if s.hasFinal {
+		return s.finalAnswer
+	}
+	return s.lastNoPhase
 }
 
 // tailBuffer retains only the most recent limit bytes written to it.

@@ -41,6 +41,87 @@ func TestWithStderrAddsDetail(t *testing.T) {
 	}
 }
 
+func TestCodexAgentTextSelectsFinalAnswer(t *testing.T) {
+	var s codexAgentText
+	s.observe("commentary", "Working on it…")
+	s.observe("final_answer", "Done.")
+	if got := s.result(); got != "Done." {
+		t.Fatalf("result() = %q, want final_answer only", got)
+	}
+}
+
+func TestCodexAgentTextLastNoPhaseWins(t *testing.T) {
+	var s codexAgentText
+	s.observe("", "first")
+	s.observe("", "second")
+	if got := s.result(); got != "second" {
+		t.Fatalf("result() = %q, want last no-phase message", got)
+	}
+}
+
+func TestCodexAgentTextUnknownPhaseDoesNotReplaceFallback(t *testing.T) {
+	var s codexAgentText
+	s.observe("", "answer")
+	s.observe("other", "unrelated")
+	if got := s.result(); got != "answer" {
+		t.Fatalf("result() = %q, want phase-less message", got)
+	}
+}
+
+func TestCodexAgentTextIgnoresEmptyTrailing(t *testing.T) {
+	var s codexAgentText
+	s.observe("", "real answer")
+	s.observe("final_answer", "")
+	s.observe("", "")
+	if got := s.result(); got != "real answer" {
+		t.Fatalf("result() = %q, want prior non-empty message", got)
+	}
+}
+
+func TestAgentCodexAdapterTextFinalAnswerNotConcatenated(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Planning…","phase":"commentary"}}'` + "\n" +
+		`echo '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The answer.","phase":"final_answer"}}'` + "\n" +
+		`echo '{"type":"turn.completed"}'` + "\n"
+	out, _ := runCodexAdapter(t, script)
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+		Error   string         `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %q", resp.Error)
+	}
+	textOut, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok {
+		t.Fatalf("_text output missing: %+v", resp.Outputs)
+	}
+	got, _ := textOut["data"].(string)
+	if got != "The answer." {
+		t.Fatalf("_text data = %q, want final_answer only (not concatenated commentary)", got)
+	}
+}
+
+func TestAgentCodexAdapterTextIgnoresEmptyTrailingMessage(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"The answer."}}'` + "\n" +
+		`echo '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":""}}'` + "\n" +
+		`echo '{"type":"turn.completed"}'` + "\n"
+	out, _ := runCodexAdapter(t, script)
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	textOut := resp.Outputs["_text"].(map[string]any)
+	if got, _ := textOut["data"].(string); got != "The answer." {
+		t.Fatalf("_text data = %q, want prior non-empty agent_message", got)
+	}
+}
+
 func TestAppendFailure(t *testing.T) {
 	if got := appendFailure("", "first"); got != "first" {
 		t.Fatalf("appendFailure(\"\", \"first\") = %q, want %q", got, "first")
