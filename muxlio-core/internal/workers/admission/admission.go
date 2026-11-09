@@ -271,9 +271,12 @@ func (g *Gate) TryAdmit(info DispatchInfo, workerActive, workerCap int, now time
 		return false, QueueReasonGlobalFull
 	}
 
-	// 3. Per-run cap.
-	rs := g.getOrCreateRun(info.RunID)
-	if g.cfg.PerRunCap > 0 && rs.active >= g.cfg.PerRunCap {
+	// 3. Per-run cap (do not create run state before hard-limit checks succeed).
+	runActive := 0
+	if existing, ok := g.runs[info.RunID]; ok {
+		runActive = existing.active
+	}
+	if g.cfg.PerRunCap > 0 && runActive >= g.cfg.PerRunCap {
 		return false, QueueReasonRunCap
 	}
 
@@ -306,6 +309,8 @@ func (g *Gate) TryAdmit(info DispatchInfo, workerActive, workerCap int, now time
 	//    held back by DRR when another run still has positive deficit in the
 	//    current round. If this is the only known run, skip the check so it
 	//    can saturate capacity without artificial throttling.
+	_, hadRun := g.runs[info.RunID]
+	rs := g.getOrCreateRun(info.RunID)
 	multipleRuns := len(g.runs) > 1
 	if multipleRuns {
 		if !g.roundSeen[info.RunID] {
@@ -330,6 +335,7 @@ func (g *Gate) TryAdmit(info DispatchInfo, workerActive, workerCap int, now time
 						b.refund()
 					}
 				}
+				g.dropIdleRun(info.RunID, hadRun)
 				return false, QueueReasonFairness
 			}
 			// All other runs are also exhausted — start a new round.
@@ -355,6 +361,17 @@ func (g *Gate) TryAdmit(info DispatchInfo, workerActive, workerCap int, now time
 // round-seen set. Each run receives one weight quantum. This is called when a
 // new run joins or when all runs have exhausted their deficit.
 // Must be called with g.mu held.
+// dropIdleRun removes a run created only for a failed fairness attempt.
+// Must be called with g.mu held.
+func (g *Gate) dropIdleRun(runID string, existed bool) {
+	if existed {
+		return
+	}
+	if rs, ok := g.runs[runID]; ok && rs.active == 0 {
+		delete(g.runs, runID)
+	}
+}
+
 func (g *Gate) advanceRound() {
 	for _, rs := range g.runs {
 		rs.deficit += rs.weight
@@ -369,17 +386,22 @@ func (g *Gate) Release(info DispatchInfo) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if g.globalActive > 0 {
-		g.globalActive--
-	}
+	released := false
 	if rs, ok := g.runs[info.RunID]; ok {
 		if rs.active > 0 {
 			rs.active--
+			released = true
 		}
 		// Clean up idle run states to prevent unbounded map growth.
 		if rs.active == 0 && rs.deficit <= 0 {
 			delete(g.runs, info.RunID)
 		}
+	}
+	if !released {
+		return
+	}
+	if g.globalActive > 0 {
+		g.globalActive--
 	}
 	if info.OperatorKey != "" {
 		if g.keyActive[info.OperatorKey] > 0 {

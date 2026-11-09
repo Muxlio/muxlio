@@ -416,6 +416,48 @@ func TestHardLimitNeverExceeded(t *testing.T) {
 
 // ─── Snapshot ────────────────────────────────────────────────────────────────
 
+// TestReleaseIdempotent verifies duplicate Release after interrupted work does
+// not drop another dispatch's global reservation.
+func TestReleaseIdempotent(t *testing.T) {
+	g := newGate(Config{GlobalCap: 2})
+	now := time.Now()
+	a := DispatchInfo{RunID: "run-a", Executor: "ex"}
+	b := DispatchInfo{RunID: "run-b", Executor: "ex"}
+	if ok, _ := g.TryAdmit(a, 0, 0, now); !ok {
+		t.Fatal("admit a")
+	}
+	if ok, _ := g.TryAdmit(b, 0, 0, now); !ok {
+		t.Fatal("admit b")
+	}
+	g.Release(b)
+	g.Release(b)
+	if g.ActiveCount() != 1 {
+		t.Fatalf("global active after duplicate release: %d, want 1", g.ActiveCount())
+	}
+	if g.ActiveForRun("run-a") != 1 {
+		t.Fatalf("run-a active: %d", g.ActiveForRun("run-a"))
+	}
+}
+
+// TestKeyCapRejectionLeavesNoRunState verifies failed key-cap attempts do not
+// insert phantom runs that would participate in deficit round-robin.
+func TestKeyCapRejectionLeavesNoRunState(t *testing.T) {
+	g := newGate(Config{PerKeyCaps: map[string]int{"keyX": 1}, GlobalCap: 10})
+	now := time.Now()
+	if ok, _ := g.TryAdmit(DispatchInfo{RunID: "holder", Executor: "ex", OperatorKey: "keyX"}, 0, 0, now); !ok {
+		t.Fatal("holder admit")
+	}
+	if ok, reason := g.TryAdmit(DispatchInfo{RunID: "blocked", Executor: "ex", OperatorKey: "keyX"}, 0, 0, now); ok || reason != QueueReasonKeyCap {
+		t.Fatalf("blocked key cap: ok=%v reason=%v", ok, reason)
+	}
+	if _, exists := g.runs["blocked"]; exists {
+		t.Fatal("key-cap rejection created run state")
+	}
+	if ok, reason := g.TryAdmit(DispatchInfo{RunID: "other", Executor: "ex", OperatorKey: "keyY"}, 0, 0, now); !ok {
+		t.Fatalf("other run should admit: reason=%v", reason)
+	}
+}
+
 func TestSnapshot(t *testing.T) {
 	g := newGate(Config{})
 	infoA := DispatchInfo{RunID: "run-a", Executor: "ex"}
