@@ -1013,7 +1013,9 @@ func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResul
 	if len(params.Plan) == 0 {
 		return errResult("plan is required")
 	}
-	if errs, _ := validatePlanLocally(params.Plan); len(errs) > 0 {
+	errs, _ := validatePlanLocally(params.Plan)
+	errs, _ = splitValidationIssues(errs)
+	if len(errs) > 0 {
 		text, _ := json.MarshalIndent(map[string]any{"code": "MUXLIO_PLAN_INVALID", "message": "plan failed local validation", "errors": errs}, "", "  ")
 		return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(text)}}, IsError: true}
 	}

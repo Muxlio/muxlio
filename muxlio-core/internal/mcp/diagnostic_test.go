@@ -3,6 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"os"
 	"path/filepath"
@@ -84,6 +87,25 @@ func TestBuildPreservesExecutablePlan(t *testing.T) {
 		t.Fatalf("compiled plan silently truncated: nodes=%d", len(got))
 	}
 }
+
+func TestRegisterWorkflowVersionAllowsWarnings(t *testing.T) {
+	s := &server{api: &apiClient{base: "http://coordinator", client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/workflow-versions" {
+			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"digest":"abc"}`)), Request: r}, nil
+	})}}}
+	raw := json.RawMessage(`{"irVersion":"1.0","name":"warnings","root":"root","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"generic/task","fallbackExecutors":["generic/task"]}]}}}`)
+	planArg, _ := json.Marshal(map[string]any{"plan": raw})
+	result := s.dispatchTool("register_workflow_version", planArg)
+	if result.IsError {
+		t.Fatalf("register should allow warning-only plan: %s", result.Content[0].Text)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestCheckAndBuildAllowWarnings(t *testing.T) {
 	raw := json.RawMessage(`{"irVersion":"1.0","name":"warnings","root":"root","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"generic/task","fallbackExecutors":["generic/task"]}]}}}`)
