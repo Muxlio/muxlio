@@ -65,6 +65,7 @@ const (
 
 // Sentinel errors. The API maps these to stable HTTP error codes.
 var (
+	ErrLocalHookBusy        = errors.New("muxlio: local hook busy")
 	ErrSubscriptionDisabled = errors.New("muxlio: subscription is disabled")
 	ErrInvalidConfig        = errors.New("muxlio: subscription has an invalid configuration")
 	ErrSecretMissing        = errors.New("muxlio: signing secret is missing or too short")

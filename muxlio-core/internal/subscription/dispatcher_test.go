@@ -261,7 +261,6 @@ func TestUncooperativeHookCancellationIsBounded(t *testing.T) {
 	must(t, s.EnqueueDelivery(subscription.Delivery{ID: "one", SubscriptionID: sub.ID, State: subscription.StatePending, MaxRetries: 1}))
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	defer close(release)
 	d := subscription.Dispatcher{Store: s, Events: s, Hooks: map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error { close(entered); <-release; return nil }}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -284,8 +283,30 @@ func TestUncooperativeHookCancellationIsBounded(t *testing.T) {
 	if record.Attempts != 0 || record.State != subscription.StatePending {
 		t.Fatalf("shutdown consumed an attempt: %+v", record)
 	}
+	// While the cancelled invocation still holds the hook slot, later ticks must
+	// not treat contention as a receiver failure.
 	must(t, d.Tick(context.Background(), time.Now().Add(time.Hour)))
-	must(t, d.Tick(context.Background(), time.Now().Add(2*time.Hour)))
+	record, err = s.GetDelivery("one")
+	must(t, err)
+	if record.Attempts != 0 {
+		t.Fatalf("contention consumed an attempt: %+v", record)
+	}
+	close(release)
+	d.Hooks = map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error { return fmt.Errorf("unavailable") }}
+	now := time.Now().UTC()
+	for deadline := time.Now().Add(time.Second); ; {
+		if time.Now().After(deadline) {
+			t.Fatal("released hook did not free its slot")
+		}
+		must(t, d.Tick(context.Background(), now.Add(2*time.Hour)))
+		record, err = s.GetDelivery("one")
+		must(t, err)
+		if record.Attempts > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	must(t, d.Tick(context.Background(), now.Add(3*time.Hour)))
 	dead, err := s.ListDeadLetters(10)
 	must(t, err)
 	if len(dead) != 1 {
@@ -328,6 +349,43 @@ func TestBackoffStartsAfterAttemptCompletes(t *testing.T) {
 	if record.NextAttemptAt == nil || record.NextAttemptAt.Before(now.Add(time.Second+30*time.Millisecond)) {
 		t.Fatalf("backoff was measured before attempt completion: %+v", record)
 	}
+}
+
+func TestHookBusyAfterCancelDoesNotConsumeRetry(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "busy.db"))
+	must(t, err)
+	defer s.Close()
+	sub := definition("local:stuck")
+	must(t, s.CreateSubscription(sub))
+	must(t, s.EnqueueDelivery(subscription.Delivery{ID: "one", SubscriptionID: sub.ID, State: subscription.StatePending, MaxRetries: 3}))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	d := subscription.Dispatcher{Store: s, Events: s, Hooks: map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error {
+		close(entered)
+		<-release
+		return nil
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Tick(ctx, time.Now()) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("hook not entered")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("tick did not return")
+	}
+	must(t, d.Tick(context.Background(), time.Now().Add(time.Hour)))
+	record, err := s.GetDelivery("one")
+	must(t, err)
+	if record.Attempts != 0 {
+		t.Fatalf("hook busy consumed retry: %+v", record)
+	}
+	close(release)
 }
 
 func TestDeliveryPreservesJSONNumbersAcrossPersistenceAndRetry(t *testing.T) {

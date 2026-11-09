@@ -3,6 +3,7 @@ package subscription
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -106,6 +107,11 @@ func (d *Dispatcher) Tick(ctx context.Context, now time.Time) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// A stuck hook from an earlier cancelled attempt holds the single local
+		// slot; that is internal contention, not a receiver failure.
+		if errors.Is(err, ErrLocalHookBusy) {
+			continue
+		}
 		// Include fanout and earlier attempts in this batch, while preserving
 		// the caller's clock (which can be synthetic in tests).
 		finished := now.Add(time.Since(started))
@@ -144,7 +150,7 @@ func (d *Dispatcher) deliver(ctx context.Context, sub Subscription, record Deliv
 		select {
 		case d.hookBusy <- struct{}{}:
 		default:
-			return fmt.Errorf("local hook busy")
+			return ErrLocalHookBusy
 		}
 		done := make(chan error, 1)
 		go func() {
