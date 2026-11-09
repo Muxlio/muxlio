@@ -184,13 +184,15 @@ func (c Client) downloadVerified(ctx context.Context, target string, proxy bool,
 			}
 			continue
 		}
+		var chunkLen int64
 		if res.StatusCode == http.StatusPartialContent {
 			var start, end, total int64
 			n, scanErr := fmt.Sscanf(res.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &total)
-			if scanErr != nil || n != 3 || start != received || end < start || end != total-1 || total > MaxTransferBytes || (expected > 0 && total != expected) {
+			if scanErr != nil || n != 3 || start != received || end < start || end >= total || total > MaxTransferBytes || (expected > 0 && total != expected) {
 				res.Body.Close()
 				return fmt.Errorf("muxlio: invalid artifact range: %w", ErrIntegrity)
 			}
+			chunkLen = end - start + 1
 			expected = total
 		} else {
 			// Servers without range support can safely restart the bounded download.
@@ -213,6 +215,12 @@ func (c Client) downloadVerified(ctx context.Context, target string, proxy bool,
 		}
 		n, copyErr := io.Copy(tmp, io.LimitReader(res.Body, MaxTransferBytes-received+1))
 		res.Body.Close()
+		// A short body can be an interrupted transfer; keep the bytes and let
+		// the next attempt resume from the new offset. An oversized body cannot
+		// belong to the advertised Content-Range and must be rejected.
+		if chunkLen > 0 && n > chunkLen {
+			return fmt.Errorf("muxlio: invalid artifact range body: %w", ErrIntegrity)
+		}
 		received += n
 		if received > MaxTransferBytes {
 			return fmt.Errorf("muxlio: artifact size exceeds transfer limit")
