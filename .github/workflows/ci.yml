@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── TypeScript / Node ─────────────────────────────────────────────────────
+  node:
+    name: Node ${{ matrix.node }} – build & test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Test all workspaces
+        run: npm run test
+
+      - name: Test UI (standalone)
+        working-directory: muxlio-ui
+        run: npm test && npm run smoke
+
+  # ── Go – adapters ─────────────────────────────────────────────────────────
+  go-adapters:
+    name: Go ${{ matrix.go }} – adapters
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.25", "1.26", "1.27"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: muxlio-core/go.sum
+
+      - name: Test adapters
+        working-directory: muxlio-adapters
+        run: go test ./...
+
+  # ── Go – core ─────────────────────────────────────────────────────────────
+  go-core:
+    name: Go ${{ matrix.go }} – core
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.26", "1.27"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: muxlio-core/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Expose node_modules binaries to PATH
+        run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Build TypeScript workspaces
+        run: npm run build
+
+      - name: Test core
+        working-directory: muxlio-core
+        run: go test ./...
