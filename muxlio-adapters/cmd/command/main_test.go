@@ -278,6 +278,64 @@ func TestRenderArgTemplateStillRejectsMalformedSourceAndMissingInputs(t *testing
 	}
 }
 
+func TestFailOnOutputMarksPassedFalse(t *testing.T) {
+	resp, _ := commandResponse(t, map[string]any{
+		"program": "/bin/echo", "args": []string{"dirty"}, "failOnOutput": true, "onNonZero": "fail",
+	})
+	if resp.Error == "" || resp.Outputs["passed"] != false {
+		t.Fatalf("failOnOutput should fail with passed=false: %+v", resp)
+	}
+}
+
+func TestCommandInterruptedViaSubprocess(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "command")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	workspace := t.TempDir()
+	for _, tc := range []struct {
+		name, params, wantErr, wantStdout string
+	}{
+		{
+			name:       "timeout keeps captured output",
+			params:     `{"program":"/bin/sh","args":["-c","printf partial; sleep 2"],"timeout":"150ms","onNonZero":"return"}`,
+			wantErr:    "timed out",
+			wantStdout: "partial",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := adapter.Request{
+				Workspace: workspace, WorkDir: t.TempDir(), Executor: "command",
+				HostExecutionAllowed: true, Params: json.RawMessage(tc.params),
+			}
+			raw, err := json.Marshal(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bin)
+			cmd.Env = append(os.Environ(), "PATH=/usr/bin:/bin:/usr/local/bin")
+			cmd.Stdin = strings.NewReader(string(raw))
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resp adapter.Response
+			if err := json.Unmarshal(out, &resp); err != nil {
+				t.Fatalf("response: %s, %v", out, err)
+			}
+			if !strings.Contains(resp.Error, tc.wantErr) {
+				t.Fatalf("error=%q want %q in %+v", resp.Error, tc.wantErr, resp)
+			}
+			if got := resp.Outputs["stdout"].(string); !strings.Contains(got, tc.wantStdout) {
+				t.Fatalf("stdout=%q want partial %q in %+v", got, tc.wantStdout, resp)
+			}
+			if resp.Outputs["passed"] != false {
+				t.Fatalf("passed=%v", resp.Outputs["passed"])
+			}
+		})
+	}
+}
+
 func TestResolveProgramUsesWorkerPath(t *testing.T) {
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "tool")

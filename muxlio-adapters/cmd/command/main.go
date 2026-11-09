@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/muxlio/muxlio-adapters/contract"
 	"io"
@@ -202,10 +203,12 @@ func main() {
 	runErr := runCommand(ctx, cmd)
 	duration := time.Since(started).Milliseconds()
 	if parent.Err() != nil {
-		adapter.Fail("command: cancelled")
+		writeCommandInterrupted("command: cancelled", out, stderr, duration, p.TrimStdout)
+		return
 	}
-	if ctx.Err() != nil {
-		adapter.Fail("command: timed out after %s", timeout)
+	if errors.Is(runErr, context.DeadlineExceeded) || (ctx.Err() != nil && runErr != nil) {
+		writeCommandInterrupted(fmt.Sprintf("command: timed out after %s", timeout), out, stderr, duration, p.TrimStdout)
+		return
 	}
 	result := map[string]any{"exitCode": nil, "signal": nil, "stdout": out.String(), "stderr": stderr.String(), "durationMs": duration}
 	if runErr == nil {
@@ -226,6 +229,7 @@ func main() {
 		result["stdout"] = strings.TrimSpace(out.String())
 	}
 	if p.FailOnOutput && out.String() != "" {
+		result["passed"] = false
 		_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: "command produced output while failOnOutput is enabled"})
 		return
 	}
@@ -300,6 +304,19 @@ func renderArgTemplate(template string, inputs map[string]any) (string, error) {
 		return "", renderErr
 	}
 	return out, nil
+}
+
+func writeCommandInterrupted(message string, out, stderr preview, duration int64, trimStdout bool) {
+	result := map[string]any{
+		"exitCode": nil, "signal": nil,
+		"stdout": out.String(), "stderr": stderr.String(),
+		"durationMs": duration, "passed": false,
+	}
+	if trimStdout {
+		result["stdout"] = strings.TrimSpace(out.String())
+	}
+	_ = adapter.WriteResponse(adapter.Response{Outputs: result, Error: message})
+	os.Exit(0)
 }
 
 type streamWriter struct{ name string }
