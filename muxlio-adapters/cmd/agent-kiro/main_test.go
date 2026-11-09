@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseKiroUsageFromStructuredResultMetadata(t *testing.T) {
@@ -115,5 +120,64 @@ func TestStderrTailIsBounded(t *testing.T) {
 	_, _ = buffer.Write([]byte(strings.Repeat("x", 9*1024)))
 	if got := len(buffer.String()); got != 8*1024 {
 		t.Fatalf("stderr tail length = %d, want %d", got, 8*1024)
+	}
+}
+
+func buildAgentKiro(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "agent-kiro")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func TestKiroAdapterTreatsRunErrorAsTerminalEvent(t *testing.T) {
+	bin := buildAgentKiro(t)
+	workDir := t.TempDir()
+	binDir := t.TempDir()
+	stream := `{"type":"runError","data":{"stage":"interrupted","message":"run was interrupted"}}` + "\n"
+	cli := filepath.Join(binDir, "kiro-cli")
+	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
+	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req, err := json.Marshal(map[string]any{
+		"contractVersion":      "1",
+		"workspace":              workDir,
+		"workDir":                workDir,
+		"executor":               "agent/kiro",
+		"task":                   "run-error",
+		"hostExecutionAllowed":   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli}
+	cmd.Stdin = strings.NewReader(string(req))
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected adapter error for runError terminal event")
+	}
+	if !strings.Contains(resp.Error, "run was interrupted") {
+		t.Fatalf("error = %q, want provider runError message", resp.Error)
+	}
+	if strings.Contains(resp.Error, "stream ended without a completion event") {
+		t.Fatalf("runError must be a completion event: %q", resp.Error)
 	}
 }

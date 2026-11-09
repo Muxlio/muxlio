@@ -175,6 +175,25 @@ func main() {
 			if payload.Error != "" {
 				runErr = payload.Error
 			}
+		case "runError":
+			var payload struct {
+				Stage   string `json:"stage"`
+				Message string `json:"message"`
+			}
+			dataRaw := ev["data"]
+			if len(dataRaw) == 0 || strings.TrimSpace(string(dataRaw)) == "null" || json.Unmarshal(dataRaw, &payload) != nil {
+				runErr = appendFailure(runErr, "malformed kiro runError data")
+				continue
+			}
+			completed = true
+			switch {
+			case payload.Message != "":
+				runErr = payload.Message
+			case payload.Stage != "":
+				runErr = fmt.Sprintf("kiro run error at stage %s", payload.Stage)
+			default:
+				runErr = "kiro run error"
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
