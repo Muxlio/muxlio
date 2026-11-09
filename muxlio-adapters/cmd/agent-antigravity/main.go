@@ -128,7 +128,7 @@ func main() {
 			var role string
 			_ = json.Unmarshal(ev["role"], &role)
 			if role == "assistant" {
-				for _, chunk := range extractAssistantText(json.RawMessage(line)) {
+				for _, chunk := range extractAssistantText(ev["message"]) {
 					adapter.CaptureAgentText(&textChunks, chunk)
 				}
 			}
@@ -168,7 +168,7 @@ func main() {
 				usage = u
 			}
 			// Collect final text if not already streamed.
-			for _, key := range []string{"result", "text", "content"} {
+			for _, key := range []string{"result", "response", "text", "content"} {
 				var s string
 				if raw, ok := ev[key]; ok {
 					if json.Unmarshal(raw, &s) == nil && s != "" {

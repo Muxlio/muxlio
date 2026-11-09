@@ -223,6 +223,73 @@ func TestAgentAntigravityAdapterCollectsOutputs(t *testing.T) {
 	}
 }
 
+func TestAgentAntigravityAdapterCapturesResultResponseField(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"result","result":{"status":"SUCCESS","response":"only in response field","usage":{"input_tokens":5,"output_tokens":6}}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+		Error   string         `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	text, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok || text["data"] != "only in response field" {
+		t.Fatalf("_text output = %v", resp.Outputs["_text"])
+	}
+}
+
+func TestAgentAntigravityAdapterMessageEventUsesNestedMessage(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"message","role":"assistant","message":{"content":"from nested message"}}'` + "\n" +
+		`echo '{"type":"result","status":"success"}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+		Error   string         `json:"error"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	text, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok || text["data"] != "from nested message" {
+		t.Fatalf("_text output = %v", resp.Outputs["_text"])
+	}
+}
+
 func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
