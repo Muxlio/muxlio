@@ -40,3 +40,29 @@ func TestOperatorCanInspectAndResolveUncertainAttempt(t *testing.T) {
 		t.Fatalf("hold not resolved: %+v", attempts)
 	}
 }
+
+func TestScopedControlCredentialCanResolveOwnAttempt(t *testing.T) {
+	s := state.New()
+	if err := s.CreateRun(&state.Run{ID: "own"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{ID: "attempt", RunID: "own", ActivationID: "act", State: "awaiting_reconciliation", Effect: "nonretryable", AwaitReconciliationReason: "verify ledger"}); err != nil {
+		t.Fatal(err)
+	}
+	h := WithAuth(NewRouter(s, nil), "admin", "worker",
+		AccessGrant{Token: "scoped", RunID: "own", Permissions: []string{"control"}})
+	body := `{"outcome":"not-applied","reason":"operator confirmed old operation cannot commit"}`
+	call := func(token string) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/runs/own/attempts/attempt/resolve", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	if code := call("scoped"); code != 200 {
+		t.Fatalf("scoped resolve: %d", code)
+	}
+	if code := call("admin"); code != 409 {
+		t.Fatalf("repeat resolve: %d", code)
+	}
+}

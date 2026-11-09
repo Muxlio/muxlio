@@ -113,6 +113,8 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 			return len(parts) == 4 && g.permits("inputs")
 		case "sessions", "steer":
 			return g.permits("steer")
+		case "attempts":
+			return len(parts) == 5 && parts[4] == "resolve" && g.permits("control")
 		}
 	}
 	return false
