@@ -182,6 +182,52 @@ test('isolates returned execution values from runner reuse and output parser mut
   assert.deepEqual(report.results.map(r => r.scores['answer/v1'].value), [1, 2, 3, 4, 5, 6]);
 });
 
+test('evaluation configuration cannot bypass runners through dryRun', async () => {
+  const captured = [];
+  const report = await evaluateWorkflow({
+    dataset: dataset(), versions: versions().slice(0, 1),
+    configuration: { dryRun: true, executors: { byNode: {} } },
+    runner: { id: 'capture/v1', async run(_, options) {
+      captured.push(options);
+      return { state: 'succeeded', output: { answer: 42 } };
+    } },
+  });
+  assert.equal(captured.length, 3);
+  assert.equal(captured.every(options => options.dryRun === undefined), true);
+  assert.ok(report.results.every(r => r.execution.success));
+  assert.ok(!('dryRun' in report.manifest.configuration));
+});
+
+test('evaluation dryRun cannot bypass the default CLI runner', async () => {
+  const report = await evaluateWorkflow({
+    dataset: dataset(), versions: versions().slice(0, 1),
+    configuration: { dryRun: true, cliPath: '/definitely/missing/muxlio' },
+  });
+  assert.ok(report.results.every(result => result.execution.state === 'error'));
+  assert.match(report.results[0].execution.error, /ENOENT|not found|Could not find executable/i);
+});
+
+test('runner results expose only execution fields in evaluation reports', async () => {
+  const report = await evaluateWorkflow({
+    dataset: dataset(), versions: versions().slice(0, 1),
+    runner: { id: 'shaped/v1', async run(workflow) {
+      return {
+        runId: 'run-1',
+        state: 'succeeded',
+        output: { answer: 42 },
+        error: undefined,
+        events: [{ type: 'activation.succeeded' }],
+        plan: workflow.plan,
+        durationMs: 10,
+      };
+    } },
+  });
+  assert.ok(report.results.every(r => {
+    assert.deepEqual(Object.keys(r.execution).sort(), ['output', 'runId', 'state', 'success', 'usage']);
+    return true;
+  }));
+});
+
 test('non-JSON runner outputs report output errors independently of execution success', async () => {
   const report = await evaluateWorkflow({ dataset: dataset(), versions: versions(),
     runner: { id: 'invalid-output/v1', async run() {

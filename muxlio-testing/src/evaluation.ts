@@ -120,7 +120,7 @@ export async function evaluateWorkflow<I, O>(options: EvaluationOptions<I, O>): 
   const parseOutput = dataset.output.parse.bind(dataset.output);
   // Pin JSON values before the first await; never trust caller-supplied plan digests.
   const cases = snapshot(dataset.cases);
-  const configuration = snapshot(options.configuration ?? {});
+  const configuration = pinConfiguration(options.configuration);
   const versions = options.versions.map(v => {
     const plan = snapshot(v.workflow.plan);
     plan.digest = computeDigest(plan);
@@ -147,7 +147,9 @@ export async function evaluateWorkflow<I, O>(options: EvaluationOptions<I, O>): 
       const start = performance.now();
       let execution: EvaluationExecution;
       try {
-        execution = structuredClone(await run({ plan: snapshot(version.plan) }, { ...snapshot(configuration), input: snapshot(c.input) }));
+        execution = structuredClone(coerceExecution(
+          await run({ plan: snapshot(version.plan) }, { ...snapshot(configuration), input: snapshot(c.input) }),
+        ));
       } catch (error) {
         execution = { state: 'error', error: message(error) };
       }
@@ -183,6 +185,27 @@ export async function evaluateWorkflow<I, O>(options: EvaluationOptions<I, O>): 
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
   return { manifest, results };
+}
+
+function pinConfiguration(
+  configuration: EvaluationOptions<unknown, unknown>['configuration'],
+): Omit<TestWorkflowOptions, 'input' | 'dryRun'> {
+  const { dryRun: _ignored, ...rest } = (configuration ?? {}) as TestWorkflowOptions;
+  return snapshot(rest);
+}
+
+function coerceExecution(raw: unknown): EvaluationExecution {
+  if (!raw || typeof raw !== 'object' || typeof (raw as EvaluationExecution).state !== 'string') {
+    return { state: 'error', error: 'runner returned invalid execution' };
+  }
+  const value = raw as EvaluationExecution & Record<string, unknown>;
+  return {
+    ...(typeof value.runId === 'string' ? { runId: value.runId } : {}),
+    state: value.state,
+    ...(value.output !== undefined ? { output: value.output } : {}),
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+    ...(value.usage ? { usage: value.usage } : {}),
+  };
 }
 
 function uniqueIds(items: readonly { id: string }[], kind: string) {
