@@ -5,6 +5,7 @@ let liveEntries=[],liveSelection=null,liveMonitorEntry=null;
 
 function activationIsStreaming(act,attempt){
   if(!act)return false;
+  if(['succeeded','failed','cancelled'].includes(act.state))return false;
   return act.state==='running'||(attempt&&attempt.state==='running');
 }
 
@@ -37,28 +38,54 @@ function scheduleLiveOutputPoll(entry){
   stopLivePoll();
   if(!entry)return;
   const token=livePollToken,runId=entry.runId,actId=entry.act.id;
+  let statePollCount=0;
+  let trackedAct=entry.act,trackedAttempt=entry.attempt;
   async function tick(){
     if(token!==livePollToken||!liveSelection||liveSelection.runId!==runId||liveSelection.activationId!==actId)return;
     try{
       const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
       if(token!==livePollToken||!liveSelection||liveSelection.runId!==runId||liveSelection.activationId!==actId)return;
       const row=liveEntries.find(x=>x.runId===runId&&x.act.id===actId);
-      const attempt=row?.attempt||entry.attempt;
-      const act=row?.act||entry.act;
+      const attempt=row?.attempt||trackedAttempt;
+      const act=row?.act||trackedAct;
+      trackedAct=act;trackedAttempt=attempt;
       updateLiveTranscript(mergeActivationLogs(actId,d.logs||[]),activationIsStreaming(act,attempt));
-      if(!activationIsStreaming(act,attempt)&&liveMonitorEntry?.act){
-        liveMonitorEntry={...liveMonitorEntry,act:{...liveMonitorEntry.act,state:act.state}};
-      }
     }catch{}
     if(token!==livePollToken||!liveSelection||liveSelection.runId!==runId||liveSelection.activationId!==actId)return;
+    statePollCount++;
+    if(statePollCount%5===0){
+      try{
+        const fresh=await api(`/v1/runs/${encodeURIComponent(runId)}/activations/${encodeURIComponent(actId)}`);
+        if(token!==livePollToken||!liveSelection||liveSelection.runId!==runId||liveSelection.activationId!==actId)return;
+        if(fresh){
+          const wasStreaming=activationIsStreaming(trackedAct,trackedAttempt);
+          trackedAct=fresh;
+          if(liveMonitorEntry&&liveMonitorEntry.runId===runId&&liveMonitorEntry.act?.id===actId){
+            liveMonitorEntry={...liveMonitorEntry,act:fresh};
+          }
+          const idx=liveEntries.findIndex(x=>x.runId===runId&&x.act.id===actId);
+          if(idx>=0){
+            const row=liveEntries[idx];
+            if(activationIsStreaming(fresh,row.attempt))liveEntries[idx]={...row,act:fresh};
+            else liveEntries.splice(idx,1);
+            renderLiveList();
+          }
+          if(wasStreaming&&!activationIsStreaming(fresh,trackedAttempt)){
+            renderLiveMeta(liveMonitorEntry);
+            updateLiveTranscript(activationTranscripts.get(actId)?.agent||'',false);
+          }
+        }
+      }catch{}
+    }
+    if(token!==livePollToken||!liveSelection||liveSelection.runId!==runId||liveSelection.activationId!==actId)return;
     const row=liveEntries.find(x=>x.runId===runId&&x.act.id===actId);
-    const attempt=row?.attempt||entry.attempt;
-    const act=row?.act||entry.act;
+    const attempt=row?.attempt||trackedAttempt;
+    const act=row?.act||trackedAct;
     if(activationIsStreaming(act,attempt))livePollTimer=setTimeout(tick,LIVE_POLL_MS);
     else{
-      const terminal=liveEntries.find(x=>x.runId===runId&&x.act.id===actId)?.act;
-      if(terminal&&liveMonitorEntry?.act)liveMonitorEntry={...liveMonitorEntry,act:terminal};
+      if(liveMonitorEntry?.act)liveMonitorEntry={...liveMonitorEntry,act:act};
       renderLiveMeta(liveMonitorEntry);
+      updateLiveTranscript(activationTranscripts.get(actId)?.agent||'',false);
     }
   }
   tick();
@@ -140,8 +167,7 @@ async function loadLive(){
       const attempts=attemptsResp.attempts||[];
       for(const act of graph.activations||[]){
         const attempt=latestAttemptFor(attempts,act.id);
-        const streaming=act.state==='running'||(attempt&&attempt.state==='running');
-        if(streaming)entries.push({runId:r.id,workflowName:r.workflowName,act,attempt});
+        if(activationIsStreaming(act,attempt))entries.push({runId:r.id,workflowName:r.workflowName,act,attempt});
       }
     }));
     if(typeof refreshEpoch==='number'&&epoch!==refreshEpoch)return;
@@ -152,7 +178,7 @@ async function loadLive(){
       const still=entries.find(e=>e.runId===liveSelection.runId&&e.act.id===liveSelection.activationId);
       if(still){
         liveMonitorEntry=still;
-        if(still.act.state==='running'||activationIsStreaming(still.act,still.attempt))scheduleLiveOutputPoll(still);
+        if(activationIsStreaming(still.act,still.attempt))scheduleLiveOutputPoll(still);
         else renderLiveMeta(liveMonitorEntry);
       }else if(liveMonitorEntry){
         const selected=liveMonitorEntry;

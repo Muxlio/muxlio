@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const liveSource = `
@@ -109,4 +110,69 @@ assert.ok(
 );
 
 stopLivePoll();
+
+const prodLive = readFileSync(new URL('./js/live.js', import.meta.url), 'utf8');
+const pollBlock = prodLive.slice(
+  prodLive.indexOf('function scheduleLiveOutputPoll'),
+  prodLive.indexOf('function renderLiveMeta'),
+);
+assert.match(pollBlock, /statePollCount\+\+/, 'live poll must periodically re-check activation state');
+assert.match(pollBlock, /\/activations\/\$\{encodeURIComponent\(actId\)\}/, 'live poll must read activation state from the API');
+const activationIsStreaming = vm.runInNewContext(
+  `${prodLive.slice(prodLive.indexOf('function activationIsStreaming'), prodLive.indexOf('function stopLivePoll'))}; activationIsStreaming`,
+  {},
+);
+assert.equal(
+  activationIsStreaming({ state: 'succeeded' }, { state: 'running' }),
+  false,
+  'terminal activation state must end streaming even when attempt metadata is stale',
+);
+
+let pollTicks = 0;
+let pollTimersAfterTerminal = 0;
+const terminalOut = { lastMetaState: null, lastTranscriptLive: null };
+const terminalCtx = vm.createContext({
+  activationTranscripts: new Map([['act-1', { agent: 'done', seen: new Set() }]]),
+  mergeActivationLogs(actId) { return activationTranscripts.get(actId)?.agent || ''; },
+  renderMarkdown: String,
+  LIVE_POLL_MS: 1,
+  livePollTimer: null,
+  livePollToken: 0,
+  liveSelection: { runId: 'run-a', activationId: 'act-1' },
+  liveMonitorEntry: { runId: 'run-a', act: { id: 'act-1', state: 'running' } },
+  liveEntries: [{ runId: 'run-a', act: { id: 'act-1', state: 'running' }, attempt: { state: 'running' } }],
+  document: { querySelector: () => null },
+  renderLiveMeta(entry) { terminalOut.lastMetaState = entry?.act?.state; },
+  renderLiveList() {},
+  api(path) {
+    if (path.includes('/logs?')) {
+      pollTicks++;
+      return Promise.resolve({ logs: [] });
+    }
+    if (path.includes('/activations/')) return Promise.resolve({ id: 'act-1', state: 'succeeded' });
+    return Promise.resolve({});
+  },
+  setTimeout(fn) {
+    if (terminalOut.lastMetaState === 'succeeded') pollTimersAfterTerminal++;
+    queueMicrotask(fn);
+    return pollTicks + 1;
+  },
+  clearTimeout() {},
+  terminalOut,
+});
+vm.runInContext(
+  `let livePollTimer=null,livePollToken=0;
+  ${prodLive.slice(prodLive.indexOf('function activationIsStreaming'), prodLive.indexOf('function stopLivePoll'))}
+  function stopLivePoll(){if(livePollTimer){clearTimeout(livePollTimer);livePollTimer=null}livePollToken++}
+  function updateLiveTranscript(text,live){terminalOut.lastTranscriptLive=live;}
+  ${pollBlock}
+  scheduleLiveOutputPoll(liveMonitorEntry);`,
+  terminalCtx,
+);
+for (let i = 0; i < 200; i++) await new Promise(resolve => queueMicrotask(resolve));
+assert.ok(pollTicks >= 5, 'state poll should run after several log polls');
+assert.equal(terminalOut.lastMetaState, 'succeeded', 'live poll must refresh metadata when an activation finishes');
+assert.equal(terminalOut.lastTranscriptLive, false, 'live poll must switch to terminal transcript mode after completion');
+assert.equal(pollTimersAfterTerminal, 0, 'live poll must stop after the activation is no longer streaming');
+
 console.log('live output stream switch check passed');
