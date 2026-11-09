@@ -20,7 +20,8 @@ function run(t, passed, packageCount = 2) {
     })) },
     fake: {
       byExecutor: {
-        'agent/kiro': { outputs: { findings: 'audit artifact', notes: 'repair artifact', approved: true, feedback: 'review evidence', report: 'review artifact' } },
+        'agent/kiro': { outputs: { findings: 'findings artifact', notes: 'fix artifact' } },
+        'agent/antigravity': { outputs: { report: 'review artifact' } },
         command: { outputs: commandOutputs },
       },
       byNode: { verify: { outputs: { ...commandOutputs, passed, exitCode: passed ? 0 : 1, report: 'check artifact' } } },
@@ -42,22 +43,22 @@ test('real interpreter finishes and commits each package before starting the nex
   assert.equal(result.state, 'succeeded', result.error);
   assert.equal(result.status, 0);
   assert.equal(result.output.length, 2);
-  assert.ok(result.output.every(pkg => pkg.passed && pkg.attempts === 1 && pkg.verification === 'check artifact'));
+  assert.ok(result.output.every(pkg => pkg.attempts === 1 && pkg.verification === 'check artifact' && pkg.review === 'review artifact'));
   const commits = result.queued.filter(event => event.payload.nodeId === 'commit');
   assert.equal(commits.length, 2);
   const nextClean = result.queued.filter(event => event.payload.nodeId === 'require-clean-workspace')[1];
   const firstCommitDone = result.events.find(event => event.type === 'activation.succeeded' && event.subjectId === commits[0].subjectId);
   assert.ok(firstCommitDone.seq < nextClean.seq);
-  assert.equal(result.queued.some(event => event.payload.nodeId === 'fix-verification'), false);
+  assert.equal(result.queued.some(event => event.payload.nodeId === 'fix'), false);
 });
 
-test('real interpreter pauses on failed verification, rereviews each repair and never commits or advances', options, t => {
+test('real interpreter pauses on failed verification and never commits or advances', options, t => {
   const result = run(t, false);
   assert.equal(result.state, 'paused', result.error);
   const count = id => result.queued.filter(event => event.payload.nodeId === id).length;
-  assert.equal(count('review'), 5);
-  assert.equal(count('verify'), 5);
-  assert.equal(count('fix-verification'), 4);
+  assert.equal(count('review'), 1);
+  assert.equal(count('verify'), 10);
+  assert.equal(count('fix'), 9);
   assert.equal(count('commit'), 0);
   assert.equal(count('require-clean-workspace'), 1);
 });

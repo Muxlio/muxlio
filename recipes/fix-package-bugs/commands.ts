@@ -4,7 +4,7 @@ export const verifyScript = String.raw`
 const {spawnSync} = require('node:child_process');
 const {writeFileSync} = require('node:fs');
 const {join} = require('node:path');
-const [kind, path, target, approved, feedback] = process.argv.slice(1);
+const [kind, path, target] = process.argv.slice(1);
 const checks = kind === 'go'
   ? [['package tests', 'go', ['test', target], path], ['package vet', 'go', ['vet', target], path]]
   : kind === 'npm'
@@ -20,8 +20,7 @@ checks.push(
   ['core regression tests', 'go', ['test', './...'], 'muxlio-core'],
   ['adapter regression tests', 'go', ['test', './...'], 'muxlio-adapters'],
 );
-console.log('Review approved: ' + approved + '\nReviewer feedback: ' + feedback);
-let failed = approved !== 'true';
+let failed = false;
 const results = [];
 for (const [label, program, args, cwd] of checks) {
   const start = Date.now();
@@ -34,7 +33,7 @@ for (const [label, program, args, cwd] of checks) {
   console.log('\n=== ' + label + ': ' + (passed ? 'passed' : 'FAILED') + ', exit ' + exitCode + (error ? ', ' + error : '') + ' ===');
   if (!passed) failed = true;
 }
-writeFileSync(join(process.env.MUXLIO_OUTPUT_DIR, 'checks.json'), JSON.stringify({passed: !failed, reviewApproved: approved === 'true', feedback, checks: results}, null, 2));
+writeFileSync(join(process.env.MUXLIO_OUTPUT_DIR, 'checks.json'), JSON.stringify({passed: !failed, checks: results}, null, 2));
 process.exitCode = failed ? 1 : 0;
 `;
 

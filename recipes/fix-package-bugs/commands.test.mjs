@@ -13,14 +13,14 @@ function fixture(t) {
   return root;
 }
 
-function verify(t, { approved = 'true', fail = '', kind = 'go' } = {}) {
+function verify(t, { fail = '', kind = 'go' } = {}) {
   const root = fixture(t);
   mkdirSync(join(root, 'bin'));
   for (const path of ['muxlio-core', 'muxlio-adapters', 'muxlio-sdk']) mkdirSync(join(root, path));
   const stub = `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === process.env.FAIL_ARGS) process.exit(7);\n`;
   for (const program of ['npm', 'go']) writeFileSync(join(root, 'bin', program), stub, { mode: 0o755 });
   const path = kind === 'npm' ? 'muxlio-sdk' : 'muxlio-core';
-  const result = spawnSync(process.execPath, ['-e', verifyScript, kind, path, kind === 'npm' ? '@muxlio/sdk' : './internal/plan', approved, 'Review evidence'], {
+  const result = spawnSync(process.execPath, ['-e', verifyScript, kind, path, kind === 'npm' ? '@muxlio/sdk' : './internal/plan'], {
     cwd: root, encoding: 'utf8',
     env: { ...process.env, PATH: join(root, 'bin'), FAIL_ARGS: fail, MUXLIO_OUTPUT_DIR: root },
   });
@@ -28,7 +28,7 @@ function verify(t, { approved = 'true', fail = '', kind = 'go' } = {}) {
   return { result, report };
 }
 
-test('successful checks record exact commands, statuses and review verdict', t => {
+test('successful checks record exact commands and statuses', t => {
   const { result, report } = verify(t);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(report.passed, true);
@@ -36,15 +36,6 @@ test('successful checks record exact commands, statuses and review verdict', t =
   assert.deepEqual(report.checks[0].args, ['test', './internal/plan']);
   assert.deepEqual(report.checks[1].args, ['vet', './internal/plan']);
   assert.ok(report.checks.every(check => check.exitCode === 0 && check.passed));
-});
-
-test('rejected review cannot pass when every test succeeds', t => {
-  const { result, report } = verify(t, { approved: 'false' });
-  assert.equal(result.status, 1);
-  assert.equal(report.passed, false);
-  assert.equal(report.reviewApproved, false);
-  assert.ok(report.checks.every(check => check.passed));
-  assert.match(result.stdout, /Review evidence/);
 });
 
 test('failed checks fail the gate and later suites still run', t => {
@@ -73,7 +64,7 @@ test('verification task passes real command adapter validation and executes chec
   const request = {
     executor: 'command', hostExecutionAllowed: true, workspace: root, workDir: join(root, 'scratch'),
     params: verifyTask.def.params,
-    inputs: { package: { kind: 'go', path: 'muxlio-core', target: './internal/workers' }, approved: true, feedback: 'Independent review approved' },
+    inputs: { package: { kind: 'go', path: 'muxlio-core', target: './internal/workers' } },
     outputs: { report: { mime: 'application/json', path: 'checks.json' } },
   };
   const result = spawnSync(process.env.MUXLIO_COMMAND_ADAPTER, [], {
