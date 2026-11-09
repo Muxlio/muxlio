@@ -73,6 +73,7 @@ func TestFailures(t *testing.T) {
 		"missing stop":              initialized + "\n" + sessionCreated + "\n" + `{"jsonrpc":"2.0","id":3,"result":{}}`,
 		"wrong id":                  `{"jsonrpc":"2.0","id":20,"result":{}}`,
 		"invalid envelope":          `{"jsonrpc":"2.0","id":1,"result":{},"error":{}}`,
+		"string id type mismatch":   `{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"agentCapabilities":{}}}`,
 		"malformed":                 `{broken}`,
 		"empty":                     "",
 		"oversized":                 strings.Repeat("x", (4<<20)+1),
@@ -164,6 +165,22 @@ func TestCancellationWithBlockedWriter(t *testing.T) {
 	defer cancel()
 	if err := New(local, local).Execute(ctx, "/workspace", "prompt"); err == nil || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("blocked write: %v", err)
+	}
+}
+
+// JSON numbers may use equivalent encodings on the wire.
+func TestResponseIDFormats(t *testing.T) {
+	for name, completeLine := range map[string]string{
+		"float":  `{"jsonrpc":"2.0","id":3.0,"result":{"stopReason":"end_turn"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stream := initialized + "\n" + sessionCreated + "\n" + completeLine + "\n"
+			var requests bytes.Buffer
+			client := New(strings.NewReader(stream), &requests)
+			if err := client.Execute(context.Background(), "/workspace", "prompt"); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

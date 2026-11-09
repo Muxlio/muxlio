@@ -130,7 +130,7 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			if len(m.Params) > 0 || (len(m.Result) > 0) == (len(m.Error) > 0) {
 				return fmt.Errorf("invalid ACP response envelope")
 			}
-			if string(m.ID) != fmt.Sprint(id) {
+			if !jsonRPCIDEqual(id, m.ID) {
 				return fmt.Errorf("ACP response ID mismatch")
 			}
 			if cancelled || ctx.Err() != nil {
@@ -147,6 +147,26 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			}
 			return nil
 		}
+	}
+}
+
+// jsonRPCIDEqual reports whether a JSON-RPC response id matches the client's request id.
+func jsonRPCIDEqual(want int, raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if string(raw) == fmt.Sprint(want) {
+		return true
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return false
+	}
+	switch v := decoded.(type) {
+	case float64:
+		return v == float64(want)
+	default:
+		return false
 	}
 }
 
