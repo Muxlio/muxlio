@@ -57,7 +57,7 @@ func TestWebhookStartsAndExecutesPinnedRun(t *testing.T) {
 	}
 	args := []string{"--server", server.URL, "--secret-file", secretFile, "--idempotency-key", "one", "--signature-header", "X-Test", "--signature-prefix", "sig=", "--signature-encoding", "base64", "test", payloadFile}
 	for i := 0; i < 2; i++ {
-		if code := cmdTestEvent(args); code != 0 {
+		if code := cmdTestEvent(args, ""); code != 0 {
 			t.Fatalf("test-event exit %d", code)
 		}
 	}
@@ -104,7 +104,7 @@ func TestWebhookStartsAndExecutesPinnedRun(t *testing.T) {
 	if rec.Code != 403 {
 		t.Fatalf("disabled trigger: %d", rec.Code)
 	}
-	if code := cmdTestEvent([]string{}); code != 2 {
+	if code := cmdTestEvent([]string{}, ""); code != 2 {
 		t.Fatalf("invalid invocation exit %d", code)
 	}
 }

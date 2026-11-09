@@ -2,6 +2,76 @@ package main
 
 import "strings"
 
+// partitionArgs splits argv into global-option prefix and command invocation.
+// Only flags that appear before the subcommand name are treated as globals, so
+// "muxlio init --workspace DIR" keeps --workspace for the init FlagSet.
+func partitionArgs(args []string) (before, cmdAndRest []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			if globalFlagTakesValue(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if i == 0 {
+			return nil, args
+		}
+		return args[:i], args[i:]
+	}
+	return args, nil
+}
+
+func globalFlagTakesValue(flag string) bool {
+	name := strings.TrimLeft(flag, "-")
+	switch name {
+	case "fake-config", "data-dir", "adapters", "workspace", "addr", "coordinator", "worker-id", "capabilities", "capacity", "state", "server", "token", "token-file", "worker-token", "worker-token-file":
+		return true
+	default:
+		return false
+	}
+}
+
+// argvIncludesJSON reports whether --json appears anywhere in argv. Unlike
+// partitionArgs, this matches flags after the subcommand (muxlio check plan.ts --json).
+func argvIncludesJSON(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutArg drops every occurrence of a boolean flag from argv.
+func withoutArg(args []string, flag string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == flag {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+// absorbFlagValue removes --name VALUE from args when present and returns the
+// effective value (flag wins over current).
+func absorbFlagValue(name string, args []string, current string) ([]string, string) {
+	prefix := "--" + name
+	out := make([]string, 0, len(args))
+	val := current
+	for i := 0; i < len(args); i++ {
+		if args[i] == prefix && i+1 < len(args) {
+			val = args[i+1]
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, val
+}
+
 // reorderArgs reorganizes command-line arguments so that flag arguments
 // precede positional arguments, allowing Go's flag.FlagSet to parse flags
 // even if they appear after positional arguments.
@@ -34,7 +104,7 @@ func reorderArgs(args []string) []string {
 func isBoolFlag(flagName string) bool {
 	name := strings.TrimLeft(flagName, "-")
 	switch name {
-	case "json", "fake", "open", "starter":
+	case "json", "fake", "open", "starter", "allow-command", "current", "dry-run", "list-requests":
 		return true
 	default:
 		return false

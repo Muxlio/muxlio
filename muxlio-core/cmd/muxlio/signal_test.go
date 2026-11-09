@@ -28,11 +28,11 @@ func TestSignalInputRequests(t *testing.T) {
 		{"r", "--list-requests", "--server", s.URL},
 		{"r", "--request-id", "request", "--idempotency-key", "delivery", "--data", "false", "--server", s.URL},
 	} {
-		if code := cmdSignal(args); code != 0 {
+		if code := cmdSignal(args, ""); code != 0 {
 			t.Fatalf("exit %d for %v", code, args)
 		}
 	}
-	if code := cmdSignal([]string{"r", "--request-id", "request", "--server", s.URL}); code != 2 {
+	if code := cmdSignal([]string{"r", "--request-id", "request", "--server", s.URL}, ""); code != 2 {
 		t.Fatalf("missing delivery key exit=%d", code)
 	}
 	if calls != 2 {

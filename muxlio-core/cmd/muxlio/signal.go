@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func cmdSignal(args []string) int {
+func cmdSignal(args []string, dataDir string) int {
 	fs := flag.NewFlagSet("signal", flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL")
 	name := fs.String("name", "", "signal name to deliver")
@@ -29,7 +29,7 @@ func cmdSignal(args []string) int {
 		return 2
 	}
 	runID := fs.Arg(0)
-	serverURL, token, err := resolveServer(*server, "")
+	serverURL, token, err := resolveServer(*server, dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func cmdRemote(command string, args []string) int {
+func cmdRemote(command string, args []string, dataDir string) int {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile name")
 	tokenFlag := fs.String("token", "", "bearer authentication token")
@@ -21,7 +21,7 @@ func cmdRemote(command string, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	serverURL, profileToken, err := resolveServer(*server, "")
+	serverURL, profileToken, err := resolveServer(*server, dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2

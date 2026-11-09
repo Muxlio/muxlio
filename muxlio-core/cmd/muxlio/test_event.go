@@ -20,7 +20,7 @@ import (
 
 // cmdTestEvent sends a real signed delivery through the public webhook route.
 // It deliberately needs the trigger secret, not an administrator credential.
-func cmdTestEvent(args []string) int {
+func cmdTestEvent(args []string, dataDir string) int {
 	fs := flag.NewFlagSet("test-event", flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile")
 	secretFile := fs.String("secret-file", "", "file containing trigger HMAC secret")
@@ -35,7 +35,7 @@ func cmdTestEvent(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: muxlio test-event --server URL --secret-file FILE [--idempotency-key KEY] trigger-id payload.json (creates a real run)")
 		return 2
 	}
-	serverURL, _, err := resolveServer(*server, "")
+	serverURL, _, err := resolveServer(*server, dataDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

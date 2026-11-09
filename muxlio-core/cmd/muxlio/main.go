@@ -79,18 +79,6 @@ Options:
 `
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "init":
-			os.Exit(cmdInit(os.Args[2:], defaultRuntime(), false))
-		case "test-event":
-			os.Exit(cmdTestEvent(os.Args[2:]))
-		case "service":
-			os.Exit(cmdService(os.Args[2:]))
-		case "submit", "status", "pause", "resume", "cancel":
-			os.Exit(cmdRemote(os.Args[1], os.Args[2:]))
-		}
-	}
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		os.Exit(1)
@@ -109,93 +97,97 @@ func main() {
 	workerTokenFlag := ""
 	workerTokenFileFlag := ""
 	var stateFilters []string
-	args := os.Args[1:]
-	filtered := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
+	raw := os.Args[1:]
+	before, args := partitionArgs(raw)
+	if len(args) == 0 && len(before) > 0 {
+		args = before
+		before = nil
+	}
+	for i := 0; i < len(before); i++ {
+		switch before[i] {
 		case "--json":
 			jsonOut = true
 		case "--fake-config":
 			i++
-			if i < len(args) {
-				fakeConfig = args[i]
+			if i < len(before) {
+				fakeConfig = before[i]
 			}
 		case "--data-dir":
 			i++
-			if i < len(args) {
-				dataDir = args[i]
+			if i < len(before) {
+				dataDir = before[i]
 			}
 		case "--adapters":
 			i++
-			if i < len(args) {
-				adaptersDir = args[i]
+			if i < len(before) {
+				adaptersDir = before[i]
 			}
 		case "--workspace":
 			i++
-			if i < len(args) {
-				workspace = args[i]
+			if i < len(before) {
+				workspace = before[i]
 			}
 		case "--addr":
 			i++
-			if i < len(args) {
-				addr = args[i]
+			if i < len(before) {
+				addr = before[i]
 			}
 		case "--coordinator":
 			i++
-			if i < len(args) {
-				workerCoordinator = args[i]
+			if i < len(before) {
+				workerCoordinator = before[i]
 			}
 		case "--worker-id":
 			i++
-			if i < len(args) {
-				workerID = args[i]
+			if i < len(before) {
+				workerID = before[i]
 			}
 		case "--capabilities":
 			i++
-			if i < len(args) {
-				workerCapabilities = args[i]
+			if i < len(before) {
+				workerCapabilities = before[i]
 			}
 		case "--capacity":
 			i++
-			if i < len(args) {
-				workerCapacity = args[i]
+			if i < len(before) {
+				workerCapacity = before[i]
 			}
 		case "--state":
 			i++
-			if i < len(args) {
+			if i < len(before) {
 				// Accept comma-separated states or repeated --state flags.
-				stateFilters = append(stateFilters, parseStateFlag(args[i])...)
+				stateFilters = append(stateFilters, parseStateFlag(before[i])...)
 			}
 		case "--server":
 			i++
-			if i < len(args) {
-				serverFlag = args[i]
+			if i < len(before) {
+				serverFlag = before[i]
 			}
 		case "--token":
 			i++
-			if i < len(args) {
-				tokenFlag = args[i]
+			if i < len(before) {
+				tokenFlag = before[i]
 			}
 		case "--token-file":
 			i++
-			if i < len(args) {
-				tokenFileFlag = args[i]
+			if i < len(before) {
+				tokenFileFlag = before[i]
 			}
 		case "--worker-token":
 			i++
-			if i < len(args) {
-				workerTokenFlag = args[i]
+			if i < len(before) {
+				workerTokenFlag = before[i]
 			}
 		case "--worker-token-file":
 			i++
-			if i < len(args) {
-				workerTokenFileFlag = args[i]
+			if i < len(before) {
+				workerTokenFileFlag = before[i]
 			}
-		default:
-			filtered = append(filtered, args[i])
 		}
 	}
-	args = filtered
+	if argvIncludesJSON(raw) {
+		jsonOut = true
+	}
 
 	if len(args) == 0 {
 		fmt.Print(usage)
@@ -232,11 +224,20 @@ func main() {
 		if len(args) < 2 {
 			die("run requires a plan file path (and optionally an input file path)")
 		}
-		inputArg := ""
-		if len(args) >= 3 {
-			inputArg = args[2]
+		runArgs := args[1:]
+		runArgs, workspace = absorbFlagValue("workspace", runArgs, workspace)
+		runArgs, fakeConfig = absorbFlagValue("fake-config", runArgs, fakeConfig)
+		runArgs, serverFlag = absorbFlagValue("server", runArgs, serverFlag)
+		runArgs, dataDir = absorbFlagValue("data-dir", runArgs, dataDir)
+		runArgs = withoutArg(runArgs, "--json")
+		if len(runArgs) < 1 {
+			die("run requires a plan file path (and optionally an input file path)")
 		}
-		os.Exit(cmdRun(args[1], inputArg, fakeConfig, adaptersDir, dataDir, workspace, serverFlag, tokenFlag, tokenFileFlag, jsonOut))
+		inputArg := ""
+		if len(runArgs) >= 2 {
+			inputArg = runArgs[1]
+		}
+		os.Exit(cmdRun(runArgs[0], inputArg, fakeConfig, adaptersDir, dataDir, workspace, serverFlag, tokenFlag, tokenFileFlag, jsonOut))
 
 	case "graph":
 		os.Exit(cmdGraph(args[1:], dataDir, jsonOut))
@@ -258,10 +259,35 @@ func main() {
 		os.Exit(cmdArtifacts(args[1:], dataDir, jsonOut))
 
 	case "signal":
-		os.Exit(cmdSignal(args[1:]))
+		os.Exit(cmdSignal(forwardRemoteFlags(args[1:], serverFlag, tokenFlag, tokenFileFlag), dataDir))
+
+	case "test-event":
+		os.Exit(cmdTestEvent(forwardRemoteFlags(args[1:], serverFlag, tokenFlag, tokenFileFlag), dataDir))
+
+	case "service":
+		os.Exit(cmdService(args[1:]))
+
+	case "submit", "status", "pause", "resume", "cancel":
+		os.Exit(cmdRemote(cmd, forwardRemoteFlags(args[1:], serverFlag, tokenFlag, tokenFileFlag), dataDir))
 
 	case "runs":
-		os.Exit(cmdRuns(dataDir, stateFilters, jsonOut))
+		runTail := args[1:]
+		var extra []string
+		for i := 0; i < len(runTail); i++ {
+			switch runTail[i] {
+			case "--data-dir":
+				if i+1 < len(runTail) {
+					dataDir = runTail[i+1]
+					i++
+				}
+			case "--state":
+				if i+1 < len(runTail) {
+					extra = append(extra, parseStateFlag(runTail[i+1])...)
+					i++
+				}
+			}
+		}
+		os.Exit(cmdRuns(dataDir, append(stateFilters, extra...), jsonOut))
 
 	case "ui":
 		os.Exit(cmdUI(forwardServerFlag(args[1:], serverFlag), jsonOut))
@@ -289,10 +315,18 @@ func main() {
 		}
 
 	case "worker":
-		if len(args) > 1 && args[1] == "status" {
+		workerArgs := args[1:]
+		workerArgs, workspace = absorbFlagValue("workspace", workerArgs, workspace)
+		workerArgs, workerCoordinator = absorbFlagValue("coordinator", workerArgs, workerCoordinator)
+		workerArgs, workerID = absorbFlagValue("worker-id", workerArgs, workerID)
+		workerArgs, workerCapabilities = absorbFlagValue("capabilities", workerArgs, workerCapabilities)
+		workerArgs, workerCapacity = absorbFlagValue("capacity", workerArgs, workerCapacity)
+		workerArgs, workerTokenFlag = absorbFlagValue("worker-token", workerArgs, workerTokenFlag)
+		workerArgs, workerTokenFileFlag = absorbFlagValue("worker-token-file", workerArgs, workerTokenFileFlag)
+		if len(workerArgs) > 0 && workerArgs[0] == "status" {
 			os.Exit(cmdWorkerStatus(dataDir, adaptersDir, jsonOut))
 		}
-		if len(args) < 2 || args[1] != "start" {
+		if len(workerArgs) < 1 || workerArgs[0] != "start" {
 			die("usage: muxlio worker start --coordinator URL --worker-id ID --workspace DIR [--capabilities name1,name2] [--worker-token TOKEN | --worker-token-file FILE]")
 		}
 		os.Exit(cmdWorkerStart(workerCoordinator, workerID, workerCapabilities, workerCapacity, adaptersDir, dataDir, workspace, addr, workerTokenFlag, workerTokenFileFlag))
@@ -311,7 +345,23 @@ func forwardServerFlag(args []string, server string) []string {
 	if server == "" {
 		return args
 	}
-	return append(args, "--server", server)
+	return append([]string{"--server", server}, args...)
+}
+
+// forwardRemoteFlags prepends global coordinator client flags when they were
+// parsed before the subcommand (muxlio --server URL status …).
+func forwardRemoteFlags(args []string, server, token, tokenFile string) []string {
+	var prefix []string
+	if server != "" {
+		prefix = append(prefix, "--server", server)
+	}
+	if token != "" {
+		prefix = append(prefix, "--token", token)
+	}
+	if tokenFile != "" {
+		prefix = append(prefix, "--token-file", tokenFile)
+	}
+	return append(prefix, args...)
 }
 
 func die(msg string) {

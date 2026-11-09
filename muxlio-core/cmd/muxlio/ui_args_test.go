@@ -7,7 +7,7 @@ import (
 
 func TestForwardServerFlagToUI(t *testing.T) {
 	got := forwardServerFlag([]string{"--port", "7601", "--open=false"}, "http://coordinator:7600")
-	want := []string{"--port", "7601", "--open=false", "--server", "http://coordinator:7600"}
+	want := []string{"--server", "http://coordinator:7600", "--port", "7601", "--open=false"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("forwardServerFlag() = %v, want %v", got, want)
 	}
