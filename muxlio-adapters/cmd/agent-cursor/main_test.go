@@ -11,6 +11,20 @@ import (
 	"github.com/muxlio/muxlio-adapters/adapter"
 )
 
+func TestSubtypeIndicatesError(t *testing.T) {
+	for value, want := range map[string]bool{
+		"success":        false,
+		"no_error":       false,
+		"model_call":     false,
+		"error":          true,
+		"error_max_turn": true,
+	} {
+		if got := subtypeIndicatesError(value); got != want {
+			t.Fatalf("subtypeIndicatesError(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
 func TestCursorAgentEnvSetsFileCredentialStore(t *testing.T) {
 	t.Setenv("AGENT_CLI_CREDENTIAL_STORE", "keychain")
 	t.Setenv("MUXLIO_LOG_FD", "3")
@@ -94,6 +108,31 @@ func TestCursorAdapterPreservesUsageFromFailedResult(t *testing.T) {
 	}
 	if got.Usage == nil || got.Usage.Input != 7 || got.Usage.Output != 3 || got.Usage.Cached != 2 {
 		t.Fatalf("usage = %+v, want input=7 output=3 cached=2", got.Usage)
+	}
+}
+
+func TestCursorAdapterReportsUsageFromUsageEvent(t *testing.T) {
+	script := `echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}}'
+echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":25,"outputTokens":9,"cacheReadTokens":3}}'
+echo '{"type":"result","subtype":"success","result":"done"}'`
+	got := runCursorFixture(t, script)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage == nil || got.Usage.Input != 125 || got.Usage.Output != 49 || got.Usage.Cached != 15 {
+		t.Fatalf("usage = %+v, want aggregated input=125 output=49 cached=15", got.Usage)
+	}
+}
+
+func TestCursorAdapterResultUsageOverridesUsageEvents(t *testing.T) {
+	script := `echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}}'
+echo '{"type":"result","usage":{"inputTokens":110,"outputTokens":45,"cacheReadTokens":14},"result":"done"}'`
+	got := runCursorFixture(t, script)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage == nil || got.Usage.Input != 110 || got.Usage.Output != 45 || got.Usage.Cached != 14 {
+		t.Fatalf("usage = %+v, want result totals input=110 output=45 cached=14", got.Usage)
 	}
 }
 

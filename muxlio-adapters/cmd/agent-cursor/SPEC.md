@@ -42,6 +42,8 @@ ports return parsed JSON; file ports return artifact-shaped values for the
 worker's generic uploader. Missing or invalid outputs retain per-port errors.
 `_text` contains collected assistant text as `text/plain`.
 
-Explicit `result.usage` token counts pass through the shared usage parser.
-Unavailable counts remain unavailable, distinct from reported zero. The response
-contains collected outputs, output errors, diagnostic logs, and available usage.
+Explicit `usage` event counts pass through the shared usage parser and are
+summed across model calls. If the terminal result includes usage, its totals take
+precedence. Unavailable counts remain unavailable, distinct from reported zero.
+The response contains collected outputs, output errors, diagnostic logs, and
+available usage.

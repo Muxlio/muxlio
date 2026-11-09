@@ -99,6 +99,10 @@ func main() {
 			if data.Content != "" {
 				adapter.CaptureAgentText(&textChunks, data.Content)
 			}
+		case "usage":
+			if reported := adapter.ParseTokenUsage(event["usage"]); reported != nil {
+				usage = addTokenUsage(usage, reported)
+			}
 		case "result":
 			completed = true
 			if reported := adapter.ParseTokenUsage(event["usage"]); reported != nil {
@@ -196,6 +200,31 @@ func resultText(event map[string]json.RawMessage) []string {
 	return nil
 }
 
+func subtypeIndicatesError(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch lower {
+	case "", "success", "no_error":
+		return false
+	case "error":
+		return true
+	}
+	return strings.HasPrefix(lower, "error_")
+}
+
+func addTokenUsage(total, reported *adapter.TokenUsage) *adapter.TokenUsage {
+	if reported == nil {
+		return total
+	}
+	if total == nil {
+		return reported
+	}
+	return &adapter.TokenUsage{
+		Input:  total.Input + reported.Input,
+		Output: total.Output + reported.Output,
+		Cached: total.Cached + reported.Cached,
+	}
+}
+
 func resultError(event map[string]json.RawMessage) string {
 	var failed bool
 	_ = json.Unmarshal(event["is_error"], &failed)
@@ -212,7 +241,7 @@ func resultError(event map[string]json.RawMessage) string {
 			if value == "" {
 				continue
 			}
-			if key == "subtype" && !strings.Contains(strings.ToLower(value), "error") {
+			if key == "subtype" && !subtypeIndicatesError(value) {
 				continue
 			}
 			return value
