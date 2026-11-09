@@ -22,19 +22,19 @@ export PATH="$HOME/.local/muxlio/bin:$PATH"
 ```
 
 The resulting prefix contains `bin/muxlio`, eight compiled adapters under
-`libexec/muxlio/adapters` (`agent-a2a`, `agent-acp`, `agent-claude`, `agent-codex`, `agent-cursor`,
-`agent-gemini`, `agent-kiro`, and `command`), and UI assets under
+`libexec/muxlio/adapters` (`agent-a2a`, `agent-acp`, `agent-antigravity`, `agent-claude`, `agent-codex`, `agent-cursor`,
+`agent-kiro`, and `command`), and UI assets under
 `share/muxlio/ui`. Copy the
 **whole prefix** to a stable location, for example `$HOME/.local/muxlio`, before
 removing or moving the checkout. Relative resource discovery uses the installed
 executable, never its build directory. No SDK is required to execute compiled
 plans. Use the SDK/compiler from a development checkout to author plans.
 
-Building over an existing prefix migrates `agent/gemini-cli` capabilities,
-executor permissions, and admission settings to `agent/gemini` before removing
-the retired adapter. Capacity group names remain unchanged. Conflicting old and
-new executor settings stop the upgrade for operator resolution; the config and
-legacy adapter are preserved.
+The adapter rename is a clean break. Existing configuration and saved workflow
+plans that reference the former executor name must be updated to
+`agent/antigravity`; the installer does not migrate old executor settings.
+Plans are immutable, so edit and recompile the workflow source before registering
+the new plan version. Capacity group names remain unchanged.
 
 For a local Homebrew formula, first create a source archive of this tree (not
 just HEAD: include the implemented files):
@@ -73,7 +73,7 @@ chmod 700 "$HOME/.muxlio" "$HOME/.muxlio/logs"
 cat > "$HOME/.muxlio/config.json" <<EOF
 {
   "workspace": "$HOME/.muxlio/workspaces/overnight",
-  "capabilities": ["agent/a2a", "agent/acp", "agent/claude", "agent/codex", "agent/cursor", "agent/gemini", "agent/kiro", "command"],
+  "capabilities": ["agent/a2a", "agent/acp", "agent/antigravity", "agent/claude", "agent/codex", "agent/cursor", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
   "executors": {"agent/kiro": {"timeoutSeconds": 3600}},
   "mcp": {"listen": "127.0.0.1:7602"}
@@ -95,7 +95,7 @@ trusted-network access; use MCP TLS or a trusted TLS proxy for encrypted access.
 
 Native adapters run with `HOME` set to the operator's real home directory by
 default, so provider CLIs reuse existing login state already present there
-(e.g. `~/.claude`, `~/.codex`, `~/.cursor`, Gemini CLI config under your home). No extra configuration is needed if the agents
+(e.g. `~/.claude`, `~/.codex`, `~/.cursor`, Antigravity CLI config under your home). No extra configuration is needed if the agents
 are already logged in under your normal home.
 
 For **Cursor** on headless macOS hosts (SSH sessions, launchd user agents), the

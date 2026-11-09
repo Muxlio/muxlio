@@ -262,6 +262,16 @@ var tools = []toolDef{
 		},
 	},
 	{
+		Name:        "register_workflow_version",
+		Description: "Validate and store an immutable Plan IR version on the coordinator, keyed by its content digest.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"plan": map[string]any{"type": "object", "description": "Compiled Plan IR document."}}, "required": []string{"plan"}},
+	},
+	{
+		Name:        "list_workflow_versions",
+		Description: "List immutable workflow versions registered with the coordinator.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
 		Name:        "list_runs",
 		Description: "List all workflow runs known to the coordinator.",
 		InputSchema: map[string]any{
@@ -614,6 +624,14 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolGetArtifactMetadata(args)
 	case "start_run":
 		return s.toolStartRun(args)
+	case "register_workflow_version":
+		return s.toolRegisterWorkflowVersion(args)
+	case "list_workflow_versions":
+		resp, err := s.api.get("/v1/workflow-versions", nil)
+		if err != nil {
+			return errResult("coordinator request failed: " + err.Error())
+		}
+		return apiResultOrError(resp)
 	case "list_runs":
 		return s.toolListRuns()
 	case "get_run":
@@ -984,6 +1002,33 @@ func (s *server) toolGetArtifactMetadata(args json.RawMessage) toolCallResult {
 		return errResult(fmt.Sprintf("coordinator returned HTTP %d: %s", headResp.StatusCode, strings.TrimSpace(string(body))))
 	}
 	return errResult("coordinator request failed: " + err.Error())
+}
+
+func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResult {
+	var params struct {
+		Plan json.RawMessage `json:"plan"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(args))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&params); err != nil {
+		return errResult("invalid arguments: " + err.Error())
+	}
+	if len(params.Plan) == 0 {
+		return errResult("plan is required")
+	}
+	if errs, _ := validatePlanLocally(params.Plan); len(errs) > 0 {
+		text, _ := json.MarshalIndent(map[string]any{"code": "MUXLIO_PLAN_INVALID", "message": "plan failed local validation", "errors": errs}, "", "  ")
+		return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(text)}}, IsError: true}
+	}
+	var planValue any
+	if err := json.Unmarshal(params.Plan, &planValue); err != nil {
+		return errResult("invalid plan JSON: " + err.Error())
+	}
+	resp, err := s.api.post("/v1/workflow-versions", map[string]any{"plan": planValue})
+	if err != nil {
+		return errResult("coordinator request failed: " + err.Error())
+	}
+	return apiResultOrError(resp)
 }
 
 func (s *server) toolStartRun(args json.RawMessage) toolCallResult {

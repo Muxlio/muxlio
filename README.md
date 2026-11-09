@@ -14,7 +14,7 @@
 
 ---
 
-Muxlio lets you author multi-step workflows that fan out across AI coding agents — Claude, Codex, Cursor, Gemini CLI, Kiro — and command tools, then run them durably on a coordinator that survives client disconnects. Submit a plan tonight and check the results in the morning.
+Muxlio lets you author multi-step workflows that fan out across AI coding agents — Antigravity, Claude, Codex, Cursor, Kiro — and command tools, then run them durably on a coordinator that survives client disconnects. Submit a plan tonight and check the results in the morning.
 
 Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON document, and interpreted by a Go coordinator. No JavaScript reaches the runtime: the IR is the contract between authoring and execution. Plans are immutable and content-addressed (SHA-256 digest), so a run always executes the exact bytes that were submitted.
 
@@ -42,7 +42,7 @@ Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON do
 - **Fan-out and control flow** — `map` for bounded-concurrency fan-out, `branch` for conditionals, `loop` with finite iteration bounds, `wait` for external signals, `join` for aggregation, `child` for nested sub-runs.
 - **Durable execution** — SQLite-backed state, event-sourced history, and explicit recovery. Queued work is eligible for reassignment; effects that may have already happened are held for manual reconciliation rather than silently replayed.
 - **Retry and fallback** — Per-step retry policies (`maxAttempts`, bounded backoff) and fallback executors. Effect policies control whether repeating an operation is safe.
-- **Agent adapters** — Ship adapters for `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
+- **Agent adapters** — Ship adapters for `agent/a2a`, `agent/acp`, `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`. Custom adapter scripts plug in with no coordinator changes.
 - **Observability UI** — A web dashboard for run search, activation/scope graphs, event timelines, logs, artifacts, attempt history, worker status, a **Live** view that polls running activations for agent output, and a signal form for waiting runs.
 - **MCP server** — Exposes coordinator operations as MCP tools so any MCP-capable assistant (Codex, Cursor, Claude Code, Kiro) can build, check, submit, and inspect runs from its own chat.
 - **Fake executor for testing** — Validate plans and dataflow end to end without invoking real model calls. Fake outputs are keyed by node ID or executor name.
@@ -54,7 +54,7 @@ Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON do
 
 - **Go** 1.26+ (to build the coordinator, CLI, and adapters)
 - **Node.js** 18+ (for the TypeScript SDK, compiler, testing harness, and UI)
-- **Agent provider CLIs** on `PATH` for whichever executors you intend to use (e.g. `claude`, `codex`, `gemini`, `kiro`)
+- **Agent provider CLIs** on `PATH` for whichever executors you intend to use (e.g. `agy`, `claude`, `codex`, `kiro`)
 
 ### Build from source
 
@@ -80,15 +80,15 @@ muxlio init --data-dir "$HOME/.local/muxlio" --workspace /absolute/path/to/proje
 Before `muxlio service start`, point the service at an authorized workspace and the executor capabilities the local worker should advertise:
 
 ```sh
-# Example: choose a project workspace and install Gemini authoring instructions
-muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent gemini
+# Example: choose a project workspace and install Antigravity authoring instructions
+muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent antigravity
 # Creates ~/.muxlio/{data,logs,work,artifacts,bin,skills,libexec/muxlio/adapters,share/muxlio/ui}
 # and ~/.muxlio/config.json (workspace, capabilities, addr, attemptTimeoutSeconds)
 # A coordinator bearer token is generated and stored in config.json.
 # --starter writes a sample workflow into the workspace; --agent installs muxlio-skills/SKILL.md for that agent.
 ```
 
-Default capabilities match the shipped adapters: `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
+Default capabilities match the shipped adapters: `agent/a2a`, `agent/acp`, `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
 
 ### Install with Homebrew
 
@@ -126,7 +126,7 @@ const input = z.object({
 });
 
 const gather = task({
-  executor: 'agent/gemini',
+  executor: 'agent/antigravity',
   task: 'Investigate the topic and write findings to findings.md.',
   outputs: { findings: artifact.markdown('findings.md') },
 });
@@ -387,18 +387,18 @@ muxlio worker start \
 
 Omit `--capabilities` to auto-detect executable adapters in `--adapters` (default `~/.muxlio/adapters`). For a release install, pass `--adapters ~/.muxlio/libexec/muxlio/adapters`; alternatively copy or symlink the adapters there. Pass a comma-separated list to advertise a subset. `--capacity` sets concurrent assignments (default 1; override with `MUXLIO_WORKER_CAPACITY`).
 
-Supported first-party executors (one adapter binary each): `agent/a2a`, `agent/acp`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/gemini`, `agent/kiro`, and `command`.
+Supported first-party executors (one adapter binary each): `agent/a2a`, `agent/acp`, `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`.
 
 Local agent adapters run in the selected attempt workspace, including snapshots
 without Git metadata. Each adapter supplies its CLI's headless workspace options
-and access to the separate scratch directory for declared outputs. Claude and
-Gemini use the same workspace selection and output prompt as the other local
+and access to the separate scratch directory for declared outputs. Antigravity and
+Claude use the same workspace selection and output prompt as the other local
 agents. ACP forwards the selected directory to its configured agent; that agent's
 launch options remain in `params.args`. A2A runs remotely and does not use a local
 agent workspace.
 
-Gemini uses the model configured in its CLI unless `params.model` overrides it.
-Its readiness check recognizes `GEMINI_API_KEY` and saved API-key or Google login
+Antigravity uses the model configured in its CLI unless `params.model` overrides it.
+Its readiness check recognizes `ANTIGRAVITY_API_KEY` and saved Antigravity API-key or Google login
 credentials; credential validity is checked when the task runs.
 
 ## MCP integration

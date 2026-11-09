@@ -14,7 +14,7 @@ import (
 
 func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	agent := fs.String("agent", "", "agent type to configure skill for (codex, cursor, claude, gemini, kiro)")
+	agent := fs.String("agent", "", "agent type to configure skill for (antigravity, codex, cursor, claude, kiro)")
 	workspace := fs.String("workspace", "", "authorized workspace directory (default: current dir)")
 	dataDir := fs.String("data-dir", globalDataDir, "runtime data directory (default: ~/.muxlio)")
 	workerPath := fs.String("worker-path", "", "persist this absolute executable search path (default: preserve saved workerEnv.PATH, otherwise capture PATH)")
@@ -24,6 +24,12 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return 2
+	}
+	switch *agent {
+	case "", "antigravity", "claude", "codex", "cursor", "kiro":
+	default:
+		fmt.Fprintf(os.Stderr, "error: unknown agent %q\n", *agent)
+		return 1
 	}
 
 	if _, port, err := net.SplitHostPort(*mcpListen); err != nil || port == "" {
@@ -245,12 +251,12 @@ esac
 			claudeSkill := filepath.Join(claudeDir, "SKILL.md")
 			_ = os.WriteFile(claudeSkill, skillContent, 0o644)
 			skillInstalledPaths = append(skillInstalledPaths, claudeSkill)
-		case "gemini":
-			geminiDir := filepath.Join(ws, ".gemini", "skills", "muxlio")
-			_ = os.MkdirAll(geminiDir, 0o755)
-			geminiSkill := filepath.Join(geminiDir, "SKILL.md")
-			_ = os.WriteFile(geminiSkill, skillContent, 0o644)
-			skillInstalledPaths = append(skillInstalledPaths, geminiSkill)
+		case "antigravity":
+			antigravityDir := filepath.Join(ws, ".agents", "skills", "muxlio")
+			_ = os.MkdirAll(antigravityDir, 0o755)
+			antigravitySkill := filepath.Join(antigravityDir, "SKILL.md")
+			_ = os.WriteFile(antigravitySkill, skillContent, 0o644)
+			skillInstalledPaths = append(skillInstalledPaths, antigravitySkill)
 		}
 	}
 

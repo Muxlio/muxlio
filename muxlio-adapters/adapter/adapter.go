@@ -36,12 +36,12 @@ type TokenUsage = contract.TokenUsage
 // outputTokens, candidatesTokenCount.
 // Cached keys: cached_input_tokens, cache_read_input_tokens, cacheReadInputTokens, cacheReadTokens,
 // cached_content_token_count, cached_tokens, cachedTokens,
-// cachedContentTokenCount, cached (Gemini result.stats).
+// cachedContentTokenCount, cached (Antigravity result.stats).
 //
-// The camelCase aliases cover the Gemini CLI's stream-json "usage" event,
+// The camelCase aliases cover the Antigravity CLI stream-json "usage" event,
 // which surfaces provider-reported counts at the top level of the event
 // object using camelCase field names (inputTokens, outputTokens,
-// cachedTokens) and the raw Gemini usageMetadata names (promptTokenCount,
+// cachedTokens) and the raw usageMetadata names (promptTokenCount,
 // candidatesTokenCount, cachedContentTokenCount).
 func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -67,7 +67,7 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	}
 	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
 	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
-	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
+	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
 	if !found {
 		return nil
 	}
@@ -155,7 +155,7 @@ func InputString(inputs map[string]any, port string) string {
 
 // CleanEnvForChild returns the current process environment with muxlio-internal
 // variables stripped out. Adapters must call this when building exec.Cmd.Env
-// for any child CLI process they spawn (cursor, kiro, claude, gemini, etc.).
+// for any child CLI process they spawn (cursor, kiro, claude, antigravity, etc.).
 //
 // Background: the script executor injects MUXLIO_LOG_FD=3 into the adapter's
 // environment and opens fd 3 as a pipe write-end for live log streaming. If

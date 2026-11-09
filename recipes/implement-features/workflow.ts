@@ -1,7 +1,7 @@
 // recipes/implement-features/workflow.ts
 //
 // Batch feature implementation: implement → review → verify/fix loop → commit.
-// Commits remain in the current workspace for manual review and push.
+// Shared-write tasks retain the worker checkout's Git metadata.
 //
 //   muxlio check recipes/implement-features/workflow.ts
 //   muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json \
@@ -55,12 +55,7 @@ export default workflow('implement-features', {
         });
 
         const staged = step('stage-changes', stageChanges, { feature, verificationReport: verification.value }, { requiresPassed: verification });
-        step(
-          'commit',
-          commit,
-          { feature },
-          { after: staged, requiresPassed: verification },
-        );
+        step('commit', commit, { feature }, { after: staged, requiresPassed: verification });
 
         return {
           id: feature.id,

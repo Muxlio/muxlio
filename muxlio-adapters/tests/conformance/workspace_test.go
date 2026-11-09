@@ -24,7 +24,7 @@ func TestAgentSnapshotWorkspaces(t *testing.T) {
 		"agent/codex":  {[]string{"--json", "--skip-git-repo-check"}, "--add-dir"},
 		"agent/claude": {[]string{"--print", "--verbose"}, "--add-dir"},
 		"agent/cursor": {[]string{"--print", "--trust"}, "--add-dir"},
-		"agent/gemini": {[]string{"--skip-trust"}, "--include-directories"},
+		"agent/antigravity": {[]string{"--dangerously-skip-permissions"}, "--add-dir"},
 		"agent/kiro":   {[]string{"--no-interactive", "--trust-workspace", "--trust-all-tools"}, ""},
 	}
 	for _, fixture := range bundledAdapters {

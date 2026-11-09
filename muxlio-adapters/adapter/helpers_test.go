@@ -61,10 +61,17 @@ func TestParseTokenUsageHandlesCursorMetadataCamelCase(t *testing.T) {
 	}
 }
 
-func TestParseTokenUsageHandlesGeminiMetadataCamelCase(t *testing.T) {
+func TestParseTokenUsageHandlesAntigravityUsage(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"input_tokens":7171,"output_tokens":95,"thinking_tokens":90,"cache_read_tokens":40,"total_tokens":7266}`))
+	if got == nil || got.Input != 7171 || got.Output != 95 || got.Cached != 40 {
+		t.Fatalf("Antigravity usage = %+v", got)
+	}
+}
+
+func TestParseTokenUsageHandlesProviderMetadataCamelCase(t *testing.T) {
 	got := ParseTokenUsage(json.RawMessage(`{"promptTokenCount":100,"candidatesTokenCount":40,"cachedContentTokenCount":12}`))
 	if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
-		t.Fatalf("gemini metadata usage = %+v", got)
+		t.Fatalf("provider metadata usage = %+v", got)
 	}
 }
 

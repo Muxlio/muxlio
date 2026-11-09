@@ -33,10 +33,10 @@ func TestBundledExecutorCapabilitiesIncludeShippedAgents(t *testing.T) {
 	required := []string{
 		"agent/a2a",
 		"agent/acp",
+		"agent/antigravity",
 		"agent/claude",
 		"agent/codex",
 		"agent/cursor",
-		"agent/gemini",
 		"agent/kiro",
 		"command",
 	}

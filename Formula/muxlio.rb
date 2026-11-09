@@ -20,7 +20,7 @@ class Muxlio < Formula
     end
 
     adapters = libexec/"muxlio/adapters"
-    %w[agent-claude agent-codex agent-cursor agent-gemini agent-kiro command].each do |adapter|
+    %w[agent-antigravity agent-claude agent-codex agent-cursor agent-kiro command].each do |adapter|
       cd "muxlio-adapters" do
         system "go", "build", "-trimpath", "-o", adapters/adapter, "./cmd/#{adapter}"
       end

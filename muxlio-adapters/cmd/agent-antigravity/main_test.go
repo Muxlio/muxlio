@@ -97,10 +97,10 @@ func TestBuildPromptDeclaresOutputs(t *testing.T) {
 	}
 }
 
-func TestAgentGeminiAdapterCLIError(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterCLIError(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"AuthError\",\"message\":\"auth failed\"}}'\n" +
 		"echo 'provider error' >&2\n" +
@@ -110,13 +110,13 @@ func TestAgentGeminiAdapterCLIError(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -131,18 +131,18 @@ func TestAgentGeminiAdapterCLIError(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini:") {
+	if resp.Error == "" || !strings.Contains(resp.Error, "agent-antigravity:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
-	if _, err := os.Stat(filepath.Join(workDir, "gemini-stream.jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(workDir, "agy-stream.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("adapter should not write a CLI stream diagnostic file, stat error = %v", err)
 	}
 }
 
-func TestAgentGeminiAdapterGeminiResultErrorStatus(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterAntigravityResultErrorStatus(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"QuotaError\",\"message\":\"quota exceeded\"}}'\n" +
 		"exit 0\n"
@@ -151,13 +151,13 @@ func TestAgentGeminiAdapterGeminiResultErrorStatus(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -170,15 +170,15 @@ func TestAgentGeminiAdapterGeminiResultErrorStatus(t *testing.T) {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
 	if !strings.Contains(resp.Error, "quota exceeded") {
-		t.Fatalf("expected Gemini result error in response, got %q", resp.Error)
+		t.Fatalf("expected Antigravity result error in response, got %q", resp.Error)
 	}
 }
 
-func TestAgentGeminiAdapterCollectsOutputs(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterCollectsOutputs(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
 	outFile := filepath.Join(workDir, "notes.md")
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		"echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}'\n" +
 		"echo '{\"type\":\"result\",\"result\":\"done\"}'\n" +
@@ -188,7 +188,7 @@ func TestAgentGeminiAdapterCollectsOutputs(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "write notes",
 		"workDir":   workDir,
 		"nodeId":    "n1",
@@ -197,7 +197,7 @@ func TestAgentGeminiAdapterCollectsOutputs(t *testing.T) {
 		},
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.Output()
 	if err != nil {
@@ -223,14 +223,52 @@ func TestAgentGeminiAdapterCollectsOutputs(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiAdapterReportsUsageFromResultStats verifies the adapter
-// maps provider-reported token counts from the terminal result event's
-// "stats" object (the documented Gemini CLI stream-json contract) into the
-// shared attempt-level usage record on a successful run.
-func TestAgentGeminiAdapterReportsUsageFromResultStats(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"init","conversation_id":"c1"}'` + "\n" +
+		`echo '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"hello from agy"}}'` + "\n" +
+		`echo '{"event":"result","result":{"status":"SUCCESS","response":"hello from agy","usage":{"input_tokens":12,"output_tokens":3}}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Outputs map[string]any      `json:"outputs"`
+		Error   string              `json:"error"`
+		Usage   *adapter.TokenUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	text, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok || text["data"] != "hello from agy" {
+		t.Fatalf("text output = %v", resp.Outputs["_text"])
+	}
+	if resp.Usage == nil || resp.Usage.Input != 12 || resp.Usage.Output != 3 {
+		t.Fatalf("usage = %+v", resp.Usage)
+	}
+}
+
+// TestAgentAntigravityAdapterReportsUsageFromResultStats verifies the adapter
+// maps provider-reported token counts from the terminal result event's
+// "stats" object into the shared attempt-level usage record on a successful run.
+func TestAgentAntigravityAdapterReportsUsageFromResultStats(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"cached":30,"input":70}}'` + "\n"
@@ -239,13 +277,13 @@ func TestAgentGeminiAdapterReportsUsageFromResultStats(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.Output()
 	if err != nil {
@@ -269,30 +307,29 @@ func TestAgentGeminiAdapterReportsUsageFromResultStats(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiAdapterReportsUsageFromUsageEvent verifies the adapter
+// TestAgentAntigravityAdapterReportsUsageFromUsageEvent verifies the adapter
 // captures usage from a dedicated "usage" event whose provider-reported
-// counts use camelCase field names at the top level of the event object,
-// matching the Gemini CLI's internal AgentEvent format.
-func TestAgentGeminiAdapterReportsUsageFromUsageEvent(t *testing.T) {
-	bin := buildAgentGemini(t)
+// counts use camelCase field names at the top level of the event object.
+func TestAgentAntigravityAdapterReportsUsageFromUsageEvent(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
-		`echo '{"type":"usage","model":"gemini-2.5-pro","inputTokens":200,"outputTokens":80,"cachedTokens":15}'` + "\n" +
+		`echo '{"type":"usage","model":"antigravity-pro","inputTokens":200,"outputTokens":80,"cachedTokens":15}'` + "\n" +
 		`echo '{"type":"result","status":"success","result":"done"}'` + "\n"
 	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.Output()
 	if err != nil {
@@ -316,14 +353,14 @@ func TestAgentGeminiAdapterReportsUsageFromUsageEvent(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiAdapterPreservesUsageOnFailure verifies that a terminal
+// TestAgentAntigravityAdapterPreservesUsageOnFailure verifies that a terminal
 // result event which reports both an error and usage keeps the real token
 // counts in the failure response, so failed attempts are not recorded as
 // unavailable when the provider returned usage.
-func TestAgentGeminiAdapterPreservesUsageOnFailure(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterPreservesUsageOnFailure(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","status":"error","error":{"type":"QuotaError","message":"quota exceeded"},"stats":{"input_tokens":7,"output_tokens":3,"cached_content_token_count":2}}'` + "\n" +
 		"echo 'provider error' >&2\n" +
@@ -333,13 +370,13 @@ func TestAgentGeminiAdapterPreservesUsageOnFailure(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -355,7 +392,7 @@ func TestAgentGeminiAdapterPreservesUsageOnFailure(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Error == "" || !strings.Contains(resp.Error, "agent-gemini:") {
+	if resp.Error == "" || !strings.Contains(resp.Error, "agent-antigravity:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
 	if resp.Usage == nil {
@@ -366,13 +403,13 @@ func TestAgentGeminiAdapterPreservesUsageOnFailure(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiAdapterUsageAbsentWhenNotReported verifies the adapter
+// TestAgentAntigravityAdapterUsageAbsentWhenNotReported verifies the adapter
 // does not estimate or synthesize usage when the provider does not report it
 // — the usage field stays absent (nil) rather than being reported as zero.
-func TestAgentGeminiAdapterUsageAbsentWhenNotReported(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterUsageAbsentWhenNotReported(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"result","status":"success","result":"done"}'` + "\n"
@@ -381,13 +418,13 @@ func TestAgentGeminiAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.Output()
 	if err != nil {
@@ -403,13 +440,13 @@ func TestAgentGeminiAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	}
 }
 
-// TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported verifies that
+// TestAgentAntigravityAdapterUsageAbsentOnFailureWhenNotReported verifies that
 // a failed run which never reported usage omits the usage field entirely
 // rather than synthesising a zero-valued record.
-func TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAgentAntigravityAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()
-	fakeCLI := filepath.Join(t.TempDir(), "gemini")
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","status":"error","error":{"type":"AuthError","message":"auth failed"}}'` + "\n" +
 		"exit 1\n"
@@ -418,13 +455,13 @@ func TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"workspace": workDir,
-		"executor":  "agent/gemini",
+		"executor":  "agent/antigravity",
 		"task":      "do nothing",
 		"workDir":   workDir,
 		"nodeId":    "n1",
 	})
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "GEMINI_CLI="+fakeCLI)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -439,12 +476,12 @@ func TestAgentGeminiAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T) {
 	}
 }
 
-func TestGeminiUsesConfiguredModelUnlessOverridden(t *testing.T) {
-	bin := buildAgentGemini(t)
+func TestAntigravityUsesConfiguredModelUnlessOverridden(t *testing.T) {
+	bin := buildAgentAntigravity(t)
 	for _, model := range []string{"", "fixture-model"} {
 		t.Run("model="+model, func(t *testing.T) {
 			workspace := t.TempDir()
-			cli := filepath.Join(t.TempDir(), "gemini")
+			cli := filepath.Join(t.TempDir(), "agy")
 			script := `#!/bin/sh
 found=false
 previous=''
@@ -462,10 +499,10 @@ echo '{"type":"result","status":"success","result":"done"}'
 				t.Fatal(err)
 			}
 			params, _ := json.Marshal(map[string]string{"model": model})
-			req := adapter.Request{Executor: "agent/gemini", Workspace: workspace, WorkDir: workspace, Params: params, Task: "do nothing"}
+			req := adapter.Request{Executor: "agent/antigravity", Workspace: workspace, WorkDir: workspace, Params: params, Task: "do nothing"}
 			input, _ := json.Marshal(req)
 			cmd := exec.Command(bin)
-			cmd.Env = []string{"PATH=/bin:/usr/bin", "HOME=" + workspace, "GEMINI_CLI=" + cli, "EXPECTED_MODEL=" + model}
+			cmd.Env = []string{"PATH=/bin:/usr/bin", "HOME=" + workspace, "ANTIGRAVITY_CLI=" + cli, "EXPECTED_MODEL=" + model}
 			cmd.Stdin = strings.NewReader(string(input))
 			raw, err := cmd.Output()
 			if err != nil {
@@ -479,9 +516,9 @@ echo '{"type":"result","status":"success","result":"done"}'
 	}
 }
 
-func buildAgentGemini(t *testing.T) string {
+func buildAgentAntigravity(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "agent-gemini")
+	bin := filepath.Join(t.TempDir(), "agent-antigravity")
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -490,7 +527,7 @@ func buildAgentGemini(t *testing.T) string {
 	cmd.Dir = wd
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go build agent-gemini: %v\n%s", err, out)
+		t.Fatalf("go build agent-antigravity: %v\n%s", err, out)
 	}
 	return bin
 }

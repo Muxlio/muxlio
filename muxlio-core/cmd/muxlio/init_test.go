@@ -8,7 +8,30 @@ import (
 	"testing"
 )
 
-func TestInitAgentGeminiInstallsWorkspaceSkill(t *testing.T) {
+func TestInitAgentAntigravityInstallsWorkspaceSkill(t *testing.T) {
+	root := t.TempDir()
+	ws := t.TempDir()
+	skillsDir := filepath.Join(root, "skills")
+	if err := os.MkdirAll(skillsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte("# muxlio test skill\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdInit([]string{"--data-dir", root, "--workspace", ws, "--agent", "antigravity", "--json"}, "", true); code != 0 {
+		t.Fatalf("cmdInit returned %d", code)
+	}
+	skillPath := filepath.Join(ws, ".agents", "skills", "muxlio", "SKILL.md")
+	raw, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read antigravity skill: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("antigravity workspace skill is empty")
+	}
+}
+
+func TestInitRejectsUnknownAgent(t *testing.T) {
 	root := t.TempDir()
 	ws := t.TempDir()
 	// Init loads skill content from the runtime tree when the repo checkout is
@@ -20,16 +43,8 @@ func TestInitAgentGeminiInstallsWorkspaceSkill(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte("# muxlio test skill\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdInit([]string{"--data-dir", root, "--workspace", ws, "--agent", "gemini", "--json"}, "", true); code != 0 {
-		t.Fatalf("cmdInit returned %d", code)
-	}
-	skillPath := filepath.Join(ws, ".gemini", "skills", "muxlio", "SKILL.md")
-	raw, err := os.ReadFile(skillPath)
-	if err != nil {
-		t.Fatalf("read gemini skill: %v", err)
-	}
-	if len(raw) == 0 {
-		t.Fatal("gemini workspace skill is empty")
+	if code := cmdInit([]string{"--data-dir", root, "--workspace", ws, "--agent", "unknown", "--json"}, "", true); code == 0 {
+		t.Fatal("expected unknown agent to be rejected")
 	}
 }
 

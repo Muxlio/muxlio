@@ -15,19 +15,14 @@ build_tmp="$destination/bin/.muxlio-build"
 (cd "$repo/muxlio-core" && go build -trimpath -ldflags "-X main.CurrentVersion=$version" -o "$build_tmp" ./cmd/muxlio)
 mv "$build_tmp" "$destination/bin/muxlio"
 (cd "$repo/muxlio-core" && go build -trimpath -ldflags "-X main.Version=$version" -o "$destination/bin/muxlio-mcp" ./cmd/muxlio-mcp)
-for adapter in agent-a2a agent-acp agent-claude agent-codex agent-cursor agent-gemini agent-kiro command; do
+for adapter in agent-a2a agent-acp agent-antigravity agent-claude agent-codex agent-cursor agent-kiro command; do
   (cd "$repo/muxlio-adapters" && go build -trimpath -o "$destination/libexec/muxlio/adapters/$adapter" "./cmd/$adapter")
   if [ -f "$repo/muxlio-adapters/cmd/$adapter/adapter.json" ]; then
     cp "$repo/muxlio-adapters/cmd/$adapter/adapter.json" "$destination/libexec/muxlio/adapters/$adapter.json"
   fi
 done
-# Migrate operator settings before retiring an adapter name. Conflicting
-# settings stop the upgrade while the legacy binary is still available.
-go run "$repo/scripts/migrate-executor.go" "$destination/config.json" agent/gemini-cli agent/gemini
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"
-# Remove the retired Gemini adapter name when upgrading an existing prefix.
-rm -f -- "$destination/libexec/muxlio/adapters/agent-gemini-cli" "$destination/libexec/muxlio/adapters/agent-gemini-cli.json"
 cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/server.mjs" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favicon.ico" \
   "$repo/muxlio-ui/app.css" "$repo/muxlio-ui/workspace.css" "$repo/muxlio-ui/operations.css" "$repo/muxlio-ui/workspace.js" \
   "$destination/share/muxlio/ui/"

@@ -1,12 +1,12 @@
-// agent-gemini adapter for muxlio.
+// agent-antigravity adapter for muxlio.
 //
-// Reads an adapter.Request from stdin, invokes the Google Gemini CLI
+// Reads an adapter.Request from stdin, invokes the Google Antigravity CLI (agy)
 // non-interactively, collects declared output files and the final assistant
 // text, and writes an adapter.Response to stdout.
 //
 // Params (via node.params JSON):
 //
-//	model   string   Optional Gemini model override; otherwise use the CLI's configured default
+//	model   string   Optional Antigravity model override; otherwise use the CLI's configured default
 //
 // Special input port:
 //
@@ -16,10 +16,10 @@
 //
 //	"_text"    the final assistant text from the session
 //
-// gemini CLI resolution order:
-//  1. $GEMINI_CLI env var
-//  2. ~/.local/bin/gemini
-//  3. gemini on PATH
+// agy CLI resolution order:
+//  1. $ANTIGRAVITY_CLI or $AGY_CLI env var
+//  2. ~/.local/bin/agy or ~/.local/bin/antigravity
+//  3. agy or antigravity on PATH
 package main
 
 import (
@@ -36,17 +36,17 @@ import (
 
 func main() {
 	if adapter.ProbeRequested(os.Args) {
-		checks := adapter.RunnerChecks(resolveGeminiCLI(), "--version")
-		checks[2] = geminiAuthenticationCheck()
+		checks := adapter.RunnerChecks(resolveAntigravityCLI(), "--version")
+		checks[2] = antigravityAuthenticationCheck()
 		adapter.RunProbe(checks...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
 	if err != nil {
-		adapter.Fail("agent-gemini: %v", err)
+		adapter.Fail("agent-antigravity: %v", err)
 	}
-	if err := adapter.CheckRunnerEnvironment(req, resolveGeminiCLI()); err != nil {
-		adapter.Fail("agent-gemini: %v", err)
+	if err := adapter.CheckRunnerEnvironment(req, resolveAntigravityCLI()); err != nil {
+		adapter.Fail("agent-antigravity: %v", err)
 	}
 
 	model := ""
@@ -59,30 +59,30 @@ func main() {
 		}
 	}
 
-	geminiCLI := resolveGeminiCLI()
+	antigravityCLI := resolveAntigravityCLI()
 	workDir, err := adapter.WorkingDir(req)
 	if err != nil {
-		adapter.Fail("agent-gemini: finding working directory: %v", err)
+		adapter.Fail("agent-antigravity: finding working directory: %v", err)
 	}
 
 	prompt := buildPrompt(req)
 
-	// --prompt         non-interactive scripted mode
-	// --output-format  stream-json for machine-readable streaming events
-	// --model          selects the model
-	// --approval-mode  allow tool execution without per-tool confirmation
+	// --prompt                        non-interactive scripted mode
+	// --output-format                 stream-json for machine-readable streaming events
+	// --dangerously-skip-permissions  allow tool execution without per-tool confirmation
+	// --add-dir                       grant access to per-attempt scratch directory for outputs
+	// --model                         selects the model
 	args := []string{
 		"--prompt", prompt,
 		"--output-format", "stream-json",
-		"--approval-mode", "yolo",
-		"--skip-trust",
-		"--include-directories", req.WorkDir,
+		"--dangerously-skip-permissions",
+		"--add-dir", req.WorkDir,
 	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
 
-	cmd := exec.Command(geminiCLI, args...)
+	cmd := exec.Command(antigravityCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
 	cmd.Stderr = stderr
@@ -90,10 +90,10 @@ func main() {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		adapter.Fail("agent-gemini: stdout pipe: %v", err)
+		adapter.Fail("agent-antigravity: stdout pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		adapter.Fail("agent-gemini: starting gemini CLI: %v\n(hint: install the Google Gemini CLI or set $GEMINI_CLI)", err)
+		adapter.Fail("agent-antigravity: starting antigravity CLI: %v\n(hint: install the Google Antigravity CLI (agy) or set $ANTIGRAVITY_CLI)", err)
 	}
 
 	// Parse the newline-delimited stream-json event stream.
@@ -113,7 +113,10 @@ func main() {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		typeRaw, ok := ev["type"]
+		typeRaw, ok := ev["event"]
+		if !ok {
+			typeRaw, ok = ev["type"] // tolerate older adapter test fixtures
+		}
 		if !ok {
 			continue
 		}
@@ -129,7 +132,7 @@ func main() {
 					adapter.CaptureAgentText(&textChunks, chunk)
 				}
 			}
-		// Gemini CLI stream-json event types mirror the Claude Code / Cursor pattern:
+		// Antigravity CLI stream-json event types mirror the Claude Code / Cursor pattern:
 		//   assistant  — carries message.content (array of content blocks or string)
 		//   text       — carries data.content (incremental text delta)
 		//   result     — terminal event, carries result/text/is_error/error
@@ -150,14 +153,15 @@ func main() {
 			}
 		case "result":
 			completed = true
-			// Gemini CLI's stream-json result event carries aggregated token
-			// usage. The field name depends on the CLI version: newer builds
-			// emit a top-level "usage" object, while the documented headless
-			// stream-json contract places aggregated counts under "stats"
-			// (e.g. {"input_tokens":120,"output_tokens":18}). Try both so the
-			// adapter captures usage regardless of the wire format; a nil
-			// result (no recognised keys) preserves any usage reported by an
-			// earlier "usage" event rather than overwriting it with absence.
+			result := ev["result"]
+			if len(result) > 0 {
+				var payload map[string]json.RawMessage
+				if json.Unmarshal(result, &payload) == nil {
+					for k, v := range payload {
+						ev[k] = v
+					}
+				}
+			}
 			if u := adapter.ParseTokenUsage(ev["usage"]); u != nil {
 				usage = u
 			} else if u := adapter.ParseTokenUsage(ev["stats"]); u != nil {
@@ -175,12 +179,10 @@ func main() {
 					}
 				}
 			}
-			// Gemini's stream-json result event reports failures with status/error,
-			// unlike Claude/Cursor which use is_error/subtype. Preserve both forms.
 			var status string
 			_ = json.Unmarshal(ev["status"], &status)
 			if strings.EqualFold(status, "error") {
-				runErr = appendFailure(runErr, "gemini reported a terminal error")
+				runErr = appendFailure(runErr, "antigravity reported a terminal error")
 			}
 			if raw, ok := ev["error"]; ok && len(raw) > 0 && string(raw) != "null" {
 				var detail struct {
@@ -195,11 +197,10 @@ func main() {
 					}
 				}
 			}
-			// Detect terminal errors used by other stream-json CLI schemas.
 			var isErr bool
 			_ = json.Unmarshal(ev["is_error"], &isErr)
 			if isErr {
-				runErr = appendFailure(runErr, "gemini reported a terminal error")
+				runErr = appendFailure(runErr, "antigravity reported a terminal error")
 			}
 			for _, key := range []string{"subtype"} {
 				if raw, ok := ev[key]; ok && len(raw) > 0 && string(raw) != "null" {
@@ -217,41 +218,41 @@ func main() {
 					break
 				}
 			}
+		case "step_update":
+			var update struct {
+				TextDelta string          `json:"text_delta"`
+				Usage     json.RawMessage `json:"usage"`
+			}
+			if json.Unmarshal(ev["step_update"], &update) == nil {
+				if update.TextDelta != "" {
+					adapter.CaptureAgentText(&textChunks, update.TextDelta)
+				}
+				if u := adapter.ParseTokenUsage(update.Usage); u != nil {
+					usage = u
+				}
+			}
 		case "usage":
-			// Newer Gemini CLI builds emit a dedicated "usage" event whose
-			// provider-reported counts live at the top level of the event
-			// object (camelCase: inputTokens, outputTokens, cachedTokens, or
-			// the raw usageMetadata names promptTokenCount, etc.). Parse the
-			// whole line so ParseTokenUsage sees those top-level keys. The
-			// last "usage" event holds the final total, so overwrite each
-			// time a non-nil value is parsed.
 			if u := adapter.ParseTokenUsage(json.RawMessage(line)); u != nil {
 				usage = u
 			}
 		case "completion", "done":
 			completed = true
-			// No extra action needed; process exit determines success.
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		_ = cmd.Process.Kill()
-		runErr = appendFailure(runErr, fmt.Sprintf("reading gemini stdout: %v", err))
+		runErr = appendFailure(runErr, fmt.Sprintf("reading antigravity stdout: %v", err))
 	}
 
 	if err := cmd.Wait(); err != nil {
-		runErr = appendFailure(runErr, fmt.Sprintf("gemini process error: %v", err))
+		runErr = appendFailure(runErr, fmt.Sprintf("antigravity process error: %v", err))
 	}
 	adapter.AppendLogChunk("stderr", stderr.String())
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
 	if runErr != "" {
-		// Preserve provider-reported usage from the terminal result/usage
-		// event so failed attempts that still returned usage are recorded,
-		// not estimated as zero/unavailable. usage is nil when no usage
-		// event was parsed, which omitempty reports as absent (matching
-		// Fail).
-		adapter.FailWithUsage(usage, "agent-gemini: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithUsage(usage, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
 	}
 
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
@@ -265,7 +266,7 @@ func main() {
 	errMsg := ""
 	if len(missing) > 0 {
 		errMsg = withStderr(
-			fmt.Sprintf("gemini did not write expected output files: %s", strings.Join(missing, ", ")),
+			fmt.Sprintf("antigravity did not write expected output files: %s", strings.Join(missing, ", ")),
 			stderr.String(),
 		)
 	}
@@ -313,22 +314,27 @@ func buildPrompt(req *adapter.Request) string {
 	return adapter.ComposePrompt(req)
 }
 
-// resolveGeminiCLI returns the path to the Gemini CLI executable.
-func resolveGeminiCLI() string {
-	if v := os.Getenv("GEMINI_CLI"); v != "" {
+// resolveAntigravityCLI returns the path to the Antigravity CLI executable.
+func resolveAntigravityCLI() string {
+	if v := os.Getenv("ANTIGRAVITY_CLI"); v != "" {
+		return v
+	}
+	if v := os.Getenv("AGY_CLI"); v != "" {
 		return v
 	}
 	home, _ := os.UserHomeDir()
 	candidates := []string{
-		filepath.Join(home, ".local", "bin", "gemini"),
-		"gemini",
+		filepath.Join(home, ".local", "bin", "agy"),
+		filepath.Join(home, ".local", "bin", "antigravity"),
+		"agy",
+		"antigravity",
 	}
 	for _, c := range candidates {
 		if path, err := exec.LookPath(c); err == nil {
 			return path
 		}
 	}
-	return filepath.Join(home, ".local", "bin", "gemini")
+	return filepath.Join(home, ".local", "bin", "agy")
 }
 
 // tailBuffer retains only the most recent limit bytes written to it.

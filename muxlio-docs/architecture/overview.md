@@ -98,7 +98,7 @@ iterations.
 
 - **M0** Plan IR, Go interpreter, TS SDK + compiler, testing harness, conformance tests
 - **M1** SQLite durable state, crash recovery, timers/signals, local artifacts
-- **M2** Real agent adapters (claude, codex, cursor, gemini, kiro, go-test), CLI/JSON diagnostics, SKILL.md authoring loop
+- **M2** Real agent adapters (antigravity, claude, codex, cursor, kiro, go-test), CLI/JSON diagnostics, SKILL.md authoring loop
 - **M3** Observability UI (run search, graph, events, logs, attempts, live output, signal form, retry)
 - **M4** Remote workers, durable remote artifacts, coordinator bearer-token auth, MCP server
 - **M5** Isolation modes, advanced composition — in progress

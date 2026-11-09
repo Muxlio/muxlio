@@ -32,7 +32,7 @@ const { plan } = await defineAsyncWorkflow({
   async run(ctx, input) {
     return ctx.map('items', input.items, async (item, itemCtx) => {
       const gather = await itemCtx.execute('gather', {
-        executor: 'agent/gemini',
+        executor: 'agent/antigravity',
         task: 'Investigate the topic.',
         outputs: { findings: { mime: 'text/markdown', path: 'findings.md' } },
       });

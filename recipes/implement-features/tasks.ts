@@ -2,7 +2,9 @@ import { task, artifact } from '@muxlio/sdk';
 
 export const implement = task({
   executor: 'agent/kiro',
-  fallbackExecutors: ['agent/codex'],
+  fallbackExecutors: ['agent/cursor'],
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: `Implement the requested feature in the current workspace, following
 existing conventions and patterns. Add or update focused tests where relevant.
 Run any applicable checks and make sure they pass.
@@ -13,10 +15,11 @@ delegate to another agent. Do not commit or push; the recipe creates local commi
   outputs: { notes: artifact.markdown('notes.md') },
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
-
 export const review = task({
-  executor: 'agent/kiro',
+  executor: 'agent/antigravity',
   fallbackExecutors: ['agent/codex'],
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: `Independently review the feature implementation. Read the implementation
 notes from the previous step (provided in context). Check correctness,
 regressions, security, and test coverage. Fix any issues directly in the
@@ -30,7 +33,9 @@ creates local commits.`,
 
 export const fix = task({
   executor: 'agent/kiro',
-  fallbackExecutors: ['agent/codex'],
+  fallbackExecutors: ['agent/cursor'],
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: `Read the verification failure report provided in context. Determine root
 causes and fix them in the workspace without weakening or disabling any checks.
 Keep changes scoped to the feature. Write fix.md to the scratch directory
@@ -42,6 +47,8 @@ SKILL.md. Do not commit or push; the recipe creates local commits.`,
 
 export const verify = task({
   executor: 'command',
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: 'Run the repository build and test suites; return nonzero if any suite fails.',
   params: {
     program: 'node',
@@ -58,6 +65,8 @@ process.exitCode=failed?1:0;`],
 
 export const commit = task({
   executor: 'command',
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: 'Create the verified feature commit.',
   params: {
     program: 'git',
@@ -70,12 +79,17 @@ export const commit = task({
 
 export const stageChanges = task({
   executor: 'command',
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: 'Stage workspace changes for the verified feature commit.',
   params: { program: 'git', args: ['add', '-A'], cwd: '.', onNonZero: 'fail' },
 });
 
 export const requireCleanWorkspace = task({
   executor: 'command',
+  workspaceMode: 'shared-write',
+  concurrencyKeys: ['implement-features-workspace'],
   task: 'Require a clean workspace before beginning a feature.',
   params: { program: 'git', args: ['status', '--porcelain'], cwd: '.', onNonZero: 'fail', failOnOutput: true },
 });
+

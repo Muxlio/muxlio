@@ -66,7 +66,7 @@
         {
           "id": "gather",
           "kind": "execute",
-          "executor": "agent/gemini",
+          "executor": "agent/antigravity",
           "task": "Investigate the topic.",
           "inputs": {},
           "outputs": {
@@ -117,8 +117,8 @@
     }
   },
   "requiredExecutors": [
-    "agent/gemini",
+    "agent/antigravity",
     "agent/claude"
   ],
-  "digest": "sha256:a72330ca3ab6db249db3ea45bd06aa962599e5b3d7e1f3e93d48e67c798ddb95"
+  "digest": "sha256:d9caf33f1eb270c5f0baddc4608d7948a1797dfa1025462c6183bb909c835f03"
 }

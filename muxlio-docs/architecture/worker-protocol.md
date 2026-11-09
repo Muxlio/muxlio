@@ -292,7 +292,7 @@ muxlio worker start \
   --worker-id worker-a \
   --workspace /path/to/workspace \
   --worker-token-file ~/.muxlio/worker-token \
-  --capabilities agent/claude,agent/codex,agent/cursor,agent/gemini,agent/kiro,command \
+  --capabilities agent/antigravity,agent/claude,agent/codex,agent/cursor,agent/kiro,command \
   --capacity 2 \
   --adapters ~/.muxlio/adapters
 ```
@@ -375,7 +375,7 @@ alone does not advertise an enforced isolation backend.
 `muxlio worker status [--adapters DIR] [--data-dir DIR] [--json]` runs local
 readiness checks. `muxlio doctor` includes the same checks. Registration probes
 are a startup snapshot; restarting the worker refreshes them after login or
-configuration changes. Gemini's probe currently verifies configured API-key
+configuration changes. Antigravity's probe currently verifies configured API-key
 availability; interactive login is unverified and fails closed. Readiness does
 not guarantee a credential remains valid or that a remote service is reachable.
 

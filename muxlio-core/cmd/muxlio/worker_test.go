@@ -18,7 +18,7 @@ func TestAdapterNameToCapability(t *testing.T) {
 		{"agent-claude", "agent/claude"},
 		{"agent-codex", "agent/codex"},
 		{"agent-cursor", "agent/cursor"},
-		{"agent-gemini", "agent/gemini"},
+		{"agent-antigravity", "agent/antigravity"},
 		{"command", "command"},
 		{"agent-kiro", "agent/kiro"},
 		{"standalone", "standalone"}, // no dash → unchanged

@@ -23,13 +23,12 @@ func TestReleaseUpgradeRemovesObsoleteAdapter(t *testing.T) {
 	obsolete := filepath.Join(adapters, "command-go-test")
 	custom := filepath.Join(adapters, "custom-tool")
 	config := filepath.Join(prefix, "config.json")
-	legacy := filepath.Join(adapters, "agent-gemini-cli")
-	for _, path := range []string{obsolete, custom, legacy, legacy + ".json"} {
+	for _, path := range []string{obsolete, custom} {
 		if err := os.WriteFile(path, []byte("preserve existing content\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(config, []byte(`{"capabilities":["agent/gemini-cli","custom/tool"],"executors":{"agent/gemini-cli":{"allow":false}},"token":"preserve-existing-token","custom":{"keep":true}}`), 0600); err != nil {
+	if err := os.WriteFile(config, []byte(`{"capabilities":["agent/antigravity","custom/tool"],"executors":{"agent/antigravity":{"allow":false}},"token":"preserve-existing-token","custom":{"keep":true}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	// Exercise the real installer with a stub compiler: this test concerns
@@ -75,11 +74,6 @@ exit 1
 				t.Fatalf("installer changed %s: %q, %v", path, content, err)
 			}
 		}
-		for _, path := range []string{legacy, legacy + ".json"} {
-			if _, err := os.Lstat(path); !os.IsNotExist(err) {
-				t.Fatalf("legacy Gemini artifact still installed: %s %v", path, err)
-			}
-		}
 		raw, err := os.ReadFile(config)
 		if err != nil {
 			t.Fatal(err)
@@ -95,10 +89,10 @@ exit 1
 		if err := json.Unmarshal(raw, &migrated); err != nil {
 			t.Fatal(err)
 		}
-		if len(migrated.Capabilities) != 2 || migrated.Capabilities[0] != "agent/gemini" || migrated.Capabilities[1] != "custom/tool" || migrated.Token != "preserve-existing-token" || !migrated.Custom["keep"] {
+		if len(migrated.Capabilities) != 2 || migrated.Capabilities[0] != "agent/antigravity" || migrated.Capabilities[1] != "custom/tool" || migrated.Token != "preserve-existing-token" || !migrated.Custom["keep"] {
 			t.Fatalf("upgrade lost configuration: %+v", migrated)
 		}
-		if permission, ok := migrated.Executors["agent/gemini"]; !ok || permission.Allow {
+		if permission, ok := migrated.Executors["agent/antigravity"]; !ok || permission.Allow {
 			t.Fatal("upgrade lost executor deny permission")
 		}
 		capabilities, err := discoverCapabilities(adapters)
