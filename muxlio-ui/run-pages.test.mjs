@@ -52,16 +52,20 @@ assert.ok(calls.some(path=>path.includes('/outputs?offset=50')),'artifact pages 
 assert.equal(renders.at(-1).graph.activations.length,10000,'paging history never truncates the graph');
 
 const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
-const opsContext=vm.createContext({document:{addEventListener(){},getElementById:panel},esc:s=>String(s).replaceAll('<','&lt;'),fmtTokens:String,fmtDuration:String,date:String,stateClass:String});
+const opsContext=vm.createContext({document:{addEventListener(){},getElementById:panel},esc:s=>String(s).replaceAll('<','&lt;'),fmtTokens:String,fmtDuration:String,date:String,stateClass:String,activationData:[{id:'activation',nodeId:'find-and-fix'}]});
 vm.runInContext(operations,opsContext);
 opsContext.renderRunOperations({id:'large-run',planDigest:'sha256:pinned',limits:{maxAttempts:100},overview:{attempts:20,heldAttempts:1,attemptStates:{detached:2,awaiting_reconciliation:1},usage:{tokens:{observed:0,unknown:2},costUsd:{estimated:1}}}});
 assert.match(panel('runAttention').innerHTML,/need reconciliation/);
 assert.match(panel('runAttention').innerHTML,/2 remote operations/);
 assert.match(panel('runContract').innerHTML,/<dt>Observed<\/dt><dd>0<\/dd>/,'reported zero stays distinct from missing usage');
 assert.match(panel('runContract').innerHTML,/<dt>Estimated<\/dt><dd>\$1\.0000<\/dd>/);
-assert.match(panel('runContract').innerHTML,/sha256:pinned/);
+assert.match(panel('runContract').innerHTML,/Totals can be incomplete/);
+assert.match(panel('runSettings').innerHTML,/sha256:pinned/);
 assert.doesNotMatch(opsContext.attemptMetadataMarkup([{executor:'<script>',id:'attempt',state:'detached',operationRef:{id:'<img>'}}]),/<script>|<img>/);
 const row=opsContext.attemptRowMarkup({id:'attempt',executor:'generic',state:'succeeded',usage:{input:0},executionDurationMs:0});
 assert.match(row,/<dt>Input<\/dt><dd>0<\/dd>/);
 assert.match(row,/<dt>Output<\/dt><dd>Unavailable<\/dd>/);
+const heldRow=opsContext.attemptRowMarkup({id:'attempt',activationId:'activation',state:'cancelled',awaitReconciliationReason:'Outcome unknown'});
+assert.match(heldRow,/<strong>find-and-fix<\/strong>/);
+assert.match(heldRow,/Needs reconciliation/);
 console.log('bounded run pages, stable refresh, and operational accounting checks passed');

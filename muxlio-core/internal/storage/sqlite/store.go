@@ -1230,7 +1230,11 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 	} else if !details {
 		query = strings.Replace(query, "result_json", "json_remove(result_json,'$.outputs','$.validationFailure.actual','$.validationFailure.expected')", 1)
 	}
-	query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+	if limit >= 0 {
+		query += ` ORDER BY (await_reconciliation_reason<>'') DESC,activation_id,retry_number,id LIMIT ? OFFSET ?`
+	} else {
+		query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+	}
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

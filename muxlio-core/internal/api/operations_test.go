@@ -37,10 +37,13 @@ func TestOperationalAPIsPersistEvidenceAndProtectScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, id := range []string{"held", "detached"} {
-		st := []string{"awaiting_reconciliation", "detached"}[i]
+		st := []string{"cancelled", "detached"}[i]
 		if err = s.RecordExecutionAttempt(state.ExecutionAttempt{ID: id, RunID: "run", ActivationID: "activation", State: st, StartedAt: time.Now(), AwaitReconciliationReason: map[bool]string{true: "Verify external outcome", false: ""}[i == 0]}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err = s.RecordExecutionAttempt(state.ExecutionAttempt{ID: "ordinary", RunID: "run", ActivationID: "aaa", State: "succeeded", StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
 	}
 	router := WithAuth(NewRouterWithArtifacts(s, nil, local), "admin", "worker", AccessGrant{Token: "scoped", RunID: "run", Permissions: []string{"read", "control"}})
 	request := func(method, path string, body any, token string, status int) []byte {
@@ -76,6 +79,10 @@ func TestOperationalAPIsPersistEvidenceAndProtectScopes(t *testing.T) {
 	}
 	if ops.Counts["queue"] != 1 {
 		t.Fatal("queued work is missing from operational counts")
+	}
+	var attempts struct{ Attempts []state.ExecutionAttempt }
+	if err = json.Unmarshal(request("GET", "/v1/runs/run/attempts?limit=1&details=false", nil, "admin", 200), &attempts); err != nil || len(attempts.Attempts) != 1 || attempts.Attempts[0].ID != "held" {
+		t.Fatalf("held attempt must appear on the first page: %+v %v", attempts, err)
 	}
 	const deliverySecret = "do-not-render-delivery-payload"
 	for i, id := range []string{"old", "middle", "latest"} {

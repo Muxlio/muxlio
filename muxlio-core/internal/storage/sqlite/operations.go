@@ -102,7 +102,7 @@ const operationalFacts = `WITH facts AS (
  SELECT 'queue' kind,d.run_id,d.activation_id,d.attempt_id,'queued' state,coalesce(nullif(q.reason,''),'Waiting for a compatible worker') reason,'' stamp
  FROM dispatches d JOIN runs r ON r.id=d.run_id LEFT JOIN admission_queue q ON q.activation_id=d.activation_id
  WHERE d.state='pending' AND r.state NOT IN ('succeeded','failed','cancelled')
- UNION ALL SELECT 'attention',run_id,activation_id,id,state,coalesce(await_reconciliation_reason,''),started_at FROM execution_attempts WHERE state='awaiting_reconciliation'
+ UNION ALL SELECT 'attention',run_id,activation_id,id,state,coalesce(await_reconciliation_reason,''),started_at FROM execution_attempts WHERE await_reconciliation_reason<>''
  UNION ALL SELECT 'detached',run_id,activation_id,id,state,'Remote operation is running without a worker slot',started_at FROM execution_attempts WHERE state='detached'
  UNION ALL SELECT 'recovery',run_id,subject_id,'',type,coalesce(json_extract(payload_json,'$.reason'),''),timestamp FROM events WHERE type IN ('run.recovered','run.recovery_blocked','lease.expired','execution.resolved','execution.reconciled','assignment.expired','worker.lost')
  UNION ALL SELECT 'runs',id,'','',state,error,updated_at FROM runs WHERE state IN ('created','running','waiting','paused','failed')

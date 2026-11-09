@@ -254,7 +254,7 @@ async function loadArtifactRevisions(run,target='runRevisionsPanel',pageIndex=nu
 const baseOperationalTab=showWbTab;
 showWbTab=function(tab){baseOperationalTab(tab);if(tab==='artifacts'&&current)loadArtifactRevisions(current)};
 const baseAttemptRowMarkup=attemptRowMarkup;
-attemptRowMarkup=function(attempt){const markup=baseAttemptRowMarkup(attempt);return attempt.state==='awaiting_reconciliation'?markup.replace('</article>',`<div class="attempt-outcome">${hubButton('resolve','Resolve uncertain execution',`data-run="${esc(attempt.runId||current)}" data-attempt="${esc(attempt.id)}"`)}</div></article>`):markup};
+attemptRowMarkup=function(attempt){const markup=baseAttemptRowMarkup(attempt);return attempt.awaitReconciliationReason?markup.replace('</article>',`<div class="attempt-outcome">${hubButton('resolve','Resolve uncertain execution',`data-run="${esc(attempt.runId||current)}" data-attempt="${esc(attempt.id)}"`)}</div></article>`):markup};
 
 document.addEventListener('change',event=>{
  if(event.target.id==='operationKind'){hubState.operationOffset=0;loadOpsDashboard()}

@@ -60,6 +60,11 @@ func (s *Memory) ListActivationPage(id string, offset, limit int, details bool) 
 }
 func (s *Memory) ListExecutionAttemptPage(id, act string, offset, limit int, details bool) ([]ExecutionAttempt, error) {
 	items, err := s.ListExecutionAttempts(id, act)
+	if limit >= 0 {
+		sort.SliceStable(items, func(i, j int) bool {
+			return items[i].AwaitReconciliationReason != "" && items[j].AwaitReconciliationReason == ""
+		})
+	}
 	items = pageSlice(items, offset, limit)
 	if !details {
 		for i := range items {

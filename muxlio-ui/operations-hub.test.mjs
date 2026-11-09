@@ -6,9 +6,15 @@ import test from 'node:test';
 const format=readFileSync(new URL('./js/format.js',import.meta.url),'utf8');
 const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
 const hub=readFileSync(new URL('./js/operations-hub.js',import.meta.url),'utf8');
-const helpers=vm.runInNewContext(`${format}\n${operations}\n${hub};({evidenceDocument,reportRows,evidenceMarkup,hubUsage,hubClientPage,comparisonMarkup})`,{
+const helpers=vm.runInNewContext(`${format}\n${operations}\n${hub};({evidenceDocument,reportRows,evidenceMarkup,hubUsage,hubClientPage,comparisonMarkup,attemptRowMarkup})`,{
  document:{addEventListener(){},getElementById(){return null}},loadWorkers(){},showWbTab(){},
- esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),stateClass:()=>'',current:null
+ esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),stateClass:()=>'',date:String,current:null
+});
+
+test('cancelled attempts with unresolved effects can be resolved',()=>{
+ const row=helpers.attemptRowMarkup({id:'attempt',runId:'run',state:'cancelled',awaitReconciliationReason:'External outcome unknown'});
+ assert.match(row,/Resolve uncertain execution/);
+ assert.doesNotMatch(helpers.attemptRowMarkup({id:'done',state:'cancelled'}),/Resolve uncertain execution/);
 });
 
 test('evidence import recognizes actual evaluation and raw benchmark bundles',()=>{
