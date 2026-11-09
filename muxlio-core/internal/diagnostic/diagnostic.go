@@ -90,7 +90,8 @@ func rawDiagnosticDepth(d Diagnostic, depth int) any {
 
 func (d Diagnostic) MarshalJSON() ([]byte, error) { return JSON(rawDiagnostic(d)) }
 
-var credential = regexp.MustCompile(`(?i)((?:(?:bearer|basic)\s+)|(?:[a-z0-9_]*(?:token|password|secret|api[_-]?key)[a-z0-9_]*["']?\s*[:=]\s*))(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,"';&}]+)`)
+var bearerCredential = regexp.MustCompile(`(?i)((?:bearer|basic)\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,"';&}]+)`)
+var keyedCredential = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|password|secret|api[_-]?key)[a-z0-9_]*["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,;\n"&}]+)`)
 var urlCredential = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 var token = regexp.MustCompile(`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]+)\b`)
 
@@ -108,7 +109,8 @@ func Redact(s string) string {
 	for _, v := range secrets {
 		s = strings.ReplaceAll(s, v, "[REDACTED]")
 	}
-	s = credential.ReplaceAllString(s, "${1}[REDACTED]")
+	s = keyedCredential.ReplaceAllString(s, "${1}[REDACTED]")
+	s = bearerCredential.ReplaceAllString(s, "${1}[REDACTED]")
 	s = token.ReplaceAllString(s, "[REDACTED]")
 	s = urlCredential.ReplaceAllString(s, "${1}[REDACTED]@")
 	if len(s) > MaxString {

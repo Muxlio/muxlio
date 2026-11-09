@@ -88,6 +88,15 @@ func TestKnownSecretsBeforeTruncationAndInKeys(t *testing.T) {
 	}
 }
 
+func TestRedactUnquotedMultiWordCredentials(t *testing.T) {
+	got := Redact(`password=first secret second`)
+	for _, secret := range []string{"first", "second"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("unquoted credential leaked %q: %s", secret, got)
+		}
+	}
+}
+
 func TestRedactQuotedCredentials(t *testing.T) {
 	for _, input := range []string{`password="first secret second"`, `password="first \"secret\" second"`, `token='first secret second'`, `HTTPS://user:private-value@example.com/path`} {
 		got := Redact(input)
