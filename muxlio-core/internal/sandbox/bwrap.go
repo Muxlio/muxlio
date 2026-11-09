@@ -21,6 +21,13 @@ func (bubblewrap) Launch(c Config, _ Policy) (Launch, error) {
 	if err != nil {
 		return Launch{}, fmt.Errorf("required bwrap isolation unavailable: %w", err)
 	}
+	mounts := []string{c.AdapterDir, c.Scratch}
+	if c.Workspace != "" && (c.WorkspaceMode == "read-only" || c.WorkspaceMode == "shared-write") {
+		mounts = append(mounts, c.Workspace)
+	}
+	if err := validateMountDirs(mounts...); err != nil {
+		return Launch{}, err
+	}
 	args := []string{"--die-with-parent", "--new-session", "--unshare-all", "--cap-drop", "ALL"}
 	// Bind only system executables/libraries. Never bind the host root, home,
 	// /run (credential sockets), or /etc (host configuration and secrets).

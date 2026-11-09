@@ -16,6 +16,26 @@ import (
 // the VM kernel; this does not claim a dedicated microVM per agent.
 type container struct{ desktop bool }
 
+func removeContainer(engine string, prefix []string, name string, env []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	args := append(append([]string{}, prefix...), "rm", "--force", name)
+	cleanup := exec.CommandContext(ctx, engine, args...)
+	cleanup.Env = env
+	out, err := cleanup.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "no such container") || strings.Contains(lower, "no container with id or name") {
+		return nil
+	}
+	if len(out) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return err
+}
+
 func (d container) Capabilities(c Config) Capabilities {
 	name, process := "oci", "linux-namespaces"
 	if d.desktop {
@@ -35,17 +55,8 @@ func (d container) Launch(c Config, p Policy) (Launch, error) {
 	}
 	// -v uses ':' as syntax and silently creates missing sources. Reject
 	// ambiguous paths and require actual directories before asking the daemon.
-	for _, path := range []string{c.AdapterDir, c.Scratch, c.Workspace} {
-		if path == "" {
-			continue
-		}
-		if !filepath.IsAbs(path) || strings.ContainsAny(path, ":,\x00\n") {
-			return Launch{}, fmt.Errorf("invalid sandbox mount path")
-		}
-		info, err := os.Stat(path)
-		if err != nil || !info.IsDir() {
-			return Launch{}, fmt.Errorf("sandbox mount source is not a directory: %s", path)
-		}
+	if err := validateMountDirs(c.AdapterDir, c.Scratch, c.Workspace); err != nil {
+		return Launch{}, err
 	}
 	engine, err := exec.LookPath("docker")
 	if !d.desktop {
@@ -98,11 +109,6 @@ func (d container) Launch(c Config, p Policy) (Launch, error) {
 	cmd := exec.Command(engine, args...)
 	cmd.Env = os.Environ()
 	return Launch{Command: cmd, Cleanup: func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		args := append(append([]string{}, prefix...), "rm", "--force", name)
-		cleanup := exec.CommandContext(ctx, engine, args...)
-		cleanup.Env = cmd.Env
-		return cleanup.Run()
+		return removeContainer(engine, prefix, name, cmd.Env)
 	}}, nil
 }

@@ -1,11 +1,13 @@
 package sandbox
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBoundaryDescriptions(t *testing.T) {
@@ -160,5 +162,172 @@ func TestNativeAdapterArguments(t *testing.T) {
 	launch, err := Start(Config{Script: "/adapter", Arguments: []string{"--muxlio-probe"}}, Policy{Mode: "trusted-native"})
 	if err != nil || strings.Join(launch.Command.Args, " ") != "/adapter --muxlio-probe" {
 		t.Fatalf("probe arguments: %+v %v", launch, err)
+	}
+}
+
+func TestValidateMountDirsRejectsAmbiguousPaths(t *testing.T) {
+	abs := t.TempDir()
+	for name, path := range map[string]string{
+		"relative":  "relative/path",
+		"colon":     abs + ":suffix",
+		"comma":     abs + ",extra",
+		"newline":   abs + "\n",
+		"non-dir":   filepath.Join(abs, "missing"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateMountDirs(path); err == nil {
+				t.Fatal("accepted unsafe mount path")
+			}
+		})
+	}
+	if err := validateMountDirs(""); err != nil {
+		t.Fatal("empty mount path should be ignored")
+	}
+}
+
+func TestOCIRejectsInvalidMountPaths(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("requires Linux or macOS")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	scratch := t.TempDir()
+	for _, rel := range []string{"adapter", "scratch", "workspace"} {
+		c := Config{AdapterDir: t.TempDir(), Scratch: scratch, Script: filepath.Join(t.TempDir(), "adapter")}
+		switch rel {
+		case "adapter":
+			c.AdapterDir = "relative/adapters"
+		case "scratch":
+			c.Scratch = "relative/scratch"
+		case "workspace":
+			c.Workspace, c.WorkspaceMode = "relative/workspace", "read-only"
+		}
+		p := Policy{Mode: "required", Runtime: "oci", Image: "approved-image"}
+		if runtime.GOOS == "darwin" {
+			p.Runtime, p.Enabled = "docker-vm", true
+		}
+		if _, err := Start(c, p); err == nil || !strings.Contains(err.Error(), "invalid sandbox mount path") {
+			t.Fatalf("%s: want invalid mount path, got %v", rel, err)
+		}
+	}
+}
+
+func TestBubblewrapRejectsRelativeMountPaths(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap is Linux-only")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "bwrap"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	_, err := Start(Config{AdapterDir: t.TempDir(), Scratch: "relative/scratch", Script: filepath.Join(t.TempDir(), "adapter")}, Policy{Mode: "required", Runtime: "bwrap"})
+	if err == nil {
+		t.Fatal("bwrap accepted relative scratch mount")
+	}
+	if !strings.Contains(err.Error(), "invalid sandbox mount path") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestContainerCleanupAfterSuccessfulRun(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("requires Linux or macOS")
+	}
+	bin := t.TempDir()
+	script := `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    run) exit 0 ;;
+    rm) echo "No such container: muxlio-test" >&2; exit 1 ;;
+  esac
+done
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	c := Config{AdapterDir: t.TempDir(), Scratch: t.TempDir(), Script: "/adapter"}
+	p := Policy{Mode: "required", Runtime: "oci", Image: "approved-image"}
+	if runtime.GOOS == "darwin" {
+		p.Runtime, p.Enabled = "docker-vm", true
+	}
+	launch, err := Start(c, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.Command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.Cleanup(); err != nil {
+		t.Fatalf("cleanup after auto-removed container failed: %v", err)
+	}
+}
+
+func TestContainerCleanupAfterRunInterrupted(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("requires Linux or macOS")
+	}
+	bin := t.TempDir()
+	record := filepath.Join(t.TempDir(), "state")
+	script := `#!/bin/sh
+RECORD="$RECORD"
+mode=""
+for arg in "$@"; do
+  case "$arg" in
+    run|rm) mode=$arg ;;
+  esac
+done
+case "$mode" in
+  run)
+    echo running > "$RECORD"
+    trap 'rm -f "$RECORD"' EXIT
+    sleep 60
+    ;;
+  rm)
+    printf '%s\n' "$@" >> "$RECORD.cleanup"
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("RECORD", record)
+	c := Config{AdapterDir: t.TempDir(), Scratch: t.TempDir(), Script: "/adapter", Arguments: []string{"--muxlio-probe"}}
+	p := Policy{Mode: "required", Runtime: "oci", Image: "approved-image"}
+	if runtime.GOOS == "darwin" {
+		p.Runtime, p.Enabled = "docker-vm", true
+	}
+	launch, err := Start(c, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	cmd := launch.Command
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	<-ctx.Done()
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	<-done
+	if launch.Cleanup == nil {
+		t.Fatal("missing cleanup")
+	}
+	if err := launch.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(record + ".cleanup")
+	if err != nil || !strings.Contains(string(data), "rm\n--force\nmuxlio-") {
+		t.Fatalf("interrupted cleanup missing: %q %v", data, err)
 	}
 }
