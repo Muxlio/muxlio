@@ -229,7 +229,7 @@ func (e *Engine) Retry(runID string) error {
 	return nil
 }
 
-// Run executes the run to completion. For M0 this is synchronous.
+// Run executes the run to completion synchronously.
 func (e *Engine) Run(runID string) (runErr error) {
 	run, err := e.store.GetRun(runID)
 	if err != nil {
@@ -1494,9 +1494,9 @@ func (e *Engine) executeJoin(runID string, node *Node, scope []string, ctx *Eval
 // a durable deadline then blocks until it fires. For a signal it blocks until
 // a signal with the matching name is delivered to the run.
 //
-// In the synchronous M1 interpreter, "blocking" means polling the store
+// In the synchronous interpreter, "blocking" means polling the store
 // directly (timers: sleep until due; signals: check store after delivery).
-// A proper async scheduler replaces this with an event-driven loop in M2+.
+// An asynchronous scheduler could replace this with an event-driven loop.
 func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
 	actID := activationID(runID, scope, node.ID)
 

@@ -2,44 +2,44 @@
 
 Use this guide to author and run workflows with this repository's TypeScript SDK and Go CLI. A workflow definition compiles into Plan IR JSON; the Go coordinator interprets that plan. JavaScript runs at compile time only.
 
-## Muxlio-assisted feature work
+## Build the user's workflow
 
-For feature work, use `recipes/implement-features/workflow.ts`. Edit its input JSON with the requested features and relevant context paths, then check and fake-run before a real run. The recipe works in the current clean git workspace and maps features serially (`concurrency: 1`): implement → review → command verification/fix loop → command commit. Agent tasks currently use Kiro with Codex fallback. The recipe ends with verified local commits; review and push them manually from the worker when ready.
+Start from the user's task, inputs, required outputs, and success criteria.
+Inspect available workers and executor contracts before choosing agent or tool
+steps. Make dependencies explicit, bound maps and loops, and choose retry and
+effect policies appropriate to each operation. Show the user the workflow when
+requested, validate it before starting, and inspect the run's outputs and errors.
 
-Before a real run, configure `executors.command.allow: true` in the worker's
-`config.json` and restart the service after changing configuration. Agent steps
-should not commit or push; the recipe owns local commits. Git remote credentials
-and an upstream branch are not required for the recipe. Commits remain on the
-worker until pushed manually. Existing submitted runs keep their compiled plans;
-compile and submit the updated recipe for runs without a push step.
+With MCP, construct Plan IR and call `check_plan`, then `start_run`. Use
+`get_run`, `get_activations`, `get_attempts`, `get_logs`, and `read_artifact` to
+follow execution. The runtime does not contain a feature-specific submission
+command. The installed service and MCP tools do not require a Muxlio source
+checkout. The worker needs the target files, authorized executors, and tools.
 
-Typical repository commands:
+For setup, `muxlio init --agent <assistant> --allow-command` prepares the workspace,
+credentials, assistant instructions, and MCP settings. The flag explicitly permits
+command execution. `muxlio service start` starts the coordinator, worker, UI, and
+configured MCP listener. Client connection settings are separate from the listener.
 
-```sh
-npm run build
-go -C muxlio-core build ./...
-muxlio check recipes/implement-features/workflow.ts
-muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json --json --fake-config recipes/implement-features/fake.json
-```
+Developers can author TypeScript workflows using the SDK and compile them with
+`muxlio build`. Compilation runs source code locally and requires Node, tsx, and
+its dependencies. An existing JSON plan skips that compilation step. Use
+`muxlio test` with fake outputs to check dataflow before real execution.
 
-`npm run build` builds the SDK, compiler, and testing workspaces. Run `npm run setup` once to build and install the full release prefix under `~/.muxlio` and copy the CLI to `.bin/muxlio`. Use `npm run release` to refresh binaries in an existing runtime without re-running `muxlio init`. `check` compiles the TypeScript workflow and validates the resulting Plan IR. With no `--adapters`, `run` uses the fake executor. Fake outputs are keyed by node ID or executor name:
+The repository's `recipes/implement-features` workflow is an example used to
+develop Muxlio. It implements, reviews, checks, repairs, and commits features
+serially. Its commands target Muxlio's build and tests; adapt those commands and
+executor choices when building a workflow for another project. It is not a
+special runtime API. Shared-write tasks with concurrency keys must run through
+coordinator admission rather than direct `--adapters` execution.
 
-```json
-{
-  "byNode": {
-    "implement": { "outputs": { "notes": { "digest": "sha256:fake", "mime": "text/markdown" } } },
-    "review": { "outputs": { "review": { "digest": "sha256:fake", "mime": "text/markdown" } } }
-  }
-}
-```
-
-Supply it with `--fake-config path/to/fake.json`. With no fake config, the fake executor generates placeholder artifact references for declared output ports. `--json` returns run state, output, and events as JSON. A failed run returns a nonzero status; with JSON enabled it also emits the failed state and error. Inspect validation errors and run events/output, correct the workflow or inputs, then recompile, check, and fake-run. For real execution, build the adapters and pass `--adapters adapters --data-dir ~/.muxlio`; the adapter directory must contain executable scripts named by replacing `/` in each executor with `-` (for example, `agent/codex` maps to `adapters/agent-codex`).
-
-Verification outputs are evidence to act on, not just summaries. Read `passed` alongside `notes.md`, `build-output.txt`, run state, and events. If verification fails, use the reported failure and relevant files to repair the implementation, rerun the relevant build/tests, then rerun the workflow checks. A successful fake run alone does not verify real adapter behavior or code correctness.
+Read verification outputs and errors before retrying. A successful fake run does
+not prove that real agent output is correct. Preserve completed work, inspect
+uncertain external effects, and use the workflow's bounded recovery policy.
 
 ## CLI reference
 
-The current CLI commands are:
+Useful CLI commands include:
 
 ```text
 muxlio init [--data-dir dir] [--workspace dir] [--agent name] [--starter]
@@ -82,7 +82,7 @@ Set `MUXLIO_API_URL` to change the coordinator URL (default `http://127.0.0.1:76
 
 The UI provides run search and state filters, input/output/error and timing details, the materialized activation/scope graph, logs, execution attempt history, a cursor-paginated event timeline, active worker assignments, a **Live** page for streaming attempt logs from running activations, retry controls for failed runs, and a send-signal form for waiting runs.
 
-The adapter executors included here are `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`. The generic command adapter accepts `params.program`, `params.args`, and `params.cwd`; for Go tests, use `program: 'go'`, `args: ['test', './...', '-timeout', '120s']`, and `cwd: 'muxlio-core'`. Command tasks automatically infer `passed`, `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`; use `onNonZero: 'return'` to handle failures in the workflow. Other executor strings can be used by custom adapters or fake configuration, but do not name a bundled real adapter.
+The adapter executors included here are `agent/a2a`, `agent/acp`, `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`. The generic command adapter accepts `params.program`, `params.args`, and `params.cwd`; for Go tests, use `program: 'go'`, `args: ['test', './...', '-timeout', '120s']`, and `cwd: 'muxlio-core'`. Command tasks automatically infer `passed`, `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`; use `onNonZero: 'return'` to handle failures in the workflow. Other executor strings can be used by custom adapters or fake configuration, but do not name a bundled real adapter.
 
 ## Testing with fake executors
 

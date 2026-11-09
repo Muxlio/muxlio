@@ -10,81 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
-
-func TestSubmitFeaturesConstructsPlan(t *testing.T) {
-	input := json.RawMessage(`{"features":[{"id":"one","feature":"Add a checklist","context":"Docs only"},{"id":"two","feature":"Clarify usage"}],"branch":"main"}`)
-	called := false
-	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/runs" || r.Header.Get("Authorization") != "Bearer configured-token" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
-		}
-		var request struct {
-			Plan  plan.Plan       `json:"plan"`
-			Input json.RawMessage `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		if request.Plan.Name != "implement-features" || request.Plan.Digest == "" {
-			t.Errorf("wrong feature plan: %+v", request.Plan)
-		}
-		if errs := plan.Validate(&request.Plan); len(errs) != 0 {
-			t.Errorf("invalid plan: %v", errs)
-		}
-		var gotInput, wantInput any
-		_ = json.Unmarshal(request.Input, &gotInput)
-		_ = json.Unmarshal(input, &wantInput)
-		got, _ := json.Marshal(gotInput)
-		want, _ := json.Marshal(wantInput)
-		if string(got) != string(want) {
-			t.Errorf("input changed: %s", got)
-		}
-		commit := false
-		for _, graph := range request.Plan.Subgraphs {
-			for _, node := range graph.Nodes {
-				if node.ID == "push" {
-					t.Error("feature plan must not push")
-				}
-				if node.ID == "commit" {
-					commit = true
-				}
-			}
-		}
-		if !commit {
-			t.Error("feature plan must commit")
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"runId":"run_features","state":"running"}`))
-	}))
-	s := &server{api: newAPIClient(ts.URL, "configured-token")}
-	result := s.dispatchTool("submit_features", input)
-	if result.IsError || !called || !strings.Contains(result.Content[0].Text, "run_features") {
-		t.Fatalf("submission: %+v", result)
-	}
-}
-
-func TestSubmitFeaturesRejectsInvalidInputBeforeSubmission(t *testing.T) {
-	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("invalid feature input was submitted")
-	}))
-	s := &server{api: newAPIClient(ts.URL)}
-	tooMany := `{"features":[` + strings.TrimSuffix(strings.Repeat(`{"id":"one","feature":"test"},`, 21), ",") + `]}`
-	for _, input := range []string{
-		`{}`, `null`, `{"features":[]}`, `{"features":"bad"}`, `{"features":[{"id":"one"}]}`,
-		`{"features":[{"id":" ","feature":"test"}]}`, `{"features":[{"id":"one","feature":" "}]}`,
-		`{"features":[{"id":"one","feature":"a"},{"id":"one","feature":"b"}]}`, tooMany,
-		`{"features":[{"id":"one","feature":"test","unknown":true}]}`,
-		`{"features":[{"id":"one","feature":"test"}],"unknown":true}`,
-	} {
-		if result := s.dispatchTool("submit_features", json.RawMessage(input)); !result.IsError {
-			t.Errorf("accepted %s: %+v", input, result)
-		}
-	}
-}
 
 func TestRetryAndAttemptInspection(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusConflict} {

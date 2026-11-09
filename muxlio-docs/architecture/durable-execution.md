@@ -86,8 +86,13 @@ Structural evaluation and traversal are replayable from immutable values and
 checkpoints. Executor calls and outbox deliveries can cause external effects.
 Delivery is at least once, not exactly once: a lost acknowledgement can leave an
 effect completed outside the coordinator without a local success checkpoint.
-Automatic retries currently require the empty/default or `retryable` effect policy;
-`idempotency-key`, `reconcile`, `manual`, and `none` do not grant automatic replay.
+Automatic retries use the node retry budget and effect policy. `pure` permits
+replay; keyed effects require adapter-side deduplication; reconcilable effects
+require affirmative lookup evidence before redispatch after uncertainty. The
+legacy empty/default and `retryable` policies permit retries of reported failures,
+but do not prove safe replay after worker loss. `manual`/`nonretryable` hold uncertain
+effects for operator resolution. See the [effect policies](worker-protocol.md#retry-safety-and-uncertain-external-effects)
+for supported legacy aliases and recovery behavior.
 An explicit retry is an operator decision about incomplete work. Providers own
 protocols, authentication, usage normalization and limitations; no provider name
 changes these state or identity rules. Missing usage remains unavailable, distinct

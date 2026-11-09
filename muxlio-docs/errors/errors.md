@@ -1,6 +1,8 @@
 # Muxlio Error Codes
 
-All errors have a stable machine-readable code, severity, phase, and actionable fix.
+Plan diagnostics carry stable machine-readable codes, severity, phase, and repair
+guidance. HTTP error envelopes contain code and message, with fix and details
+when available.
 
 ## API Error Envelope
 
@@ -118,7 +120,7 @@ when `POST /v1/runs` receives a structurally invalid plan.
 ### MUXLIO_UNKNOWN_WAIT_TYPE
 - **Phase:** plan
 - **Cause:** A `wait` node has an unrecognized `waitFor` value.
-- **Fix:** Set `waitFor` to `"timer"` or `"signal"`, or leave empty for a pass-through wait.
+- **Fix:** Set `waitFor` to `"timer"`, `"signal"`, or `"input"`, or leave empty for a pass-through wait.
 
 ### MUXLIO_MISSING_TIMER_SECONDS
 - **Phase:** plan
@@ -127,7 +129,7 @@ when `POST /v1/runs` receives a structurally invalid plan.
 
 ### MUXLIO_MISSING_SIGNAL_NAME
 - **Phase:** plan
-- **Cause:** A `wait` node has `waitFor=signal` but no `signalName`.
+- **Cause:** A `wait` node has `waitFor=signal` or `waitFor=input` but no `signalName`.
 - **Fix:** Set `signalName` to the signal the node should wait for.
 
 ### MUXLIO_UNKNOWN_NODE_KIND
@@ -138,7 +140,8 @@ when `POST /v1/runs` receives a structurally invalid plan.
 ### MUXLIO_BAD_REF
 - **Phase:** plan
 - **Cause:** An input binding or output references a node that doesn't exist in the subgraph.
-- **Fix:** Ensure bindings reference earlier nodes in the same subgraph.
+- **Fix:** Reference an existing visible node and declared output port. Forward references
+  are allowed when they form an acyclic dependency graph.
 
 ### MUXLIO_BAD_RETRY
 - **Phase:** plan

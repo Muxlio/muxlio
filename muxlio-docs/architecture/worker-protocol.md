@@ -258,12 +258,13 @@ heartbeat I/O is blocked.
 ## Errors
 
 Errors use a stable machine-readable `code` and human-readable `message`.
-Implemented HTTP cases include `unauthorized` (401), `worker_identity_mismatch`
-(403), `invalid_json`, `invalid_registration`, `unsupported_protocol`,
-`invalid_completion` (400), `not_found` (404), `method_not_allowed` (405),
-`worker_protocol_unavailable` (503), and `coordinator_error` (500). An
+Implemented HTTP cases include `MUXLIO_UNAUTHORIZED` (401),
+`MUXLIO_INVALID_JSON`, `MUXLIO_INVALID_REGISTRATION`,
+`MUXLIO_UNSUPPORTED_PROTOCOL`, `MUXLIO_INVALID_COMPLETION` (400),
+`MUXLIO_NOT_FOUND` (404), `MUXLIO_METHOD_NOT_ALLOWED` (405),
+`MUXLIO_WORKER_PROTOCOL_UNAVAILABLE` (503), and `MUXLIO_COORDINATOR_ERROR` (500). An
 assignment that violates the response envelope is treated as an internal
-`coordinator_error` (500). Clients should branch on `code`, not message text.
+`MUXLIO_COORDINATOR_ERROR` (500). Clients should branch on `code`, not message text.
 Backends may provide a typed protocol error with an HTTP status and code;
 invalid backend status or empty error fields are converted to the generic 500
 response. Internal errors are deliberately returned without implementation
@@ -275,10 +276,10 @@ Capability matching is based on advertised names and versions, runtime
 attributes, capacity, and placement labels. A capability is an executor
 contract, not a business category. Registration does not itself grant access
 to arbitrary secrets; secret references and authorization are assignment
-policy concerns. Artifact transfer, streamed logs, cancellation, and
-reconciliation details will be versioned extensions. Until those transports
-are configured, workers should only process the JSON execution request they
-receive and return portable JSON/artifact references.
+policy concerns. Artifact transfer, fenced live progress, cancellation,
+and reconciliation use the shared contracts described here and in the
+[artifact storage guide](artifact-storage.md). Provider protocols and output
+normalization remain inside adapters.
 
 ## Running a worker
 
@@ -375,8 +376,8 @@ alone does not advertise an enforced isolation backend.
 `muxlio worker status [--adapters DIR] [--data-dir DIR] [--json]` runs local
 readiness checks. `muxlio doctor` includes the same checks. Registration probes
 are a startup snapshot; restarting the worker refreshes them after login or
-configuration changes. Antigravity's probe currently verifies configured API-key
-availability; interactive login is unverified and fails closed. Readiness does
+configuration changes. Antigravity's probe checks API-key availability or saved CLI login credentials;
+credential validity is checked when the task runs. Readiness does
 not guarantee a credential remains valid or that a remote service is reachable.
 
 ## Retry safety and uncertain external effects

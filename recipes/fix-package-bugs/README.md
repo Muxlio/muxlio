@@ -4,14 +4,15 @@ Audit and repair Muxlio one package at a time. Like `implement-features`, this
 recipe creates local commits for manual inspection and push. It does not launch
 itself when compiled or tested.
 
-From the repository root, after `npm run build`:
+Start a coordinator and a worker authorized for this checkout. This recipe uses
+shared-write concurrency keys and must be submitted to the coordinator. From the
+repository root, after `npm run build`:
 
 ```sh
 node recipes/fix-package-bugs/discover.mjs --out recipes/fix-package-bugs/input.json
 muxlio check recipes/fix-package-bugs/workflow.ts
 muxlio run recipes/fix-package-bugs/workflow.ts recipes/fix-package-bugs/input.json \
-  --adapters ~/.muxlio/libexec/muxlio/adapters \
-  --workspace "$PWD" --data-dir ~/.muxlio --json
+  --server http://127.0.0.1:7600 --json
 ```
 
 Discovery uses `go list` to enumerate each Go package in both modules, then adds

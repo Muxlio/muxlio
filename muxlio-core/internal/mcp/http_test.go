@@ -164,7 +164,7 @@ func TestHTTPInvalidMessagesDoNotDispatch(t *testing.T) {
 		{"null", `null`, nil, http.StatusBadRequest, -32600},
 		{"bad protocol", `{"jsonrpc":"1.0","id":1,"method":"ping"}`, nil, http.StatusBadRequest, -32600},
 		{"null request ID", `{"jsonrpc":"2.0","id":null,"method":"ping"}`, nil, http.StatusBadRequest, -32600},
-		{"request as notification", `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"submit_features","arguments":{}}}`, nil, http.StatusBadRequest, -32600},
+		{"request as notification", `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"start_run","arguments":{}}}`, nil, http.StatusBadRequest, -32600},
 		{"trailing data", `{"jsonrpc":"2.0","id":1,"method":"ping"} {}`, nil, http.StatusBadRequest, -32700},
 		{"mixed request and response", `{"jsonrpc":"2.0","id":1,"method":"ping","result":{}}`, nil, http.StatusBadRequest, -32600},
 		{"unknown method", `{"jsonrpc":"2.0","id":1,"method":"unknown"}`, nil, http.StatusOK, -32601},

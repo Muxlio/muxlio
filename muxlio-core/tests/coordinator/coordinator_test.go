@@ -1,6 +1,6 @@
-// Package m1_test contains integration tests for M1 durable-coordinator features:
+// Package coordinator_test contains integration tests for durable-coordinator features:
 // timers, signals, chunked logs, retry policy, wait-node validation, and the HTTP API.
-package m1_test
+package coordinator_test
 
 import (
 	"encoding/json"

@@ -44,13 +44,13 @@ func TestNpmReleaseScriptBuildsRuntimePrefix(t *testing.T) {
 		}
 	}
 
-	readmePath := filepath.Join(repoRoot, "README.md")
+	readmePath := filepath.Join(repoRoot, "muxlio-docs", "architecture", "developer-reference.md")
 	readme, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
 	doc := string(readme)
 	if !strings.Contains(doc, "npm run release") {
-		t.Fatal("README missing npm run release")
+		t.Fatal("developer reference missing npm run release")
 	}
 }

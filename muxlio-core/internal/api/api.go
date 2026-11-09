@@ -1,4 +1,4 @@
-// Package api implements the Muxlio HTTP API for the M1 coordinator.
+// Package api implements the Muxlio HTTP API for the coordinator.
 //
 // Endpoints:
 //

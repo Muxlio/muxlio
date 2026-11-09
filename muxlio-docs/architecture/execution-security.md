@@ -132,11 +132,14 @@ must not have those powers. Set `accessGrants` in the coordinator configuration:
 
 Credential files are relative to the configuration directory or absolute. Keep
 them protected and deliver their values as bearer tokens over TLS outside trusted
-local networks. Grants load at server startup; restart to revoke or rotate them.
+local networks. Worker credentials and scoped grants reload on every API request; replacing token
+files or removing/revoking grants affects subsequent requests. Restart workers with
+new credentials after rotation. The administrator token is fixed at server startup.
 No scoped credential may list all runs, create runs or access another run.
 `read`, `control` (pause/resume/cancel/retry), `signals`, and `steer` are independent
-permissions. `steer` is reserved for session steering routes; it does not itself
-add a steering endpoint. Worker registration and protocol URLs must match the
+permissions. `steer` authorizes session input delivery at
+`/v1/runs/{runId}/sessions/{sessionId}/inputs`, subject to queue permissions and
+advertised adapter input capabilities. Worker registration and protocol URLs must match the
 grant's worker ID. Artifact permissions require an explicit digest allowlist;
 read permission cannot request a PUT transfer plan. Empty scopes grant nothing.
 Without UI serving, unauthenticated requests from remote addresses fail closed

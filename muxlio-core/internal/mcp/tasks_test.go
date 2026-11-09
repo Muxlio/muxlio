@@ -59,10 +59,7 @@ func taskParams(handle string) map[string]any {
 	return map[string]any{"taskId": handle, "_meta": taskMeta()}
 }
 func taskStartParams(name string) map[string]any {
-	args := any(map[string]any{"features": []any{map[string]any{"id": "f", "feature": "Implement"}}})
-	if name == "start_run" {
-		args = map[string]any{"plan": json.RawMessage(`{"irVersion":"1.0","name":"tasks","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"test"}],"output":{}}}}`), "input": map[string]any{}}
-	}
+	args := map[string]any{"plan": json.RawMessage(`{"irVersion":"1.0","name":"tasks","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"test"}],"output":{}}}}`), "input": map[string]any{}}
 	return map[string]any{"name": name, "arguments": args, "_meta": taskMeta()}
 }
 
@@ -76,7 +73,7 @@ func TestTasksDurableCreationAndLifecycle(t *testing.T) {
 	runner := &taskRunner{store: store}
 	upstream := newTestServer(t, api.WithAuth(api.NewRouter(store, runner), "admin", "worker"))
 	s := &server{api: newAPIClient(upstream.URL, "admin")}
-	for _, name := range []string{"start_run", "submit_features"} {
+	for _, name := range []string{"start_run"} {
 		created, rpcErr := taskRPC(t, s, "tools/call", taskStartParams(name))
 		if rpcErr != nil || created["resultType"] != "task" || created["status"] != "working" {
 			t.Fatalf("create: %v %v", created, rpcErr)
@@ -207,7 +204,7 @@ func TestTasksNegotiationAndLegacyFallback(t *testing.T) {
 	store := state.New()
 	upstream := newTestServer(t, api.WithAuth(api.NewRouter(store, &taskRunner{store: store}), "admin", "worker"))
 	s := &server{api: newAPIClient(upstream.URL, "admin")}
-	for _, name := range []string{"start_run", "submit_features"} {
+	for _, name := range []string{"start_run"} {
 		for _, mode := range []string{"legacy", "experimental", "modern-no-extension"} {
 			params := taskStartParams(name)
 			if mode == "modern-no-extension" {

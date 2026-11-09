@@ -1,4 +1,4 @@
-// Package conformance_test implements the M0 conformance tests for the
+// Package conformance_test implements the conformance tests for the
 // Muxlio Plan IR interpreter. These verify stable scope identity, output
 // reference resolution, branch/loop semantics, duplicate key rejection,
 // maxItems enforcement, and event generation — the dataflow invariants

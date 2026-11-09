@@ -11,17 +11,21 @@ Muxlio executes immutable workflow plans against durable state. Workflow
 authors choose what work to do; adapters perform effects; the coordinator
 knows only execution; the independently run UI observes it through the API.
 
-## M0 components
+## Components
 
 ### muxlio-core (Go)
 The execution engine. Contains:
 - **internal/plan/** — Plan IR types, expression evaluator, validator, interpreter
-- **internal/state/** — in-memory and SQLite state stores (runs, activations, events, signals, dispatches)
+- **internal/state/** and **internal/storage/** — state contracts and SQLite persistence (runs, activations, events, signals, dispatches)
 - **internal/workers/** — executor interface, script executor, fake executor
 - **internal/artifacts/** — content-addressed artifact store
 - **internal/coordinatorlog/** — structured lifecycle logging (redacts secrets)
 - **internal/api/** — HTTP coordinator API (Bearer-token auth on `/v1/*`)
-- **cmd/muxlio/** — CLI entry point, service supervisor, MCP server
+- **internal/sandbox/** — execution isolation backends and boundary checks
+- **internal/schedule/**, **internal/subscription/**, and **internal/trigger/** — durable schedules, outbound lifecycle subscriptions, and inbound webhook triggers
+- **internal/telemetry/** and **internal/diagnostic/** — OpenTelemetry integration and structured diagnostics
+- **cmd/muxlio/** — CLI entry point and service supervisor
+- **cmd/muxlio-mcp/** — standalone MCP server
 
 The coordinator exposes only the HTTP API. The standalone **muxlio-ui** package
 serves the observability page and reverse-proxies `/v1/*` and `/healthz` to a
@@ -36,17 +40,17 @@ and `defineWorkflow`.
 
 ### muxlio-compiler (TypeScript)
 The restricted async TypeScript frontend (Frontend A). Authors workflows
-using `async run(ctx, input)` syntax with `await ctx.execute(...)`. Uses a
-recording-based approach for M0; a full AST-analysis compiler is planned.
+using `async run(ctx, input)` syntax with `await ctx.execute(...)`. It records
+workflow operations at compile time to build the plan.
 
 ### muxlio-testing (TypeScript)
 Test harness with fake executors. `testWorkflow` runs a compiled plan
 against the Go CLI with canned outputs — no model tokens required.
 
-### muxlio-tests/conformance (Go)
-Conformance tests verifying stable scope identity, output reference
-resolution, branch/loop semantics, duplicate key rejection, maxItems
-enforcement, and event generation.
+### Go tests (`muxlio-core/tests`)
+Conformance, contract, coordinator, integration, and recovery tests cover stable
+scope identity, output reference resolution, branch/loop semantics, worker and
+adapter contracts, persistence, and event generation.
 
 ## Plan IR v1.0
 
@@ -93,12 +97,3 @@ to these outputs via `ValueRef { node, port }`. The interpreter processes
 nodes in topological order (derived from bindings). Map creates child
 scopes per item; branch selects one path; loop carries state across
 iterations.
-
-## Shipped capabilities
-
-- **M0** Plan IR, Go interpreter, TS SDK + compiler, testing harness, conformance tests
-- **M1** SQLite durable state, crash recovery, timers/signals, local artifacts
-- **M2** Real agent adapters (antigravity, claude, codex, cursor, kiro, go-test), CLI/JSON diagnostics, SKILL.md authoring loop
-- **M3** Observability UI (run search, graph, events, logs, attempts, live output, signal form, retry)
-- **M4** Remote workers, durable remote artifacts, coordinator bearer-token auth, MCP server
-- **M5** Isolation modes, advanced composition — in progress

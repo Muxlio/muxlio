@@ -3,7 +3,7 @@
 // Maps over Go packages in muxlio-core, analyzes each for test coverage,
 // branches on whether tests exist, and collects a report. This is a real
 // workflow that uses map (fan-out), branch (conditional), and execute
-// (per-package analysis) — the core M0 dataflow primitives.
+// (per-package analysis) — the core dataflow primitives.
 //
 // Compile: npx tsx examples/audit-coverage.workflow.ts
 // Run:     .bin/muxlio run examples/audit-coverage.plan.json examples/audit-coverage.input.json --json

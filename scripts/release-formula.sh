@@ -38,6 +38,9 @@ import sys
 path = Path(sys.argv[1])
 version, tag, sha = sys.argv[2:]
 source = path.read_text()
+if not re.search(r'^  url ', source, re.M):
+    source = source.replace('  head ', f'  url "https://github.com/Muxlio/muxlio/archive/refs/tags/{tag}.tar.gz"\n  version "{version}"\n  sha256 "{sha}"\n  head ', 1)
+
 source, url_count = re.subn(r'url "https://github\.com/Muxlio/muxlio/archive/refs/tags/[^" ]+\.tar\.gz"',
                             f'url "https://github.com/Muxlio/muxlio/archive/refs/tags/{tag}.tar.gz"', source, count=1)
 source, version_count = re.subn(r'version "[^"]+"', f'version "{version}"', source, count=1)

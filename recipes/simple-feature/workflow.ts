@@ -10,7 +10,7 @@
 //
 //   muxlio check recipes/simple-feature/workflow.ts
 //   muxlio build recipes/simple-feature/workflow.ts --out /tmp/simple-feature.plan.json
-//   muxlio submit --server yamini /tmp/simple-feature.plan.json recipes/simple-feature/input.json
+//   muxlio submit --server coordinator /tmp/simple-feature.plan.json recipes/simple-feature/input.json
 import { workflow, task, artifact } from '@muxlio/sdk';
 import { z } from 'zod';
 

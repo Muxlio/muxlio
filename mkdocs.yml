@@ -1,6 +1,6 @@
 site_name: Muxlio
 site_description: >-
-  A durable workflow execution engine that coordinates AI coding agents
+  A durable workflow execution engine that coordinates AI agents and tools
   through compiled, content-addressed plans.
 site_url: https://muxlio.github.io/muxlio/
 repo_url: https://github.com/Muxlio/muxlio
@@ -12,21 +12,14 @@ site_dir: site
 
 theme:
   name: material
+  logo: assets/logo.png
+  favicon: assets/logo.png
+  icon:
+    repo: fontawesome/brands/github
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
+    - scheme: slate
+      primary: teal
+      accent: teal
   features:
     - navigation.instant
     - navigation.sections
@@ -36,13 +29,20 @@ theme:
     - content.code.annotate
     - content.tabs.link
 
+extra_css:
+  - assets/extra.css
+
 plugins:
   - search
 
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -66,4 +66,9 @@ nav:
       - Artifact Storage: architecture/artifact-storage.md
       - Environment Manifests: architecture/environment-manifests.md
       - Execution Security: architecture/execution-security.md
+      - CLI and SDK Reference: architecture/developer-reference.md
+      - Service Reference: architecture/service-reference.md
+      - MCP Reference: architecture/mcp-reference.md
+      - Operations Reference: architecture/operations-reference.md
+      - Benchmark Methodology: architecture/benchmark-methodology.md
   - Error Reference: errors/errors.md

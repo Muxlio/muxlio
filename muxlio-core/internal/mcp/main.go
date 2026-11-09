@@ -10,7 +10,6 @@
 //	check_plan      Validate a compiled Plan IR JSON document.
 //	build           Compile a local workflow file.
 //	test            Test a local workflow with fake executors.
-//	submit_features Run the constructed feature workflow without pushing.
 //	start_run       Submit and start a workflow run from a Plan IR document.
 //	list_runs       List all runs on the coordinator.
 //	get_run         Get the current state of a single run.
@@ -606,8 +605,6 @@ type server struct {
 
 func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult {
 	switch name {
-	case "submit_features":
-		return s.toolSubmitFeatures(args)
 	case "retry_run":
 		return s.toolControlRun(args, "retry")
 	case "get_attempts":
@@ -1311,7 +1308,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Use submit_features to run the MCP-constructed implement-features workflow: implementation, review, verification/fix, and local commits, without pushing. Inspect get_workers first. Submission returns immediately; poll get_run and use get_activations, get_attempts, get_logs, and read_artifact to inspect progress and reports. Use retry_run only for a failed run after fixing its cause; completed work is preserved. build and test read local files and may execute workflow source code.",
+				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Validate it with check_plan and start it with start_run. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. build and test read local files and may execute workflow source code.",
 			},
 		})
 
@@ -1341,7 +1338,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 		}
 		result := s.tools.dispatchTool(params.Name, params.Arguments)
 		if modern {
-			if meta.Tasks && (params.Name == "start_run" || params.Name == "submit_features") && !result.IsError {
+			if meta.Tasks && params.Name == "start_run" && !result.IsError {
 				if task := s.tools.taskForSubmission(result, meta); task != nil {
 					s.send(jsonRPCResponse{JSONRPC: "2.0", ID: msg.ID, Result: task})
 					return

@@ -78,7 +78,7 @@ func TestDiscoverCapabilitiesMatchesBundledSet(t *testing.T) {
 }
 
 func TestServiceDocDocumentsBundledExecutors(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "muxlio-docs", "service.md")
+	path := filepath.Join("..", "..", "..", "muxlio-docs", "architecture", "service-reference.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read service.md: %v", err)
@@ -86,11 +86,11 @@ func TestServiceDocDocumentsBundledExecutors(t *testing.T) {
 	doc := string(raw)
 	for _, exec := range BundledExecutorCapabilities {
 		if !strings.Contains(doc, exec) {
-			t.Fatalf("muxlio-docs/service.md missing executor %q", exec)
+			t.Fatalf("muxlio-docs/architecture/service-reference.md missing executor %q", exec)
 		}
 	}
 	base := strings.ReplaceAll("agent/claude", "/", "-")
 	if !strings.Contains(doc, base) {
-		t.Fatalf("muxlio-docs/service.md missing adapter binary name %q", base)
+		t.Fatalf("muxlio-docs/architecture/service-reference.md missing adapter binary name %q", base)
 	}
 }

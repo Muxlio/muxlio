@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/muxlio/muxlio-core/internal/plan"
 )
 
 type toolAnnotations struct {
@@ -24,12 +21,7 @@ type toolAnnotations struct {
 func init() {
 	tools = append(tools,
 		toolDef{
-			Name:        "submit_features",
-			Description: "Construct and submit an implement-features workflow for 1–20 features. Runs implementation, review, verification/fix loops, and local commits serially in the worker workspace. Never pushes. Returns a run ID immediately; use get_run to track it. Requires a clean worker workspace and authorized command execution. Uses the same default agent and fallback as the TypeScript feature recipe.",
-			InputSchema: featureInputSchema(),
-		},
-		toolDef{
-			Name: "retry_run", Description: "Retry a failed run after its cause has been fixed. Completed steps and local commits are preserved. The original compiled plan is retained, including any old push step. This is not resume_run, which resumes a paused run.",
+			Name: "retry_run", Description: "Retry a failed run after its cause has been fixed. Completed steps and outputs are preserved. The original compiled plan is retained. This is not resume_run, which resumes a paused run.",
 			InputSchema: runIDSchema(),
 		},
 		toolDef{
@@ -69,47 +61,6 @@ func runIDSchema() map[string]any {
 		"properties": map[string]any{"runId": map[string]any{"type": "string", "minLength": 1}},
 		"required":   []string{"runId"},
 	}
-}
-
-func (s *server) toolSubmitFeatures(args json.RawMessage) toolCallResult {
-	p, err := newFeaturePlan()
-	if err != nil {
-		return errResult("constructing feature plan: " + err.Error())
-	}
-	if errs := plan.Validate(p); plan.HasErrors(errs) {
-		return errResult(fmt.Sprintf("invalid feature plan: %v", errs))
-	}
-	if err := plan.ValidateInput(p, args); err != nil {
-		return errResult("invalid feature input: " + err.Error())
-	}
-	var input struct {
-		Features []struct {
-			ID      string `json:"id"`
-			Feature string `json:"feature"`
-			Context string `json:"context,omitempty"`
-		} `json:"features"`
-		Branch string `json:"branch,omitempty"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(args))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		return errResult("invalid feature input: " + err.Error())
-	}
-	seen := map[string]bool{}
-	for _, feature := range input.Features {
-		if strings.TrimSpace(feature.ID) == "" || strings.TrimSpace(feature.Feature) == "" {
-			return errResult("feature id and feature must not be blank")
-		}
-		if seen[feature.ID] {
-			return errResult("feature IDs must be unique within a submission")
-		}
-		seen[feature.ID] = true
-	}
-	resp, err := s.api.post("/v1/runs", map[string]any{"plan": p, "input": args})
-	if err != nil {
-		return errResult("coordinator request failed: " + err.Error())
-	}
-	return apiResultOrError(resp)
 }
 
 func (s *server) toolGetAttempts(args json.RawMessage) toolCallResult {

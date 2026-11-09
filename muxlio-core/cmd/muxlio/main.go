@@ -1,4 +1,4 @@
-// Package main implements the muxlio CLI for M0. It supports loading a
+// Package main implements the muxlio CLI. It supports loading a
 // compiled Plan IR JSON file, validating it, and running it with a fake
 // executor against a JSON input file.
 package main
@@ -28,10 +28,10 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
-const usage = `muxlio — workflow execution engine (M1/M2)
+const usage = `muxlio — workflow execution engine
 
 Usage:
-  muxlio init [--agent name] [--workspace dir]        Initialize ~/.muxlio and configure agent skills
+  muxlio init [--agent name] [--allow-command]        Initialize ~/.muxlio and configure agent skills
   muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
   muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
   muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor

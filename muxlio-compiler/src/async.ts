@@ -1,4 +1,4 @@
-// Frontend A: restricted async TypeScript compiler (M0 recording-based approach).
+// Frontend A: restricted async TypeScript compiler using compile-time recording.
 //
 // The `run(ctx, input)` function is called once at compile time with a
 // recording context. The context's methods (execute, map, branch, loop)
@@ -7,9 +7,8 @@
 // natural `async/await` syntax while the recording happens synchronously.
 // The trace of calls builds the Plan IR.
 //
-// This is a pragmatic M0 implementation. A full AST-analysis compiler that
-// validates the restricted TypeScript subset without executing `run` is a
-// later milestone (see design §4.1, §4.2, M0 tasks).
+// The compiler validates and records the supported operations as the workflow
+// function runs with a recording context.
 
 import { computeDigest, assertNoLiteralCredentials } from '@muxlio/sdk';
 import type {

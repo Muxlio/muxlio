@@ -20,6 +20,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	workerPath := fs.String("worker-path", "", "persist this absolute executable search path (default: preserve saved workerEnv.PATH, otherwise capture PATH)")
 	mcpListen := fs.String("mcp-listen", "127.0.0.1:7602", "MCP HTTP listen address for setup (existing setting preserved unless this flag is supplied)")
 	starter := fs.Bool("starter", false, "create a starter workflow in the workspace")
+	allowCommand := fs.Bool("allow-command", false, "authorize command execution for workflow checks and local commits")
 	jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON output")
 
 	if err := fs.Parse(reorderArgs(args)); err != nil {
@@ -119,6 +120,32 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 	configChanged := false
+	if *allowCommand {
+		executors := map[string]json.RawMessage{}
+		if raw := config["executors"]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &executors); err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid executors configuration:", err)
+				return 1
+			}
+		}
+		if executors == nil {
+			executors = map[string]json.RawMessage{}
+		}
+		command := map[string]json.RawMessage{}
+		if raw := executors["command"]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &command); err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid command executor configuration:", err)
+				return 1
+			}
+		}
+		if command == nil {
+			command = map[string]json.RawMessage{}
+		}
+		command["allow"] = json.RawMessage("true")
+		executors["command"], _ = json.Marshal(command)
+		config["executors"], _ = json.Marshal(executors)
+		configChanged = true
+	}
 	if setWorkspace {
 		value, _ := json.Marshal(ws)
 		if !bytes.Equal(bytes.TrimSpace(config["workspace"]), value) {

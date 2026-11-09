@@ -576,7 +576,6 @@ func TestMCPToolsList(t *testing.T) {
 	}
 	// Verify expected tools are present.
 	expectedTools := map[string]bool{
-		"submit_features":       false,
 		"retry_run":             false,
 		"get_attempts":          false,
 		"read_artifact":         false,
@@ -608,7 +607,7 @@ func TestMCPToolsList(t *testing.T) {
 		if !ok {
 			t.Errorf("tool %s missing annotations", name)
 		}
-		if name == "submit_features" || name == "retry_run" {
+		if name == "start_run" || name == "retry_run" {
 			if annotations["readOnlyHint"] != false || annotations["idempotentHint"] != false {
 				t.Errorf("tool %s incorrectly marked read-only or idempotent", name)
 			}

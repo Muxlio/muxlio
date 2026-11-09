@@ -8,6 +8,50 @@ import (
 	"testing"
 )
 
+func TestInitCommandAuthorizationPreservesExecutorConfiguration(t *testing.T) {
+	root, ws := t.TempDir(), t.TempDir()
+	path := filepath.Join(root, "config.json")
+	initial := map[string]any{"workspace": ws, "executors": map[string]any{
+		"command":      map[string]any{"allow": false, "env": map[string]string{"EXAMPLE": "value"}, "timeoutSeconds": 120},
+		"generic/task": map[string]any{"allow": false},
+	}}
+	raw, _ := json.Marshal(initial)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--data-dir", root, "--json"}
+	read := func() map[string]map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			Executors map[string]map[string]any `json:"executors"`
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			t.Fatal(err)
+		}
+		return config.Executors
+	}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatalf("init: %d", code)
+	}
+	if read()["command"]["allow"] != false {
+		t.Fatal("init without authorization changed command permission")
+	}
+	if code := cmdInit(append(args, "--allow-command"), "", true); code != 0 {
+		t.Fatalf("init with command authorization: %d", code)
+	}
+	executors := read()
+	if executors["command"]["allow"] != true || executors["generic/task"]["allow"] != false {
+		t.Fatalf("incorrect permissions: %v", executors)
+	}
+	if executors["command"]["timeoutSeconds"] != float64(120) || executors["command"]["env"].(map[string]any)["EXAMPLE"] != "value" {
+		t.Fatalf("command configuration lost: %v", executors["command"])
+	}
+}
+
 func TestInitAgentAntigravityInstallsWorkspaceSkill(t *testing.T) {
 	root := t.TempDir()
 	ws := t.TempDir()
