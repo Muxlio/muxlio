@@ -791,10 +791,15 @@ func (s *Store) SendSignal(runID, name string, payload any, idempotencyKey ...st
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.db == nil {
+		return errors.New("store closed")
+	}
 	// Deduplicate by idempotency key when provided.
 	if ikey != "" {
 		var existing int
-		_ = s.db.QueryRow(`SELECT COUNT(*) FROM signals WHERE run_id=? AND name=? AND idempotency_key=?`, runID, name, ikey).Scan(&existing)
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM signals WHERE run_id=? AND name=? AND idempotency_key=?`, runID, name, ikey).Scan(&existing); err != nil {
+			return err
+		}
 		if existing > 0 {
 			return nil
 		}

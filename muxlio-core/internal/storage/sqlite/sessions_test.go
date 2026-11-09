@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,4 +95,85 @@ func TestLostSessionReservationSurvivesCoordinatorRestart(t *testing.T) {
 	if err != nil || assignment == nil || assignment.State != "uncertain" {
 		t.Fatalf("lost session was not fenced: %+v %v", assignment, err)
 	}
+}
+
+// TestSessionQueueMutexProtection verifies that GetSessionQueue,
+// CompareAndSwapSessionQueue, and AssignmentRequest hold s.mu while accessing
+// s.db, so a concurrent Close cannot cause a nil-pointer panic.
+func TestSessionQueueMutexProtection(t *testing.T) {
+	st := openTemp(t)
+
+	if err := st.CreateRun(&state.Run{ID: "sq-run", WorkflowName: "batch"}); err != nil {
+		t.Fatal(err)
+	}
+
+	handle := &contract.SessionHandle{ID: "handle-1", Executor: "test"}
+	q := &state.SessionQueue{RunID: "sq-run", Handle: *handle}
+
+	// A missing queue must return the sentinel error, not panic.
+	if _, err := st.GetSessionQueue("sq-run", handle.ID); err == nil {
+		t.Fatal("expected error for missing queue")
+	}
+
+	// CAS with revision==0 creates the initial row.
+	ok, err := st.CompareAndSwapSessionQueue(q, 0)
+	if err != nil || !ok {
+		t.Fatalf("initial CAS: ok=%v err=%v", ok, err)
+	}
+
+	// A second CAS with the same revision must fail (lost update).
+	ok, err = st.CompareAndSwapSessionQueue(q, 0)
+	if err != nil || ok {
+		t.Fatalf("duplicate revision CAS: ok=%v err=%v", ok, err)
+	}
+
+	// Correct revision advances normally.
+	ok, err = st.CompareAndSwapSessionQueue(q, 1)
+	if err != nil || !ok {
+		t.Fatalf("advancing CAS: ok=%v err=%v", ok, err)
+	}
+
+	// GetSessionQueue returns the stored queue.
+	got, err := st.GetSessionQueue("sq-run", handle.ID)
+	if err != nil || got.Revision != 2 {
+		t.Fatalf("GetSessionQueue: %+v err=%v", got, err)
+	}
+
+	// AssignmentRequest returns nil for an unknown ID without error.
+	raw, err := st.AssignmentRequest("no-such-assignment")
+	if err != nil || raw != nil {
+		t.Fatalf("AssignmentRequest missing: raw=%v err=%v", raw, err)
+	}
+}
+
+func TestSessionInputsConcurrentCloseSafe(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateRun(&state.Run{ID: "race-run", WorkflowName: "batch"}); err != nil {
+		t.Fatal(err)
+	}
+	q := &state.SessionQueue{RunID: "race-run", Handle: contract.SessionHandle{ID: "sess", Executor: "test"}}
+	if _, err := st.CompareAndSwapSessionQueue(q, 0); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	closed := make(chan struct{})
+	go func() {
+		defer wg.Done()
+		defer close(closed)
+		_ = st.Close()
+	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-closed:
+				return
+			default:
+				_, _ = st.GetSessionQueue("race-run", "sess")
+				_, _ = st.AssignmentRequest("missing")
+			}
+		}
+	}()
+	wg.Wait()
 }

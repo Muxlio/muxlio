@@ -670,3 +670,63 @@ func TestDecodePersistedAttemptResult(t *testing.T) {
 		}
 	}
 }
+
+// TestSendSignalIdempotencyKeyErrorIsNotSwallowed verifies that a DB error
+// during the dedup check causes SendSignal to return an error instead of
+// silently inserting a duplicate signal.
+func TestSendSignalIdempotencyKeyErrorIsNotSwallowed(t *testing.T) {
+	st := openTemp(t)
+	if err := st.CreateRun(&state.Run{ID: "signal-run", WorkflowName: "batch"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First delivery: should succeed and be persisted.
+	if err := st.SendSignal("signal-run", "tick", nil, "key-1"); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+
+	// Verify only one signal exists.
+	sigs, err := st.ConsumeSignals("signal-run", "tick")
+	if err != nil || len(sigs) != 1 {
+		t.Fatalf("expected 1 signal, got %d err=%v", len(sigs), err)
+	}
+
+	// Second delivery with the same idempotency key must be a no-op.
+	if err := st.SendSignal("signal-run", "tick", nil, "key-1"); err != nil {
+		t.Fatalf("second send (duplicate): %v", err)
+	}
+	sigs, err = st.ConsumeSignals("signal-run", "tick")
+	if err != nil || len(sigs) != 1 {
+		t.Fatalf("duplicate key inserted: got %d signals, err=%v", len(sigs), err)
+	}
+
+	// A different idempotency key on the same run+name must produce a new signal.
+	if err := st.SendSignal("signal-run", "tick", map[string]any{"v": 2}, "key-2"); err != nil {
+		t.Fatalf("different key send: %v", err)
+	}
+	sigs, err = st.ConsumeSignals("signal-run", "tick")
+	if err != nil || len(sigs) != 2 {
+		t.Fatalf("expected 2 signals after distinct key, got %d err=%v", len(sigs), err)
+	}
+
+	// Delivery without a key is always inserted (no dedup).
+	for i := 0; i < 2; i++ {
+		if err := st.SendSignal("signal-run", "tick", nil); err != nil {
+			t.Fatalf("keyless send %d: %v", i, err)
+		}
+	}
+	sigs, err = st.ConsumeSignals("signal-run", "tick")
+	if err != nil || len(sigs) != 4 {
+		t.Fatalf("expected 4 signals after keyless sends, got %d err=%v", len(sigs), err)
+	}
+}
+
+func TestSendSignalAfterCloseReturnsError(t *testing.T) {
+	st := openTemp(t)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SendSignal("closed-run", "tick", nil, "key"); err == nil {
+		t.Fatal("expected SendSignal to report a closed store")
+	}
+}

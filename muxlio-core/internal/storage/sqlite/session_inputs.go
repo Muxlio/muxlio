@@ -8,6 +8,11 @@ import (
 )
 
 func (s *Store) GetSessionQueue(runID, sessionID string) (*state.SessionQueue, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.db == nil {
+		return nil, errors.New("store closed")
+	}
 	var raw []byte
 	if err := s.db.QueryRow("SELECT queue_json FROM session_input_queues WHERE run_id=? AND session_id=?", runID, sessionID).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -20,6 +25,11 @@ func (s *Store) GetSessionQueue(runID, sessionID string) (*state.SessionQueue, e
 	return &q, err
 }
 func (s *Store) CompareAndSwapSessionQueue(q *state.SessionQueue, revision int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return false, errors.New("store closed")
+	}
 	clone := *q
 	clone.Revision = revision + 1
 	raw, err := json.Marshal(clone)
@@ -43,6 +53,11 @@ func (s *Store) CompareAndSwapSessionQueue(q *state.SessionQueue, revision int64
 }
 
 func (s *Store) AssignmentRequest(id string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.db == nil {
+		return nil, errors.New("store closed")
+	}
 	var raw []byte
 	err := s.db.QueryRow("SELECT request_json FROM dispatches WHERE assignment_id=?", id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
