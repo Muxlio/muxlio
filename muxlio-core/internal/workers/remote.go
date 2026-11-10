@@ -446,8 +446,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				e = execCtx.Err()
 				r.Outputs = nil
 			}
-			elapsed := time.Since(started).Milliseconds()
-			r.ExecutionDurationMS = &elapsed
+			if r.ExecutionDurationMS == nil {
+				elapsed := time.Since(started).Milliseconds()
+				r.ExecutionDurationMS = &elapsed
+			}
 			_ = logSink.Close()
 			select {
 			case done <- execution{assignment.AssignmentID, r, e, executeReq.Secrets}:

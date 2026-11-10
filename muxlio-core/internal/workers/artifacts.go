@@ -100,8 +100,13 @@ func (a ArtifactTransferExecutor) Execute(req ExecuteRequest) (result ExecuteRes
 		return ExecuteResult{}, req.Context.Err()
 	}
 	stopSnapshots := a.startSnapshots(req)
+	execStarted := time.Now()
 	result, err = a.Inner.Execute(req)
 	stopSnapshots()
+	if result.ExecutionDurationMS == nil {
+		ms := time.Since(execStarted).Milliseconds()
+		result.ExecutionDurationMS = &ms
+	}
 	if err != nil || result.Error != "" {
 		return result, err
 	}

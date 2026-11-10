@@ -19,6 +19,39 @@ import (
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 )
 
+func TestArtifactTransferTimingMeasuresInnerExecutionOnly(t *testing.T) {
+	payload := []byte("payload")
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
+	client := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if strings.HasSuffix(req.URL.Path, "/transfer") {
+			time.Sleep(200 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: digest, URL: "/bytes", Method: http.MethodGet, Mode: "proxy"})
+			return w.Result(), nil
+		}
+		if req.URL.Path == "/bytes" {
+			time.Sleep(200 * time.Millisecond)
+			_, _ = w.Write(payload)
+		}
+		return w.Result(), nil
+	})}
+	wrap := ArtifactTransferExecutor{
+		Inner:    timingExecutor{},
+		WorkBase: t.TempDir(),
+		Client:   artifacts.Client{BaseURL: "http://coordinator", HTTP: client},
+	}
+	result, err := wrap.Execute(ExecuteRequest{
+		Executor: "test", RunID: "run", ActivationID: "act", AttemptID: "attempt",
+		Inputs: map[string]any{"input": map[string]any{"digest": digest, "size": float64(len(payload)), "path": "input.txt"}},
+	})
+	if err != nil || result.Error != "" {
+		t.Fatalf("transfer failed: %+v %v", result, err)
+	}
+	if result.ExecutionDurationMS == nil || *result.ExecutionDurationMS < 5 || *result.ExecutionDurationMS >= 150 {
+		t.Fatalf("artifact transfer included in execution timing: %+v", result)
+	}
+}
+
 func TestScriptArtifactTransferSharesUniqueInvocationScratch(t *testing.T) {
 	inner := testScript(t, `cat input.txt > result.txt; printf '{}'`)
 	uploads := 0

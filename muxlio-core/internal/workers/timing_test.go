@@ -2,13 +2,18 @@ package workers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/muxlio/muxlio-core/internal/artifacts"
 )
 
 type timingExecutor struct{ err error }
@@ -61,6 +66,65 @@ func TestRemoteTimingExcludesDispatchAndCompletionDelays(t *testing.T) {
 				t.Fatalf("unexpected completion: %+v", completion)
 			}
 		})
+	}
+}
+
+func TestRemoteTimingExcludesArtifactTransferDelays(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	payload := []byte("payload")
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
+	req, _ := json.Marshal(map[string]any{
+		"executor": "test",
+		"inputs": map[string]any{
+			"input": map[string]any{"digest": digest, "size": float64(len(payload)), "path": "input.txt"},
+		},
+	})
+	var completion remoteCompletion
+	client := &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "register"):
+			_ = json.NewEncoder(w).Encode(remoteRegistrationResult{CoordinatorEpoch: 1})
+		case strings.HasSuffix(r.URL.Path, "heartbeat"):
+			_ = json.NewEncoder(w).Encode(remoteHeartbeatResult{CoordinatorEpoch: 1})
+		case strings.Contains(r.URL.Path, "/artifacts/") && strings.HasSuffix(r.URL.Path, "/transfer"):
+			time.Sleep(200 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(artifacts.TransferPlan{Digest: digest, URL: "/bytes", Method: http.MethodGet, Mode: "proxy"})
+		case r.URL.Path == "/bytes":
+			time.Sleep(200 * time.Millisecond)
+			_, _ = w.Write(payload)
+		case strings.HasSuffix(r.URL.Path, "assignments"):
+			_ = json.NewEncoder(w).Encode(remoteAssignment{AssignmentID: "a", RunID: "r", ActivationID: "act", AttemptID: "attempt", CoordinatorEpoch: 1, Generation: 1, Request: req})
+		case strings.HasSuffix(r.URL.Path, "complete"):
+			if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
+				t.Error(err)
+			}
+			cancel()
+		default:
+			t.Errorf("unexpected request %s", r.URL.String())
+		}
+		return w.Result(), nil
+	})}
+	if err := RunRemoteWorker(ctx, RemoteWorkerConfig{CoordinatorURL: "http://coordinator", WorkerID: "worker", HTTPClient: client, HeartbeatInterval: time.Second, WorkBase: t.TempDir()}, timingExecutor{}); err != nil {
+		t.Fatal(err)
+	}
+	if completion.State != "succeeded" {
+		t.Fatalf("unexpected completion state=%s err=%+v", completion.State, completion.Error)
+	}
+	if completion.ExecutionDurationMS == nil || *completion.ExecutionDurationMS < 5 || *completion.ExecutionDurationMS >= 150 {
+		t.Fatalf("worker timing includes artifact transfer: %+v", completion)
+	}
+}
+
+func TestQueueTimeoutErrorIsDistinctFromExecutionDeadline(t *testing.T) {
+	err := QueueTimeoutError{Deadline: time.Now()}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("queue timeout should unwrap deadline exceeded for retry policy")
+	}
+	var qt QueueTimeoutError
+	if !errors.As(err, &qt) {
+		t.Fatal("errors.As should identify queue timeout")
 	}
 }
 
