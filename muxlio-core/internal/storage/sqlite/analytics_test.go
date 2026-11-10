@@ -41,3 +41,17 @@ func TestAnalyticsExecutorFilterSelectsRunsWithMatchingAttempts(t *testing.T) {
 		t.Fatalf("executor filter returned unexpected runs: %+v", snapshot)
 	}
 }
+
+func TestQueryAnalyticsClampsOffsetToTotal(t *testing.T) {
+	s := openTemp(t)
+	if err := s.CreateRun(&state.Run{ID: "one", WorkflowName: "demo", State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.QueryAnalytics(state.AnalyticsQuery{Offset: 99, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Offset != snapshot.TotalRuns || snapshot.TotalRuns != 1 || len(snapshot.Runs) != 0 || snapshot.HasMore {
+		t.Fatalf("unexpected pagination metadata: offset=%d total=%d runs=%d hasMore=%v", snapshot.Offset, snapshot.TotalRuns, len(snapshot.Runs), snapshot.HasMore)
+	}
+}

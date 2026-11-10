@@ -64,6 +64,12 @@ func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot
 		return nil, err
 	}
 	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 200

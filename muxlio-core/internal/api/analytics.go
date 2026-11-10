@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,14 +39,14 @@ func registerAnalytics(mux *http.ServeMux, store state.Store) {
 			attempts[id] = list
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"runs":           snapshot.Runs,
-			"attemptsByRun":  attempts,
-			"totalRuns":      snapshot.TotalRuns,
-			"stateCounts":    snapshot.StateCounts,
-			"offset":         snapshot.Offset,
-			"limit":          snapshot.Limit,
-			"hasMore":        snapshot.HasMore,
-			"populations":    snapshot.Populations,
+			"runs":          snapshot.Runs,
+			"attemptsByRun": attempts,
+			"totalRuns":     snapshot.TotalRuns,
+			"stateCounts":   snapshot.StateCounts,
+			"offset":        snapshot.Offset,
+			"limit":         snapshot.Limit,
+			"hasMore":       snapshot.HasMore,
+			"populations":   snapshot.Populations,
 		})
 	})
 }
@@ -73,14 +74,26 @@ func parseAnalyticsQuery(r *http.Request) (state.AnalyticsQuery, error) {
 		}
 		q.CreatedBefore = t.UTC()
 	}
-	offset, limit := pageOptions(r)
-	q.Offset = offset
-	q.Limit = limit
-	if limit <= 0 {
-		q.Limit = 200
-	}
-	if q.Limit > 500 {
-		q.Limit = 500
-	}
+	q.Offset, q.Limit = analyticsPageOptions(r)
 	return q, nil
+}
+
+// analyticsPageOptions applies analytics-specific pagination bounds (default 200, max 500).
+func analyticsPageOptions(r *http.Request) (offset, limit int) {
+	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return offset, 200
+	}
+	limit, _ = strconv.Atoi(raw)
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return offset, limit
 }
