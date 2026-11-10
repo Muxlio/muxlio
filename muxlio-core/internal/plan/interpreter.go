@@ -1446,6 +1446,8 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 				return nil, err
 			}
 			return nil, errRunPaused
+		default:
+			return nil, fmt.Errorf("muxlio: loop %q has invalid onExhausted %q", node.ID, node.OnExhausted)
 		}
 	}
 

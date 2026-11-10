@@ -375,6 +375,16 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 				Fix:     "Set maxIterations to a positive hard upper bound.",
 			})
 		}
+		switch node.OnExhausted {
+		case "", "pause", "fail":
+		default:
+			errs = append(errs, ValidationError{
+				Code: "MUXLIO_BAD_ON_EXHAUSTED", Severity: "error", Phase: "plan",
+				Subgraph: sgName, NodeID: node.ID,
+				Message: fmt.Sprintf("loop onExhausted %q is invalid", node.OnExhausted),
+				Fix:     `Use "pause", "fail", or omit onExhausted to default to pause.`,
+			})
+		}
 
 	case KindProject:
 		if len(node.Inputs) == 0 {
