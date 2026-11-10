@@ -4,7 +4,9 @@ import vm from 'node:vm';
 
 // ── helpers ───────────────────────────────────────────────────────────────
 const wbSource = readFileSync(new URL("./js/format.js", import.meta.url), "utf8") + "\n" + readFileSync(new URL('./js/workbench.js', import.meta.url), 'utf8');
+const jsonSource = readFileSync(new URL('./js/json.js', import.meta.url), 'utf8');
 const inspSource = readFileSync(new URL('./js/inspector.js', import.meta.url), 'utf8');
+const inspBundle = `${jsonSource};const MuxlioJson=globalThis.MuxlioJson;\n${inspSource}`;
 
 function makeCtx(runAttempts = []) {
   return {
@@ -131,7 +133,7 @@ console.log('buildWbStats token stat checks passed');
   // No attempts → empty string (section suppressed for older runs)
   const ctxNoAtt = makeInspCtx([]);
   const { buildAttemptUsageMarkup: buNoAtt } = vm.runInNewContext(
-    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    `${wbSource}; ${inspBundle}; ({buildAttemptUsageMarkup})`,
     ctxNoAtt,
   );
   const act0 = { id: 'act-old', nodeId: 'n', state: 'succeeded' };
@@ -142,7 +144,7 @@ console.log('buildWbStats token stat checks passed');
     { activationId: 'act-1', retryNumber: 0, state: 'succeeded', usage: { input: 1200, output: 800, cached: 300 } },
   ]);
   const { buildAttemptUsageMarkup: buWith } = vm.runInNewContext(
-    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    `${wbSource}; ${inspBundle}; ({buildAttemptUsageMarkup})`,
     ctxWith,
   );
   const act1 = { id: 'act-1', nodeId: 'n', state: 'succeeded' };
@@ -159,7 +161,7 @@ console.log('buildWbStats token stat checks passed');
     { activationId: 'act-2', retryNumber: 1, state: 'succeeded', usage: null },
   ]);
   const { buildAttemptUsageMarkup: buRetry } = vm.runInNewContext(
-    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    `${wbSource}; ${inspBundle}; ({buildAttemptUsageMarkup})`,
     ctxRetry,
   );
   const act2 = { id: 'act-2', nodeId: 'n', state: 'succeeded' };
@@ -177,7 +179,7 @@ console.log('buildWbStats token stat checks passed');
     { activationId: 'act-3', retryNumber: 0, state: 'succeeded', usage: null },
   ]);
   const { buildAttemptUsageMarkup: buAllNull } = vm.runInNewContext(
-    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    `${wbSource}; ${inspBundle}; ({buildAttemptUsageMarkup})`,
     ctxAllNull,
   );
   const htmlAllNull = buAllNull({ id: 'act-3', nodeId: 'n', state: 'succeeded' });
@@ -190,7 +192,7 @@ console.log('buildWbStats token stat checks passed');
     { activationId: 'act-partial', retryNumber: 0, state: 'succeeded', usage: { input: 0, output: null, cached: null } },
   ]);
   const { buildAttemptUsageMarkup: buPartial } = vm.runInNewContext(
-    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    `${wbSource}; ${inspBundle}; ({buildAttemptUsageMarkup})`,
     ctxPartial,
   );
   const htmlPartial = buPartial({ id: 'act-partial', nodeId: 'n', state: 'succeeded' });
@@ -203,7 +205,7 @@ console.log('buildWbStats token stat checks passed');
     const context = makeInspCtx([
       { activationId: 'agent', executor: 'custom/agent', retryNumber: 1, state: 'succeeded', usage },
     ]);
-    const render = vm.runInNewContext(`${wbSource}; ${inspSource}; buildAttemptUsageMarkup`, context);
+    const render = vm.runInNewContext(`${wbSource}; ${inspBundle}; buildAttemptUsageMarkup`, context);
     const html = render({ id: 'agent' });
     if (usage === null) {
       assert.match(html, /<td colspan="3"[^>]*>—<\/td>/);

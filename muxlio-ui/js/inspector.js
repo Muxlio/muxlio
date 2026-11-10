@@ -238,14 +238,17 @@ async function loadInspectorSnapshots(act,runId){
 }
 
 /* ── shared helpers (kept from original) ─────── */
-const PREVIEW_LIMIT=4096;
-function valueType(v){if(v===null)return 'null';if(Array.isArray(v))return 'array';if(typeof v==='object')return 'object';return typeof v}
-function treeMarkup(value,key='Value',depth=0,statePath='tree'){const type=valueType(value),label=esc(key),count=type==='array'?value.length:type==='object'?Object.keys(value).length:0;if(type==='object'||type==='array'){if(!count)return `<div class="data-row"><span class="data-key">${label}</span><span class="data-type">${type} · empty</span></div>`;const children=type==='array'?value.map((v,i)=>[String(i),v]):Object.entries(value);return `<div class="data-row"><details data-preserve-key="${esc(`${statePath}/${key}`)}"><summary><span class="data-key">${label}</span> <span class="data-type">${type} · ${count}</span></summary><div class="data-children data-tree">${children.map(([k,v])=>treeMarkup(v,k,depth+1,`${statePath}/${key}`)).join('')}</div></details></div>`}if(type==='null')return `<div class="data-row"><span class="data-key">${label}</span><span class="data-type">null</span></div>`;return `<div class="data-row"><span class="data-key">${label}</span><span class="data-value ${esc(type)}">${esc(type==='string'?JSON.stringify(value):String(value))}</span><span class="data-type">${esc(type)}</span></div>`}
-function inputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Input is null.':'No input recorded.'}</div>`;return `<div class="data-tools"><button class="btn ghost" data-copy="run-input">Copy input</button></div><div class="data-tree">${treeMarkup(value,'Input',0,'run:input')}</div>`}
+const PREVIEW_LIMIT=MuxlioJson?.PREVIEW_BYTES??4096;
+const jsonCopyStores=new Map();
+function valueType(v){return MuxlioJson.jsonValueType(v)}
+function treeMarkup(value,key='Value',depth=0,statePath='tree'){return MuxlioJson.jsonTreeMarkup(value,key,depth,statePath,esc)}
+function rememberJsonCopy(target,text){if(target&&text!=null)jsonCopyStores.set(target,String(text))}
+function resolveJsonCopy(target,mode){const full=jsonCopyStores.get(target)||'';if(mode==='preview'){const preview=full.slice(0,PREVIEW_LIMIT);return {text:preview,label:full.length>preview.length?'Preview copied.':'JSON copied.'}}return {text:full,label:'JSON copied.'}}
+function inputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Input is null.':'No input recorded.'}</div>`;const panel=MuxlioJson.jsonPanelFromValue(value,esc,{title:'Input',statePath:'run:input',copyLabel:'Copy input'});rememberJsonCopy('run:input',panel.raw);return panel.html}
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
 function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
-function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT}}
-function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref)return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:`<div class="data-tree">${treeMarkup(item,'Value')}</div>`}</section>`;const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');return `<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>${esc(path||name)}</strong><div class="artifact-subtitle">${esc(name)}</div></div></div></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd title="${k==='Digest'?'':esc(v)}">${k==='Digest'?`<details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">${esc(v)}</code><button class="btn ghost" data-copy-value="${esc(v)}">Copy digest</button></details>`:esc(v)}</dd>`).join('')}</dl>`:''}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="${esc(name)}">View</button><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div></section>`}).join('')}`}
+function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT,raw}}
+function outputMarkup(value){if(value===undefined||value===null)return `<div class="data-empty">${value===null?'Output is null.':'No output recorded.'}</div>`;const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref){const panel=MuxlioJson.jsonPanelFromValue(item,esc,{title:name,statePath:`output:${name}`,copyLabel:'Copy JSON'});rememberJsonCopy(`output:${name}`,panel.raw);return `<section class="artifact"><div class="artifact-head"><strong>${esc(name)}</strong><span class="data-type">${esc(valueType(item))}</span></div>${typeof item==='string'?`<div class="markdown-body">${renderMarkdown(item)}</div>`:panel.html}</section>`}const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');const jsonPreview=MuxlioJson.jsonArtifactPreview(ref,esc);const previewPayload=jsonPreview?MuxlioJson.jsonPreviewPayload(ref):null;if(previewPayload)rememberJsonCopy(`artifact-preview:${path||name}`,previewPayload.raw);return `<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>${esc(path||name)}</strong><div class="artifact-subtitle">${esc(name)}</div></div></div></div>${meta.length?`<dl class="artifact-meta">${meta.map(([k,v])=>`<dt>${esc(k)}</dt><dd title="${k==='Digest'?'':esc(v)}">${k==='Digest'?`<details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">${esc(v)}</code><button class="btn ghost" data-copy-value="${esc(v)}">Copy digest</button></details>`:esc(v)}</dd>`).join('')}</dl>`:''}${jsonPreview||''}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="${esc(name)}">View</button><button class="btn ghost" data-download="artifact" data-name="${esc(name)}" data-copy="run-output">Download</button></div></section>`}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
 async function loadArtifactBlob(ref){
   const mime=ref.mime||ref.mimeType||'application/octet-stream';
@@ -262,16 +265,35 @@ async function showArtifactOutput(ref,name,value){
   const modal=$('#outputModal'),body=$('#outputModalBody'),request=++outputModalRequest;
   outputModalOpener=document.activeElement;
   $('#outputModalTitle').textContent=ref?.path||name||'Output';
-  body.textContent='Loading output…';modal.hidden=false;$('#closeOutputModal').focus();
+  body.textContent='Loading output…';body.classList.add('json-loading');modal.hidden=false;$('#closeOutputModal').focus();
   try{
     const blob=ref?await loadArtifactBlob(ref):new Blob([typeof value==='string'?value:JSON.stringify(value,null,2)],{type:'text/plain'});
     const text=await blob.text();
     if(request!==outputModalRequest)return;
-    const markdown=/^text\/markdown(?:;|$)/i.test(ref?.mime||ref?.mimeType||'')||/\.md$/i.test(ref?.path||'');
-    body.innerHTML=markdown?`<article class="markdown-body">${renderMarkdown(text)}</article>`:`<pre class="output-raw">${esc(text)}</pre>`;
-  }catch(err){if(request===outputModalRequest)body.innerHTML=`<div class="notice error" role="alert">${esc(err.message)}</div>`;}
+    const mime=ref?.mime||ref?.mimeType||'';
+    const markdown=/^text\/markdown(?:;|$)/i.test(mime)||/\.md$/i.test(ref?.path||'');
+    const json=MuxlioJson.isJsonMime(mime)||MuxlioJson.jsonPathLooksJson(ref?.path)||(!markdown&&!ref&&typeof value!=='string');
+    body.classList.remove('json-loading');
+    if(markdown){
+      body.innerHTML=`<article class="markdown-body">${renderMarkdown(text)}</article>`;
+      body._jsonRaw='';
+      return;
+    }
+    if(json){
+      const target=`modal:${ref?.path||name||'output'}`;
+      const panel=MuxlioJson.jsonPanelFromText(text,esc,{title:'Value',statePath:target,copyLabel:'Copy JSON'});
+      rememberJsonCopy(target,text);
+      body.innerHTML=panel.html;
+      body._jsonRaw=text;
+      body.dataset.jsonTarget=target;
+      return;
+    }
+    body.innerHTML=`<pre class="output-raw">${esc(text)}</pre>`;
+    body._jsonRaw=text;
+  }catch(err){if(request===outputModalRequest){body.classList.remove('json-loading');body.innerHTML=`<div class="notice error" role="alert">${esc(err.message)}</div>`;}}
 }
 document.getElementById('closeOutputModal')?.addEventListener('click',closeArtifactOutput);
+document.addEventListener('click',e=>{if(e.target.closest('[data-copy-json]'))inspectorAction(e)});
 document.getElementById('outputModal')?.addEventListener('click',e=>{if(e.target.id==='outputModal')closeArtifactOutput();});
 document.addEventListener('keydown',e=>{
   const modal=$('#outputModal');if(!modal||modal.hidden)return;
@@ -284,6 +306,8 @@ document.addEventListener('keydown',e=>{
   }
 });
 async function inspectorAction(e){
+  const copyJson=e.target.closest('[data-copy-json]');
+  if(copyJson){const mode=copyJson.dataset.copyJson||'full',target=copyJson.dataset.copyTarget||$('#outputModalBody')?.dataset.jsonTarget;const {text,label}=resolveJsonCopy(target,mode);try{if(!text)throw Error('Nothing to copy');if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message(label)}catch(err){message('Copy failed: '+err.message,true)}return}
   const copyValue=e.target.closest('[data-copy-value]');
   if(copyValue){try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(copyValue.dataset.copyValue);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const copyLogs=e.target.closest('[data-copylogs]');
@@ -299,7 +323,7 @@ async function inspectorAction(e){
   if(view){await showArtifactOutput(ref,name,value);return;}
   let content=ref?(ref.data??ref):value;
   if(download&&ref){try{content=await loadArtifactBlob(ref)}catch(err){message('Download failed: '+err.message,true);return;}}
-  if(copy&&!download){const text=JSON.stringify(content??null,null,2);try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
+  if(copy&&!download){let text;if(content instanceof Blob)text=await content.text();else if(typeof content==='string')text=content;else text=MuxlioJson.stringifyForCopy(content);try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text??'');message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const blob=content instanceof Blob?content:new Blob([typeof content==='string'?content:JSON.stringify(content??null,null,2)],{type:ref?.mime||'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=safeFilename(ref?.path?.split('/').pop()||name||'output.json');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }

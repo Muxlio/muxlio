@@ -58,17 +58,19 @@ try {
   assert.match(html, /id="runInputInspector"/, 'run input should use a structured inspector');
   assert.match(html, /id="runOutputInspector"/, 'run output should use an artifact inspector');
   assert.match(app, /function treeMarkup\(/, 'nested input values should render as an expandable tree');
+  assert.match(await (await fetch(`${baseURL}/js/json.js`)).text(), /parseJsonDocument/, 'shared JSON renderer should handle output text');
   assert.match(app, /function outputMarkup\(/, 'outputs should be rendered by the artifact browser');
   assert.match(app, /data-download="artifact"/, 'artifact downloads should be available');
-  assert.match(app, /PREVIEW_LIMIT=4096/, 'text previews should stay bounded');
-  const helperSource = app.match(/const PREVIEW_LIMIT=4096;[\s\S]*?let currentRunInput,currentRunOutput;/)?.[0];
+  assert.match(app, /PREVIEW_LIMIT=.*4096/, 'text previews should stay bounded');
+  const helperSource = app.match(/const PREVIEW_LIMIT=[^;]+;[\s\S]*?let currentRunInput,currentRunOutput;/)?.[0];
   assert.ok(helperSource, 'inspector rendering helpers should be present');
   const markdownSource = await (await fetch(`${baseURL}/js/markdown.js`)).text();
+  const jsonSource = await (await fetch(`${baseURL}/js/json.js`)).text();
   const documentStub = {getElementById(){return null},addEventListener(){}};
-  const helpers = vm.runInNewContext(`${markdownSource};const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); ${helperSource}; ({treeMarkup,inputMarkup,outputMarkup,safePreview})`, { TextEncoder, document:documentStub });
+  const helpers = vm.runInNewContext(`${markdownSource};${jsonSource};const MuxlioJson=globalThis.MuxlioJson;const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); ${helperSource}; ({treeMarkup,inputMarkup,outputMarkup,safePreview})`, { TextEncoder, document:documentStub });
   const nested = helpers.inputMarkup({name:'<script>alert(1)</script>', nested:[1,true,null,{ok:'yes'}]});
   assert.match(nested, /<details/);
-  assert.match(nested, /<span class="data-type">boolean<\/span>/);
+  assert.match(nested, /<span class="json-type[^"]*">boolean<\/span>/);
   assert.match(nested, /null/);
   assert.ok(!nested.includes('<script>'), 'API values should be escaped');
   assert.match(helpers.inputMarkup(null), /Input is null/);
@@ -81,7 +83,7 @@ try {
   assert.match(helpers.outputMarkup({data:{mime:'application/json',path:'x.json',data:{a:1}}}), /data-view-artifact="data"/);
   assert.match(helpers.outputMarkup({data:{mime:'application/octet-stream',path:'x.bin',data:'abc'}}), /application\/octet-stream/);
   let copied, downloaded, filename, clipboardFailure, copyCalls=0;
-  const actions = vm.runInNewContext(`const esc=String;${helperSource};currentRunOutput={report:{data:'wrong run payload'}};inspectorAction`, {
+  const actions = vm.runInNewContext(`${jsonSource};const MuxlioJson=globalThis.MuxlioJson;const esc=String;${helperSource};currentRunOutput={report:{data:'wrong run payload'}};inspectorAction`, {
     TextEncoder, Blob, ArrayBuffer, selectedActivation:'selected', activationData:[{id:'selected',outputs:{report:{mime:'text/markdown',path:'report.md',data:'# Selected\n\n**raw payload**'}}}],
     navigator:{clipboard:{async writeText(value){copied=value;copyCalls++}}},
     message(value){clipboardFailure=value},
@@ -90,7 +92,7 @@ try {
   });
   const actionEvent = kind => ({target:{closest(selector){if(selector==='#inspectorContent')return {};if(selector==='[data-'+kind+']'||(kind==='download'&&selector==='[data-copy]'))return {dataset:{copy:'run-output',...(kind==='download'?{download:'artifact'}:{}),name:'report'}};return null}}});
   await actions(actionEvent('copy'));
-  assert.equal(copied,JSON.stringify('# Selected\n\n**raw payload**'));
+  assert.equal(copied,'# Selected\n\n**raw payload**','artifact copy should use raw text, not JSON-quoted strings');
   await actions(actionEvent('download'));
   assert.equal(await downloaded.text(),'# Selected\n\n**raw payload**');
   assert.equal(copyCalls,1,'Download must not invoke the copy action');

@@ -585,6 +585,7 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			"/workspace.js":         "workspace.js",
 			"/workspace.css":        "workspace.css",
 			"/js/markdown.js":       "js/markdown.js",
+			"/js/json.js":           "js/json.js",
 			"/js/core.js":           "js/core.js",
 			"/js/format.js":         "js/format.js",
 			"/js/workbench.js":      "js/workbench.js",

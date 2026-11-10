@@ -79,14 +79,15 @@ console.log('inspector agent resolution checks passed');
 // Exercise the production renderer and view functions, rather than copies.
 const { readFile } = await import('node:fs/promises');
 const source = name => readFile(new URL(name, import.meta.url), 'utf8');
-const [markdown, inspector, live, transcript, page] = await Promise.all([
-  source('js/markdown.js'), source('js/inspector.js'), source('js/live.js'),
+const [markdown, json, inspector, live, transcript, page] = await Promise.all([
+  source('js/markdown.js'), source('js/json.js'), source('js/inspector.js'), source('js/live.js'),
   source('js/transcript.js'), source('index.html'),
 ]);
 const classes = new Set();
 const listeners = new Map();
 const modalElements = new Map(['outputModal','outputModalBody','outputModalTitle','closeOutputModal'].map(id=>[id,{
-  hidden:true, innerHTML:'', textContent:'',
+  hidden:true, innerHTML:'', textContent:'', dataset:{},
+  classList:{add:c=>classes.add(c),remove:c=>classes.delete(c)},
   focus(){},
   addEventListener:(type,listener)=>listeners.set(`${id}:${type}`,listener),
 }]));
@@ -97,7 +98,7 @@ const body = {
   closest:()=>scroll,
 };
 const context = vm.createContext({
-  TextEncoder, TextDecoder, Uint8Array, atob, Blob,
+  TextEncoder, TextDecoder, Uint8Array, atob, Blob, window: {},
   document:{
     getElementById:id=>id==='refreshTranscript'?null:modalElements.get(id)||body,
     querySelector:()=>scroll,
@@ -106,7 +107,7 @@ const context = vm.createContext({
   $:selector=>modalElements.get(selector.slice(1))||body,
   esc:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
 });
-vm.runInContext(`${markdown}\n${inspector}\n${live}\n${transcript}`, context);
+vm.runInContext(`${markdown}\n${json}\n${inspector}\n${live}\n${transcript}`, context);
 assert.equal(typeof listeners.get('closeOutputModal:click'),'function');
 assert.equal(typeof listeners.get('outputModal:click'),'function');
 assert.equal(typeof listeners.get('document:keydown'),'function');
@@ -168,6 +169,7 @@ for(const id of ['liveTranscriptBody','transcriptPageBody']){
   assert.match(page,new RegExp(`<div class="[^"]*markdown-body" id="${id}">`),'block markup uses a div container');
 }
 assert.ok(page.indexOf('/js/markdown.js')<page.indexOf('/js/inspector.js'),'renderer loads before consumers');
+assert.ok(page.indexOf('/js/json.js')<page.indexOf('/js/inspector.js'),'json renderer loads before consumers');
 const artifact = {report:{mime:'text/markdown; charset=utf-8',path:'report.md',data:formatted}};
 const original = JSON.stringify(artifact);
 assert.match(context.outputMarkup(artifact), /data-view-artifact="report"/, 'artifact cards expose the output viewer');
@@ -177,6 +179,9 @@ assert.match(modalElements.get('outputModalBody').innerHTML, /<h1>Report<\/h1>/,
 assert.equal(JSON.stringify(artifact),original,'previews do not mutate output data');
 await context.showArtifactOutput({mime:'text/plain',data:'# raw'},'report');
 assert.match(modalElements.get('outputModalBody').innerHTML, /<pre class="output-raw"># raw<\/pre>/, 'plain text remains raw in the output viewer');
+await context.showArtifactOutput({mime:'application/json',path:'out.json',data:'{"ok":false,"total":0,"tags":["alpha"]}'},'out.json');
+assert.match(modalElements.get('outputModalBody').innerHTML, /json-tree/, 'JSON artifacts render in the structured viewer');
+assert.match(modalElements.get('outputModalBody').innerHTML, /json-value boolean/, 'scalar false stays visible in JSON output');
 listeners.get('closeOutputModal:click')();
 assert.equal(modalElements.get('outputModal').hidden,true);
 console.log('safe Markdown and production output view checks passed');

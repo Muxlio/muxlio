@@ -252,6 +252,7 @@ function renderWorkbench(r,g,events){
   // re-attach inspector click
   $('#runDetail').onclick=null;
   $('#nodeInspector').onclick=inspectorAction;
+  $('#runInputInspector').onclick=inspectorAction;
   $('#runOutputInspector').onclick=inspectorAction;
 
   if(selectedActivation&&typeof selectedActivationDetail!=='undefined'&&selectedActivationDetail?.id===selectedActivation){const index=activationData.findIndex(a=>a.id===selectedActivation);if(index>=0)activationData[index]={...selectedActivationDetail,...activationData[index]};else activationData.push(selectedActivationDetail);}

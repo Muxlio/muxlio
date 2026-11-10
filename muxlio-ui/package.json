@@ -10,6 +10,6 @@
     "test:live-output": "node live-output.test.mjs",
     "test:inspector-transcript": "node inspector-transcript.test.mjs",
     "test:cancel-run-modal": "node cancel-run-modal.test.mjs",
-    "test": "node --test format.test.mjs operations-hub.test.mjs worker-capabilities.test.mjs security.test.mjs input-requests.test.mjs && node snapshots.test.mjs && node run-pages.test.mjs && node inspector-transcript.test.mjs && node live-output.test.mjs && node graph.test.mjs && node scroll-layout.test.mjs && node token-usage.test.mjs && node analytics.test.mjs && node timing.test.mjs && node cancel-run-modal.test.mjs"
+    "test": "node --test format.test.mjs operations-hub.test.mjs worker-capabilities.test.mjs security.test.mjs input-requests.test.mjs json-output.test.mjs && node snapshots.test.mjs && node run-pages.test.mjs && node inspector-transcript.test.mjs && node live-output.test.mjs && node graph.test.mjs && node scroll-layout.test.mjs && node token-usage.test.mjs && node analytics.test.mjs && node timing.test.mjs && node cancel-run-modal.test.mjs"
   }
 }
