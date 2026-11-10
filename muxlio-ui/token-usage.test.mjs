@@ -130,16 +130,16 @@ console.log('buildUsagePresentation checks passed');
   ]);
   const { buildWbStats: buildRep } = vm.runInNewContext(`${bundle}; ({buildWbStats})`, ctxReported);
   const htmlRep = buildRep(run, acts);
-  assert.match(htmlRep, /Token subtotal/, 'single token headline');
-  assert.match(htmlRep, /1\.4K/, 'token subtotal uses input+output from attempts');
+  assert.doesNotMatch(htmlRep, /wb-usage-primary|wb-usage-measure/, 'summary row is a single stat, not a measure stack');
+  assert.match(htmlRep, /class="stat-val">1\.4K<\/div><div class="stat-label">Usage<\/div>/, 'headline value matches elapsed-time stat layout');
+  assert.match(htmlRep, /Token subtotal/, 'token measure named in expandable breakdown');
   assert.match(htmlRep, /Input subtotal/, 'dimension breakdown is in expandable details');
   assert.match(htmlRep, /data-open-operations/, 'links to attempt-level usage');
 
   const zeroStats = vm.runInNewContext(`${bundle}; buildWbStats`, makeCtx([
     { state: 'succeeded', usage: { input: 0, output: 0, cached: 0 } },
   ]))(run, acts);
-  assert.match(zeroStats, /Token subtotal/, 'reported zero still surfaces token measure');
-  assert.match(zeroStats, />\s*0\s*</, 'meaningful zero retained');
+  assert.match(zeroStats, /class="stat-val">0<\/div><div class="stat-label">Usage<\/div>/, 'reported zero shown as headline stat');
 
   const partialRun = {
     state: 'succeeded',
@@ -208,8 +208,10 @@ console.log('buildUsagePresentation checks passed');
     },
   };
   const costHtml = buildFull(costRun, acts);
-  assert.match(costHtml, /Cost · observed/);
-  assert.match(costHtml, /Cost · estimated/);
+  assert.match(costHtml, /class="stat-val">10<\/div><div class="stat-label">Usage<\/div>/, 'tokens win headline when cost is also reported');
+  assert.match(costHtml, /Cost · observed/, 'observed cost stays a distinct drawer measure');
+  assert.match(costHtml, /Cost · estimated/, 'estimated cost stays a distinct drawer measure');
+  assert.doesNotMatch(costHtml, /wb-usage-measure/, 'cost labels do not crowd the summary row');
   assert.match(costHtml, /wb-usage-details/, 'keyboard-expandable details element');
   assert.match(costHtml, /summary/, 'native summary control for accessibility');
 
@@ -218,7 +220,8 @@ console.log('buildUsagePresentation checks passed');
     usage: { credits: Array.from({ length: 12 }, (_, i) => ({ unit: `unit-${i}`, observed: i, unknown: 0 })) },
   };
   const manyCreditsHtml = buildFull(manyCreditsRun, acts);
-  assert.match(manyCreditsHtml, /Show 2 more usage details/, 'additional measures remain available through expansion');
+  assert.match(manyCreditsHtml, /class="stat-val">0<\/div><div class="stat-label">Usage<\/div>/, 'first credit unit headlines the stat row');
+  assert.match(manyCreditsHtml, /Show 5 more usage details/, 'additional credit units stay in expandable breakdown');
   assert.match(manyCreditsHtml, /unit-11/, 'last measure is rendered in the expandable overflow');
 }
 console.log('buildWbStats adaptive usage checks passed');

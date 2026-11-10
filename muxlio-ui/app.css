@@ -140,16 +140,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .stat-val.red{color:var(--red)}
 .stat-val.amber{color:var(--amber)}
 .stat-label{font-size:12px;color:var(--muted);white-space:nowrap}
-.stat.wb-usage{flex:1 1 220px;min-width:min(100%,200px);max-width:100%;border-right:none;margin-right:0;padding-right:0}
-.wb-usage-details{border:none;margin:0;padding:0}
-.wb-usage-head{display:flex;flex-direction:column;gap:6px;cursor:pointer;list-style:none}
+.stat.wb-usage{flex:0 0 auto;min-width:max-content;max-width:100%;border-right:1px solid var(--border);margin-right:22px;padding-right:22px}
+.wb-usage-details{border:none;margin:0;padding:0;position:relative}
+.wb-usage-head{display:flex;flex-direction:column;gap:2px;cursor:pointer;list-style:none;padding-right:14px}
 .wb-usage-head::-webkit-details-marker{display:none}
-.wb-usage-head::after{content:"";width:6px;height:6px;border-right:1px solid var(--muted);border-bottom:1px solid var(--muted);transform:rotate(-45deg);align-self:flex-start;margin-top:2px}
+.wb-usage-head::after{content:"";position:absolute;top:12px;right:0;width:6px;height:6px;border-right:1px solid var(--muted);border-bottom:1px solid var(--muted);transform:rotate(-45deg)}
 .wb-usage-details[open] .wb-usage-head::after{transform:rotate(45deg)}
-.wb-usage-primary{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end}
-.wb-usage-measure{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:100%}
-.wb-usage-measure-val{font-size:18px;font-weight:650;letter-spacing:-.03em;color:#f4fbfb;line-height:1.2;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.wb-usage-measure-label{font-size:11px;color:var(--muted);white-space:normal;overflow-wrap:anywhere;max-width:14rem;line-height:1.35}
+.wb-usage-head .stat-val,.wb-usage-head .stat-label{pointer-events:none}
 .wb-usage-drawer{padding:8px 0 4px;border-top:1px solid var(--border);margin-top:6px}
 .wb-usage-detail-list{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px 12px}
 .wb-usage-detail-row{margin:0}
@@ -162,7 +159,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .wb-usage-overflow>summary:focus-visible,.wb-usage-head:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:3px}
 .wb-usage-overflow .wb-usage-detail-list{margin-top:8px}
 .wb-usage--empty .stat-val,.wb-usage--pending .stat-val,.wb-usage--idle .stat-val{font-size:15px;font-weight:600}
-@media(max-width:680px){.stat.wb-usage{flex-basis:100%;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:4px}.wb-usage-measure-label{max-width:none}}
+@media(max-width:680px){.stat.wb-usage{flex-basis:100%;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:4px;margin-right:0;border-right:none}}
 
 .tab-bar{display:flex;align-items:center;gap:4px;padding:0 12px;border-bottom:1px solid var(--border);flex-shrink:0;background:#101518}
 .tab-btn{padding:12px 12px 10px;font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;background:none}

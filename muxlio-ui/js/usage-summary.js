@@ -162,7 +162,22 @@ function buildOperationsUsageSectionMarkup(usage,attemptCount,attemptStates){
   return `<div class="operations-summary"><div class="operations-heading"><div><h2>Usage</h2><p class="subtle">Across ${esc(attemptCount??0)} attempts. Observed values were reported by executors; estimates were supplied by executors. Provider credits use executor-reported units and are not converted into tokens or cost. Unreported attempts have neither value. Pending attempts are excluded from coverage. Totals can be incomplete.</p></div><div class="operation-states">${Object.entries(states).map(([state,count])=>`<span class="state ${esc(stateClass(state))}">${esc(state)} · ${esc(count)}</span>`).join('')}</div></div><div class="usage-grid">${buildUsageGridMarkup(usage,attemptCount)}</div></div>`;
 }
 
-const WB_USAGE_VISIBLE_MEASURES=4;
+const WB_USAGE_HEADLINE_KEYS=['tokens','tokens-estimated','cost-observed','cost-estimated'];
+const WB_USAGE_DRAWER_CAP=6;
+
+function workbenchUsageHeadlineMeasure(primary){
+  if(!primary?.length)return null;
+  for(const key of WB_USAGE_HEADLINE_KEYS){
+    const match=primary.find(item=>item.key===key);
+    if(match)return match;
+  }
+  return primary[0];
+}
+
+function workbenchUsageDetailLabel(measure){
+  if(!measure)return '';
+  return `${measure.label}${measure.coverage||''}`;
+}
 
 function buildWorkbenchUsageMarkup(presentation,options={}){
   const {status,primary,details,attemptCount,hasAttempts,usage}=presentation;
@@ -171,30 +186,30 @@ function buildWorkbenchUsageMarkup(presentation,options={}){
     return `<div class="stat wb-usage wb-usage--idle" aria-label="Usage not available yet"><div class="stat-val">—</div><div class="stat-label">Usage</div></div>`;
   }
   if(status==='error'){
-    return `<div class="stat wb-usage wb-usage--error" role="status"><div class="stat-val subtle">Usage unavailable</div><div class="stat-label">Usage · run error</div>${link}</div>`;
+    return `<div class="stat wb-usage wb-usage--error" role="status"><div class="stat-val subtle">Unavailable</div><div class="stat-label">Usage</div>${link}</div>`;
   }
   if((status==='empty'||status==='pending')&&!primary.length){
     const pendingNote=status==='pending'?'Usage pending':'No usage reported';
     return `<div class="stat wb-usage wb-usage--${status==='pending'?'pending':'empty'}" role="status"><div class="stat-val subtle">${esc(pendingNote)}</div><div class="stat-label">Usage</div>${link}</div>`;
   }
-  const visible=primary.slice(0,WB_USAGE_VISIBLE_MEASURES);
-  const overflow=primary.slice(WB_USAGE_VISIBLE_MEASURES);
-  const measureHtml=measure=>`<div class="wb-usage-measure"><span class="wb-usage-measure-val">${esc(usageMeasureValue(measure))}</span><span class="wb-usage-measure-label">${esc(measure.label)}${esc(measure.coverage||'')}</span></div>`;
-  const visibleHtml=visible.map(measureHtml).join('');
-  const detailRows=[...overflow,...details];
-  const detailCap=6;
+  const headline=workbenchUsageHeadlineMeasure(primary);
+  const headlineVal=usageMeasureValue(headline);
+  const headlineTitle=workbenchUsageDetailLabel(headline);
+  const secondary=primary.filter(item=>item!==headline);
+  const detailRows=[...secondary,...details];
+  const detailCap=WB_USAGE_DRAWER_CAP;
   const detailVisible=detailRows.slice(0,detailCap);
   const detailOverflow=detailRows.slice(detailCap);
-  const detailHtml=detailVisible.map(row=>{
+  const usageDetailRow=row=>{
     const val=row.value==null?'Unavailable':(typeof row.format==='function'?row.format(row.value):row.value);
-    return `<div class="wb-usage-detail-row"><dt>${esc(row.label)}</dt><dd>${esc(val)}</dd></div>`;
-  }).join('');
-  const overflowHtml=detailOverflow.length?`<details class="wb-usage-overflow"><summary>Show ${detailOverflow.length} more usage details</summary><dl class="wb-usage-detail-list">${detailOverflow.map(row=>{
-    const val=row.value==null?'Unavailable':(typeof row.format==='function'?row.format(row.value):row.value);
-    return `<div class="wb-usage-detail-row"><dt>${esc(row.label)}</dt><dd>${esc(val)}</dd></div>`;
-  }).join('')}</dl></details>`:'';
+    return `<div class="wb-usage-detail-row"><dt>${esc(workbenchUsageDetailLabel(row))}</dt><dd>${esc(val)}</dd></div>`;
+  };
+  const detailHtml=detailVisible.map(usageDetailRow).join('');
+  const overflowHtml=detailOverflow.length?`<details class="wb-usage-overflow"><summary>Show ${detailOverflow.length} more usage details</summary><dl class="wb-usage-detail-list">${detailOverflow.map(usageDetailRow).join('')}</dl></details>`:'';
   const coverage=usage?.tokenDimensions?.coverage;
   const coverageHtml=coverage?`<p class="wb-usage-coverage subtle">${esc(attemptCount)} attempts · ${esc(coverage.reporting??0)} reporting · ${esc(coverage.pending??0)} pending</p>`:'';
   const drawer=detailRows.length||link?`<div class="wb-usage-drawer"><dl class="wb-usage-detail-list">${detailHtml}</dl>${coverageHtml}${overflowHtml}${link}</div>`:'';
-  return `<div class="stat wb-usage" data-usage-state="${esc(status)}"><details class="wb-usage-details"><summary class="wb-usage-head" aria-label="Usage summary, expand for token breakdown"><span class="stat-label">Usage</span><div class="wb-usage-primary">${visibleHtml}</div></summary>${drawer}</details></div>`;
+  const titleAttr=headlineTitle?` title="${esc(headlineTitle)}"`:'';
+  const expandNote=detailRows.length||link?' expand for usage breakdown':'';
+  return `<div class="stat wb-usage" data-usage-state="${esc(status)}"${titleAttr}><details class="wb-usage-details"><summary class="wb-usage-head" aria-label="Usage${esc(expandNote)}"><div class="stat-val">${esc(headlineVal)}</div><div class="stat-label">Usage</div></summary>${drawer}</details></div>`;
 }
