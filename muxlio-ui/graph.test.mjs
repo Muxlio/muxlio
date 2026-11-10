@@ -5,6 +5,7 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('./js/workbench.js', import.meta.url), 'utf8');
 const { graphMarkup, numbers } = vm.runInNewContext(`${source}; ({graphMarkup,numbers:activationDisplayNumbers})`, {
   selectedActivation: 'verify-10',
+  document:{addEventListener(){}},
   esc: value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
 });
 const item = ['map:each__0:001'];

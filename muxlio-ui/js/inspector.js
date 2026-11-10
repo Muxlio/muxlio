@@ -421,6 +421,8 @@ async function refreshInputRequests(runId) {
     const data=await api(`/v1/runs/${encodeURIComponent(runId)}/input-requests`);
     if(current!==runId)return;
     const requests=data.requests||[],signature=JSON.stringify([runId,requests]);
+    wbInputRequestSummary=requests;
+    if(typeof renderWbActivity==='function'&&typeof wbCurrentRunSummary!=='undefined'&&wbCurrentRun===runId&&typeof activationData!=='undefined')renderWbActivity(wbCurrentRunSummary,activationData);
     if(container._requestSignature===signature)return;
     const existingForms=new Map([...container.querySelectorAll('form[data-input-request]')].map(form=>[form.dataset.inputRequest,form]));
     container._requestSignature=signature;

@@ -12,12 +12,8 @@ function renderRunOperations(run){
  if(operationsRun?.id!==run.id)operationsOffset=0;
  operationsRun=run;
  const overview=run.overview||{},states=overview.attemptStates||{};
- const attention=document.getElementById('runAttention');
- if(attention){
-  const held=overview.heldAttempts||0,detached=states.detached||0;
-  attention.hidden=!held&&!detached&&!run.error;
-  attention.innerHTML=`${held?`<p><strong>${held} attempts need reconciliation.</strong> Review their external outcome before retrying.</p>`:''}${detached?`<p>${detached} remote operations are detached. Waiting does not occupy a worker slot.</p>`:''}${run.error?`<p class="insp-error">${esc(run.error)}</p>`:''}<button class="btn ghost" data-open-operations>Inspect operations</button>`;
- }
+ const attention=document.getElementById('runAttention');if(attention){attention.hidden=true;}
+ if(typeof renderWbActivity==='function')renderWbActivity(run,typeof activationData!=='undefined'?activationData:[]);
  const panel=document.getElementById('runContract');if(!panel)return;
  const limits=run.limits||{};
  const rows=[['Plan version',run.planDigest||'Unavailable'],['End-to-end deadline',run.deadlineSeconds?date(new Date(Date.parse(run.createdAt)+run.deadlineSeconds*1000)):'No deadline'],['Attempts',`${overview.attempts??0}${limits.maxAttempts!=null?' / '+limits.maxAttempts:''}`],['Activations',`${overview.activations??0}${limits.maxActivations!=null?' / '+limits.maxActivations:''}`],['Active attempt limit',limits.maxActiveAttempts??'Unlimited'],['Token limit',limits.maxTokens!=null?fmtTokens(limits.maxTokens):'Unlimited'],['Cost limit',limits.maxCostUsd!=null?'$'+limits.maxCostUsd:'Unlimited'],['Missing usage policy',limits.missingUsage||'fail-closed'],['Retention',run.pinned?'Pinned':run.retainedUntil?`Retained until ${date(run.retainedUntil)}`:'Service retention policy']];

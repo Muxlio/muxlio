@@ -175,7 +175,9 @@
         </div>
       </div>
       <div class="stat-row" id="wbStats"></div>
-      <section class="notice run-attention" id="runAttention" hidden></section>
+      <div id="wbActivityAnnounce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+      <section class="wb-activity panel" id="wbActivity" hidden aria-label="Current activity and attention"></section>
+      <section class="notice run-attention" id="runAttention" hidden aria-hidden="true"></section>
       <section class="panel" id="inputRequestsPanel" hidden aria-label="Input requests">
         <div class="panel-head"><h2>Input requests</h2></div>
         <div class="panel-body" id="inputRequests"></div>

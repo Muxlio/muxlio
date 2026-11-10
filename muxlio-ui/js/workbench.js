@@ -44,6 +44,105 @@ function sumExecutionTime(attempts){
   return known?total:null;
 }
 
+let wbActivityAttempts=[],wbInputRequestSummary=[],wbActivitySignature='';
+function latestAttemptForActivation(attempts,activationId){
+  return (attempts||[]).filter(a=>a.activationId===activationId&&a.state!=='queued').sort((a,b)=>(b.retryNumber||0)-(a.retryNumber||0))[0]||null;
+}
+function activationActivityElapsed(act,attempts,nowIso){
+  const attempt=latestAttemptForActivation(attempts,act.id);
+  if(attempt?.startedAt){
+    const end=attempt.state==='running'?nowIso:(attempt.finishedAt||null);
+    if(end)return formatElapsed(attempt.startedAt,end);
+  }
+  return null;
+}
+function materializedStateCounts(acts){
+  const counts={};for(const act of acts||[])counts[act.state||'queued']=(counts[act.state||'queued']||0)+1;return counts;
+}
+function wbActivityStateSummary(counts,total){
+  const order=['running','waiting','paused','queued','failed','cancelled','succeeded'];
+  const parts=order.filter(state=>counts[state]).map(state=>`${counts[state]} ${state}`);
+  return `${total} materialized${parts.length?` · ${parts.join(' · ')}`:''}`;
+}
+function wbActivityButton(label,attrs){return `<button type="button" class="btn ghost wb-activity-action" ${attrs}>${esc(label)}</button>`}
+function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date().toISOString()){
+  const overview=run.overview||{},states=overview.attemptStates||{},actsList=acts||[],attemptList=attempts||[],requests=inputRequests||[];
+  const counts=materializedStateCounts(actsList),total=overview.activations??actsList.length;
+  const items=[];
+  const runWait=['waiting','paused','created'].includes(run.state);
+  if(runWait){
+    const since=run.updatedAt||run.createdAt,elapsed=since?formatElapsed(since,nowIso):null;
+  const runDetail={created:'Run created and waiting to start.',waiting:'Run is waiting for admission or capacity.',paused:'Run is paused.'}[run.state]||'Waiting for coordinator admission or worker capacity.';
+    items.push({tone:'running',title:`Run ${run.state}`,detail:runDetail,elapsed,timing:elapsed?`Waiting ${elapsed}`:'Timing unavailable',actions:`${run.state==='paused'?wbActivityButton('Resume run','data-run-action="resume"'):''}`});
+  }
+  if(run.error&&!runWait)items.push({tone:'attention',title:'Run failed',detail:run.error,actions:wbActivityButton('Inspect operations','data-open-operations')});
+  const held=attemptList.filter(a=>a.awaitReconciliationReason);
+  for(const attempt of held){
+    const act=actsList.find(a=>a.id===attempt.activationId);
+    const step=act?nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId):'Step unavailable';
+    const elapsed=attempt.startedAt?formatElapsed(attempt.startedAt,attempt.finishedAt||nowIso):null;
+    items.push({tone:'attention',title:step,detail:attempt.awaitReconciliationReason||'External outcome uncertain.',elapsed,timing:elapsed?`Held ${elapsed}`:'Timing unavailable',actions:`${wbActivityButton('View node',`data-wb-focus-act="${esc(attempt.activationId)}"`)}${wbActivityButton('Resolve uncertain execution',`data-ops-action="resolve" data-run="${esc(run.id)}" data-attempt="${esc(attempt.id)}"`)}${wbActivityButton('Operations','data-open-operations')}`});
+  }
+  const heldCount=overview.heldAttempts||0;
+  if(heldCount>held.length)items.push({tone:'attention',title:'Held uncertain effects',detail:`${heldCount-held.length} more attempts need reconciliation on other pages.`,actions:wbActivityButton('Inspect operations','data-open-operations')});
+  const detached=states.detached||0;
+  if(detached)items.push({tone:'attention',title:'Detached remote operations',detail:`${detached} remote operations are detached. Waiting does not occupy a worker slot.`,actions:wbActivityButton('Inspect operations','data-open-operations')});
+  for(const req of requests.filter(r=>r.state==='pending')){
+    items.push({tone:'attention',title:req.name||'Input request',detail:`Activation ${req.activationId||'unavailable'}${req.expiresAt?` · expires ${req.expiresAt}`:''}`,timing:'Awaiting response',actions:`${wbActivityButton('Respond',`data-wb-focus-input="${esc(req.requestId)}"`)}${req.activationId?wbActivityButton('View node',`data-wb-focus-act="${esc(req.activationId)}"`):''}`});
+  }
+  for(const act of actsList.filter(a=>a.state==='failed')){
+    const elapsed=activationActivityElapsed(act,attemptList,nowIso);
+    items.push({tone:'attention',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail:act.error||act.queueReason||'Execution failed.',elapsed,timing:elapsed?`Failed after ${elapsed}`:'Timing unavailable',actions:`${wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)}${wbActivityButton('Live transcript',`data-wb-transcript="${esc(act.id)}"`)}`});
+  }
+  const inFlight=actsList.filter(a=>['running','waiting','paused'].includes(a.state));
+  const inFlightIds=new Set(inFlight.map(a=>a.id));
+  for(const act of inFlight){
+    const elapsed=activationActivityElapsed(act,attemptList,nowIso);
+    const detail=act.queueReason||(act.state==='running'?'Executing on a worker.':'Waiting to start.');
+    items.push({tone:act.state==='running'?'progress':'queued',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail,elapsed,timing:elapsed?`${act.state==='running'?'Running':'Waiting'} ${elapsed}`:'Timing unavailable',actions:`${wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)}${act.state==='running'?wbActivityButton('Live transcript',`data-wb-transcript="${esc(act.id)}"`):''}`});
+  }
+  for(const act of actsList.filter(a=>a.state==='queued'&&!inFlightIds.has(a.id))){
+    items.push({tone:'queued',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail:act.queueReason||'Queued for dispatch.',timing:act.queueReason?'Admission wait':'Timing unavailable',actions:wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)});
+  }
+  const signature=JSON.stringify({run:run.state,error:run.error||'',counts,held:held.map(a=>a.id),detached,requests:requests.map(r=>[r.requestId,r.state]),items:items.map(i=>[i.title,i.detail,i.tone])});
+  const terminal=['succeeded','failed','cancelled'].includes(run.state);
+  const idle=terminal&&!items.length;
+  const summary=wbActivityStateSummary(counts,total);
+  const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<p class="wb-activity-empty subtle">${idle?'No activations need attention. Completed count reflects materialized nodes only.':'No activations materialized yet.'}</p>`;
+  const html=`<details class="wb-activity-details" data-preserve-key="wb-activity" open><summary><span class="wb-activity-heading"><strong>Current activity</strong><span class="subtle">${esc(summary)}</span></span></summary>${itemHtml}</details>`;
+  const announce=items.length?`${items.length} items need attention or are in progress. ${summary}.`:(idle?`Run ${run.state}. ${summary}.`:'');
+  return {html,signature,announce,visible:!idle||!terminal||actsList.length>0};
+}
+function renderWbActivity(run,acts){
+  const panel=document.getElementById('wbActivity');if(!panel)return;
+  if(!panel.dataset)panel.dataset={};
+  if(panel.dataset.runId!==run.id){panel.dataset.runId=run.id;panel._activitySignature='';wbActivitySignature='';}
+  const attempts=typeof wbActivityAttempts!=='undefined'?wbActivityAttempts:[];
+  const requests=typeof wbInputRequestSummary!=='undefined'?wbInputRequestSummary:[];
+  const {html,signature,announce,visible}=buildWbActivityMarkup(run,acts,attempts,requests);
+  panel.hidden=!visible;
+  if(panel._activitySignature===signature)return;
+  panel._activitySignature=signature;
+  const announcer=document.getElementById('wbActivityAnnounce');
+  if(announce&&announcer&&signature!==wbActivitySignature){announcer.textContent=announce;wbActivitySignature=signature;}
+  if(typeof replaceHTMLPreservingDetails==='function')replaceHTMLPreservingDetails(panel,html);else panel.innerHTML=html;
+}
+document.addEventListener('click',event=>{
+  const transcript=event.target.closest('[data-wb-transcript]');
+  if(transcript&&current){location.hash=`#transcript/${encodeURIComponent(current)}/${encodeURIComponent(transcript.dataset.wbTranscript)}`;return;}
+  const focusAct=event.target.closest('[data-wb-focus-act]');
+  if(focusAct){showWbTab('graph');loadActivation(focusAct.dataset.wbFocusAct);return;}
+  const focusInput=event.target.closest('[data-wb-focus-input]');
+  if(focusInput){
+    const panel=document.getElementById('inputRequestsPanel');panel?.scrollIntoView({block:'nearest'});
+    const form=[...(document.querySelectorAll('form[data-input-request]')||[])].find(item=>item.dataset.inputRequest===focusInput.dataset.wbFocusInput);
+    const field=form?.querySelector('input,select,textarea');
+    field?.focus({preventScroll:true});
+    return;
+  }
+  const runAction=event.target.closest('#wbActivity [data-run-action]');
+  if(runAction){document.querySelector(`#runControls [data-run-action="${runAction.dataset.runAction}"]`)?.click();}
+});
 function buildWbStats(r,acts){
   const total=r.overview?.activations??acts.length,done=r.overview?.completed??acts.filter(a=>a.state==='succeeded').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
@@ -212,13 +311,14 @@ function buildWbArtifacts(acts){
 // wbCurrentRunState tracks the state of the run currently open in the
 // workbench. Read by inspector.js to decide whether to show the retry
 // actions panel; must be set before renderWorkbench calls renderInspectorWb.
-let wbCurrentRunState='';
+let wbCurrentRunState='',wbCurrentRunSummary=null;
 let wbActiveTab='graph';
 function renderWorkbench(r,g,events){
   const acts=g.activations||[];
   activationData=acts;
   wbCurrentRun=r.id;
   wbCurrentRunState=r.state;
+  wbCurrentRunSummary=r;
   if(typeof refreshInputRequests==='function')refreshInputRequests(r.id);
 
   $('#workbenchView').hidden=false;
@@ -233,6 +333,7 @@ function renderWorkbench(r,g,events){
   sb.textContent=({succeeded:'✓ Succeeded',failed:'✗ Failed',running:'⟳ Running',waiting:'Waiting',paused:'Ⅱ Paused',cancelled:'Cancelled'}[r.state]||r.state||'—');
 
   $('#wbStats').innerHTML=buildWbStats(r,acts);
+  renderWbActivity(r,acts);
   replaceHTMLPreservingDetails($('#graphFlow'),graphMarkup(acts,g.scopes||[],r.overview?r.overview.completed===r.overview.activations:undefined));
   if(!g.hasOwnProperty('offset'))$('#wbArtifactList').innerHTML=buildWbArtifacts(acts);
   $('#inspActivationCount').textContent=`${r.overview?.activations??acts.length} nodes`;

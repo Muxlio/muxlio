@@ -233,20 +233,22 @@ document.addEventListener('click', async function(e) {
 const _baseOpenRun=openRun;
 openRun=async function(id){
   const epoch=refreshEpoch,seq=++detailRequest,same=renderedRun===id;
-  if(!same){selectedActivation=null;selectedActivationDetail=null;after=0;eventRecords=[];outputOffset=0;eventCursors=[0];eventPageIndex=0;liveEventRecords=[];runDataLoaded=false;runAttempts=[];
+  if(!same){selectedActivation=null;selectedActivationDetail=null;after=0;eventRecords=[];outputOffset=0;eventCursors=[0];eventPageIndex=0;liveEventRecords=[];runDataLoaded=false;runAttempts=[];wbActivityAttempts=[];wbInputRequestSummary=[];
  for(const key of ['runInputInspector','runOutputInspector']){const el=document.getElementById(key);if(el)el.textContent='Open the Data tab to load run inputs and outputs.';}}
 
   try{
     const r=await api(`/v1/runs/${encodeURIComponent(id)}?summary=true`);
     if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
     if(!r.overview)throw Error('Coordinator update required: this UI uses paged run views. Upgrade the coordinator before opening run histories.');
-    const [g,e,o,l]=await Promise.all([
+    const [g,e,o,l,attemptPage]=await Promise.all([
       api(`/v1/runs/${encodeURIComponent(id)}/graph`),
       api(`/v1/runs/${encodeURIComponent(id)}/events?order=desc&before=${eventCursors[eventPageIndex]||0}&limit=${RUN_DETAIL_PAGE_SIZE}`),
       api(`/v1/runs/${encodeURIComponent(id)}/outputs?offset=${outputOffset}&limit=${RUN_DETAIL_PAGE_SIZE}`),
-      api(`/v1/runs/${encodeURIComponent(id)}/events?tail=true&limit=50`)
+      api(`/v1/runs/${encodeURIComponent(id)}/events?tail=true&limit=50`),
+      api(`/v1/runs/${encodeURIComponent(id)}/attempts?offset=0&limit=50&details=false`)
     ]);
     if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
+    wbActivityAttempts=attemptPage.attempts||[];
     if(!same)liveAfter=r.overview?.latestEventSeq||0;
     const recent=new Map((l.events||[]).map(event=>[event.seq,event]));for(const event of liveEventRecords)recent.set(event.seq,event);liveEventRecords=[...recent.values()].sort((a,b)=>a.seq-b.seq).slice(-50);
     mergeEvents(e);

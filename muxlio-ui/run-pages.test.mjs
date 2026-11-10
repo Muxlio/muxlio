@@ -18,6 +18,7 @@ const context=vm.createContext({
   const offset=Number(url.searchParams.get('offset')||0),before=Number(url.searchParams.get('before')||0);
   if(url.pathname.endsWith('/graph'))return {activations:Array.from({length:10000},(_,i)=>({id:`node-${i}`})),scopes:[]};
   if(url.pathname.endsWith('/outputs'))return {outputs:[],offset,hasMore:true};
+  if(url.pathname.endsWith('/attempts'))return {attempts:[],hasMore:false};
   if(url.pathname.endsWith('/events')){const first=before?before-1:latestEvent;return {events:Array.from({length:50},(_,i)=>({seq:first-i})),nextBefore:first-49,hasMore:true};}
   throw Error(`unexpected unbounded request ${path}`);
  },
@@ -56,9 +57,14 @@ const usage=readFileSync(new URL('./js/usage-summary.js',import.meta.url),'utf8'
 const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
 const opsContext=vm.createContext({document:{addEventListener(){},getElementById:panel},esc:s=>String(s).replaceAll('<','&lt;'),fmtDuration:String,date:String,stateClass:String,activationData:[{id:'activation',nodeId:'find-and-fix'}]});
 vm.runInContext(format+'\n'+usage+'\n'+operations,opsContext);
+const wb=readFileSync(new URL('./js/workbench.js',import.meta.url),'utf8');
+vm.runInContext(wb,opsContext);
+vm.runInContext(`wbActivityAttempts=[{id:'attempt-held',activationId:'activation',awaitReconciliationReason:'Verify remote outcome'}]`,opsContext);
+panel('wbActivity');
 opsContext.renderRunOperations({id:'large-run',planDigest:'sha256:pinned',limits:{maxAttempts:100},overview:{attempts:20,heldAttempts:1,attemptStates:{detached:2,awaiting_reconciliation:1},usage:{tokens:{observed:0,unknown:2},costUsd:{estimated:1}}}});
-assert.match(panel('runAttention').innerHTML,/need reconciliation/);
-assert.match(panel('runAttention').innerHTML,/2 remote operations/);
+assert.equal(panel('runAttention').hidden,true,'legacy banner is consolidated into the activity panel');
+assert.match(panel('wbActivity').innerHTML,/Resolve uncertain execution/);
+assert.match(panel('wbActivity').innerHTML,/Detached remote operations/);
 assert.match(panel('runContract').innerHTML,/<dt>Observed<\/dt><dd>0<\/dd>/,'reported zero stays distinct from missing usage');
 assert.match(panel('runContract').innerHTML,/<dt>Estimated<\/dt><dd>\$1\.0000<\/dd>/);
 assert.match(panel('runContract').innerHTML,/Totals can be incomplete/);
