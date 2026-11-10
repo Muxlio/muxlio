@@ -101,7 +101,7 @@ func Redact(s string) string {
 	for _, entry := range os.Environ() {
 		k, v, _ := strings.Cut(entry, "=")
 		key := strings.ToLower(k)
-		if len(v) >= 4 && sensitive(key) {
+		if envSecretRedactable(v) && sensitive(key) {
 			secrets = append(secrets, v)
 		}
 	}
@@ -118,6 +118,24 @@ func Redact(s string) string {
 	}
 	return s
 }
+// envSecretRedactable reports whether a process environment value is safe to
+// replace globally in arbitrary error text. Short or dictionary-like values
+// otherwise corrupt common network and permission diagnostics.
+func envSecretRedactable(v string) bool {
+	if len(v) < 8 {
+		return false
+	}
+	if len(v) >= 16 {
+		return true
+	}
+	for _, r := range v {
+		if r < 'a' || r > 'z' {
+			return true
+		}
+	}
+	return false
+}
+
 func sensitive(k string) bool {
 	k = strings.ReplaceAll(strings.ToLower(k), "-", "_")
 	return strings.Contains(k, "token") || strings.Contains(k, "password") || strings.Contains(k, "secret") || strings.Contains(k, "api_key") || strings.Contains(k, "apikey") || k == "authorization"
