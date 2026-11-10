@@ -741,6 +741,15 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 			if a.ExecutionDurationMS == nil {
 				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
 			}
+			if a.Usage == nil {
+				a.Usage = s.attempts[i].Usage
+			}
+			if a.Measurements == nil {
+				a.Measurements = s.attempts[i].Measurements
+			}
+			if a.Result == nil {
+				a.Result = s.attempts[i].Result
+			}
 			s.attempts[i] = a
 			found = true
 			break

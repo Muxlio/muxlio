@@ -117,6 +117,32 @@ func TestMemoryExecutionAttemptUsage(t *testing.T) {
 	}
 }
 
+func TestRecordExecutionAttemptPreservesObservationsOnReplay(t *testing.T) {
+	s := New()
+	if err := s.CreateRun(&Run{ID: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "running",
+		StartedAt: time.Now(), Usage: &TokenUsage{Input: 10, Output: 5},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "succeeded",
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := s.ListExecutionAttempts("r", "act")
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("attempts=%v err=%v", attempts, err)
+	}
+	if attempts[0].Usage == nil || attempts[0].Usage.Input != 10 {
+		t.Fatalf("usage lost on replay: %+v", attempts[0].Usage)
+	}
+}
+
 func TestMemoryTimingRetainedOnReplayAndEmitted(t *testing.T) {
 	s := New()
 	ms := int64(123)
