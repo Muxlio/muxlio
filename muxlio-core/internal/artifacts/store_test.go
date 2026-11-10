@@ -83,6 +83,39 @@ func TestLocalStreamRejectsCorruptExistingObjectAndNonCanonicalDigest(t *testing
 	}
 }
 
+func TestStorePutIsolatedFromCallerMutation(t *testing.T) {
+	s := New()
+	data := []byte("original")
+	b, err := s.Put(data, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[0] = 'X'
+	got, err := s.Get(b.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data) != "original" {
+		t.Fatalf("mutation leaked: %q", got.Data)
+	}
+	b.Data[0] = 'Y'
+	got, err = s.Get(b.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data) != "original" {
+		t.Fatalf("mutation through Put result leaked: %q", got.Data)
+	}
+	got.Data[0] = 'Z'
+	got, err = s.Get(b.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data) != "original" {
+		t.Fatalf("mutation through Get result leaked: %q", got.Data)
+	}
+}
+
 func TestLocalStreamReturnedReaderHonorsCancellation(t *testing.T) {
 	store, err := NewLocal(t.TempDir())
 	if err != nil {

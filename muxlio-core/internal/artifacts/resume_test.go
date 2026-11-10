@@ -119,6 +119,22 @@ func TestResumeValidatesRangesAndRestartsWhenIgnored(t *testing.T) {
 	}
 }
 
+func TestParseDigestRejectsNonCanonicalHex(t *testing.T) {
+	full := digestOf("payload")
+	if _, err := parseDigest("sha256:" + strings.ToUpper(full[7:])); !errors.Is(err, ErrInvalidDigest) {
+		t.Fatalf("uppercase hex: %v", err)
+	}
+}
+
+func TestUploadRejectsNonCanonicalDeclaredDigest(t *testing.T) {
+	payload := "payload"
+	upper := "sha256:" + strings.ToUpper(digestOf(payload)[7:])
+	_, err := (Client{BaseURL: "http://unused.invalid"}).Upload(t.Context(), upper, "", int64(len(payload)), strings.NewReader(payload))
+	if !errors.Is(err, ErrInvalidDigest) {
+		t.Fatalf("expected ErrInvalidDigest, got %v", err)
+	}
+}
+
 func TestUploadRejectsDeclaredSizeMismatch(t *testing.T) {
 	_, err := (Client{BaseURL: "http://unused.invalid"}).Upload(t.Context(), digestOf("abc"), "text/plain", 4, strings.NewReader("abc"))
 	if !errors.Is(err, ErrIntegrity) {

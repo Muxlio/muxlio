@@ -284,16 +284,25 @@ func (s *Store) Put(data []byte, mime string) (*Blob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.blobs[digest]; ok {
-		return existing, nil // dedup by digest
+		return cloneBlob(existing), nil // dedup by digest
 	}
 	blob := &Blob{
 		Digest: digest,
-		Data:   data,
+		Data:   append([]byte(nil), data...),
 		Mime:   mime,
 		Size:   int64(len(data)),
 	}
 	s.blobs[digest] = blob
-	return blob, nil
+	return cloneBlob(blob), nil
+}
+
+func cloneBlob(blob *Blob) *Blob {
+	if blob == nil {
+		return nil
+	}
+	copy := *blob
+	copy.Data = append([]byte(nil), blob.Data...)
+	return &copy
 }
 
 // Get retrieves a blob by digest.
@@ -304,7 +313,7 @@ func (s *Store) Get(digest string) (*Blob, error) {
 	if !ok {
 		return nil, fmt.Errorf("muxlio: artifact %q not found", digest)
 	}
-	return blob, nil
+	return cloneBlob(blob), nil
 }
 
 // Has reports whether a digest exists in the store.
@@ -321,7 +330,7 @@ func (s *Store) List() []*Blob {
 	defer s.mu.RUnlock()
 	blobs := make([]*Blob, 0, len(s.blobs))
 	for _, b := range s.blobs {
-		blobs = append(blobs, b)
+		blobs = append(blobs, cloneBlob(b))
 	}
 	return blobs
 }

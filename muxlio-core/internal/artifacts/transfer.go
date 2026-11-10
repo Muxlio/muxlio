@@ -394,6 +394,13 @@ func parseDigest(digest string) (string, error) {
 	if len(digest) != 71 || digest[:7] != "sha256:" {
 		return "", fmt.Errorf("muxlio: %w %q", ErrInvalidDigest, digest)
 	}
+	// Digests have one canonical textual representation. Accepting upper-case
+	// hex here would allow aliases for the same content address.
+	for _, c := range digest[7:] {
+		if c >= 'A' && c <= 'F' {
+			return "", fmt.Errorf("muxlio: %w %q", ErrInvalidDigest, digest)
+		}
+	}
 	if _, err := hex.DecodeString(digest[7:]); err != nil {
 		return "", fmt.Errorf("muxlio: %w %q", ErrInvalidDigest, digest)
 	}
