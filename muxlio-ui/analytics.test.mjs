@@ -467,6 +467,30 @@ console.log('Partial token relative-volume checks passed');
 }
 console.log('Partial token chart checks passed');
 
+// Cached tokens are a subset of input; volume must not count them twice.
+{
+  const output = { innerHTML: '' };
+  const { buildAnalyticsModel, renderAnalytics, tokenSparklineMarkup } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
+  const usage = { input: 100, output: 20, cached: 30 };
+  const runs = [{ id: 'run', state: 'succeeded', createdAt: new Date().toISOString() }];
+  const model = buildAnalyticsModel(runs, new Map([
+    ['run', [{ executor: 'generic', state: 'succeeded', usage }]],
+  ]));
+  renderAnalytics(model);
+  const row = output.innerHTML.match(/<tr>\s*<td[^>]*><strong>generic<\/strong>[\s\S]*?<\/tr>/)?.[0] ?? '';
+  assert.match(row, /abc-bar[^>]*>120</, 'relative token volume is input+output, not input+output+cached');
+  assert.doesNotMatch(row, /abc-bar[^>]*>150</, 'cached must not inflate relative volume');
+  const spark = tokenSparklineMarkup(model.tokenBuckets);
+  const bucket = model.tokenBuckets.find(b => b.hasData);
+  assert.equal(bucket.input + bucket.output, 120, 'fixture billable volume');
+  const heights = [...spark.matchAll(/style="height:(\d+)px/g)].map(m => Number(m[1]));
+  const barHeight = heights[0];
+  const segSum = heights.slice(1, 4).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(segSum - barHeight) <= 3, 'stacked segments match billable bar height without double-counting cached');
+  assert.match(spark, /in=100 out=20 cached=30/);
+}
+console.log('Cached subset token volume checks passed');
+
 // UTC labels must match UTC bucket keys even for viewers on a different day.
 {
   class ViewerDate extends Date {

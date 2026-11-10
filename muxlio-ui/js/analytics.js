@@ -224,6 +224,33 @@ function analyticsUsage(usage) {
   return Object.values(values).some(value => value != null) ? values : null;
 }
 
+// Billable volume is input plus output; cached is a subset of input, not additive.
+// Returns null when values are missing or cached exceeds input.
+function analyticsTokenVolume(input, output, cached) {
+  const inN = analyticsNumber(input);
+  const outN = analyticsNumber(output);
+  const cachedN = analyticsNumber(cached);
+  if (inN == null || outN == null) {
+    if (inN != null && outN == null && cachedN == null) {
+      return { volume: inN, nonCachedInput: inN, cached: 0, output: 0 };
+    }
+    if (inN == null && outN != null && cachedN == null) {
+      return { volume: outN, nonCachedInput: 0, cached: 0, output: outN };
+    }
+    return null;
+  }
+  if (cachedN == null) {
+    return { volume: inN + outN, nonCachedInput: inN, cached: 0, output: outN };
+  }
+  if (cachedN > inN) return null;
+  return {
+    volume: inN + outN,
+    nonCachedInput: inN - cachedN,
+    cached: cachedN,
+    output: outN,
+  };
+}
+
 // Render a simple CSS bar chart from an array of {label, value} items.
 // maxValue is the scale reference; bars are percentage widths.
 function barChartMarkup(items, opts = {}) {
@@ -278,16 +305,18 @@ function sparklineMarkup(buckets) {
 
 // Render the token-usage-over-time section as stacked bars per day.
 function tokenSparklineMarkup(tokenBuckets) {
-  const maxTotal = Math.max(...tokenBuckets.map(b => b.input + b.output + b.cached), 1);
+  const volumes = tokenBuckets.map(b => analyticsTokenVolume(b.input, b.output, b.cached)?.volume ?? 0);
+  const maxTotal = Math.max(...volumes, 1);
   const hasAny = tokenBuckets.some(b => b.hasData);
   if (!hasAny) return '';
 
   const bars = tokenBuckets.map(b => {
-    const total = b.input + b.output + b.cached;
+    const parts = analyticsTokenVolume(b.input, b.output, b.cached);
+    const total = parts?.volume ?? 0;
     const totalH = maxTotal > 0 ? (total / maxTotal) * 56 : 0;
-    const inH  = total > 0 ? (b.input  / total) * totalH : 0;
-    const outH = total > 0 ? (b.output / total) * totalH : 0;
-    const cacH = total > 0 ? (b.cached / total) * totalH : 0;
+    const inH  = total > 0 && parts ? (parts.nonCachedInput / total) * totalH : 0;
+    const outH = total > 0 && parts ? (parts.output / total) * totalH : 0;
+    const cacH = total > 0 && parts ? (parts.cached / total) * totalH : 0;
     const tip = `${b.label}: in=${fmtTok(b.input)} out=${fmtTok(b.output)} cached=${fmtTok(b.cached)}`;
     return `<div class="spark-col" title="${esc(tip)}" aria-label="${esc(tip)}">
       <div class="spark-bar-wrap" style="height:${Math.max(1,Math.round(totalH))}px">
@@ -320,7 +349,7 @@ function analyticsDetailsMarkup(model) {
     const usage=model.executorUsage.get(name);
     const values=['input','output','cached'].map(field=>`<td class="num">${esc(fmtTok(usage?.[field]))}</td>`).join('');
     const complete=usage&&['input','output','cached'].every(field=>usage[field]!=null);
-    const total=complete?usage.input+usage.output+usage.cached:null;
+    const total=complete?(analyticsTokenVolume(usage.input,usage.output,usage.cached)?.volume??null):null;
     return {name,stats,values,total};
   });
   const maxTokens=Math.max(1,...rows.map(row=>row.total??0));
