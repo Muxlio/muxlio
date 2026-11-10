@@ -161,6 +161,12 @@ function analyticsBucketLabel(d, range, tz) {
   return span > 1 ? `${label} (+${span - 1}d)` : label;
 }
 
+function analyticsRangeThroughNow(range, now = new Date()) {
+  const toMs = Math.max(range.to.getTime(), now.getTime());
+  if (toMs === range.to.getTime()) return range;
+  return { ...range, to: new Date(toMs) };
+}
+
 function analyticsRunInRange(run, range) {
   const created = Date.parse(run.createdAt);
   if (!Number.isFinite(created)) return false;

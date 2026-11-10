@@ -595,6 +595,7 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			"/js/transcript.js":           "js/transcript.js",
 			"/js/analytics-accounting.js": "js/analytics-accounting.js",
 			"/js/analytics-filters.js":      "js/analytics-filters.js",
+			"/js/analytics-retry-latency.js": "js/analytics-retry-latency.js",
 			"/js/analytics.js":              "js/analytics.js",
 			"/js/operations.js":     "js/operations.js",
 			"/js/operations-hub.js": "js/operations-hub.js",

@@ -8,7 +8,8 @@ async function loadAnalyticsDataLegacy(filters, range, attemptErrors = new Map()
   if (runsData.runs !== null && !Array.isArray(runsData.runs)) throw new Error('Invalid runs response');
   const attemptsByRun = new Map();
   let runs = (runsData.runs || []).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  runs = runs.filter(r => analyticsRunInRange(r, range));
+  const includeRange = analyticsRangeThroughNow(range);
+  runs = runs.filter(r => analyticsRunInRange(r, includeRange));
   const concurrency = 12;
   for (let start = 0; start < runs.length; start += concurrency) await Promise.all(runs.slice(start, start + concurrency).map(async run => {
     try {
@@ -19,7 +20,7 @@ async function loadAnalyticsDataLegacy(filters, range, attemptErrors = new Map()
       attemptErrors.set(run.id, err.message || 'Request failed');
     }
   }));
-  const applied = analyticsApplyFiltersToModelInputs(runs, attemptsByRun, filters, range);
+  const applied = analyticsApplyFiltersToModelInputs(runs, attemptsByRun, filters, includeRange);
   return buildAnalyticsModel(applied.runs, applied.attemptsByRun, attemptErrors, {
     range, filters, totalRuns: applied.runs.length, hasMore: false, legacy: true,
   });
@@ -204,6 +205,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
   const usageSummary = analyticsSummarizeUsage(attemptRows);
   const measures = analyticsMeasureCatalog(usageSummary);
   const measureRollups = buildAnalyticsMeasureRollups(flatAttempts, measures, dayBucketTemplate(), range, tz);
+  const retryLatency = buildAnalyticsRetryLatency(flatAttempts, runs);
 
   let totalInput = null, totalOutput = null, totalCached = null, anyTokenData = false;
   for (const [, e] of executorUsage) {
@@ -239,6 +241,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
     populations: ctx.populations,
     comparison: ctx.comparison,
     legacy: !!ctx.legacy,
+    retryLatency,
   };
 }
 
@@ -561,6 +564,14 @@ function analyticsDrillRecords(model, drill, measureId) {
     return model.flatAttempts.filter(({ run }) => (run.workflowName || 'Unnamed workflow') === key)
       .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
   }
+  if (kind === 'latencyWorkflow') {
+    return model.flatAttempts.filter(({ run }) => (run.workflowName || 'Unnamed workflow') === key)
+      .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
+  }
+  if (kind === 'latencyExecutor') {
+    return model.flatAttempts.filter(({ attempt }) => (attempt.executor || 'unknown') === key)
+      .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
+  }
   return [];
 }
 
@@ -802,6 +813,7 @@ function renderAnalytics(model, options = {}) {
         <div><h3 class="analytics-breakdown-title">By executor</h3>${bars(executorBreakdown, { fmt: measureFmt, drillKind: 'executor' })}</div>
         <div><h3 class="analytics-breakdown-title">By workflow</h3>${bars(workflowBreakdown, { fmt: measureFmt, drillKind: 'workflow' })}</div>
       </div></section>` : '')
+    + analyticsRetryLatencyMarkup(model)
     + `<div class="analytics-chart-grid">`
     + card('Task time by adapter', timingChart, true)
     + card(`Run outcomes · ${esc(windowLabel)}`, sparklineMarkup(buckets, sparkOpts) + legend([['Succeeded', 'succeeded'], ['Failed', 'failed'], ['Other', 'pending']]), true)

@@ -7,6 +7,7 @@ const analyticsSource = [
   './js/usage-summary.js',
   './js/analytics-accounting.js',
   './js/analytics-filters.js',
+  './js/analytics-retry-latency.js',
   './js/analytics.js',
 ].map(p => readFileSync(new URL(p, import.meta.url), 'utf8')).join('\n');
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -28,7 +29,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromHash, analyticsResolveRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromHash, analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile})`,
     ctx,
   );
 }
@@ -468,6 +469,13 @@ console.log('Analytics fetch failure checks passed');
   const model = await helpers.loadAnalyticsData();
   assert.equal(model.runsWithNoAttempts, 1);
   assert.equal(model.attemptErrors.size, 0);
+
+  const { analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange } = getHelpers(makeCtx());
+  const staleRange = analyticsResolveRange({ preset: '30d' }, new Date('2026-06-01T12:00:00.000Z'));
+  const run = { id: 'edge', createdAt: '2026-06-01T12:00:00.050Z' };
+  assert.equal(analyticsRunInRange(run, staleRange), false, 'stale upper bound can exclude just-created runs');
+  const includeRange = analyticsRangeThroughNow(staleRange, new Date('2026-06-01T12:00:00.050Z'));
+  assert.equal(analyticsRunInRange(run, includeRange), true, 'legacy load widens the include window through now');
 }
 console.log('Analytics API empty slice checks passed');
 
@@ -650,3 +658,74 @@ console.log('Analytics overlapping-load checks passed');
   assert.ok(model.buckets.find(b => b.dateKey === bucket.dateKey)?.total, 'run lands in 7d bucket');
 }
 console.log('analytics filter URL and bucket boundary checks passed');
+
+// Retry, latency distributions, and timing separation.
+{
+  const { buildAnalyticsModel, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile, renderAnalytics } = getHelpers(makeCtx());
+  assert.equal(analyticsPercentile([100, 200, 300], 0.95), 300);
+  assert.equal(analyticsPercentile([], 0.5), null);
+  const t = analyticsAttemptTiming({
+    executionDurationMs: 50,
+    startedAt: '2026-01-01T00:00:10Z',
+    finishedAt: '2026-01-01T00:01:10Z',
+    queuedAt: '2026-01-01T00:00:00Z',
+    workerStartedAt: '2026-01-01T00:00:08Z',
+  });
+  assert.equal(t.workerMs, 50);
+  assert.equal(t.coordinatorMs, 60000);
+  assert.equal(t.queueMs, 8000);
+  assert.equal(analyticsAttemptTiming({ queuedAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:10Z' }).queueMs, null,
+    'coordinator startedAt alone cannot establish actual worker queue delay');
+  assert.equal(analyticsAttemptTiming({ executionDurationMs: 0 }).workerMs, 0);
+  assert.equal(analyticsAttemptTiming({ startedAt: 'bad', finishedAt: 'bad' }).coordinatorMs, null);
+
+  const runs = [
+    { id: 'ok', state: 'succeeded', workflowName: 'wf-a', createdAt: '2026-06-01T00:00:00Z' },
+    { id: 'retry', state: 'succeeded', workflowName: 'wf-a', createdAt: '2026-06-01T00:00:00Z' },
+    { id: 'fail', state: 'failed', workflowName: 'wf-b', createdAt: '2026-06-01T00:00:00Z' },
+    { id: 'cancel', state: 'cancelled', workflowName: 'wf-b', createdAt: '2026-06-01T00:00:00Z' },
+  ];
+  const attemptsByRun = new Map([
+    ['ok', [{ id: 'a0', activationId: 'act', executor: 'exec-a', retryNumber: 0, state: 'succeeded', executionDurationMs: 100 }]],
+    ['retry', [
+      { id: 'a1', activationId: 'act', executor: 'exec-a', retryNumber: 0, state: 'failed', executionDurationMs: 200,
+        usage: { input: 10, output: 5, cached: 0 }, measurements: { costUsd: 0.1 } },
+      { id: 'a2', activationId: 'act', executor: 'exec-b', retryNumber: 1, state: 'succeeded', executionDurationMs: 400,
+        startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T00:00:05Z' },
+    ]],
+    ['fail', [{ id: 'f1', activationId: 'act', executor: 'exec-a', retryNumber: 0, state: 'failed', executionDurationMs: 300 }]],
+    ['cancel', [{ id: 'c1', activationId: 'act', executor: 'exec-a', retryNumber: 0, state: 'cancelled' }]],
+  ]);
+  const flat = [];
+  for (const run of runs) {
+    for (const attempt of attemptsByRun.get(run.id) || []) flat.push({ run, attempt });
+  }
+  const rl = buildAnalyticsRetryLatency(flat, runs);
+  assert.equal(rl.runOutcomes.terminalRuns, 4);
+  assert.equal(rl.runOutcomes.succeededNoRetry, 1);
+  assert.equal(rl.runOutcomes.succeededAfterRetry, 1);
+  assert.equal(rl.runOutcomes.finalFailed, 1);
+  assert.equal(rl.runOutcomes.cancelledRuns, 1);
+  assert.equal(rl.runOutcomes.recoveredFailureAttempts, 1);
+  assert.equal(rl.runOutcomes.finalFailureAttempts, 1);
+  assert.equal(rl.retryOverhead.extraAttempts, 1);
+  assert.equal(rl.retryOverhead.workerMs, 200);
+  assert.equal(rl.failedRetriedUsage.reporting, 1);
+  assert.ok(rl.contributors.some(c => c.attemptId === 'a2'), 'slow successful attempt appears in contributor list');
+  assert.equal(rl.byWorkflow.find(w => w.label === 'wf-a').worker.n, 3);
+  assert.equal(rl.byExecutor.find(e => e.label === 'exec-b').coordinator.median, 5000);
+  const model = buildAnalyticsModel(runs, attemptsByRun);
+  assert.ok(model.retryLatency);
+  const output = { innerHTML: '' };
+  const { renderAnalytics: renderRetry } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
+  renderRetry(model);
+  assert.match(output.innerHTML, /Failure, retry, and latency/);
+  assert.match(output.innerHTML, /Succeeded after retry/);
+  assert.match(output.innerHTML, /small sample \(n=/);
+  assert.match(output.innerHTML, /data-analytics-drill="latencyWorkflow:wf-a"/);
+  assert.match(output.innerHTML, /Queue delay is shown only when/);
+  assert.match(output.innerHTML, /href="#run\/retry"/);
+}
+console.log('analytics retry latency checks passed');
+
+assert.match(indexSource, /analytics-retry-latency\.js/, 'retry latency module wired from index');

@@ -686,7 +686,12 @@ td.primary-cell small{display:block;margin-top:3px}
 .analytics-usage-trends h2{font-size:14px;font-weight:600;margin:0 0 8px}
 .analytics-breakdown-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:20px}
 .analytics-breakdown-title{font-size:12px;font-weight:600;margin:0 0 10px;color:var(--ink)}
-@media(max-width:900px){.analytics-chart-grid{grid-template-columns:minmax(0,1fr)}.analytics-breakdown-grid{grid-template-columns:minmax(0,1fr)}}
+.analytics-retry-latency{margin:16px 0}
+.analytics-retry-latency h2{font-size:14px;font-weight:600;margin:0 0 8px}
+.analytics-retry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:12px 0}
+.analytics-retry-latency .tablebox{margin-bottom:14px}
+.analytics-retry-latency .btn.ghost{font-size:11px;padding:2px 8px}
+@media(max-width:900px){.analytics-chart-grid{grid-template-columns:minmax(0,1fr)}.analytics-breakdown-grid{grid-template-columns:minmax(0,1fr)}.analytics-retry-grid{grid-template-columns:minmax(0,1fr)}}
 
 /* Bar chart used in analytics */
 .analytics-bar-chart{display:flex;flex-direction:column;gap:7px}
