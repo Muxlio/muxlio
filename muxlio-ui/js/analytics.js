@@ -1,9 +1,8 @@
 /* ── analytics ─────────────────────────────────── */
-// Cross-run operational insights: run volume, outcomes, and provider-reported
-// token usage. Aggregated client-side from the existing runs + attempts APIs.
+// Cross-run operational insights: run volume, outcomes, timing, and
+// provider-reported usage (tokens, credits, costs). Aggregated client-side
+// from runs + attempts using the shared UsageSummary semantics.
 
-// Fetch all runs and their execution attempts, then compute aggregated stats.
-// Returns a structured object; callers render it via renderAnalytics().
 async function loadAnalyticsData() {
   const runsData = await api('/v1/runs');
   if (runsData.runs !== null && !Array.isArray(runsData.runs)) throw new Error('Invalid runs response');
@@ -11,13 +10,10 @@ async function loadAnalyticsData() {
     new Date(a.createdAt) - new Date(b.createdAt)
   );
 
-  // Fetch all attempts so all-time totals describe the same run set. Keep the
-  // fan-out bounded to avoid overwhelming the coordinator on large histories.
-  const targets = runs;
   const attemptsByRun = new Map();
   const attemptErrors = new Map();
   const concurrency = 12;
-  for (let start = 0; start < targets.length; start += concurrency) await Promise.all(targets.slice(start, start + concurrency).map(async run => {
+  for (let start = 0; start < runs.length; start += concurrency) await Promise.all(runs.slice(start, start + concurrency).map(async run => {
     try {
       const d = await api(`/v1/runs/${encodeURIComponent(run.id)}/attempts`);
       if (d.attempts !== null && !Array.isArray(d.attempts)) throw new Error('Invalid attempts response');
@@ -30,32 +26,25 @@ async function loadAnalyticsData() {
   return buildAnalyticsModel(runs, attemptsByRun, attemptErrors);
 }
 
-// Build the analytics model from runs + attempt maps.
-// Exported (module-style) only for testing; workspace.js uses loadAnalyticsData.
 function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
   const states = ['created', 'running', 'waiting', 'paused', 'succeeded', 'failed', 'cancelled'];
-
-  // ── run volume by state ────────────────────────
   const stateCounts = Object.fromEntries(states.map(s => [s, 0]));
   for (const r of runs) {
     if (stateCounts[r.state] !== undefined) stateCounts[r.state]++;
   }
 
-  // ── daily run counts (last 30 days) ───────────
-  // Bucket by calendar day using the run's createdAt.
   const now = new Date();
   const DAY_MS = 86400000;
   const BUCKET_COUNT = 30;
-  const buckets = Array.from({ length: BUCKET_COUNT }, (_, i) => {
+  const dayBucketTemplate = () => Array.from({ length: BUCKET_COUNT }, (_, i) => {
     const d = new Date(now - (BUCKET_COUNT - 1 - i) * DAY_MS);
     return {
       label: d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' }),
       dateKey: d.toISOString().slice(0, 10),
-      total: 0,
-      succeeded: 0,
-      failed: 0,
     };
   });
+
+  const buckets = dayBucketTemplate().map(b => ({ ...b, total: 0, succeeded: 0, failed: 0 }));
   const bucketByDate = new Map(buckets.map(b => [b.dateKey, b]));
   for (const r of runs) {
     if (!r.createdAt) continue;
@@ -69,21 +58,21 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
     if (r.state === 'failed') b.failed++;
   }
 
-  // ── per-executor attempt counts, timing, and token usage ─────────────
-  // Group only by the shared ExecutionAttempt executor identifier.
-  // executorStats tracks attempt counts and worker execution timing.
-  // executorUsage tracks provider-reported token totals (may be absent).
-  // These are kept separate: missing token records must not hide timing/attempt data.
-  //
-  // Timing note: executionDurationMs is the worker-measured execution duration
-  // (excludes coordinator dispatch overhead and queue time). startedAt/finishedAt
-  // are coordinator-recorded wall times (queue-inclusive). We prefer
-  // executionDurationMs where available and only fall back to the coordinator
-  // elapsed difference when no worker duration was recorded — clearly labeled.
-  const executorStats = new Map(); // executor → {attempts, succeeded, failed, durationSumMs, durationSamples, elapsedSumMs, elapsedSamples, runIds}
-  const executorUsage = new Map(); // executor → {input, output, cached, runIds: Set}
+  const executorStats = new Map();
+  const executorUsage = new Map();
+  const flatAttempts = [];
   let runsWithNoAttempts = 0;
   let runsWithUnavailableUsage = 0;
+  const bucketProvenance = { finishedAt: 0, startedAt: 0, runCreatedAt: 0 };
+
+  const tokenBuckets = dayBucketTemplate().map(b => ({
+    ...b,
+    input: null,
+    output: null,
+    cached: null,
+    hasData: false,
+  }));
+  const tokenBucketByDate = new Map(tokenBuckets.map(b => [b.dateKey, b]));
 
   for (const r of runs) {
     if (attemptErrors.has(r.id)) continue;
@@ -95,9 +84,9 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
     let incompleteUsage = false;
     let hasCompletedAttempt = false;
     for (const a of attempts) {
+      flatAttempts.push({ attempt: a, run: r });
       const execKey = a.executor || 'unknown';
 
-      // ── attempt count and timing ───────────────
       let stats = executorStats.get(execKey);
       if (!stats) {
         stats = { attempts: 0, succeeded: 0, failed: 0, durationSumMs: 0, durationSamples: 0, elapsedSumMs: 0, elapsedSamples: 0, running: 0, missingTiming: 0, usageSamples: 0, missingUsage: 0, runIds: new Set() };
@@ -106,39 +95,56 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
       stats.attempts++;
       stats.runIds.add(r.id);
       if (a.state === 'succeeded') stats.succeeded++;
-      if (a.state === 'failed')    stats.failed++;
+      if (a.state === 'failed') stats.failed++;
+
+      const usage = analyticsUsage(a.usage);
+      const bucketTime = analyticsAttemptBucketTime(a, r);
+      if (bucketTime) bucketProvenance[bucketTime.provenance] = (bucketProvenance[bucketTime.provenance] || 0) + 1;
+
+      if (!analyticsAttemptPending(a.state)) {
+        if (usage) {
+          if (bucketTime) {
+            const key = new Date(bucketTime.ms).toISOString().slice(0, 10);
+            const tb = tokenBucketByDate.get(key);
+            if (tb) {
+              for (const field of ['input', 'output', 'cached']) {
+                if (usage[field] != null) tb[field] = (tb[field] ?? 0) + usage[field];
+              }
+              tb.hasData = true;
+            }
+          }
+        }
+      }
 
       if (a.state === 'running') {
         stats.running++;
         continue;
       }
-      if(a.state==='queued')continue;
+      if (a.state === 'queued') continue;
       hasCompletedAttempt = true;
-      let taskDuration=null;
-      // Keep worker measurements and coordinator elapsed samples separate.
+
+      let taskDuration = null;
       if (analyticsNumber(a.executionDurationMs) != null) {
         stats.durationSumMs += a.executionDurationMs;
         stats.durationSamples++;
-        taskDuration=a.executionDurationMs;
+        taskDuration = a.executionDurationMs;
       } else {
         const start = Date.parse(a.startedAt), finish = Date.parse(a.finishedAt);
         if (Number.isFinite(start) && Number.isFinite(finish) && start > 0 && finish >= start) {
           stats.elapsedSumMs += finish - start;
           stats.elapsedSamples++;
-          taskDuration=finish-start;
+          taskDuration = finish - start;
         } else {
           stats.missingTiming++;
         }
       }
-      if(taskDuration!=null){
-        stats.taskTimeTotal=(stats.taskTimeTotal||0)+taskDuration;
-        stats.taskTimeCount=(stats.taskTimeCount||0)+1;
-        stats.taskTimeMin=Math.min(stats.taskTimeMin??Infinity,taskDuration);
-        stats.taskTimeMax=Math.max(stats.taskTimeMax??0,taskDuration);
+      if (taskDuration != null) {
+        stats.taskTimeTotal = (stats.taskTimeTotal || 0) + taskDuration;
+        stats.taskTimeCount = (stats.taskTimeCount || 0) + 1;
+        stats.taskTimeMin = Math.min(stats.taskTimeMin ?? Infinity, taskDuration);
+        stats.taskTimeMax = Math.max(stats.taskTimeMax ?? 0, taskDuration);
       }
 
-      // ── token usage ───────────────────────────
-      const usage = analyticsUsage(a.usage);
       if (!usage) { stats.missingUsage++; incompleteUsage = true; continue; }
       stats.usageSamples++;
       if (Object.values(usage).some(value => value == null)) { stats.missingUsage++; incompleteUsage = true; }
@@ -152,45 +158,14 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
       }
       entry.runIds.add(r.id);
     }
-    if (hasCompletedAttempt && incompleteUsage) {
-      runsWithUnavailableUsage++;
-    }
+    if (hasCompletedAttempt && incompleteUsage) runsWithUnavailableUsage++;
   }
 
-  // ── token usage over time (last 30 days) ──────
-  // Aggregate reported tokens per day bucket.
-  const tokenBuckets = Array.from({ length: BUCKET_COUNT }, (_, i) => {
-    const d = new Date(now - (BUCKET_COUNT - 1 - i) * DAY_MS);
-    return {
-      label: d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-      dateKey: d.toISOString().slice(0, 10),
-      input: null,
-      output: null,
-      cached: null,
-      hasData: false,
-    };
-  });
-  const tokenBucketByDate = new Map(tokenBuckets.map(b => [b.dateKey, b]));
-  for (const r of runs) {
-    if (!r.createdAt) continue;
-    const timestamp = Date.parse(r.createdAt);
-    if (!Number.isFinite(timestamp)) continue;
-    const key = new Date(timestamp).toISOString().slice(0, 10);
-    const b = tokenBucketByDate.get(key);
-    if (!b) continue;
-    if (attemptErrors.has(r.id)) continue;
-    const attempts = attemptsByRun.get(r.id) || [];
-    for (const a of attempts) {
-      const usage = analyticsUsage(a.usage);
-      if (a.state === 'running' || !usage) continue;
-      for (const field of ['input', 'output', 'cached']) {
-        if (usage[field] != null) b[field] = (b[field] ?? 0) + usage[field];
-      }
-      b.hasData = true;
-    }
-  }
+  const attemptRows = flatAttempts.map(({ attempt }) => attempt);
+  const usageSummary = analyticsSummarizeUsage(attemptRows);
+  const measures = analyticsMeasureCatalog(usageSummary);
+  const measureRollups = buildAnalyticsMeasureRollups(flatAttempts, measures, dayBucketTemplate());
 
-  // ── totals ─────────────────────────────────────
   let totalInput = null, totalOutput = null, totalCached = null, anyTokenData = false;
   for (const [, e] of executorUsage) {
     if (e.input != null) totalInput = (totalInput ?? 0) + e.input;
@@ -211,21 +186,92 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map()) {
     runsWithNoAttempts,
     runsWithUnavailableUsage,
     totals: anyTokenData ? { input: totalInput, output: totalOutput, cached: totalCached } : null,
+    flatAttempts,
+    attemptCount: attemptRows.length,
+    usageSummary,
+    measures,
+    defaultMeasure: measures[0]?.id || null,
+    measureRollups,
+    bucketProvenance,
   };
 }
 
-// Reject missing or invalid measurements without turning them into zero.
+function buildAnalyticsMeasureRollups(flatAttempts, measures, dayTemplate) {
+  const rollups = new Map();
+  for (const measure of measures) {
+    const buckets = dayTemplate.map(b => ({ ...b, total: null, reporting: 0, hasData: false }));
+    const bucketByDate = new Map(buckets.map(b => [b.dateKey, b]));
+    const byExecutor = new Map();
+    const byWorkflow = new Map();
+    const evidence = [];
+    let subtotal = null;
+    let reporting = 0;
+
+    for (const { attempt, run } of flatAttempts) {
+      if (analyticsAttemptPending(attempt.state)) continue;
+      const value = analyticsMeasureValueForAttempt(attempt, measure);
+      const row = {
+        runId: run.id,
+        attemptId: attempt.id || '',
+        executor: attempt.executor || 'unknown',
+        workflow: run.workflowName || 'Unnamed workflow',
+        value,
+        bucketProvenance: null,
+      };
+      if (value != null) {
+        reporting++;
+        subtotal = (subtotal ?? 0) + value;
+        const execKey = row.executor;
+        const wfKey = row.workflow;
+        if (!byExecutor.has(execKey)) byExecutor.set(execKey, { label: execKey, value: 0, runIds: new Set() });
+        if (!byWorkflow.has(wfKey)) byWorkflow.set(wfKey, { label: wfKey, value: 0, runIds: new Set() });
+        const ex = byExecutor.get(execKey);
+        ex.value += value;
+        ex.runIds.add(run.id);
+        const wf = byWorkflow.get(wfKey);
+        wf.value += value;
+        wf.runIds.add(run.id);
+        const bucketTime = analyticsAttemptBucketTime(attempt, run);
+        if (bucketTime) {
+          row.bucketProvenance = bucketTime.provenance;
+          const key = new Date(bucketTime.ms).toISOString().slice(0, 10);
+          const b = bucketByDate.get(key);
+          if (b) {
+            b.total = (b.total ?? 0) + value;
+            b.reporting++;
+            b.hasData = true;
+          }
+        }
+      }
+      evidence.push(row);
+    }
+
+    rollups.set(measure.id, {
+      measure,
+      buckets,
+      byExecutor: [...byExecutor.values()].sort((a, b) => b.value - a.value),
+      byWorkflow: [...byWorkflow.values()].sort((a, b) => b.value - a.value),
+      evidence,
+      subtotal,
+      reporting,
+    });
+  }
+  return rollups;
+}
+
 function analyticsNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
+
 function analyticsUsage(usage) {
   if (usage == null) return null;
-  const values = Object.fromEntries(['input', 'output', 'cached'].map(field => [field, analyticsNumber(usage[field])]));
+  const values = Object.fromEntries(['input', 'output', 'cached'].map(field => {
+    const reported = analyticsUsageFieldReported(usage, field);
+    return [field, reported === undefined ? null : reported];
+  }));
   return Object.values(values).some(value => value != null) ? values : null;
 }
 
-// Billable volume is input plus output; cached is a subset of input, not additive.
-// Returns null when values are missing or cached exceeds input.
 function analyticsTokenVolume(input, output, cached) {
   const inN = analyticsNumber(input);
   const outN = analyticsNumber(output);
@@ -251,8 +297,6 @@ function analyticsTokenVolume(input, output, cached) {
   };
 }
 
-// Render a simple CSS bar chart from an array of {label, value} items.
-// maxValue is the scale reference; bars are percentage widths.
 function barChartMarkup(items, opts = {}) {
   if (!items.length) return '<p style="color:var(--muted);font-size:12px">No data.</p>';
   const maxVal = opts.maxValue ?? Math.max(...items.map(it => it.value), 1);
@@ -271,8 +315,6 @@ function barChartMarkup(items, opts = {}) {
   }).join('')}</div>`;
 }
 
-// Render a stacked sparkline from daily bucket data.
-// Each bucket has total/succeeded/failed.
 function sparklineMarkup(buckets) {
   const maxTotal = Math.max(...buckets.map(b => b.total), 1);
   const hasAny = buckets.some(b => b.total > 0);
@@ -285,7 +327,7 @@ function sparklineMarkup(buckets) {
     const pendH = Math.max(0, totalH - succH - failH);
     const tip = `${b.label}: ${b.total} runs (${b.succeeded} succeeded, ${b.failed} failed)`;
     return `<div class="spark-col" title="${esc(tip)}" aria-label="${esc(tip)}">
-      <div class="spark-bar-wrap" style="height:${Math.max(1,Math.round(totalH))}px">
+      <div class="spark-bar-wrap" style="height:${Math.max(1, Math.round(totalH))}px">
         ${failH > 0 ? `<div class="spark-seg failed" style="height:${Math.round(failH)}px"></div>` : ''}
         ${succH > 0 ? `<div class="spark-seg succeeded" style="height:${Math.round(succH)}px"></div>` : ''}
         ${pendH > 0 ? `<div class="spark-seg pending" style="height:${Math.round(pendH)}px"></div>` : ''}
@@ -303,7 +345,6 @@ function sparklineMarkup(buckets) {
   </div>`;
 }
 
-// Render the token-usage-over-time section as stacked bars per day.
 function tokenSparklineMarkup(tokenBuckets) {
   const volumes = tokenBuckets.map(b => analyticsTokenVolume(b.input, b.output, b.cached)?.volume ?? 0);
   const maxTotal = Math.max(...volumes, 1);
@@ -314,15 +355,15 @@ function tokenSparklineMarkup(tokenBuckets) {
     const parts = analyticsTokenVolume(b.input, b.output, b.cached);
     const total = parts?.volume ?? 0;
     const totalH = maxTotal > 0 ? (total / maxTotal) * 56 : 0;
-    const inH  = total > 0 && parts ? (parts.nonCachedInput / total) * totalH : 0;
+    const inH = total > 0 && parts ? (parts.nonCachedInput / total) * totalH : 0;
     const outH = total > 0 && parts ? (parts.output / total) * totalH : 0;
     const cacH = total > 0 && parts ? (parts.cached / total) * totalH : 0;
     const tip = `${b.label}: in=${fmtTok(b.input)} out=${fmtTok(b.output)} cached=${fmtTok(b.cached)}`;
     return `<div class="spark-col" title="${esc(tip)}" aria-label="${esc(tip)}">
-      <div class="spark-bar-wrap" style="height:${Math.max(1,Math.round(totalH))}px">
+      <div class="spark-bar-wrap" style="height:${Math.max(1, Math.round(totalH))}px">
         ${cacH > 0 ? `<div class="spark-seg tok-cached" style="height:${Math.round(cacH)}px"></div>` : ''}
         ${outH > 0 ? `<div class="spark-seg tok-out" style="height:${Math.round(outH)}px"></div>` : ''}
-        ${inH  > 0 ? `<div class="spark-seg tok-in"  style="height:${Math.round(inH)}px"></div>` : ''}
+        ${inH > 0 ? `<div class="spark-seg tok-in"  style="height:${Math.round(inH)}px"></div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -337,77 +378,199 @@ function tokenSparklineMarkup(tokenBuckets) {
   </div>`;
 }
 
-// Keep provenance and unavailable measurements inspectable alongside the charts.
-function analyticsDetailsMarkup(model) {
-  const runLinks=ids=>[...ids].map(id=>`<a href="#run/${encodeURIComponent(id)}">${esc(id)}</a>`).join(', ');
-  const notes=[];
-  if(model.runsWithNoAttempts)notes.push(`${model.runsWithNoAttempts} runs have no attempt records.`);
-  if(model.runsWithUnavailableUsage)notes.push(`${model.runsWithUnavailableUsage} runs have incomplete token data: no provider-reported token usage for some measurements.`);
-  for(const [id,error] of model.attemptErrors||[])notes.push(`Run ${runLinks([id])}: ${esc(error)}; statistics are partial.`);
-  const sample=(total,count)=>count?`${esc(fmtDuration(total/count))} (n=${count})`:'Unavailable';
-  const rows=[...model.executorStats].map(([name,stats])=>{
-    const usage=model.executorUsage.get(name);
-    const values=['input','output','cached'].map(field=>`<td class="num">${esc(fmtTok(usage?.[field]))}</td>`).join('');
-    const complete=usage&&['input','output','cached'].every(field=>usage[field]!=null);
-    const total=complete?(analyticsTokenVolume(usage.input,usage.output,usage.cached)?.volume??null):null;
-    return {name,stats,values,total};
+function usageMeasureSparklineMarkup(rollup) {
+  if (!rollup) return '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
+  const buckets = rollup.buckets;
+  const maxTotal = Math.max(...buckets.map(b => b.total ?? 0), 1);
+  const hasAny = buckets.some(b => b.hasData);
+  if (!hasAny) return '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
+  const fmt = v => analyticsFormatMeasureValue(rollup.measure, v);
+  const bars = buckets.map(b => {
+    const total = b.total ?? 0;
+    const totalH = maxTotal > 0 ? (total / maxTotal) * 56 : 0;
+    const tip = `${b.label}: ${fmt(total)} · ${b.reporting} attempts`;
+    return `<div class="spark-col" title="${esc(tip)}" aria-label="${esc(tip)}">
+      <div class="spark-bar-wrap" style="height:${Math.max(1, Math.round(totalH))}px">
+        ${total > 0 ? `<div class="spark-seg tok-in" style="height:${Math.round(totalH)}px"></div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  const labels = buckets
+    .filter((_, i) => i === 0 || i === Math.floor(buckets.length / 2) || i === buckets.length - 1)
+    .map(b => `<span>${esc(b.label)}</span>`).join('');
+  return `<div class="sparkline" role="img" aria-label="${esc(rollup.measure.label)} over last 30 days">
+    <div class="spark-bars">${bars}</div>
+    <div class="spark-axis">${labels}</div>
+  </div>`;
+}
+
+function analyticsUsageHeadMarkup(model) {
+  const presentation = buildUsagePresentation(model.usageSummary || {}, { attemptCount: model.attemptCount });
+  if (presentation.status === 'none') {
+    return `<div class="analytics-panel" role="status"><p class="subtle">No attempts loaded yet. Usage subtotals appear when executor-reported measurements are available.</p></div>`;
+  }
+  const measures = presentation.primary.map(m =>
+    `<div class="analytics-usage-measure"><span class="analytics-usage-val">${esc(usageMeasureValue(m))}</span><span class="analytics-usage-label">${esc(m.label)}${esc(m.coverage || '')}</span></div>`
+  ).join('');
+  const provenance = [];
+  const bp = model.bucketProvenance || {};
+  if (bp.finishedAt) provenance.push(`${bp.finishedAt} attempts bucketed by finishedAt`);
+  if (bp.startedAt) provenance.push(`${bp.startedAt} by startedAt`);
+  if (bp.runCreatedAt) provenance.push(`${bp.runCreatedAt} by run createdAt (legacy fallback)`);
+  const provNote = provenance.length
+    ? `<p class="subtle analytics-provenance">Usage trends: ${esc(provenance.join('; '))}. Subtotals are reported values with coverage, not complete spend.</p>`
+    : `<p class="subtle analytics-provenance">Usage trends bucket by attempt finishedAt, then startedAt, then run createdAt. Subtotals are reported values with coverage, not complete spend.</p>`;
+  return `<div class="analytics-panel analytics-usage-head"><h2>Reported usage</h2>${provNote}<div class="analytics-usage-primary">${measures || '<span class="subtle">No usage reported</span>'}</div></div>`;
+}
+
+function analyticsMeasureToolbarMarkup(model, selectedId) {
+  if (!model.measures?.length) {
+    return `<div class="analytics-panel subtle" role="status">No usage measures reported across loaded attempts.</div>`;
+  }
+  const id = selectedId || model.defaultMeasure;
+  const options = model.measures.map(m =>
+    `<option value="${esc(m.id)}"${m.id === id ? ' selected' : ''}>${esc(m.label)}</option>`
+  ).join('');
+  return `<h2>Usage trend and breakdown</h2>
+    <div class="analytics-toolbar">
+      <label class="analytics-measure-label">Measure
+        <select id="analyticsMeasureSelect" class="analytics-measure-select" aria-label="Select usage measure">${options}</select>
+      </label>
+    </div>`;
+}
+
+function analyticsDetailsMarkup(model, measureId) {
+  const runLinks = ids => [...ids].map(id => `<a class="analytics-run-link" href="#run/${encodeURIComponent(id)}">${esc(id)}</a>`).join(', ');
+  const notes = [];
+  if (model.runsWithNoAttempts) notes.push(`${model.runsWithNoAttempts} runs have no attempt records.`);
+  if (model.runsWithUnavailableUsage) notes.push(`${model.runsWithUnavailableUsage} runs have incomplete token data: no provider-reported token usage for some measurements.`);
+  for (const [id, error] of model.attemptErrors || []) notes.push(`Run ${runLinks([id])}: ${esc(error)}; statistics are partial.`);
+  const sample = (total, count) => count ? `${esc(fmtDuration(total / count))} (n=${count})` : 'Unavailable';
+
+  const rollup = measureId ? model.measureRollups?.get(measureId) : null;
+  const measureRows = (rollup?.evidence || []).filter(row => row.value != null).slice(0, 200);
+  const chartSubtotal = rollup?.subtotal ?? null;
+  const evidenceSum = measureRows.reduce((acc, row) => acc + row.value, 0);
+
+  const rows = [...model.executorStats].map(([name, stats]) => {
+    const usage = model.executorUsage.get(name);
+    const values = ['input', 'output', 'cached'].map(field => `<td class="num">${esc(fmtTok(usage?.[field]))}</td>`).join('');
+    const complete = usage && ['input', 'output', 'cached'].every(field => usage[field] != null);
+    const total = complete ? (analyticsTokenVolume(usage.input, usage.output, usage.cached)?.volume ?? null) : null;
+    return { name, stats, values, total };
   });
-  const maxTokens=Math.max(1,...rows.map(row=>row.total??0));
-  return `<details class="analytics-details"><summary>Data details</summary>
-    ${notes.length?`<div role="status">${notes.map(note=>`<p>${note}</p>`).join('')}</div>`:''}
+  const maxTokens = Math.max(1, ...rows.map(row => row.total ?? 0));
+
+  const reconcile = chartSubtotal != null && Math.abs(chartSubtotal - evidenceSum) < 0.0001
+    ? `<p class="subtle">Chart subtotal ${esc(analyticsFormatMeasureValue(rollup.measure, chartSubtotal))} matches ${measureRows.length} listed evidence rows.</p>`
+  : chartSubtotal != null
+    ? `<p class="subtle">Chart subtotal ${esc(analyticsFormatMeasureValue(rollup.measure, chartSubtotal))}; visible evidence rows sum ${esc(analyticsFormatMeasureValue(rollup.measure, evidenceSum))} (table may be truncated).</p>`
+    : '';
+
+  const evidenceTable = rollup ? `<div class="tablebox"><table><thead><tr><th>Executor</th><th>Workflow</th><th>Run</th><th>Attempt</th><th>${esc(rollup.measure.label)}</th><th>Bucket time</th></tr></thead><tbody>
+    ${measureRows.map(row => `<tr>
+      <td>${esc(row.executor)}</td>
+      <td>${esc(row.workflow)}</td>
+      <td>${runLinks([row.runId])}</td>
+      <td>${esc(row.attemptId || '—')}</td>
+      <td class="num">${esc(analyticsFormatMeasureValue(rollup.measure, row.value))}</td>
+      <td class="subtle">${esc(row.bucketProvenance || '—')}</td>
+    </tr>`).join('')}
+    </tbody></table></div>${reconcile}` : '';
+
+  return `<details class="analytics-details"><summary>Data details and evidence</summary>
+    ${notes.length ? `<div role="status">${notes.map(note => `<p>${note}</p>`).join('')}</div>` : ''}
+    ${evidenceTable}
     <div class="tablebox"><table><thead><tr><th>Agent</th><th>Worker time</th><th>Coordinator elapsed</th><th>Timing availability</th><th>Input tokens</th><th>Output tokens</th><th>Cached tokens</th><th>Relative token volume</th><th>Runs</th></tr></thead><tbody>
-    ${rows.map(({name,stats,values,total})=>`<tr><td><strong>${esc(name)}</strong></td><td>${sample(stats.durationSumMs,stats.durationSamples)}</td><td>${sample(stats.elapsedSumMs,stats.elapsedSamples)}</td><td>${stats.missingTiming} missing timing; ${stats.running} in progress</td>${values}<td>${total==null?'Unavailable':`<span class="abc-bar" style="display:block;width:${(100*total/maxTokens).toFixed(1)}%">${esc(fmtTok(total))}</span>`}</td><td>${runLinks(stats.runIds)}</td></tr>`).join('')}
+    ${rows.map(({ name, stats, values, total }) => `<tr><td><strong>${esc(name)}</strong></td><td>${sample(stats.durationSumMs, stats.durationSamples)}</td><td>${sample(stats.elapsedSumMs, stats.elapsedSamples)}</td><td>${stats.missingTiming} missing timing; ${stats.running} in progress</td>${values}<td>${total == null ? 'Unavailable' : `<span class="abc-bar" style="display:block;width:${(100 * total / maxTokens).toFixed(1)}%">${esc(fmtTok(total))}</span>`}</td><td>${runLinks(stats.runIds)}</td></tr>`).join('')}
     </tbody></table></div></details>`;
 }
 
-// Render the full analytics page from the model.
-function renderAnalytics(model) {
-  const {runs,buckets,tokenBuckets,executorStats,executorUsage}=model;
-  const container=document.getElementById('analyticsContent');
-  if(!container)return;
-  const workflows=new Map();
-  for(const run of runs){
-    if(!['succeeded','failed','cancelled'].includes(run.state))continue;
-    const ms=Date.parse(run.updatedAt)-Date.parse(run.createdAt);
-    if(!Number.isFinite(ms)||ms<0)continue;
-    const name=run.workflowName||'Unnamed workflow';
-    if(!workflows.has(name))workflows.set(name,[]);
+function renderAnalytics(model, options = {}) {
+  const { runs, buckets, tokenBuckets, executorStats } = model;
+  const container = document.getElementById('analyticsContent');
+  if (!container) return;
+  container._analyticsModel = model;
+
+  const measureId = options.measureId || model.defaultMeasure;
+  const rollup = measureId ? model.measureRollups?.get(measureId) : null;
+  const measureFmt = v => rollup ? analyticsFormatMeasureValue(rollup.measure, v) : fmtTok(v);
+
+  const workflows = new Map();
+  for (const run of runs) {
+    if (!['succeeded', 'failed', 'cancelled'].includes(run.state)) continue;
+    const ms = Date.parse(run.updatedAt) - Date.parse(run.createdAt);
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    const name = run.workflowName || 'Unnamed workflow';
+    if (!workflows.has(name)) workflows.set(name, []);
     workflows.get(name).push(ms);
   }
-  const workflowTime=[...workflows].map(([label,values])=>{
-    values.sort((a,b)=>a-b);
-    const mid=Math.floor(values.length/2);
-    return {label,value:values.length%2?values[mid]:(values[mid-1]+values[mid])/2};
-  }).sort((a,b)=>b.value-a.value).slice(0,10);
-  const agentTiming=[...(executorStats||[])].map(([label,s])=>({label,
-    low:s.taskTimeMin??null,high:s.taskTimeMax??null,
-    average:s.taskTimeCount?s.taskTimeTotal/s.taskTimeCount:null,
-    count:s.taskTimeCount||0,fallback:s.elapsedSamples||0,
-  })).sort((a,b)=>(b.average??-1)-(a.average??-1));
-  const failureRates=[...(executorStats||[])].map(([label,s])=>({label,value:s.failed+s.succeeded?100*s.failed/(s.failed+s.succeeded):null}))
-    .filter(x=>x.value!=null).sort((a,b)=>b.value-a.value).slice(0,10);
-  const empty='<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
-  const bars=(items,opts)=>items.length?barChartMarkup(items,opts):empty;
-  const card=(title,chart,wide=false)=>`<section class="analytics-chart-card${wide?' analytics-chart-wide':''}"><h2>${title}</h2>${chart}</section>`;
-  const legend=(items)=>`<div class="spark-legend">${items.map(([label,cls])=>`<span class="spark-legend-item"><span class="spark-swatch ${cls}"></span>${label}</span>`).join('')}</div>`;
-  const rawMax=Math.max(1,...agentTiming.map(a=>a.high??0));
-  const magnitude=10**Math.floor(Math.log10(rawMax));
-  const maxTiming=([1,2,5,10].find(n=>n*magnitude>=rawMax)||10)*magnitude;
-  const timingChart=agentTiming.length?`<div class="adapter-timing-chart">${agentTiming.map(agent=>{
-    const tooltip=`${agent.count} completed attempts; ${agent.fallback} use timestamp elapsed time, including queue and dispatch delays`;
-    return `<div class="adapter-timing-group"><div class="adapter-timing-identity"><strong>${esc(agent.label)}</strong><span title="Completed attempts">n=${agent.count}</span></div><div class="adapter-timing-bars" title="${esc(tooltip)}">${[['low','Lowest'],['average','Average'],['high','Highest']].map(([field,label])=>{
-      const value=agent[field];
-      return `<div class="adapter-timing-series timing-${field}"><span class="adapter-series-label">${label}</span><div class="adapter-series-track"><span class="adapter-series-bar${value===0?' timing-zero':''}" style="width:${value==null?0:100*value/maxTiming}%"></span></div><span class="adapter-series-value">${value==null?'—':esc(fmtDuration(value))}</span></div>`;
+  const workflowTime = [...workflows].map(([label, values]) => {
+    values.sort((a, b) => a - b);
+    const mid = Math.floor(values.length / 2);
+    return { label, value: values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2 };
+  }).sort((a, b) => b.value - a.value).slice(0, 10);
+
+  const agentTiming = [...(executorStats || [])].map(([label, s]) => ({
+    label,
+    low: s.taskTimeMin ?? null,
+    high: s.taskTimeMax ?? null,
+    average: s.taskTimeCount ? s.taskTimeTotal / s.taskTimeCount : null,
+    count: s.taskTimeCount || 0,
+    fallback: s.elapsedSamples || 0,
+  })).sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
+
+  const failureRates = [...(executorStats || [])].map(([label, s]) => ({
+    label,
+    value: s.failed + s.succeeded ? 100 * s.failed / (s.failed + s.succeeded) : null,
+  })).filter(x => x.value != null).sort((a, b) => b.value - a.value).slice(0, 10);
+
+  const empty = '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
+  const bars = (items, opts) => items.length ? barChartMarkup(items, opts) : empty;
+  const card = (title, chart, wide = false) => `<section class="analytics-chart-card${wide ? ' analytics-chart-wide' : ''}"><h2>${title}</h2>${chart}</section>`;
+  const legend = items => `<div class="spark-legend">${items.map(([label, cls]) => `<span class="spark-legend-item"><span class="spark-swatch ${cls}"></span>${label}</span>`).join('')}</div>`;
+
+  const rawMax = Math.max(1, ...agentTiming.map(a => a.high ?? 0));
+  const magnitude = 10 ** Math.floor(Math.log10(rawMax));
+  const maxTiming = ([1, 2, 5, 10].find(n => n * magnitude >= rawMax) || 10) * magnitude;
+
+  const timingChart = agentTiming.length ? `<div class="adapter-timing-chart">${agentTiming.map(agent => {
+    const tooltip = `${agent.count} completed attempts; ${agent.fallback} use timestamp elapsed time, including queue and dispatch delays`;
+    return `<div class="adapter-timing-group"><div class="adapter-timing-identity"><strong>${esc(agent.label)}</strong><span title="Completed attempts">n=${agent.count}</span></div><div class="adapter-timing-bars" title="${esc(tooltip)}">${[['low', 'Lowest'], ['average', 'Average'], ['high', 'Highest']].map(([field, label]) => {
+      const value = agent[field];
+      return `<div class="adapter-timing-series timing-${field}"><span class="adapter-series-label">${label}</span><div class="adapter-series-track"><span class="adapter-series-bar${value === 0 ? ' timing-zero' : ''}" style="width:${value == null ? 0 : 100 * value / maxTiming}%"></span></div><span class="adapter-series-value">${value == null ? '—' : esc(fmtDuration(value))}</span></div>`;
     }).join('')}</div></div>`;
-  }).join('')}<div class="adapter-timing-axis"><span></span><div><span>0</span><span>${esc(fmtDuration(maxTiming/2))}</span><span>${esc(fmtDuration(maxTiming))}</span></div></div></div>`:empty;
-  const warning=model.attemptErrors?.size?`<div class="analytics-data-status" role="status" title="Some attempt records could not be loaded">Partial data · ${model.attemptErrors.size} runs</div>`:'';
-  container.innerHTML=warning+`<div class="analytics-chart-grid">`+
-    card('Task time by adapter',timingChart,true)+
-    card('Run outcomes · 30 days',sparklineMarkup(buckets)+legend([['Succeeded','succeeded'],['Failed','failed'],['Other','pending']]),true)+
-    card('Median workflow duration',bars(workflowTime,{fmt:fmtDuration}))+
-    card('Agent failure rate',bars(failureRates,{fmt:value=>`${Math.round(value)}%`,maxValue:100,colorVar:'--red'}))+
-    card('Daily tokens · 30 days',tokenSparklineMarkup(tokenBuckets)+legend([['Input','tok-input'],['Output','tok-output'],['Cached','tok-cached']]),true)+
-    '</div>'+analyticsDetailsMarkup(model);
+  }).join('')}<div class="adapter-timing-axis"><span></span><div><span>0</span><span>${esc(fmtDuration(maxTiming / 2))}</span><span>${esc(fmtDuration(maxTiming))}</span></div></div></div>` : empty;
+
+  const executorBreakdown = rollup ? rollup.byExecutor.slice(0, 10).map(row => ({ label: row.label, value: row.value })) : [];
+  const workflowBreakdown = rollup ? rollup.byWorkflow.slice(0, 10).map(row => ({ label: row.label, value: row.value })) : [];
+
+  const warning = model.attemptErrors?.size ? `<div class="analytics-data-status" role="status" title="Some attempt records could not be loaded">Partial data · ${model.attemptErrors.size} runs</div>` : '';
+
+  container.innerHTML = warning
+    + analyticsUsageHeadMarkup(model)
+    + (model.measures?.length ? `<section class="analytics-chart-card analytics-chart-wide analytics-usage-trends">${analyticsMeasureToolbarMarkup(model, measureId)}
+      ${rollup ? `<p class="subtle">Subtotal ${esc(measureFmt(rollup.subtotal))} · ${rollup.reporting} reporting attempts (same population as charts below).</p>` : ''}
+      ${usageMeasureSparklineMarkup(rollup)}
+      <div class="analytics-breakdown-grid">
+        <div><h3 class="analytics-breakdown-title">By executor</h3>${bars(executorBreakdown, { fmt: measureFmt })}</div>
+        <div><h3 class="analytics-breakdown-title">By workflow</h3>${bars(workflowBreakdown, { fmt: measureFmt })}</div>
+      </div></section>` : '')
+    + `<div class="analytics-chart-grid">`
+    + card('Task time by adapter', timingChart, true)
+    + card('Run outcomes · 30 days', sparklineMarkup(buckets) + legend([['Succeeded', 'succeeded'], ['Failed', 'failed'], ['Other', 'pending']]), true)
+    + card('Median workflow duration', bars(workflowTime, { fmt: fmtDuration }))
+    + card('Agent failure rate', bars(failureRates, { fmt: value => `${Math.round(value)}%`, maxValue: 100, colorVar: '--red' }))
+    + card('Daily tokens · 30 days', tokenSparklineMarkup(tokenBuckets) + legend([['Input', 'tok-input'], ['Output', 'tok-output'], ['Cached', 'tok-cached']]), true)
+    + '</div>'
+    + analyticsDetailsMarkup(model, measureId);
+
+  if (typeof container.querySelector === 'function') {
+    const select = container.querySelector('#analyticsMeasureSelect');
+    if (select) {
+      select.addEventListener('change', () => renderAnalytics(model, { measureId: select.value }));
+    }
+  }
 }
 
 let analyticsRequest = 0;

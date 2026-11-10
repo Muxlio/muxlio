@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const analyticsSource = readFileSync(new URL("./js/format.js", import.meta.url), "utf8") + "\n" + readFileSync(new URL('./js/analytics.js', import.meta.url), 'utf8');
+const analyticsSource = [
+  './js/format.js',
+  './js/usage-summary.js',
+  './js/analytics-accounting.js',
+  './js/analytics.js',
+].map(p => readFileSync(new URL(p, import.meta.url), 'utf8')).join('\n');
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 
 // Build a minimal execution context that satisfies analytics.js dependencies.
@@ -18,7 +23,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog})`,
     ctx,
   );
 }
@@ -372,7 +377,13 @@ console.log('mixed executor timing, legacy and partial usage checks passed');
     window: {addEventListener(){}}, navigate(){},
     loadOverview(){}, loadRuns(){}, loadWorkers(){}, loadOlder(){},
   }));
-  const sourceByPath = new Map([['/js/analytics.js', analyticsSource], ['/js/boot.js', boot]]);
+  const sourceByPath = new Map([
+    ['/js/format.js', readFileSync(new URL('./js/format.js', import.meta.url), 'utf8')],
+    ['/js/usage-summary.js', readFileSync(new URL('./js/usage-summary.js', import.meta.url), 'utf8')],
+    ['/js/analytics-accounting.js', readFileSync(new URL('./js/analytics-accounting.js', import.meta.url), 'utf8')],
+    ['/js/analytics.js', readFileSync(new URL('./js/analytics.js', import.meta.url), 'utf8')],
+    ['/js/boot.js', boot],
+  ]);
   for (const match of indexSource.matchAll(/<script src="([^"]+)"/g)) {
     if (sourceByPath.has(match[1])) vm.runInContext(sourceByPath.get(match[1]), ctx);
   }
@@ -511,6 +522,59 @@ console.log('Cached subset token volume checks passed');
   assert.equal(model.tokenBuckets.at(-1).output, null);
 }
 console.log('Analytics UTC date checks passed');
+
+// Credits, costs, and measure breakdown use UsageSummary semantics.
+{
+  const { buildAnalyticsModel, renderAnalytics, analyticsSummarizeUsage } = getHelpers(makeCtx());
+  const finished = '2026-06-01T12:00:00Z';
+  const attempts = [
+    { id: 'a1', executor: 'agent/a', state: 'succeeded', finishedAt: finished,
+      usage: { input: 100, output: 40, cached: 10 },
+      measurements: { costUsd: 0.2, credit: { unit: 'credit', amount: 0.5 } } },
+    { id: 'a2', executor: 'agent/b', state: 'succeeded', finishedAt: finished,
+      measurements: { estimatedCostUsd: 0.1, credit: { unit: 'point', amount: 2 } } },
+    { id: 'a3', executor: 'agent/a', state: 'running' },
+  ];
+  const runs = [{ id: 'run-1', workflowName: 'wf', createdAt: '2020-01-01T00:00:00Z' }];
+  const model = buildAnalyticsModel(runs, new Map([['run-1', attempts]]));
+  assert.ok(model.measures.some(m => m.id === 'tokens'), 'token measure present');
+  assert.ok(model.measures.some(m => m.id === 'cost-observed'), 'observed cost measure');
+  assert.ok(model.measures.some(m => m.id === 'cost-estimated'), 'estimated cost measure');
+  assert.ok(model.measures.some(m => m.id === 'credit:credit'), 'credit unit measure');
+  const summary = analyticsSummarizeUsage(attempts);
+  assert.equal(summary.tokens.observed, 140);
+  assert.equal(summary.costUsd.observed, 0.2);
+  assert.equal(summary.costUsd.estimated, 0.1);
+  const credit = summary.credits.find(c => c.unit === 'credit');
+  assert.equal(credit.observed, 0.5);
+  assert.equal(model.bucketProvenance.finishedAt, 2);
+  const rollup = model.measureRollups.get('cost-observed');
+  assert.equal(rollup.subtotal, 0.2);
+  const output = { innerHTML: '' };
+  const { renderAnalytics: render } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
+  render(model);
+  assert.match(output.innerHTML, /Reported usage/);
+  assert.match(output.innerHTML, /Cost · observed/);
+  assert.match(output.innerHTML, /analyticsMeasureSelect/);
+  assert.match(output.innerHTML, /finishedAt/);
+  assert.match(output.innerHTML, /href="#run\/run-1"/);
+}
+console.log('analytics credits and cost checks passed');
+
+// Usage buckets prefer attempt finishedAt over run createdAt.
+{
+  const { buildAnalyticsModel } = getHelpers(makeCtx());
+  const day = new Date().toISOString();
+  const dayKey = day.slice(0, 10);
+  const runs = [{ id: 'r', createdAt: '2020-01-01T00:00:00Z' }];
+  const model = buildAnalyticsModel(runs, new Map([
+    ['r', [{ state: 'succeeded', finishedAt: day, usage: { input: 5, output: 5, cached: 0 } }]],
+  ]));
+  const bucket = model.tokenBuckets.find(b => b.dateKey === dayKey);
+  assert.ok(bucket?.hasData, 'token bucket uses attempt finishedAt');
+  assert.equal(bucket.input, 5);
+}
+console.log('analytics attempt bucket time checks passed');
 
 // Revisiting Analytics can overlap loads; old successes and failures must not
 // overwrite the latest request's data or loading state.

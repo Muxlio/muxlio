@@ -660,7 +660,20 @@ td.primary-cell small{display:block;margin-top:3px}
 .tok-output{background:var(--blue)}
 .tok-cached{background:var(--amber)}
 .analytics-data-status{color:var(--amber);font-size:12px;margin-bottom:12px}
-@media(max-width:900px){.analytics-chart-grid{grid-template-columns:minmax(0,1fr)}}
+.analytics-usage-head{margin-bottom:16px}
+.analytics-usage-head h2{font-size:14px;font-weight:600;margin:0 0 8px}
+.analytics-usage-primary{display:flex;flex-wrap:wrap;gap:16px 24px;margin-top:12px}
+.analytics-usage-measure{display:flex;flex-direction:column;gap:2px;min-width:100px}
+.analytics-usage-val{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+.analytics-usage-label{font-size:11px;color:var(--muted)}
+.analytics-provenance{margin:0 0 4px;font-size:12px}
+.analytics-toolbar{margin:8px 0 12px}
+.analytics-measure-label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.analytics-measure-select{font:inherit;background:var(--surface2);color:var(--ink);border:1px solid var(--border);border-radius:6px;padding:4px 8px}
+.analytics-usage-trends h2{font-size:14px;font-weight:600;margin:0 0 8px}
+.analytics-breakdown-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:20px}
+.analytics-breakdown-title{font-size:12px;font-weight:600;margin:0 0 10px;color:var(--ink)}
+@media(max-width:900px){.analytics-chart-grid{grid-template-columns:minmax(0,1fr)}.analytics-breakdown-grid{grid-template-columns:minmax(0,1fr)}}
 
 /* Bar chart used in analytics */
 .analytics-bar-chart{display:flex;flex-direction:column;gap:7px}
