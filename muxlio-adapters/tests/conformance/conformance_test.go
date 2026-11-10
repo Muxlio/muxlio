@@ -33,7 +33,8 @@ var bundledAdapters = []conformancetest.Fixture{
 		Binary:   "agent-cursor",
 		CLIName:  "agent",
 		// stream-json: result event with usage.
-		SuccessStream: `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40},"result":"Cursor done."}`,
+		SuccessStream:   `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40},"result":"Cursor done."}`,
+		ExpectedUsage:   &contract.TokenUsage{Input: 160, Output: 30, Cached: 40},
 	},
 	{
 		Executor: "agent/antigravity",

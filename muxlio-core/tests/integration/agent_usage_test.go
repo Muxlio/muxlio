@@ -35,6 +35,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	reported := &state.TokenUsage{Input: 120, Output: 30, Cached: 40}
+	cursorReported := &state.TokenUsage{Input: 160, Output: 30, Cached: 40}
 	for _, tc := range []struct {
 		executor, cli, events string
 		wantUsage             *state.TokenUsage
@@ -46,7 +47,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
 {"type":"turn.completed","usage":null}`, reported},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
-{"type":"result"}`, reported},
+{"type":"result"}`, cursorReported},
 		{"agent/kiro", "kiro-cli", string(kiroEvents), nil},
 	} {
 		for _, fail := range []bool{false, true} {

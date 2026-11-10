@@ -72,6 +72,7 @@ func main() {
 	var streamErr string
 	completed := false
 	var usage *adapter.TokenUsage
+	var usageErr error
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -101,13 +102,17 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, data.Content)
 			}
 		case "usage":
-			if reported := adapter.ParseTokenUsage(event["usage"]); reported != nil {
-				usage = addTokenUsage(usage, reported)
+			if reported := parseCursorTokenUsage(event["usage"]); reported != nil {
+				var err error
+				usage, err = addTokenUsage(usage, reported)
+				if err != nil && usageErr == nil {
+					usageErr = err
+				}
 			}
 		case "result":
 			completed = true
-			if reported := adapter.ParseTokenUsage(event["usage"]); reported != nil {
-				usage = reported
+			if reported := parseCursorTokenUsage(event["usage"]); reported != nil {
+				usage = mergeTerminalUsage(usage, reported)
 			}
 			if textChunks.Len() == 0 {
 				for _, text := range resultText(event) {
@@ -140,6 +145,10 @@ func main() {
 	}
 	if streamErr != "" {
 		fail("agent-cursor: %s", streamErr)
+		return
+	}
+	if usageErr != nil {
+		fail("agent-cursor: aggregating usage: %v", usageErr)
 		return
 	}
 	if waitErr != nil {
@@ -212,12 +221,12 @@ func subtypeIndicatesError(value string) bool {
 	return strings.HasPrefix(lower, "error_")
 }
 
-func addTokenUsage(total, reported *adapter.TokenUsage) *adapter.TokenUsage {
+func addTokenUsage(total, reported *adapter.TokenUsage) (*adapter.TokenUsage, error) {
 	sum, err := contract.AddTokenUsage(total, reported)
 	if err != nil {
-		return total
+		return total, err
 	}
-	return sum
+	return sum, nil
 }
 
 func resultError(event map[string]json.RawMessage) string {

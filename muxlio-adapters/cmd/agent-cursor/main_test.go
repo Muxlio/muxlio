@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,8 +97,30 @@ func TestCursorAdapterReportsUsageFromSuccessfulResult(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 100 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
-		t.Fatalf("usage = %+v, want input=100 output=40 cached=12", got.Usage)
+	if got.Usage == nil || got.Usage.Input != 112 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
+		t.Fatalf("usage = %+v, want input=112 output=40 cached=12", got.Usage)
+	}
+}
+
+func TestCursorAdapterReportsUsageFromPinnedRunnerResultShape(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","subtype":"success","result":"done","usage":{"inputTokens":49,"outputTokens":222,"cacheReadTokens":9728,"cacheWriteTokens":0}}'`)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage == nil || got.Usage.Input != 9777 || got.Usage.Output != 222 || got.Usage.Cached != 9728 {
+		t.Fatalf("usage = %+v, want input=9777 output=222 cached=9728", got.Usage)
+	}
+}
+
+func TestCursorAdapterMergesPartialResultUsage(t *testing.T) {
+	script := `echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}}'
+echo '{"type":"result","result":"done","usage":{"inputTokens":110}}'`
+	got := runCursorFixture(t, script)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if got.Usage == nil || got.Usage.Input != 110 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
+		t.Fatalf("usage = %+v, want input=110 output=40 cached=12", got.Usage)
 	}
 }
 
@@ -106,8 +129,8 @@ func TestCursorAdapterPreservesUsageFromFailedResult(t *testing.T) {
 	if got.Error == "" {
 		t.Fatal("expected adapter error")
 	}
-	if got.Usage == nil || got.Usage.Input != 7 || got.Usage.Output != 3 || got.Usage.Cached != 2 {
-		t.Fatalf("usage = %+v, want input=7 output=3 cached=2", got.Usage)
+	if got.Usage == nil || got.Usage.Input != 9 || got.Usage.Output != 3 || got.Usage.Cached != 2 {
+		t.Fatalf("usage = %+v, want input=9 output=3 cached=2", got.Usage)
 	}
 }
 
@@ -119,8 +142,8 @@ echo '{"type":"result","subtype":"success","result":"done"}'`
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 125 || got.Usage.Output != 49 || got.Usage.Cached != 15 {
-		t.Fatalf("usage = %+v, want aggregated input=125 output=49 cached=15", got.Usage)
+	if got.Usage == nil || got.Usage.Input != 140 || got.Usage.Output != 49 || got.Usage.Cached != 15 {
+		t.Fatalf("usage = %+v, want aggregated input=140 output=49 cached=15", got.Usage)
 	}
 }
 
@@ -131,8 +154,23 @@ echo '{"type":"result","usage":{"inputTokens":110,"outputTokens":45,"cacheReadTo
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 110 || got.Usage.Output != 45 || got.Usage.Cached != 14 {
-		t.Fatalf("usage = %+v, want result totals input=110 output=45 cached=14", got.Usage)
+	if got.Usage == nil || got.Usage.Input != 124 || got.Usage.Output != 45 || got.Usage.Cached != 14 {
+		t.Fatalf("usage = %+v, want result totals input=124 output=45 cached=14", got.Usage)
+	}
+}
+
+func TestCursorAdapterFailsOnUsageAggregationOverflow(t *testing.T) {
+	max := int64(9223372036854775807)
+	script := `echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":` + fmt.Sprint(max) + `,"outputTokens":1,"cacheReadTokens":0}}'
+echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":1,"outputTokens":0,"cacheReadTokens":0}}'
+echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0}}'
+echo '{"type":"result","subtype":"success","result":"done"}'`
+	got := runCursorFixture(t, script)
+	if got.Error == "" {
+		t.Fatal("expected adapter error on usage overflow")
+	}
+	if got.Usage == nil || got.Usage.Input != max {
+		t.Fatalf("usage = %+v, want preserved input=%d on overflow failure", got.Usage, max)
 	}
 }
 

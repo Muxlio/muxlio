@@ -42,8 +42,12 @@ ports return parsed JSON; file ports return artifact-shaped values for the
 worker's generic uploader. Missing or invalid outputs retain per-port errors.
 `_text` contains collected assistant text as `text/plain`.
 
-Explicit `usage` event counts pass through the shared usage parser and are
-summed across model calls. If the terminal result includes usage, its totals take
-precedence. Unavailable counts remain unavailable, distinct from reported zero.
+Cursor reports uncached `inputTokens` plus `cacheReadTokens` and
+`cacheWriteTokens` on the terminal result; the adapter folds cache read/write into
+`input` while preserving `cached` as the read subset. Incremental `usage` events,
+when present, use the same mapping and are summed across model calls. Complete
+terminal usage replaces prior aggregates; partial terminal usage overlays only the
+dimensions it reports. Unavailable counts remain unavailable, distinct from
+reported zero.
 The response contains collected outputs, output errors, diagnostic logs, and
 available usage.
