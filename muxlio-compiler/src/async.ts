@@ -384,7 +384,7 @@ export async function defineAsyncWorkflow(
       root: { nodes: collected.nodes, output },
       ...collected.subgraphs,
     },
-    requiredExecutors: [...collected.requiredExecutors],
+    requiredExecutors: [...collected.requiredExecutors].sort(),
   };
 
   assertNoLiteralCredentials(plan);

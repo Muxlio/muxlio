@@ -25,7 +25,7 @@ test('async compilation records extended execute node fields', async () => {
   assert.equal(node.timeoutSeconds, 600);
   assert.equal(node.queueTimeoutSeconds, 30);
   assert.deepEqual(node.retry, { maxAttempts: 3, effect: 'nonretryable' });
-  assert.deepEqual(plan.requiredExecutors.sort(), ['fallback', 'primary']);
+  assert.deepEqual(plan.requiredExecutors, ['fallback', 'primary']);
 });
 
 test('async compilation records loop onExhausted', async () => {
