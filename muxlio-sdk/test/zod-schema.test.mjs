@@ -28,6 +28,37 @@ test('zod discriminatedUnion compiles to anyOf object variants', () => {
   assert.deepEqual(schema.anyOf[0].properties.kind, { const: 'go' });
 });
 
+test('zod number min/max/int maps to JSON Schema bounds', () => {
+  assert.deepEqual(zodToJsonSchema(z.number().min(0).max(10)), {
+    type: 'number',
+    minimum: 0,
+    maximum: 10,
+  });
+  assert.deepEqual(zodToJsonSchema(z.number().int()), { type: 'integer' });
+});
+
+test('zod number exclusive bounds and multipleOf are preserved', () => {
+  assert.deepEqual(zodToJsonSchema(z.number().gt(2).gte(5).lt(10).lte(8).multipleOf(2)), {
+    type: 'number',
+    minimum: 5,
+    maximum: 8,
+    multipleOf: 2,
+  });
+  assert.deepEqual(zodToJsonSchema(z.number().gt(5).gte(5).lt(8).lte(8)), {
+    type: 'number',
+    exclusiveMinimum: 5,
+    exclusiveMaximum: 8,
+  });
+});
+
+test('zod object defaults omit required and emit default values', () => {
+  const schema = zodToJsonSchema(
+    z.object({ retries: z.number().default(3), label: z.string() }),
+  );
+  assert.deepEqual(schema.required, ['label']);
+  assert.deepEqual(schema.properties.retries, { type: 'number', default: 3 });
+});
+
 test('zod composite shapes preserve their JSON Schema constraints', () => {
   assert.deepEqual(zodToJsonSchema(z.intersection(z.object({ a: z.string() }), z.object({ b: z.number() }))), {
     allOf: [

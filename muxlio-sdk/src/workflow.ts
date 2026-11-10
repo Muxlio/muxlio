@@ -56,7 +56,33 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
     return out;
   }
   if (schema instanceof z.ZodNumber) {
-    return { type: 'number' };
+    const out: JSONSchema = { type: 'number' };
+    const checks = (schema as any)._def?.checks ?? [];
+    for (const check of checks) {
+      if (check.kind === 'min') {
+        const current = out['minimum'] ?? out['exclusiveMinimum'];
+        if (current == null || check.value > current ||
+            (check.value === current && !check.inclusive && out['minimum'] != null)) {
+          delete out['minimum'];
+          delete out['exclusiveMinimum'];
+          if (check.inclusive) out['minimum'] = check.value;
+          else out['exclusiveMinimum'] = check.value;
+        }
+      }
+      if (check.kind === 'max') {
+        const current = out['maximum'] ?? out['exclusiveMaximum'];
+        if (current == null || check.value < current ||
+            (check.value === current && !check.inclusive && out['maximum'] != null)) {
+          delete out['maximum'];
+          delete out['exclusiveMaximum'];
+          if (check.inclusive) out['maximum'] = check.value;
+          else out['exclusiveMaximum'] = check.value;
+        }
+      }
+      if (check.kind === 'int') out['type'] = 'integer';
+      if (check.kind === 'multipleOf') out['multipleOf'] = check.value;
+    }
+    return out;
   }
   if (schema instanceof z.ZodBoolean) {
     return { type: 'boolean' };
@@ -98,8 +124,9 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
     const properties: Record<string, JSONSchema> = {};
     const required: string[] = [];
     for (const [key, val] of Object.entries(shape)) {
-      properties[key] = zodTypeToJsonSchema(val as z.ZodTypeAny);
-      if (!(val instanceof z.ZodOptional) && !(val instanceof z.ZodNullable)) {
+      const field = val as z.ZodTypeAny;
+      properties[key] = zodTypeToJsonSchema(field);
+      if (!(field instanceof z.ZodOptional) && !(field instanceof z.ZodNullable) && !(field instanceof z.ZodDefault)) {
         required.push(key);
       }
     }
@@ -153,7 +180,10 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
     return { enum: (schema as any)._def.values };
   }
   if (schema instanceof z.ZodDefault) {
-    return zodTypeToJsonSchema((schema as any)._def.innerType);
+    const inner = zodTypeToJsonSchema((schema as any)._def.innerType);
+    const defValue = (schema as any)._def.defaultValue;
+    const value = typeof defValue === 'function' ? defValue() : defValue;
+    return { ...inner, default: value };
   }
   // Fallback: allow any value
   return {};
