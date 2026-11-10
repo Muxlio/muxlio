@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+// nonNegativeEventSeq parses a non-empty event sequence cursor. Invalid or
+// negative values write MUXLIO_BAD_EVENT_CURSOR and return ok=false.
+func nonNegativeEventSeq(w http.ResponseWriter, value string) (seq int, ok bool) {
+	if value == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		writeError(w, http.StatusBadRequest, CodeBadEventCursor, "event cursor must be a non-negative sequence number")
+		return 0, false
+	}
+	return n, true
+}
+
 // Pagination is opt-in for older clients. UI requests always supply a bounded limit.
 func pageOptions(r *http.Request) (offset, limit int) {
 	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))

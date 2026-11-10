@@ -404,9 +404,9 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				writeError(w, http.StatusNotFound, CodeNotFound, "run not found")
 				return
 			}
-			after, _ := strconv.Atoi(r.URL.Query().Get("after"))
-			if after < 0 {
-				after = 0
+			after, ok := nonNegativeEventSeq(w, r.URL.Query().Get("after"))
+			if !ok {
+				return
 			}
 			_, limit := pageOptions(r)
 			var page []state.Event
@@ -695,12 +695,14 @@ func handleGetRun(w http.ResponseWriter, r *http.Request, store state.Store, run
 
 func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {
 	after := 0
-	limit := 100
 	if v := r.URL.Query().Get("after"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			after = n
+		var ok bool
+		after, ok = nonNegativeEventSeq(w, v)
+		if !ok {
+			return
 		}
 	}
+	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
@@ -719,9 +721,13 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, 
 			return
 		}
 		_, limit = pageOptions(r)
-		before, _ := strconv.Atoi(r.URL.Query().Get("before"))
-		if before < 0 {
-			before = 0
+		before := 0
+		if v := r.URL.Query().Get("before"); v != "" {
+			var ok bool
+			before, ok = nonNegativeEventSeq(w, v)
+			if !ok {
+				return
+			}
 		}
 		events, err = views.EventsBefore(runID, before, limit+1)
 		if err != nil {
@@ -768,14 +774,9 @@ func handleStreamEvents(w http.ResponseWriter, r *http.Request, store state.Stor
 	if cursor == "" {
 		cursor = r.Header.Get("Last-Event-ID")
 	}
-	after := 0
-	if cursor != "" {
-		n, err := strconv.Atoi(cursor)
-		if err != nil || n < 0 {
-			writeError(w, http.StatusBadRequest, CodeBadEventCursor, "event cursor must be a non-negative sequence number")
-			return
-		}
-		after = n
+	after, ok := nonNegativeEventSeq(w, cursor)
+	if !ok {
+		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
