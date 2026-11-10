@@ -833,3 +833,27 @@ console.log('analytics empty-page pagination guard passed');
   assert.equal(model.comparison.currentRunCount, 260);
 }
 console.log('analytics period comparison totals passed');
+
+// Partial pagination must not claim full-population usage totals.
+{
+  const output = { innerHTML: '' };
+  const { buildAnalyticsModel, renderAnalytics, analyticsDefaultFilters } = getHelpers(makeCtx({
+    document: { getElementById: () => output },
+  }));
+  const now = new Date().toISOString();
+  const attempts = [
+    { id: 'a1', state: 'succeeded', finishedAt: now, usage: { input: 100, output: 50, cached: 0 }, measurements: { costUsd: 0.5 } },
+  ];
+  const model = buildAnalyticsModel(
+    [{ id: 'r1', state: 'succeeded', workflowName: 'w', createdAt: now }],
+    new Map([['r1', attempts]]),
+    new Map(),
+    { totalRuns: 100, hasMore: true, filters: analyticsDefaultFilters() },
+  );
+  renderAnalytics(model);
+  assert.doesNotMatch(output.innerHTML, /full filtered population/, 'partial load must not imply full-population usage totals');
+  assert.match(output.innerHTML, /only loaded attempts/, 'partial load explains scoped usage totals');
+  const rollup = model.measureRollups.get('cost-observed');
+  assert.equal(rollup.subtotal, 0.5, 'rollup reflects loaded attempts only');
+}
+console.log('analytics partial-scope usage honesty checks passed');

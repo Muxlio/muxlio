@@ -524,7 +524,7 @@ function analyticsFilterBarMarkup(model) {
   const total = model.totalRuns ?? model.runs.length;
   const loaded = model.runs.length;
   const scopeNote = model.hasMore
-    ? `Charts include ${loaded} of ${total} matching runs on this load; totals below reflect the full filtered population where reported.`
+    ? `Charts include ${loaded} of ${total} matching runs on this load; usage and cost totals below reflect only loaded attempts until more runs are retrieved.`
     : (model.pagesFetched > 1
       ? `Charts aggregate all ${total} matching runs (${model.pagesFetched} API requests). Run charts use createdAt · usage buckets use attempt time.`
       : `${total} runs in window · run charts use createdAt · usage buckets use attempt time.`);
