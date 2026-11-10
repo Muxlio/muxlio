@@ -118,7 +118,7 @@ func main() {
 		// final event may carry no usage; do not discard already reported counts.
 		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
 			if reported := parseKiroUsage(ev["data"]); reported != nil {
-				usage = reported
+				usage = mergeTerminalUsage(usage, reported)
 			}
 		}
 
