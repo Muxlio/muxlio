@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -60,6 +61,34 @@ func TestUsageSummaryPartialTokensRemainUnknown(t *testing.T) {
 	s := SummarizeUsage([]ExecutionAttempt{{Usage: partial}})
 	if s.Tokens.Observed != nil || s.Tokens.Unknown != 1 {
 		t.Fatalf("partial usage was treated as complete: %+v", s.Tokens)
+	}
+}
+
+func TestUsageSummaryObservedCostPrecedesEstimateOnAttempt(t *testing.T) {
+	observed, estimated := 0.2, 0.9
+	s := SummarizeUsage([]ExecutionAttempt{{Measurements: &contract.Measurements{CostUSD: &observed, EstimatedCostUSD: &estimated}}})
+	if s.CostUSD.Observed == nil || *s.CostUSD.Observed != 0.2 || s.CostUSD.Estimated != nil || s.CostUSD.Unknown != 0 {
+		t.Fatalf("cost=%+v", s.CostUSD)
+	}
+}
+
+func TestUsageSummaryInvalidMeasurementsRemainUnknown(t *testing.T) {
+	bad := -1.0
+	s := SummarizeUsage([]ExecutionAttempt{{Measurements: &contract.Measurements{EstimatedCostUSD: &bad}}})
+	if s.CostUSD.Observed != nil || s.CostUSD.Estimated != nil || s.CostUSD.Unknown != 1 {
+		t.Fatalf("invalid measurement counted: %+v", s.CostUSD)
+	}
+}
+
+func TestUsageSummaryCostOverflowCapsAtMaxFloat64(t *testing.T) {
+	first := math.MaxFloat64 - 1
+	second := 2.0
+	s := SummarizeUsage([]ExecutionAttempt{
+		{Measurements: &contract.Measurements{EstimatedCostUSD: &first}},
+		{Measurements: &contract.Measurements{EstimatedCostUSD: &second}},
+	})
+	if s.CostUSD.Estimated == nil || *s.CostUSD.Estimated != math.MaxFloat64 {
+		t.Fatalf("cost=%+v", s.CostUSD.Estimated)
 	}
 }
 

@@ -392,6 +392,112 @@ func TestAgentClaudeAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	}
 }
 
+func TestAgentClaudeAdapterReportsEstimatedCostOnSuccess(t *testing.T) {
+	bin := buildAgentClaude(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"result","result":"done","total_cost_usd":0.0812}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Measurements *struct {
+			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
+			CostUSD          *float64 `json:"costUsd"`
+		} `json:"measurements"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.0812 {
+		t.Fatalf("measurements = %+v", resp.Measurements)
+	}
+	if resp.Measurements.CostUSD != nil {
+		t.Fatalf("client estimate mislabeled observed: %+v", resp.Measurements)
+	}
+}
+
+func TestAgentClaudeAdapterPreservesEstimatedCostOnFailure(t *testing.T) {
+	bin := buildAgentClaude(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"result","is_error":true,"error":"overloaded","total_cost_usd":0.05}'` + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error        string `json:"error"`
+		Measurements *struct {
+			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
+		} `json:"measurements"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected failure response")
+	}
+	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.05 {
+		t.Fatalf("measurements = %+v", resp.Measurements)
+	}
+}
+
+func TestAgentClaudeAdapterLatestResultCostWins(t *testing.T) {
+	bin := buildAgentClaude(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"result","total_cost_usd":0.9}'` + "\n" +
+		`echo '{"type":"result","result":"done","total_cost_usd":0.1}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Measurements *struct {
+			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
+		} `json:"measurements"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.1 {
+		t.Fatalf("measurements = %+v, want latest terminal total", resp.Measurements)
+	}
+}
+
 func buildAgentClaude(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "agent-claude")

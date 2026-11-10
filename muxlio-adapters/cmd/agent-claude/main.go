@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func main() {
@@ -98,6 +99,7 @@ func main() {
 	var runErr string
 	completed := false
 	var usage *adapter.TokenUsage
+	var measurements *contract.Measurements
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -143,6 +145,9 @@ func main() {
 			completed = true
 			if reported := parseClaudeTokenUsage(ev["usage"]); reported != nil {
 				usage = reported
+			}
+			if estimated := parseClaudeEstimatedCostUSD(ev); estimated != nil {
+				measurements = withEstimatedCost(measurements, estimated)
 			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
@@ -197,7 +202,7 @@ func main() {
 		// Preserve provider-reported usage from the terminal result event so
 		// failed attempts that still returned usage are recorded, not estimated
 		// as zero/unavailable. usage is nil when no result event was parsed.
-		adapter.FailWithUsage(usage, "agent-claude: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithObserved(usage, measurements, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
@@ -216,7 +221,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage, Measurements: measurements})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

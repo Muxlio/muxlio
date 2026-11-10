@@ -45,6 +45,38 @@ func TestRecordExecutionAttemptPreservesObservationsOnReplaySQLite(t *testing.T)
 	}
 }
 
+func TestRecordExecutionAttemptPreservesEstimatedCostOnReplaySQLite(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "attempts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.CreateRun(&state.Run{ID: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	estimate := 0.0812
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "running",
+		StartedAt:    time.Now(),
+		Measurements: &contract.Measurements{EstimatedCostUSD: &estimate},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "succeeded",
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := s.ListExecutionAttempts("r", "act")
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("attempts=%v err=%v", attempts, err)
+	}
+	if attempts[0].Measurements == nil || attempts[0].Measurements.EstimatedCostUSD == nil || *attempts[0].Measurements.EstimatedCostUSD != estimate {
+		t.Fatalf("estimated cost lost on replay: %+v", attempts[0].Measurements)
+	}
+}
+
 func TestRecordExecutionAttemptPreservesCreditsOnReplaySQLite(t *testing.T) {
 	s, err := sqlite.Open(filepath.Join(t.TempDir(), "attempts.db"))
 	if err != nil {

@@ -32,6 +32,8 @@ type Fixture struct {
 	UsageUnavailable bool
 	// ExpectedUsage overrides the default bundled success usage assertion when set.
 	ExpectedUsage *contract.TokenUsage
+	// ExpectedMeasurements, when set, is asserted on successful invocations.
+	ExpectedMeasurements *contract.Measurements
 	// Script and CancelScript supply interactive provider fixtures when needed.
 	Script          func(stream, stderr string, code int, scratch string) string
 	CancelScript    string
@@ -131,6 +133,11 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 							}
 							if resp.Usage == nil || !resp.Usage.Equal(want) {
 								t.Fatalf("usage = %+v", resp.Usage)
+							}
+							if f.ExpectedMeasurements != nil {
+								if resp.Measurements == nil || !measurementsEqual(resp.Measurements, f.ExpectedMeasurements) {
+									t.Fatalf("measurements = %+v, want %+v", resp.Measurements, f.ExpectedMeasurements)
+								}
 							}
 						}
 					}
@@ -427,4 +434,37 @@ func secretStream(t *testing.T, f Fixture) string {
 		lines = append(lines, string(raw))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func measurementsEqual(got, want *contract.Measurements) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	if !floatPtrEqual(got.CostUSD, want.CostUSD) || !floatPtrEqual(got.EstimatedCostUSD, want.EstimatedCostUSD) {
+		return false
+	}
+	if !int64PtrEqual(got.EstimatedTokens, want.EstimatedTokens) {
+		return false
+	}
+	if got.Credit == nil || want.Credit == nil {
+		return got.Credit == nil && want.Credit == nil
+	}
+	if got.Credit.Unit != want.Credit.Unit || got.Credit.Provenance != want.Credit.Provenance {
+		return false
+	}
+	return floatPtrEqual(got.Credit.Amount, want.Credit.Amount)
+}
+
+func floatPtrEqual(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

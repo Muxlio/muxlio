@@ -42,16 +42,17 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 		executor, cli, events string
 		wantUsage             *state.TokenUsage
 		wantCredit            *float64
+		wantEstimatedCostUSD  *float64
 	}{
 		{"agent/antigravity", "agy", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
-{"type":"result","status":"success"}`, reported, nil},
-		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40}}
-{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}, nil},
+		{"type":"result","status":"success"}`, reported, nil, nil},
+		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40},"total_cost_usd":0.0812}
+{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}, nil, f64ptr(0.0812)},
 		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
-{"type":"turn.completed","usage":null}`, reported, nil},
+		{"type":"turn.completed","usage":null}`, reported, nil, nil},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
-{"type":"result"}`, cursorReported, nil},
-		{"agent/kiro", "kiro-cli", string(kiroEvents), nil, &kiroCredit},
+		{"type":"result"}`, cursorReported, nil, nil},
+		{"agent/kiro", "kiro-cli", string(kiroEvents), nil, &kiroCredit, nil},
 	} {
 		for _, fail := range []bool{false, true} {
 			name := tc.executor + "/success"
@@ -122,7 +123,18 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 				} else if math.Abs(*attempt.Measurements.Credit.Amount-*tc.wantCredit) > 1e-9 || attempt.Measurements.Credit.Unit != "credit" {
 					t.Fatalf("credit = %+v, want %v credit", attempt.Measurements.Credit, *tc.wantCredit)
 				}
+				if tc.wantEstimatedCostUSD == nil {
+					if attempt.Measurements != nil && attempt.Measurements.EstimatedCostUSD != nil {
+						t.Fatalf("unexpected estimated cost: %+v", attempt.Measurements)
+					}
+				} else if attempt.Measurements == nil || attempt.Measurements.EstimatedCostUSD == nil {
+					t.Fatalf("missing estimated cost: %+v", attempt.Measurements)
+				} else if math.Abs(*attempt.Measurements.EstimatedCostUSD-*tc.wantEstimatedCostUSD) > 1e-9 || attempt.Measurements.CostUSD != nil {
+					t.Fatalf("estimated cost = %+v, want %v (observed unset)", attempt.Measurements, *tc.wantEstimatedCostUSD)
+				}
 			})
 		}
 	}
 }
+
+func f64ptr(v float64) *float64 { return &v }
