@@ -200,6 +200,24 @@ function analyticsFiltersEqual(a, b) {
   return JSON.stringify({ ...a, page: 1 }) === JSON.stringify({ ...b, page: 1 });
 }
 
+const ANALYTICS_RUN_STATE_KEYS = ['created', 'running', 'waiting', 'paused', 'succeeded', 'failed', 'cancelled'];
+
+function analyticsStateCountsFromContext(ctx, runs) {
+  const counts = Object.fromEntries(ANALYTICS_RUN_STATE_KEYS.map(s => [s, 0]));
+  const total = ctx.totalRuns ?? runs.length;
+  const raw = ctx.stateCounts;
+  if (raw && typeof raw === 'object' && runs.length < total) {
+    for (const s of ANALYTICS_RUN_STATE_KEYS) {
+      if (typeof raw[s] === 'number' && Number.isFinite(raw[s])) counts[s] = raw[s];
+    }
+    return counts;
+  }
+  for (const r of runs) {
+    if (counts[r.state] !== undefined) counts[r.state]++;
+  }
+  return counts;
+}
+
 function analyticsBucketForTimestamp(ms, range, tz = 'UTC') {
   const buckets = analyticsDayBuckets(range, tz);
   for (const b of buckets) {

@@ -90,6 +90,19 @@ console.log('buildAnalyticsModel empty checks passed');
 }
 console.log('buildAnalyticsModel state counts passed');
 
+{
+  const { buildAnalyticsModel } = getHelpers(makeCtx());
+  const now = new Date().toISOString();
+  const runs = [{ id: 'r1', state: 'succeeded', workflowName: 'w', createdAt: now }];
+  const model = buildAnalyticsModel(runs, new Map([['r1', []]]), new Map(), {
+    totalRuns: 250,
+    stateCounts: { succeeded: 200, failed: 50 },
+  });
+  assert.equal(model.stateCounts.succeeded, 200, 'server stateCounts used when loaded runs are a proper subset');
+  assert.equal(model.stateCounts.failed, 50);
+}
+console.log('buildAnalyticsModel server stateCounts passed');
+
 // ── buildAnalyticsModel — token usage by executor ─────────────────────
 {
   const { buildAnalyticsModel } = getHelpers(makeCtx());
@@ -748,3 +761,75 @@ assert.match(indexSource, /analytics-retry-latency\.js/, 'retry latency module w
  assert.ok(prevented);assert.equal(focused,1);assert.doesNotMatch(output.innerHTML,/<dialog/);assert.doesNotMatch(urls.at(-1),/drill=/);
 }
 console.log('Analytics evidence panel interactions passed');
+
+{
+  let requests = 0;
+  const now = new Date().toISOString();
+  const api = async path => {
+    requests++;
+    const url = new URL(path, 'http://local');
+    const offset = Number(url.searchParams.get('offset') || 0);
+    const total = 250;
+    const slice = Array.from({ length: Math.min(200, total - offset) }, (_, i) => ({
+      id: `r${offset + i}`,
+      state: 'succeeded',
+      workflowName: 'w',
+      createdAt: now,
+    }));
+    return {
+      runs: slice,
+      attemptsByRun: Object.fromEntries(slice.map(r => [r.id, []])),
+      totalRuns: total,
+      hasMore: offset + slice.length < total,
+      stateCounts: { succeeded: total },
+    };
+  };
+  const { loadAnalyticsData, analyticsDefaultFilters } = getHelpers(makeCtx({ api }));
+  const model = await loadAnalyticsData(analyticsDefaultFilters());
+  assert.equal(requests, 3, 'fetches each analytics page plus the prior-period summary');
+  assert.equal(model.runs.length, 250, 'charts aggregate the full filtered population');
+  assert.equal(model.totalRuns, 250);
+  assert.equal(model.pagesFetched, 2);
+  assert.equal(model.buckets.reduce((sum, b) => sum + b.total, 0), 250, 'run volume buckets include all matching runs');
+}
+console.log('analytics pagination population checks passed');
+
+{
+  let requests = 0;
+  const api = async path => {
+    requests++;
+    const url = new URL(path, 'http://local');
+    const offset = Number(url.searchParams.get('offset') || 0);
+    if (offset === 0) return { runs: [{ id: 'r1', state: 'succeeded', createdAt: new Date().toISOString() }], totalRuns: 3, hasMore: true };
+    return { runs: [], totalRuns: 3, hasMore: true };
+  };
+  const { loadAnalyticsData, analyticsDefaultFilters } = getHelpers(makeCtx({ api }));
+  const model = await loadAnalyticsData(analyticsDefaultFilters());
+  assert.equal(requests, 3, 'stops fetching pages after no progress, then makes the optional comparison request');
+  assert.equal(model.hasMore, true, 'reports partial loaded population when backend says rows remain');
+  assert.equal(model.runs.length, 1);
+}
+console.log('analytics empty-page pagination guard passed');
+
+{
+  let calls = 0;
+  const now = new Date().toISOString();
+  const api = async path => {
+    calls++;
+    const url = new URL(path, 'http://local');
+    if (calls >= 3) {
+      return { runs: [], attemptsByRun: {}, totalRuns: 180, hasMore: false };
+    }
+    const offset = Number(url.searchParams.get('offset') || 0);
+    const total = 260;
+    const slice = Array.from({ length: Math.min(200, total - offset) }, (_, i) => ({
+      id: `r${offset + i}`, state: 'succeeded', workflowName: 'w', createdAt: now,
+    }));
+    return { runs: slice, attemptsByRun: {}, totalRuns: total, hasMore: offset + slice.length < total };
+  };
+  const { loadAnalyticsData, analyticsDefaultFilters } = getHelpers(makeCtx({ api }));
+  const model = await loadAnalyticsData(analyticsDefaultFilters());
+  assert.equal(model.comparison.priorRunCount, 180, 'period comparison uses filtered totals, not page size');
+  assert.equal(model.comparison.currentRunCount, 260);
+}
+console.log('analytics period comparison totals passed');

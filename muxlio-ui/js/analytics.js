@@ -26,41 +26,82 @@ async function loadAnalyticsDataLegacy(filters, range, attemptErrors = new Map()
   });
 }
 
+async function loadAnalyticsApiPages(filters, range, signal) {
+  const runs = [];
+  const attemptsByRun = new Map();
+  let page = 1;
+  let totalRuns = 0;
+  let populations;
+  let stateCounts;
+  let pagesFetched = 0;
+  let offset = 0;
+  let hasMore = false;
+
+  for (;;) {
+    const data = await api(`/v1/analytics?${analyticsFiltersQueryString({ ...filters, page }, range)}`, { signal });
+    if (!Array.isArray(data.runs)) throw new Error('Invalid analytics runs response');
+    pagesFetched++;
+    for (const run of data.runs) runs.push(run);
+    for (const [id, list] of Object.entries(data.attemptsByRun || {})) {
+      attemptsByRun.set(id, Array.isArray(list) ? list : []);
+    }
+    totalRuns = data.totalRuns ?? runs.length;
+    populations = data.populations ?? populations;
+    stateCounts = data.stateCounts ?? stateCounts;
+    offset = data.offset ?? offset;
+    hasMore = !!data.hasMore && runs.length < totalRuns;
+    // Avoid looping forever if a changing/inconsistent backend reports more
+    // rows but returns an empty page. Preserve that partial scope in the UI.
+    if (!hasMore || data.runs.length === 0) break;
+    page++;
+  }
+  runs.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  return {
+    runs,
+    attemptsByRun,
+    totalRuns,
+    populations,
+    stateCounts,
+    pagesFetched,
+    offset,
+    hasMore,
+  };
+}
+
 async function loadAnalyticsData(filters = analyticsFiltersFromURL(), signal) {
   const range = analyticsResolveRange(filters);
   const attemptErrors = new Map();
-  const qs = analyticsFiltersQueryString(filters, range);
-  let data;
+  let snapshot;
   try {
-    data = await api(`/v1/analytics?${qs}`, { signal });
+    snapshot = await loadAnalyticsApiPages(filters, range, signal);
   } catch (err) {
     if (/HTTP 404|unavailable/i.test(err?.message || '')) {
       return loadAnalyticsDataLegacy(filters, range, attemptErrors, signal);
     }
     throw err;
   }
-  if (!Array.isArray(data.runs)) throw new Error('Invalid analytics runs response');
-  const runs = (data.runs || []).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  const attemptsByRun = new Map(Object.entries(data.attemptsByRun || {}).map(([id, list]) => [id, Array.isArray(list) ? list : []]));
+  const { runs, attemptsByRun, totalRuns, populations, stateCounts, pagesFetched, offset, hasMore } = snapshot;
   const model = buildAnalyticsModel(runs, attemptsByRun, attemptErrors, {
     range,
-    filters,
-    totalRuns: data.totalRuns ?? runs.length,
-    hasMore: !!data.hasMore,
-    populations: data.populations,
-    offset: data.offset,
+    filters: { ...filters, page: 1 },
+    totalRuns,
+    hasMore,
+    populations,
+    stateCounts,
+    offset,
+    pagesFetched,
   });
-  if (model.runs.length >= 3) {
+  if (totalRuns >= 3) {
     const prior = analyticsPriorRange(range);
     const priorFilters = { ...filters, page: 1 };
     const priorQs = analyticsFiltersQueryString(priorFilters, prior);
     try {
       const priorData = await api(`/v1/analytics?${priorQs}`, { signal });
-      const priorRuns = priorData.runs || [];
-      if (priorRuns.length) {
+      const priorTotal = priorData.totalRuns ?? (priorData.runs || []).length;
+      if (priorTotal > 0) {
         model.comparison = {
-          priorRunCount: priorRuns.length,
-          currentRunCount: model.runs.length,
+          priorRunCount: priorTotal,
+          currentRunCount: totalRuns,
           priorLabel: prior.label,
         };
       }
@@ -75,11 +116,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
   const filters = ctx.filters || analyticsDefaultFilters();
   const range = ctx.range || analyticsResolveRange(filters);
   const tz = filters.tz || 'UTC';
-  const states = ['created', 'running', 'waiting', 'paused', 'succeeded', 'failed', 'cancelled'];
-  const stateCounts = Object.fromEntries(states.map(s => [s, 0]));
-  for (const r of runs) {
-    if (stateCounts[r.state] !== undefined) stateCounts[r.state]++;
-  }
+  const stateCounts = analyticsStateCountsFromContext(ctx, runs);
 
   const dayBucketTemplate = () => analyticsDayBuckets(range, tz);
 
@@ -242,6 +279,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
     comparison: ctx.comparison,
     legacy: !!ctx.legacy,
     retryLatency,
+    pagesFetched: ctx.pagesFetched ?? 1,
   };
 }
 
@@ -483,9 +521,16 @@ function analyticsFilterBarMarkup(model) {
   const compareNote = compare && compare.priorRunCount > 0
     ? `<p class="subtle analytics-compare">${esc(compare.priorLabel)}: ${compare.priorRunCount} runs vs ${compare.currentRunCount} in current window (identical filters).</p>`
     : '';
+  const total = model.totalRuns ?? model.runs.length;
+  const loaded = model.runs.length;
+  const scopeNote = model.hasMore
+    ? `Charts include ${loaded} of ${total} matching runs on this load; totals below reflect the full filtered population where reported.`
+    : (model.pagesFetched > 1
+      ? `Charts aggregate all ${total} matching runs (${model.pagesFetched} API requests). Run charts use createdAt · usage buckets use attempt time.`
+      : `${total} runs in window · run charts use createdAt · usage buckets use attempt time.`);
   const paging = model.hasMore
-    ? `<div class="analytics-pager"><p class="subtle" role="status">Page ${f.page || 1} · showing ${model.runs.length} of ${model.totalRuns} matching runs.</p><button type="button" class="btn ghost" data-analytics-page="${Math.max(1, (f.page || 1) - 1)}"${(f.page || 1) <= 1 ? ' disabled' : ''}>Previous</button><button type="button" class="btn ghost" data-analytics-page="${(f.page || 1) + 1}">Next</button></div>`
-    : `<div class="analytics-pager"><p class="subtle">${model.totalRuns ?? model.runs.length} runs in window · run charts use createdAt · usage buckets use attempt time.</p>${(f.page || 1) > 1 ? `<button type="button" class="btn ghost" data-analytics-page="${(f.page || 1) - 1}">Previous</button>` : ''}</div>`;
+    ? `<div class="analytics-pager"><p class="subtle" role="status">${esc(scopeNote)}</p><button type="button" class="btn ghost" data-analytics-page="${(f.page || 1) + 1}">Load more runs</button></div>`
+    : `<div class="analytics-pager"><p class="subtle" role="status">${esc(scopeNote)}</p></div>`;
   return `<section class="analytics-panel analytics-filters" aria-label="Analytics filters">
     <form id="analyticsFiltersForm" class="analytics-filter-form">
       <div class="analytics-filter-row">
@@ -752,8 +797,17 @@ async function loadAnalytics(filters) {
   try {
     const model = await loadAnalyticsData(filters, controller.signal);
     if (request !== analyticsRequest || controller.signal.aborted) return;
-    model.filters = { ...filters, measureId: filters.measureId || model.defaultMeasure };
+    const pageAligned = !model.hasMore && model.runs.length >= (model.totalRuns ?? model.runs.length);
+    model.filters = {
+      ...filters,
+      page: pageAligned ? 1 : (filters.page || 1),
+      measureId: filters.measureId || model.defaultMeasure,
+    };
     renderAnalytics(model, { measureId: model.filters.measureId, drill: filters.drill });
+    if (pageAligned && (filters.page || 1) > 1) {
+      const hash = analyticsFiltersToURL(model.filters);
+      if (currentRoute() !== hash) window.history.replaceState(null, '', hash);
+    }
   } catch (err) {
     if (request !== analyticsRequest || controller.signal.aborted) return;
     if (container) container.innerHTML = `<div class="notice error" role="alert">Unable to load analytics: ${esc(err.message)}</div>`;

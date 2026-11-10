@@ -1,6 +1,7 @@
 package state
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -133,6 +134,12 @@ func (s *Memory) QueryAnalytics(q AnalyticsQuery) (*AnalyticsSnapshot, error) {
 		copy.Error = ""
 		filtered = append(filtered, &copy)
 	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].CreatedAt.Equal(filtered[j].CreatedAt) {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
 	total := len(filtered)
 	offset := q.Offset
 	if offset > total {
