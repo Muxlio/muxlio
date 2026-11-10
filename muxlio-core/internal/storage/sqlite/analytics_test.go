@@ -55,3 +55,19 @@ func TestQueryAnalyticsClampsOffsetToTotal(t *testing.T) {
 		t.Fatalf("unexpected pagination metadata: offset=%d total=%d runs=%d hasMore=%v", snapshot.Offset, snapshot.TotalRuns, len(snapshot.Runs), snapshot.HasMore)
 	}
 }
+
+func TestQueryAnalyticsNoWorkflowFilterMatchesAllRuns(t *testing.T) {
+	s := openTemp(t)
+	for _, id := range []string{"a", "b"} {
+		if err := s.CreateRun(&state.Run{ID: id, WorkflowName: "wf-" + id, State: "succeeded"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := s.QueryAnalytics(state.AnalyticsQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.TotalRuns != 2 {
+		t.Fatalf("total=%d want 2", snapshot.TotalRuns)
+	}
+}

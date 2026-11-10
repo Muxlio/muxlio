@@ -9,16 +9,41 @@ import (
 
 var _ state.AnalyticsStore = (*Store)(nil)
 
+// analyticsAttemptPageSize bounds each DB read while listAnalyticsAttemptsForRun
+// still returns the full attempt set for a run.
+const analyticsAttemptPageSize = 500
+
+func (s *Store) listAnalyticsAttemptsForRun(runID string) ([]state.ExecutionAttempt, error) {
+	var all []state.ExecutionAttempt
+	offset := 0
+	for {
+		page, err := s.listExecutionAttemptPageOrdered(runID, "", offset, analyticsAttemptPageSize, false, "", true)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		if len(page) < analyticsAttemptPageSize {
+			break
+		}
+		offset += len(page)
+	}
+	return all, nil
+}
+
 func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot, error) {
 	// Read through the DB directly and let listExecutionAttemptPage acquire the
 	// store lock for attempt pages. Holding it here would recursively lock.
 	states := stateSplitCSV(q.State)
 	// Keep workflow filtering consistent with the in-memory store: IDs are not
 	// workflow names and must not create unexpected matches.
-	where := ` WHERE instr(lower(workflow_name),lower(?))>0`
-	args := []any{q.Workflow}
+	where := ` WHERE 1=1`
+	args := []any{}
+	if q.Workflow != "" {
+		where += ` AND instr(go_lower(workflow_name),go_lower(?))>0`
+		args = append(args, q.Workflow)
+	}
 	if q.Executor != "" {
-		where += ` AND EXISTS (SELECT 1 FROM execution_attempts ea WHERE ea.run_id=runs.id AND instr(lower(ea.executor),lower(?))>0)`
+		where += ` AND EXISTS (SELECT 1 FROM execution_attempts ea WHERE ea.run_id=runs.id AND instr(go_lower(ea.executor),go_lower(?))>0)`
 		args = append(args, q.Executor)
 	}
 	if len(states) == 1 {
@@ -96,7 +121,7 @@ func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot
 	}
 	attemptsByRun := map[string][]state.ExecutionAttempt{}
 	for _, id := range runIDs {
-		attempts, err := s.listExecutionAttemptPage(id, "", 0, -1, false, "")
+		attempts, err := s.listAnalyticsAttemptsForRun(id)
 		if err != nil {
 			return nil, err
 		}

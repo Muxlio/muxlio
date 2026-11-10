@@ -1259,6 +1259,10 @@ func (s *Store) ListExecutionAttemptPage(runID, activationID string, offset, lim
 }
 
 func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, limit int, details bool, attemptID string) ([]state.ExecutionAttempt, error) {
+	return s.listExecutionAttemptPageOrdered(runID, activationID, offset, limit, details, attemptID, false)
+}
+
+func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offset, limit int, details bool, attemptID string, analyticsOrder bool) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,measurements_json FROM execution_attempts WHERE run_id=?`
@@ -1278,7 +1282,9 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 	} else if !details {
 		query = strings.Replace(query, "result_json", "json_remove(result_json,'$.outputs','$.validationFailure.actual','$.validationFailure.expected')", 1)
 	}
-	if limit >= 0 {
+	if analyticsOrder {
+		query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+	} else if limit >= 0 {
 		query += ` ORDER BY (await_reconciliation_reason<>'') DESC,activation_id,retry_number,id LIMIT ? OFFSET ?`
 	} else {
 		query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
