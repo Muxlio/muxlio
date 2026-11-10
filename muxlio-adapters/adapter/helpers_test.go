@@ -19,6 +19,26 @@ func TestParseTokenUsageRejectsMixedValidAndInvalidCounts(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsagePreservesPartialFieldAvailability(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"input_tokens":9}`))
+	if got == nil || got.Input != 9 {
+		t.Fatalf("partial usage = %+v", got)
+	}
+	if _, outOK := got.ReportedOutput(); outOK {
+		t.Fatalf("missing output became reported zero: %+v", got)
+	}
+	if _, cachedOK := got.ReportedCached(); cachedOK {
+		t.Fatalf("missing fields became reported zero: %+v", got)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"cached":null,"input":9,"output":null}` && string(raw) != `{"input":9,"output":null,"cached":null}` {
+		t.Fatalf("partial JSON = %s", raw)
+	}
+}
+
 func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
 	for _, raw := range []string{
 		`{"input_tokens":null,"output_tokens":null,"cached_input_tokens":null}`,

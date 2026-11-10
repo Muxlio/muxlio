@@ -47,8 +47,14 @@ func TestParseKiroUsageFromFailedResult(t *testing.T) {
 
 func TestParseKiroUsageLeavesUnreportedCountsUnavailable(t *testing.T) {
 	got := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{"usage":{"input_tokens":9}}}`))
-	if got == nil || got.Input != 9 || got.Output != 0 || got.Cached != 0 {
-		t.Fatalf("usage = %+v, want reported input=9 and other counts unavailable as zero fields", got)
+	if got == nil || got.Input != 9 {
+		t.Fatalf("usage = %+v, want reported input=9", got)
+	}
+	if _, outOK := got.ReportedOutput(); outOK {
+		t.Fatalf("usage = %+v, want missing output unavailable", got)
+	}
+	if _, cachedOK := got.ReportedCached(); cachedOK {
+		t.Fatalf("usage = %+v, want missing output and cached unavailable", got)
 	}
 	if absent := parseKiroUsage(json.RawMessage(`{"status":"success","metadata":{}}`)); absent != nil {
 		t.Fatalf("usage = %+v, want absent", absent)

@@ -122,7 +122,7 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 							if resp.Usage != nil {
 								t.Fatal("usage must be unavailable")
 							}
-						} else if resp.Usage == nil || *resp.Usage != (contract.TokenUsage{Input: 120, Output: 30, Cached: 40}) {
+						} else if resp.Usage == nil || !resp.Usage.Equal(contract.TokenUsage{Input: 120, Output: 30, Cached: 40}) {
 							t.Fatalf("usage = %+v", resp.Usage)
 						}
 					}
@@ -197,7 +197,7 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 				t.Run("reported_zero", func(t *testing.T) {
 					stream := strings.NewReplacer(":120", ":0", ":30", ":0", ":40", ":0").Replace(f.SuccessStream)
 					resp, _ := invoke(t, bin, f, stream, "", 0, false, nil)
-					if resp.Error != "" || resp.Usage == nil || *resp.Usage != (contract.TokenUsage{}) {
+					if resp.Error != "" || resp.Usage == nil || !resp.Usage.Equal(contract.TokenUsage{}) {
 						t.Fatalf("zero usage: %+v", resp)
 					}
 				})

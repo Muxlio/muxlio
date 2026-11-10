@@ -51,17 +51,22 @@ function makeCtx(runAttempts = []) {
     'all-null usage → null (unavailable, not zero)',
   );
 
-  // Mix of reported and null usage: nulls are excluded, reported are summed
-  // (retries are included)
+  // A missing attempt makes the run total unavailable because its counts
+  // cannot be included in a complete sum.
   const mixed = sumRunTokenUsage([
     { id: 'a', usage: { input: 100, output: 50, cached: 20 } },
     { id: 'b', usage: null },                                    // retry with no report
     { id: 'c', usage: { input: 200, output: 80, cached: 10 } }, // second agent
   ]);
   assert.ok(mixed !== null, 'at least one reported usage → non-null result');
-  assert.strictEqual(mixed.input,  300, 'input summed across reported attempts');
-  assert.strictEqual(mixed.output, 130, 'output summed');
-  assert.strictEqual(mixed.cached,  30, 'cached summed');
+  assert.strictEqual(mixed.input, null, 'input total unavailable with an unreported attempt');
+  assert.strictEqual(mixed.output, null, 'output total unavailable with an unreported attempt');
+  assert.strictEqual(mixed.cached, null, 'cached total unavailable with an unreported attempt');
+
+  const partial = sumRunTokenUsage([{ id: 'p', usage: { input: 9, output: null, cached: null } }]);
+  assert.strictEqual(partial.input, 9);
+  assert.strictEqual(partial.output, null);
+  assert.strictEqual(partial.cached, null);
 
   // Reported zero is distinct from null (zero usage, e.g. cached-only call)
   const zero = sumRunTokenUsage([{ id: 'z', usage: { input: 0, output: 0, cached: 0 } }]);

@@ -21,13 +21,7 @@ type OutputDecl struct {
 	Schema json.RawMessage `json:"schema,omitempty"`
 }
 
-// TokenUsage contains only reported counts. Nil means unavailable; &TokenUsage{}
-// is a reported zero. Credits and context-window sizes are not token counts.
-type TokenUsage struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-	Cached int64 `json:"cached"`
-}
+// TokenUsage is defined in token_usage.go.
 
 // Measurements contains optional accounting supplied by an executor. Estimates
 // never replace observed token usage. Costs are USD; no prices are inferred.
@@ -103,8 +97,8 @@ func ParseResult(raw []byte) (Result, error) {
 	if err := DecodeJSON(raw, &result); err != nil {
 		return Result{}, fmt.Errorf("executor result: %w", err)
 	}
-	if u := result.Usage; u != nil && (u.Input < 0 || u.Output < 0 || u.Cached < 0) {
-		return Result{}, fmt.Errorf("executor usage must be non-negative")
+	if err := validateTokenUsage(result.Usage); err != nil {
+		return Result{}, err
 	}
 	if result.Session != nil {
 		if err := result.Session.Validate(); err != nil {

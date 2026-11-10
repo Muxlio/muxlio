@@ -40,3 +40,13 @@ func TestUsageSummaryMissingIsNullAndReportedZeroIsZero(t *testing.T) {
 		t.Fatalf("summary=%+v", s)
 	}
 }
+
+func TestUsageSummaryPartialTokensRemainUnknown(t *testing.T) {
+	partial := contract.NewTokenUsage(ptrInt64(9), nil, nil)
+	s := SummarizeUsage([]ExecutionAttempt{{Usage: partial}})
+	if s.Tokens.Observed != nil || s.Tokens.Unknown != 1 {
+		t.Fatalf("partial usage was treated as complete: %+v", s.Tokens)
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }

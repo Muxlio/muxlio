@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func main() {
@@ -212,17 +213,11 @@ func subtypeIndicatesError(value string) bool {
 }
 
 func addTokenUsage(total, reported *adapter.TokenUsage) *adapter.TokenUsage {
-	if reported == nil {
+	sum, err := contract.AddTokenUsage(total, reported)
+	if err != nil {
 		return total
 	}
-	if total == nil {
-		return reported
-	}
-	return &adapter.TokenUsage{
-		Input:  total.Input + reported.Input,
-		Output: total.Output + reported.Output,
-		Cached: total.Cached + reported.Cached,
-	}
+	return sum
 }
 
 func resultError(event map[string]json.RawMessage) string {

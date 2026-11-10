@@ -34,7 +34,7 @@ func SummarizeUsage(attempts []ExecutionAttempt) UsageSummary {
 			}
 			cost, estimatedCost = m.CostUSD, m.EstimatedCostUSD
 		}
-		if u := a.Usage; u != nil && u.Input >= 0 && u.Output >= 0 && u.Cached >= 0 {
+		if u := a.Usage; u != nil && u.Complete() && u.Input >= 0 && u.Output >= 0 {
 			// Cached is a subset of input, not additional tokens.
 			addMeasurement(&summary.Tokens.Observed, float64(u.Input)+float64(u.Output))
 		} else if estimatedTokens != nil {

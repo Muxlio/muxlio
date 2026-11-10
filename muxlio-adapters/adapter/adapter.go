@@ -68,27 +68,31 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 			return nil
 		}
 	}
-	var u TokenUsage
-	var found bool
-	read := func(keys ...string) int64 {
+	read := func(keys ...string) (int64, bool) {
 		for _, key := range keys {
 			if b, ok := values[key]; ok {
 				var n *int64
 				if json.Unmarshal(b, &n) == nil && n != nil && *n >= 0 {
-					found = true
-					return *n
+					return *n, true
 				}
 			}
 		}
-		return 0
+		return 0, false
 	}
-	u.Input = read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
-	u.Output = read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
-	u.Cached = read("cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
-	if !found {
-		return nil
+	input, inputOK := read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
+	output, outputOK := read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
+	cached, cachedOK := read("cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
+	var in, out, ca *int64
+	if inputOK {
+		in = &input
 	}
-	return &u
+	if outputOK {
+		out = &output
+	}
+	if cachedOK {
+		ca = &cached
+	}
+	return contract.NewTokenUsage(in, out, ca)
 }
 
 var responseSecrets map[string]string

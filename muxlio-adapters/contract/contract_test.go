@@ -96,7 +96,7 @@ func TestUsageAvailabilitySurvivesWireRoundTrip(t *testing.T) {
 		if err := json.Unmarshal(raw, &result); err != nil {
 			t.Fatal(err)
 		}
-		if (result.Usage == nil) != (usage == nil) || (usage != nil && *result.Usage != *usage) {
+		if (result.Usage == nil) != (usage == nil) || (usage != nil && !result.Usage.Equal(*usage)) {
 			t.Fatalf("usage lost: %s", raw)
 		}
 	}
@@ -409,7 +409,7 @@ func TestTokenUsageNilDistinctFromZero(t *testing.T) {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Usage == nil || *result.Usage != (TokenUsage{}) {
+	if result.Usage == nil || !result.Usage.Equal(TokenUsage{}) {
 		t.Errorf("reported zero not recovered: %+v", result.Usage)
 	}
 
@@ -420,7 +420,7 @@ func TestTokenUsageNilDistinctFromZero(t *testing.T) {
 	if err := json.Unmarshal(raw, &result2); err != nil {
 		t.Fatal(err)
 	}
-	if result2.Usage == nil || *result2.Usage != *filled {
+	if result2.Usage == nil || !result2.Usage.Equal(*filled) {
 		t.Errorf("usage values not recovered: %+v", result2.Usage)
 	}
 }

@@ -10,15 +10,15 @@ function checkIcon(s){if(s==='succeeded')return `<span class="node-card-check su
 // usage — callers must render that as "Unavailable", never as zero.
 function sumRunTokenUsage(attempts){
   if(!attempts||!attempts.length)return null;
-  let anyReported=false,input=0,output=0,cached=0;
+  let anyReported=false,input=0,output=0,cached=0,inputKnown=true,outputKnown=true,cachedKnown=true;
   for(const a of attempts){
-    if(a.usage==null)continue; // provider did not report
+    if(a.usage==null){inputKnown=false;outputKnown=false;cachedKnown=false;continue;} // provider did not report
     anyReported=true;
-    input+=a.usage.input||0;
-    output+=a.usage.output||0;
-    cached+=a.usage.cached||0;
+    if(typeof a.usage.input==='number')input+=a.usage.input;else inputKnown=false;
+    if(typeof a.usage.output==='number')output+=a.usage.output;else outputKnown=false;
+    if(typeof a.usage.cached==='number')cached+=a.usage.cached;else cachedKnown=false;
   }
-  return anyReported?{input,output,cached}:null;
+  return anyReported?{input:inputKnown?input:null,output:outputKnown?output:null,cached:cachedKnown?cached:null}:null;
 }
 
 // Round token counts using the largest readable compact unit.
@@ -48,9 +48,9 @@ function buildWbStats(r,acts){
   const usage=r.overview?r.overview.tokens:sumRunTokenUsage(attempts);
   const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
-  const tokIn =(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.input):'Unavailable':'—';
-  const tokOut=(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.output):'Unavailable':'—';
-  const tokCached=(r.overview?.attempts??attempts.length)?usage!=null?fmtTokens(usage.cached):'Unavailable':'—';
+  const tokIn =(r.overview?.attempts??attempts.length)?usage?.input!=null?fmtTokens(usage.input):'Unavailable':'—';
+  const tokOut=(r.overview?.attempts??attempts.length)?usage?.output!=null?fmtTokens(usage.output):'Unavailable':'—';
+  const tokCached=(r.overview?.attempts??attempts.length)?usage?.cached!=null?fmtTokens(usage.cached):'Unavailable':'—';
   const partial=r.overview?.usage?.tokens?.unknown>0?' · partial':'';
   const tokenStats=[
     {val:tokIn,label:'Input tokens'+partial},
