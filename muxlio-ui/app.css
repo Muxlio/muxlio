@@ -623,6 +623,17 @@ td.primary-cell small{display:block;margin-top:3px}
 .node-transcript-link:hover{background:var(--teal-dim);color:#f4fffb}
 
 /* ── analytics page ───────────────────────── */
+.analytics-filters{margin-bottom:16px}
+.analytics-filter-form .analytics-filter-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.analytics-filter-form label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.analytics-filter-form select,.analytics-filter-form input{font:inherit;background:var(--surface2);color:var(--ink);border:1px solid var(--border);border-radius:6px;padding:4px 8px;min-width:6rem}
+.analytics-filter-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.analytics-filter-chip{font-size:11px;padding:3px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+.analytics-drilldown{margin:12px 0}
+.analytics-drill-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.spark-drill,.abc-drill{background:transparent;border:0;padding:0;text-align:inherit;color:inherit;cursor:pointer;width:100%}
+.spark-drill:focus-visible,.abc-drill:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.abc-drill{display:flex;gap:7px;align-items:center}
 .analytics-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:8px}
 .analytics-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
 .analytics-chart-card{min-width:0;padding:22px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
@@ -660,6 +671,8 @@ td.primary-cell small{display:block;margin-top:3px}
 .tok-output{background:var(--blue)}
 .tok-cached{background:var(--amber)}
 .analytics-data-status{color:var(--amber);font-size:12px;margin-bottom:12px}
+.analytics-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px}
+.analytics-pager p{margin:0 auto 0 0}
 .analytics-usage-head{margin-bottom:16px}
 .analytics-usage-head h2{font-size:14px;font-weight:600;margin:0 0 8px}
 .analytics-usage-primary{display:flex;flex-wrap:wrap;gap:16px 24px;margin-top:12px}

@@ -63,6 +63,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	registerSubscriptions(mux, store)
 	registerTriggers(mux, store, runner)
 	registerOperations(mux, store, artifactDriver)
+	registerAnalytics(mux, store)
 	if artifactDriver != nil {
 		planner := artifacts.PlannerFromDriver(artifactDriver)
 		mux.HandleFunc("/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {

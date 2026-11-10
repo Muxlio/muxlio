@@ -6,6 +6,7 @@ const analyticsSource = [
   './js/format.js',
   './js/usage-summary.js',
   './js/analytics-accounting.js',
+  './js/analytics-filters.js',
   './js/analytics.js',
 ].map(p => readFileSync(new URL(p, import.meta.url), 'utf8')).join('\n');
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -16,6 +17,10 @@ function makeCtx(overrides = {}) {
     api: async () => { throw new Error('api not wired in test context'); },
     esc: s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     document: { getElementById: () => null },
+    URLSearchParams,
+    AbortController,
+    Intl,
+    location: { hash: '#analytics' },
     ...overrides,
   };
 }
@@ -23,7 +28,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromHash, analyticsResolveRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue})`,
     ctx,
   );
 }
@@ -39,6 +44,16 @@ function getHelpers(ctx) {
   assert.strictEqual(fmtTok(2_500_000), '2.5M');
 }
 console.log('fmtTok checks passed');
+
+// Shared ISO filter state must round-trip through the viewer-local datetime input.
+{
+  const { analyticsDateTimeLocalValue } = getHelpers(makeCtx());
+  const value = new Date(2026, 5, 2, 15, 7).toISOString();
+  const expected = `${value ? new Date(value).getFullYear() : ''}-${String(new Date(value).getMonth() + 1).padStart(2, '0')}-${String(new Date(value).getDate()).padStart(2, '0')}T${String(new Date(value).getHours()).padStart(2, '0')}:${String(new Date(value).getMinutes()).padStart(2, '0')}`;
+  assert.equal(analyticsDateTimeLocalValue(value), expected);
+  assert.equal(analyticsDateTimeLocalValue('invalid'), '');
+}
+console.log('custom range local display checks passed');
 
 // ── buildAnalyticsModel — empty state ──────────────────────────────────
 {
@@ -365,31 +380,32 @@ console.log('XSS escaping checks passed');
 }
 console.log('mixed executor timing, legacy and partial usage checks passed');
 
-// Exercise script order: boot must not replace the actual Analytics loader.
+// boot must not replace the actual Analytics loader.
 {
   const boot = readFileSync(new URL('./js/boot.js', import.meta.url), 'utf8');
-  const output = {innerHTML:''};
+  assert.doesNotMatch(boot, /function loadAnalytics\b/, 'boot must not redefine Analytics loader');
+  assert.match(indexSource, /analytics-filters\.js/, 'filter module is wired from index');
+}
+{
+  const output = { value: '', set innerHTML(v) { this.value = v; }, get innerHTML() { return this.value; } };
   let resolveRuns;
   const pending = new Promise(resolve => { resolveRuns = resolve; });
-  const ctx = vm.createContext(makeCtx({
-    api: async path => path === '/v1/runs' ? pending : {attempts:[]},
-    document: {getElementById: () => output, querySelectorAll: () => []},
-    window: {addEventListener(){}}, navigate(){},
-    loadOverview(){}, loadRuns(){}, loadWorkers(){}, loadOlder(){},
+  const { loadAnalytics } = getHelpers(makeCtx({
+    location: { hash: '#analytics' },
+    document: {
+      getElementById(id) { return id === 'analyticsContent' ? output : null; },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    },
+    api: async path => {
+      if (String(path).startsWith('/v1/analytics')) throw new Error('HTTP 404');
+      if (path === '/v1/runs') return pending;
+      return { attempts: [] };
+    },
   }));
-  const sourceByPath = new Map([
-    ['/js/format.js', readFileSync(new URL('./js/format.js', import.meta.url), 'utf8')],
-    ['/js/usage-summary.js', readFileSync(new URL('./js/usage-summary.js', import.meta.url), 'utf8')],
-    ['/js/analytics-accounting.js', readFileSync(new URL('./js/analytics-accounting.js', import.meta.url), 'utf8')],
-    ['/js/analytics.js', readFileSync(new URL('./js/analytics.js', import.meta.url), 'utf8')],
-    ['/js/boot.js', boot],
-  ]);
-  for (const match of indexSource.matchAll(/<script src="([^"]+)"/g)) {
-    if (sourceByPath.has(match[1])) vm.runInContext(sourceByPath.get(match[1]), ctx);
-  }
-  const loading = ctx.loadAnalytics();
+  const loading = loadAnalytics();
   assert.match(output.innerHTML, /Loading analytics/);
-  resolveRuns({runs:[{id:'r',state:'succeeded'}]});
+  resolveRuns({ runs: [{ id: 'r', state: 'succeeded', createdAt: new Date().toISOString() }] });
   await loading;
   assert.match(output.innerHTML, /Run outcomes · 30 days/);
 }
@@ -400,9 +416,10 @@ console.log('Analytics bootstrap and loading checks passed');
   const {loadAnalyticsData, loadAnalytics} = getHelpers(makeCtx({
     document: {getElementById: () => output},
     api: async path => {
-      if (path === '/v1/runs') return {runs:[{id:'good',state:'succeeded'},{id:'bad',state:'failed'}]};
+      if (String(path).startsWith('/v1/analytics')) throw new Error('HTTP 404');
+      if (path === '/v1/runs') return { runs: [{ id: 'good', state: 'succeeded', createdAt: new Date(Date.now() - 60_000).toISOString() }, { id: 'bad', state: 'failed', createdAt: new Date(Date.now() - 60_000).toISOString() }] };
       if (path.includes('/bad/')) throw new Error('service <offline>');
-      return {attempts:[{executor:'executorZ',state:'succeeded',executionDurationMs:10}]};
+      return { attempts: [{ executor: 'executorZ', state: 'succeeded', executionDurationMs: 10 }] };
     },
   }));
   const model = await loadAnalyticsData();
@@ -420,8 +437,13 @@ console.log('Analytics bootstrap and loading checks passed');
 
   for (const [api,role] of [
     [async () => {throw new Error('runs unavailable');},'alert'],
-    [async () => ({}),'alert'],
-    [async path => path === '/v1/runs' ? {runs:[{id:'bad'}]} : {},'status'],
+    [async () => ({}), 'alert'],
+    [async path => {
+      if (String(path).startsWith('/v1/analytics')) throw new Error('HTTP 404');
+      if (path === '/v1/runs') return { runs: [{ id: 'bad', createdAt: new Date().toISOString() }] };
+      if (path.includes('/attempts')) throw new Error('attempt unavailable');
+      return {};
+    }, 'status'],
   ]) {
     const helpers = getHelpers(makeCtx({api,document:{getElementById: () => output}}));
     await helpers.loadAnalytics();
@@ -433,9 +455,16 @@ console.log('Analytics fetch failure checks passed');
 
 // The coordinator serializes empty Go slices as null.
 {
-  const {loadAnalyticsData} = getHelpers(makeCtx({api:async () => ({runs:null})}));
+  const analyticsOrLegacy = async path => {
+    if (String(path).startsWith('/v1/analytics')) throw new Error('HTTP 404');
+    return ({ runs: null });
+  };
+  const {loadAnalyticsData} = getHelpers(makeCtx({api: analyticsOrLegacy}));
   assert.equal((await loadAnalyticsData()).runs.length, 0);
-  const helpers = getHelpers(makeCtx({api:async path => path === '/v1/runs' ? {runs:[{id:'legacy'}]} : {attempts:null}}));
+  const helpers = getHelpers(makeCtx({api: async path => {
+    if (String(path).startsWith('/v1/analytics')) throw new Error('HTTP 404');
+    return path === '/v1/runs' ? { runs: [{ id: 'legacy', createdAt: new Date().toISOString() }] } : { attempts: null };
+  }}));
   const model = await helpers.loadAnalyticsData();
   assert.equal(model.runsWithNoAttempts, 1);
   assert.equal(model.attemptErrors.size, 0);
@@ -581,23 +610,43 @@ console.log('analytics attempt bucket time checks passed');
 for (const staleFailure of [false, true]) {
   const output = {innerHTML:''};
   const pending = [];
+  const signals = [];
   const {loadAnalytics} = getHelpers(makeCtx({
     document:{getElementById:()=>output},
-    api:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),
+    api:(path, options)=>{ signals.push(options?.signal); return new Promise((resolve,reject)=>pending.push({resolve,reject})); },
   }));
   const oldLoad = loadAnalytics();
   const newLoad = loadAnalytics();
-  pending[1].resolve({runs:[]});
+  assert.equal(signals[0].aborted, true, 'starting a newer load aborts the older request');
+  pending[1].resolve({ runs: [], attemptsByRun: {} });
   await newLoad;
   const latestHTML = output.innerHTML;
   if (staleFailure) pending[0].reject(new Error('stale failure'));
-  else pending[0].resolve({runs:[{id:'stale',state:'succeeded'}]});
-  // The stale successful load still finishes its attempt request.
-  if (!staleFailure) {
-    await new Promise(resolve=>setImmediate(resolve));
-    pending[2].resolve({attempts:[]});
-  }
+  else pending[0].resolve({ runs: [{ id: 'stale', state: 'succeeded', createdAt: new Date().toISOString() }], attemptsByRun: { stale: [] } });
   await oldLoad;
   assert.equal(output.innerHTML, latestHTML);
 }
 console.log('Analytics overlapping-load checks passed');
+
+{
+  const { analyticsFiltersFromHash, analyticsResolveRange, analyticsDayBuckets, analyticsBucketForTimestamp, buildAnalyticsModel } = getHelpers(makeCtx());
+  const filters = analyticsFiltersFromHash('#analytics?range=7d&state=failed&workflow=demo');
+  assert.equal(filters.preset, '7d');
+  assert.deepEqual(Array.from(filters.states), ['failed']);
+  assert.equal(filters.workflow, 'demo');
+  const range = analyticsResolveRange(filters, new Date('2026-06-10T12:00:00Z'));
+  assert.equal(range.buckets, 7);
+  const buckets = analyticsDayBuckets(range);
+  assert.equal(buckets.length, 8, 'partial UTC calendar days receive edge buckets');
+  const runTime = '2026-06-09T10:00:00Z';
+  const model = buildAnalyticsModel(
+    [{ id: 'x', state: 'failed', workflowName: 'demo', createdAt: runTime }],
+    new Map([['x', []]]),
+    new Map(),
+    { filters, range },
+  );
+  assert.equal(model.runs.length, 1);
+  const bucket = analyticsBucketForTimestamp(Date.parse(runTime), range);
+  assert.ok(model.buckets.find(b => b.dateKey === bucket.dateKey)?.total, 'run lands in 7d bucket');
+}
+console.log('analytics filter URL and bucket boundary checks passed');
