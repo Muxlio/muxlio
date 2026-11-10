@@ -51,7 +51,8 @@ function latestAttemptForActivation(attempts,activationId){
 function activationActivityElapsed(act,attempts,nowIso){
   const attempt=latestAttemptForActivation(attempts,act.id);
   if(attempt?.startedAt){
-    const end=attempt.state==='running'?nowIso:(attempt.finishedAt||null);
+    const stillActive=['running','waiting','paused'].includes(attempt.state);
+    const end=stillActive?nowIso:(attempt.finishedAt||null);
     if(end)return formatElapsed(attempt.startedAt,end);
   }
   return null;
@@ -99,7 +100,7 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   for(const act of inFlight){
     const elapsed=activationActivityElapsed(act,attemptList,nowIso);
     const detail=act.queueReason||(act.state==='running'?'Executing on a worker.':'Waiting to start.');
-    items.push({tone:act.state==='running'?'progress':'queued',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail,elapsed,timing:elapsed?`${act.state==='running'?'Running':'Waiting'} ${elapsed}`:'Timing unavailable',actions:`${wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)}${act.state==='running'?wbActivityButton('Live transcript',`data-wb-transcript="${esc(act.id)}"`):''}`});
+    items.push({tone:act.state==='running'?'progress':act.state==='paused'?'paused':'waiting',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail,elapsed,timing:elapsed?`${act.state==='running'?'Running':act.state==='paused'?'Paused':'Waiting'} ${elapsed}`:'Timing unavailable',actions:`${wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)}${act.state==='running'?wbActivityButton('Live transcript',`data-wb-transcript="${esc(act.id)}"`):''}`});
   }
   for(const act of actsList.filter(a=>a.state==='queued'&&!inFlightIds.has(a.id))){
     items.push({tone:'queued',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail:act.queueReason||'Queued for dispatch.',timing:act.queueReason?'Admission wait':'Timing unavailable',actions:wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)});
@@ -108,7 +109,7 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   const terminal=['succeeded','failed','cancelled'].includes(run.state);
   const idle=terminal&&!items.length;
   const summary=wbActivityStateSummary(counts,total);
-  const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<div class="wb-activity-empty${idle?' is-complete':''}"><span class="wb-activity-empty-mark" aria-hidden="true">${idle?'✓':'·'}</span><span><strong>${idle?'No activations need attention.':'No activations materialized yet.'}</strong>${idle?'<small>Completed count reflects materialized nodes only.</small>':''}</span></div>`;
+  const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='paused'?'paused':item.tone==='waiting'?'waiting':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='paused'?'Paused':item.tone==='waiting'?'Waiting':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<div class="wb-activity-empty${idle?' is-complete':''}"><span class="wb-activity-empty-mark" aria-hidden="true">${idle?'✓':'·'}</span><span><strong>${idle?'No activations need attention.':'No activations materialized yet.'}</strong>${idle?'<small>Completed count reflects materialized nodes only.</small>':''}</span></div>`;
   const html=`<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong></span></summary>${itemHtml}</details>`;
   const announce=items.length?`${items.length} items need attention or are in progress. ${summary}.`:(idle?`Run ${run.state}. ${summary}.`:'');
   return {html,signature,announce,visible:!idle||!terminal||actsList.length>0};

@@ -52,3 +52,89 @@ test('paused and waiting runs expose elapsed wait when timestamps exist',()=>{
   const waiting=buildWbActivityMarkup({id:'run',state:'waiting',createdAt:'2026-06-01T11:00:00Z',updatedAt:'2026-06-01T11:55:00Z',overview:{activations:0}},[],[],[]);
   assert.match(waiting.html,/Waiting 5m 0s/);
 });
+
+// ── regression: waiting and paused activations use correct badge text ─────
+test('waiting activation shows Waiting badge not Queued',()=>{
+  const {html}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:1}},
+    [{id:'a1',nodeId:'step.work',state:'waiting'}],
+    [],[]
+  );
+  assert.doesNotMatch(html,/>Queued<\/span>/,'waiting act must not render as Queued');
+  assert.match(html,/>Waiting<\/span>/,'waiting act must render Waiting badge');
+  assert.match(html,/wb-activity-item--waiting/,'waiting act must carry --waiting tone class');
+});
+
+test('paused activation shows Paused badge not Queued',()=>{
+  const {html}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:1}},
+    [{id:'a1',nodeId:'step.work',state:'paused'}],
+    [],[]
+  );
+  assert.doesNotMatch(html,/>Queued<\/span>/,'paused act must not render as Queued');
+  assert.match(html,/>Paused<\/span>/,'paused act must render Paused badge');
+  assert.match(html,/wb-activity-item--paused/,'paused act must carry --paused tone class');
+  assert.match(html,/class="state paused"/,'paused act must have paused CSS state class');
+});
+
+// ── regression: running/waiting/paused/queued activations get distinct badges
+test('all in-flight activation states render distinct badges',()=>{
+  const {html}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:3}},
+    [
+      {id:'a1',nodeId:'step.run',state:'running'},
+      {id:'a2',nodeId:'step.wait',state:'waiting'},
+      {id:'a3',nodeId:'step.pause',state:'paused'},
+      {id:'a4',nodeId:'step.queue',state:'queued'},
+    ],
+    [],[]
+  );
+  const runningCount=(html.match(/>Running<\/span>/g)||[]).length;
+  const waitingCount=(html.match(/>Waiting<\/span>/g)||[]).length;
+  const pausedCount=(html.match(/>Paused<\/span>/g)||[]).length;
+  const queuedCount=(html.match(/>Queued<\/span>/g)||[]).length;
+  assert.equal(runningCount,1,'exactly one Running badge');
+  assert.equal(waitingCount,1,'exactly one Waiting badge');
+  assert.equal(pausedCount,1,'exactly one Paused badge');
+  assert.equal(queuedCount,1,'exactly one Queued badge');
+});
+
+// ── regression: activationActivityElapsed uses nowIso for paused/waiting ──
+test('elapsed timing uses nowIso for paused and waiting attempts',()=>{
+  const nowIso='2026-06-01T12:00:00Z';
+
+  // paused attempt with no finishedAt — must use nowIso
+  const {html:hp}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:1}},
+    [{id:'a1',nodeId:'step.work',state:'paused'}],
+    [{activationId:'a1',state:'paused',startedAt:'2026-06-01T11:59:00Z',retryNumber:0,finishedAt:null}],
+    [],
+    nowIso
+  );
+  assert.match(hp,/Paused 1m 0s/,'paused attempt elapsed should reference nowIso');
+
+  // waiting attempt with no finishedAt — must use nowIso
+  const {html:hw}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:1}},
+    [{id:'a2',nodeId:'step.work',state:'waiting'}],
+    [{activationId:'a2',state:'waiting',startedAt:'2026-06-01T11:58:00Z',retryNumber:0,finishedAt:null}],
+    [],
+    nowIso
+  );
+  assert.match(hw,/Waiting 2m 0s/,'waiting attempt elapsed should reference nowIso');
+});
+
+// ── regression: queued activations never duplicate from inFlight set ──────
+test('queued activation appears exactly once and inFlight states do not leak',()=>{
+  const {html}=buildWbActivityMarkup(
+    {id:'run',state:'running',overview:{activations:2}},
+    [
+      {id:'a1',nodeId:'step.run',state:'running'},
+      {id:'a2',nodeId:'step.queue',state:'queued',queueReason:'Waiting for a worker'},
+    ],
+    [],[]
+  );
+  const queuedCount=(html.match(/>Queued<\/span>/g)||[]).length;
+  assert.equal(queuedCount,1,'queued activation must appear exactly once');
+  assert.match(html,/Waiting for a worker/,'queued reason must be shown');
+});
