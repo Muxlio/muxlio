@@ -62,6 +62,49 @@ func TestUsageSummaryPartialTokensRemainUnknown(t *testing.T) {
 	if s.Tokens.Observed != nil || s.Tokens.Unknown != 1 {
 		t.Fatalf("partial usage was treated as complete: %+v", s.Tokens)
 	}
+	if s.TokenDimensions.Input.Observed == nil || *s.TokenDimensions.Input.Observed != 9 ||
+		s.TokenDimensions.Input.Reporting != 1 || s.TokenDimensions.Output.Observed != nil ||
+		s.TokenDimensions.Output.Unknown != 1 {
+		t.Fatalf("input subtotal=%+v output=%+v", s.TokenDimensions.Input, s.TokenDimensions.Output)
+	}
+}
+
+func TestUsageSummaryTokenDimensionsAdditiveAcrossAttempts(t *testing.T) {
+	first := &TokenUsage{Input: 100, Output: 20, Cached: 30}
+	attempts := []ExecutionAttempt{
+		{State: "succeeded", Usage: first},
+		{State: "succeeded"},
+	}
+	s := SummarizeUsage(attempts)
+	if s.Tokens.Observed == nil || *s.Tokens.Observed != 120 || s.Tokens.Unknown != 1 || s.Tokens.Reporting != 1 {
+		t.Fatalf("aggregate tokens=%+v", s.Tokens)
+	}
+	for _, dim := range []struct {
+		name string
+		want int64
+		row  TokenDimensionTotal
+	}{
+		{"input", 100, s.TokenDimensions.Input},
+		{"output", 20, s.TokenDimensions.Output},
+		{"cached", 30, s.TokenDimensions.Cached},
+	} {
+		if dim.row.Observed == nil || *dim.row.Observed != dim.want || dim.row.Reporting != 1 || dim.row.Unknown != 1 {
+			t.Fatalf("%s=%+v", dim.name, dim.row)
+		}
+	}
+	if s.TokenDimensions.Coverage.Attempts != 2 || s.TokenDimensions.Coverage.Reporting != 1 {
+		t.Fatalf("coverage=%+v", s.TokenDimensions.Coverage)
+	}
+}
+
+func TestUsageSummaryPendingAttemptsExcludedFromTokenUnknown(t *testing.T) {
+	s := SummarizeUsage([]ExecutionAttempt{{State: "running"}, {State: "succeeded", Usage: &TokenUsage{Input: 1, Output: 2}}})
+	if s.Tokens.Unknown != 0 || s.Tokens.Pending != 1 || s.Tokens.Reporting != 1 {
+		t.Fatalf("tokens=%+v", s.Tokens)
+	}
+	if s.TokenDimensions.Output.Unknown != 0 || s.TokenDimensions.Coverage.Pending != 1 {
+		t.Fatalf("dimensions=%+v", s.TokenDimensions)
+	}
 }
 
 func TestUsageSummaryObservedCostPrecedesEstimateOnAttempt(t *testing.T) {

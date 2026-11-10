@@ -93,7 +93,6 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	states := map[string]int{}
 	held := 0
 	var tokens *contract.TokenUsage
-	tokensComplete := true
 	tokensSeen := false
 	var elapsed *int64
 	missingTiming := false
@@ -102,16 +101,14 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 		if a.AwaitReconciliationReason != "" {
 			held++
 		}
-		if a.Usage != nil {
+		if a.Usage != nil && a.Usage.AnyReported() {
 			tokensSeen = true
 			var addErr error
 			tokens, addErr = contract.AddTokenUsage(tokens, a.Usage)
 			if addErr != nil {
 				tokens = nil
-				tokensComplete = false
+				break
 			}
-		} else {
-			tokensComplete = false
 		}
 		ms := a.ExecutionDurationMS
 		if ms == nil && a.State != "running" && !a.StartedAt.IsZero() && !a.FinishedAt.IsZero() && !a.FinishedAt.Before(a.StartedAt) {
@@ -131,10 +128,8 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	if missingTiming {
 		elapsed = nil
 	}
-	if tokensSeen && (!tokensComplete || tokens == nil) {
-		// A null field means the run total is incomplete, even when some
-		// attempts reported a value for that dimension.
-		tokens = contract.UnavailableTokenUsage()
+	if !tokensSeen {
+		tokens = nil
 	}
 	latest, err := views.LatestEventSeq(run.ID)
 	if err != nil {

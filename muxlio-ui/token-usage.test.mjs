@@ -53,17 +53,23 @@ function makeCtx(runAttempts = []) {
     'all-null usage → null (unavailable, not zero)',
   );
 
-  // A missing attempt makes the run total unavailable because its counts
-  // cannot be included in a complete sum.
   const mixed = sumRunTokenUsage([
     { id: 'a', usage: { input: 100, output: 50, cached: 20 } },
-    { id: 'b', usage: null },                                    // retry with no report
-    { id: 'c', usage: { input: 200, output: 80, cached: 10 } }, // second agent
+    { id: 'b', usage: null },
+    { id: 'c', usage: { input: 200, output: 80, cached: 10 } },
   ]);
   assert.ok(mixed !== null, 'at least one reported usage → non-null result');
-  assert.strictEqual(mixed.input, null, 'input total unavailable with an unreported attempt');
-  assert.strictEqual(mixed.output, null, 'output total unavailable with an unreported attempt');
-  assert.strictEqual(mixed.cached, null, 'cached total unavailable with an unreported attempt');
+  assert.strictEqual(mixed.input, 300);
+  assert.strictEqual(mixed.output, 130);
+  assert.strictEqual(mixed.cached, 30);
+
+  const partialRun = sumRunTokenUsage([
+    { id: 'a', usage: { input: 100, output: 20, cached: 30 } },
+    { id: 'b', usage: null },
+  ]);
+  assert.strictEqual(partialRun.input, 100);
+  assert.strictEqual(partialRun.output, 20);
+  assert.strictEqual(partialRun.cached, 30);
 
   const partial = sumRunTokenUsage([{ id: 'p', usage: { input: 9, output: null, cached: null } }]);
   assert.strictEqual(partial.input, 9);
@@ -88,7 +94,7 @@ console.log('sumRunTokenUsage checks passed');
   const htmlNone = buildWbStatsNone(run, acts);
   // Each token total has its own labelled stat in the current workbench.
   const tokenValues = html => Object.fromEntries([...html.matchAll(
-    /<div class="stat"><div class="stat-val">([^<]*)<\/div><div class="stat-label">(Input|Output|Cached) tokens<\/div><\/div>/g,
+    /<div class="stat"><div class="stat-val">([^<]*)<\/div><div class="stat-label">(Input|Output|Cached) tokens[^<]*<\/div><\/div>/g,
   )].map(([,value,label]) => [label,value]));
   assert.deepEqual(tokenValues(htmlNone), {Input:'—',Output:'—',Cached:'—'},
     'all three labelled token stats show an em-dash when there are no attempts');
@@ -118,6 +124,49 @@ console.log('sumRunTokenUsage checks passed');
   ]))(run,acts);
   assert.deepEqual(tokenValues(zeroStats), {Input:'0',Output:'0',Cached:'0'},
     'reported zero is distinct from unavailable in the rendered stats');
+
+  const ctxPartial = makeCtx([
+    { activationId: 'act-1', retryNumber: 0, state: 'succeeded', usage: { input: 100, output: 20, cached: 30 } },
+    { activationId: 'act-2', retryNumber: 0, state: 'succeeded', usage: null },
+  ]);
+  const partialRun = {
+    state: 'succeeded',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    overview: {
+      attempts: 2,
+      tokens: { input: 100, output: 20, cached: 30 },
+      usage: {
+        tokenDimensions: {
+          input: { observed: 100, reporting: 1, unknown: 1 },
+          output: { observed: 20, reporting: 1, unknown: 1 },
+          cached: { observed: 30, reporting: 1, unknown: 1 },
+          coverage: { attempts: 2, pending: 0, reporting: 1 },
+        },
+      },
+    },
+  };
+  const { buildWbStats: buildPartial } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, ctxPartial);
+  const htmlPartial = buildPartial(partialRun, acts);
+  assert.deepEqual(tokenValues(htmlPartial), { Input: '100', Output: '20', Cached: '30' });
+  assert.match(htmlPartial, /Input tokens · 1\/2 attempts/);
+  assert.doesNotMatch(htmlPartial, /Input tokens · partial/);
+
+  // The full-run endpoint returns UsageSummary at r.usage, without overview.
+  // Initial workbench rendering must retain these subtotals and coverage.
+  const fullRun = { ...run, usage: partialRun.overview.usage };
+  const { buildWbStats: buildFull } = vm.runInNewContext(`${wbSource}; ({buildWbStats})`, makeCtx([]));
+  const htmlFull = buildFull(fullRun, acts);
+  assert.deepEqual(tokenValues(htmlFull), { Input: '100', Output: '20', Cached: '30' });
+  assert.match(htmlFull, /Input tokens · 1\/2 attempts/);
+
+  const pendingRun = {
+    state: 'running', createdAt: run.createdAt, updatedAt: run.updatedAt,
+    usage: { tokenDimensions: { coverage: { attempts: 1, pending: 1, reporting: 0 } } },
+  };
+  const pendingHtml = buildFull(pendingRun, acts);
+  assert.match(pendingHtml, /Input tokens · pending \(1 attempt\)/,
+    'in-flight attempts without final usage are identified as pending');
 
 }
 console.log('buildWbStats token stat checks passed');

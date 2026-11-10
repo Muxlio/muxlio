@@ -5,20 +5,39 @@ function nodeDisplayName(nodeId){return /^each__\d+$/.test(nodeId||'')?'each':no
 function stateClass(s){return{succeeded:'succeeded',failed:'failed',running:'running',waiting:'waiting',paused:'paused',queued:'queued',cancelled:'cancelled'}[s]||''}
 function checkIcon(s){if(s==='succeeded')return `<span class="node-card-check succeeded">✓</span>`;if(s==='failed')return `<span class="node-card-check failed">✕</span>`;if(s==='running')return `<span class="node-card-check running">⟳</span>`;return ''}
 
-// sumRunTokenUsage aggregates token counts across all attempts (including
-// retries) in the run. Returns null when no attempt has provider-reported
-// usage — callers must render that as "Unavailable", never as zero.
+// sumRunTokenUsage aggregates reported dimensions across attempts. Missing
+// attempts do not clear dimensions reported elsewhere; null means unavailable.
 function sumRunTokenUsage(attempts){
   if(!attempts||!attempts.length)return null;
-  let anyReported=false,input=0,output=0,cached=0,inputKnown=true,outputKnown=true,cachedKnown=true;
+  let anyReported=false;
+  const dims={input:null,output:null,cached:null};
   for(const a of attempts){
-    if(a.usage==null){inputKnown=false;outputKnown=false;cachedKnown=false;continue;} // provider did not report
+    if(a.usage==null)continue;
+    const reported=['input','output','cached'].some(name=>typeof a.usage[name]==='number');
+    if(!reported)continue;
     anyReported=true;
-    if(typeof a.usage.input==='number')input+=a.usage.input;else inputKnown=false;
-    if(typeof a.usage.output==='number')output+=a.usage.output;else outputKnown=false;
-    if(typeof a.usage.cached==='number')cached+=a.usage.cached;else cachedKnown=false;
+    for(const name of ['input','output','cached']){
+      const value=a.usage[name];
+      if(typeof value!=='number')continue;
+      dims[name]=(dims[name]??0)+value;
+    }
   }
-  return anyReported?{input:inputKnown?input:null,output:outputKnown?output:null,cached:cachedKnown?cached:null}:null;
+  return anyReported?dims:null;
+}
+
+function tokenDimensionCoverage(dimensions,dimension,attempts,runState){
+  if(!dimensions)return '';
+  const row=dimensions[dimension]||{};
+  const reported=row.reporting??0;
+  const pending=dimensions.coverage?.pending??0;
+  const accountable=(dimensions.coverage?.attempts??attempts) - pending;
+  if(reported<=0){
+    if(pending>0&&['running','queued','waiting','paused'].includes(runState))return ` · pending (${pending} ${pending===1?'attempt':'attempts'})`;
+    return '';
+  }
+  const coverage=accountable>0&&reported<accountable?` · ${reported}/${accountable} attempts`:'';
+  const pendingNote=pending>0&&['running','queued','waiting','paused'].includes(runState)?` · ${pending} pending`:'';
+  return coverage+pendingNote;
 }
 
 // Round token counts using the largest readable compact unit.
@@ -45,18 +64,28 @@ function sumExecutionTime(attempts){
 function buildWbStats(r,acts){
   const total=r.overview?.activations??acts.length,done=r.overview?.completed??acts.filter(a=>a.state==='succeeded').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
-  const usage=r.overview?r.overview.tokens:sumRunTokenUsage(attempts);
+  const dimensions=r.overview?.usage?.tokenDimensions??r.usage?.tokenDimensions;
+  const attemptCount=r.overview?.attempts??dimensions?.coverage?.attempts??attempts.length;
+  const fallbackUsage=r.overview?.tokens??sumRunTokenUsage(attempts);
+  // The full-run endpoint carries the shared UsageSummary at r.usage. Prefer
+  // its per-dimension subtotals so initial workbench renders match summary API.
+  const usage=dimensions?{
+    input:dimensions.input?.observed??null,
+    output:dimensions.output?.observed??null,
+    cached:dimensions.cached?.observed??null,
+  }:fallbackUsage;
   const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
-  const tokIn =(r.overview?.attempts??attempts.length)?usage?.input!=null?fmtTokens(usage.input):'Unavailable':'—';
-  const tokOut=(r.overview?.attempts??attempts.length)?usage?.output!=null?fmtTokens(usage.output):'Unavailable':'—';
-  const tokCached=(r.overview?.attempts??attempts.length)?usage?.cached!=null?fmtTokens(usage.cached):'Unavailable':'—';
-  const partial=r.overview?.usage?.tokens?.unknown>0?' · partial':'';
-  const tokenStats=[
-    {val:tokIn,label:'Input tokens'+partial},
-    {val:tokOut,label:'Output tokens'+partial},
-    {val:tokCached,label:'Cached tokens'+partial},
-  ];
+  const hasAttempts=attemptCount>0;
+  const tokenValue=(field)=>{
+    if(!hasAttempts)return '—';
+    const value=usage?.[field];
+    return value!=null?fmtTokens(value):'Unavailable';
+  };
+  const tokenStats=['input','output','cached'].map(field=>({
+    val:tokenValue(field),
+    label:`${field==='cached'?'Cached':field[0].toUpperCase()+field.slice(1)} tokens${tokenDimensionCoverage(dimensions,field,attemptCount,r.state)}`,
+  }));
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
