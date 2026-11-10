@@ -9,13 +9,15 @@ const wb=readFileSync(new URL('./js/workbench.js',import.meta.url),'utf8');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let now=Date.parse('2026-06-01T12:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}
-const {buildWbActivityMarkup,materializedStateCounts}=vm.runInNewContext(`${format}\n${usage}\n${wb};({buildWbActivityMarkup,materializedStateCounts})`,{Date:Clock,esc,document:{addEventListener(){}},selectedActivation:null,runAttempts:[],wbActivityAttempts:[],wbInputRequestSummary:[]});
+const {buildWbActivityMarkup,materializedStateCounts,wbActivityStripSummary}=vm.runInNewContext(`${format}\n${usage}\n${wb};({buildWbActivityMarkup,materializedStateCounts,wbActivityStripSummary})`,{Date:Clock,esc,document:{addEventListener(){}},selectedActivation:null,runAttempts:[],wbActivityAttempts:[],wbInputRequestSummary:[]});
 
 test('materialized counts avoid percentage framing',()=>{
   const counts=materializedStateCounts([{state:'succeeded'},{state:'running'},{state:'queued'}]);
   const {html}=buildWbActivityMarkup({id:'run',state:'running',overview:{activations:3,completed:1}},[{id:'a',nodeId:'task.a',state:'running'},{id:'b',nodeId:'each__0',state:'queued',queueReason:'Waiting for capacity'}],[{activationId:'a',state:'running',startedAt:'2026-06-01T11:59:00Z',retryNumber:0}]);
   assert.match(html,/class="wb-activity-details"[^>]*>/);
-  assert.doesNotMatch(html,/3 materialized|1 running|<details[^>]*\bopen\b/);
+  assert.doesNotMatch(html,/3 materialized|materialized nodes|<details[^>]*\bopen\b/);
+  assert.match(html,/wb-activity-strip-summary/);
+  assert.match(html,/1 running · 1 waiting/);
   assert.doesNotMatch(html,/\b\d{1,3}%\b|estimated time remaining/i);
   assert.match(html,/Waiting for capacity/);
   assert.equal(counts.succeeded,1);
@@ -137,4 +139,17 @@ test('queued activation appears exactly once and inFlight states do not leak',()
   const queuedCount=(html.match(/>Queued<\/span>/g)||[]).length;
   assert.equal(queuedCount,1,'queued activation must appear exactly once');
   assert.match(html,/Waiting for a worker/,'queued reason must be shown');
+});
+
+test('collapsed strip summarizes actionable activity without succeeded totals',()=>{
+  const succeeded=buildWbActivityMarkup({id:'run',state:'succeeded',overview:{activations:4,completed:4}},[{id:'a',nodeId:'a',state:'succeeded'}],[],[]);
+  assert.match(succeeded.html,/No actionable activity/);
+  assert.doesNotMatch(succeeded.html,/4 materialized|succeeded/);
+
+  const active=buildWbActivityMarkup({id:'run',state:'running',overview:{activations:2,heldAttempts:1,attemptStates:{detached:1}}},[{id:'bad',nodeId:'verify',state:'failed',error:'nope'},{id:'run-node',nodeId:'work',state:'running'}],[{id:'held',activationId:'run-node',state:'cancelled',awaitReconciliationReason:'Verify remote outcome',startedAt:'2026-06-01T11:58:00Z',finishedAt:'2026-06-01T11:59:30Z'}],[{requestId:'req-1',name:'Approve',state:'pending',activationId:'run-node'}]);
+  assert.match(active.html,/1 running · \d+ need attention/);
+  assert.equal(wbActivityStripSummary([]),'No actionable activity');
+
+  const waiting=buildWbActivityMarkup({id:'run',state:'running'},[{id:'queued',nodeId:'queued',state:'queued'},{id:'waiting',nodeId:'waiting',state:'waiting'}],[],[]);
+  assert.equal(waiting.announce,'2 waiting');
 });

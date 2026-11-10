@@ -60,15 +60,23 @@ function activationActivityElapsed(act,attempts,nowIso){
 function materializedStateCounts(acts){
   const counts={};for(const act of acts||[])counts[act.state||'queued']=(counts[act.state||'queued']||0)+1;return counts;
 }
-function wbActivityStateSummary(counts,total){
-  const order=['running','waiting','paused','queued','failed','cancelled','succeeded'];
-  const parts=order.filter(state=>counts[state]).map(state=>`${counts[state]} ${state}`);
-  return `${total} materialized${parts.length?` · ${parts.join(' · ')}`:''}`;
+function wbActivityStripSummary(items){
+  let running=0,waiting=0,attention=0;
+  for(const item of items||[]){
+    if(item.tone==='attention')attention++;
+    else if(item.tone==='progress')running++;
+    else if(item.tone==='waiting'||item.tone==='paused'||item.tone==='queued'||item.tone==='running')waiting++;
+  }
+  const parts=[];
+  if(running)parts.push(`${running} running`);
+  if(waiting)parts.push(`${waiting} waiting`);
+  if(attention)parts.push(`${attention} need attention`);
+  if(parts.length)return parts.join(' · ');
+  return 'No actionable activity';
 }
 function wbActivityButton(label,attrs){return `<button type="button" class="btn ghost wb-activity-action" ${attrs}>${esc(label)}</button>`}
 function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date().toISOString()){
   const overview=run.overview||{},states=overview.attemptStates||{},actsList=acts||[],attemptList=attempts||[],requests=inputRequests||[];
-  const counts=materializedStateCounts(actsList),total=overview.activations??actsList.length;
   const items=[];
   const runWait=['waiting','paused','created'].includes(run.state);
   if(runWait){
@@ -105,13 +113,13 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   for(const act of actsList.filter(a=>a.state==='queued'&&!inFlightIds.has(a.id))){
     items.push({tone:'queued',title:nodeDisplayName((act.nodeId||'').split('.').slice(-1)[0]||act.nodeId),detail:act.queueReason||'Queued for dispatch.',timing:act.queueReason?'Admission wait':'Timing unavailable',actions:wbActivityButton('View node',`data-wb-focus-act="${esc(act.id)}"`)});
   }
-  const signature=JSON.stringify({run:run.state,error:run.error||'',counts,held:held.map(a=>a.id),detached,requests:requests.map(r=>[r.requestId,r.state]),items:items.map(i=>[i.title,i.detail,i.tone])});
+  const stripSummary=wbActivityStripSummary(items);
+  const signature=JSON.stringify({run:run.state,error:run.error||'',strip:stripSummary,held:held.map(a=>a.id),detached,requests:requests.map(r=>[r.requestId,r.state]),items:items.map(i=>[i.title,i.detail,i.tone])});
   const terminal=['succeeded','failed','cancelled'].includes(run.state);
   const idle=terminal&&!items.length;
-  const summary=wbActivityStateSummary(counts,total);
   const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='paused'?'paused':item.tone==='waiting'?'waiting':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='paused'?'Paused':item.tone==='waiting'?'Waiting':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<div class="wb-activity-empty${idle?' is-complete':''}"><span class="wb-activity-empty-mark" aria-hidden="true">${idle?'✓':'·'}</span><span><strong>${idle?'No activations need attention.':'No activations materialized yet.'}</strong>${idle?'<small>Completed count reflects materialized nodes only.</small>':''}</span></div>`;
-  const html=`<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong></span></summary>${itemHtml}</details>`;
-  const announce=items.length?`${items.length} items need attention or are in progress. ${summary}.`:(idle?`Run ${run.state}. ${summary}.`:'');
+  const html=`<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong><span class="wb-activity-strip-summary subtle">${esc(stripSummary)}</span></span></summary>${itemHtml}</details>`;
+  const announce=items.length?stripSummary:(idle?`Run ${run.state}. ${stripSummary}.`:'');
   return {html,signature,announce,visible:!idle||!terminal||actsList.length>0};
 }
 function renderWbActivity(run,acts){
