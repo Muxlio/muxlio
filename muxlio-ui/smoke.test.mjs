@@ -121,7 +121,7 @@ try {
 
   assert.match(app,/scheduleTranscriptPoll\(act,current\)/,'workbench inspector should poll activation logs while running');
   assert.match(html,/id="liveView"/,'live output page should be present');
-  assert.match(app,/hash==='#live'/, 'navigation should route to the live output page');
+  assert.match(app,/hash==='\/live'/, 'navigation should route to the live output page');
   assert.match(app,/logs\?activationId=/,'live page should reuse the log chunk API');
   const liveSource = await (await fetch(`${baseURL}/js/live.js`)).text();
   assert.match(liveSource,/function stopLivePoll\(/,'live page should stop polling on navigation');
@@ -187,7 +187,7 @@ try {
   assert.match(app, /tab!==inspectorTab/, 'tab responses must be fenced');
   const timers = new Map();
   const polling = vm.runInNewContext(`let refreshTimer=null,refreshPaused=false;function refreshWorkspace(){};${workspace.slice(workspace.indexOf('function stopRefresh'), workspace.indexOf('async function refreshWorkspace'))};({scheduleRefresh,stopRefresh,pause(){refreshPaused=true}})`, {
-    document:{hidden:false}, location:{hash:'#runs'}, setTimeout(fn,ms){assert.equal(ms,5000);timers.set(1,fn);return 1}, clearTimeout(id){timers.delete(id)},
+    document:{hidden:false}, location:{pathname:'/runs',search:''},currentRoute:()=>'/runs', setTimeout(fn,ms){assert.equal(ms,5000);timers.set(1,fn);return 1}, clearTimeout(id){timers.delete(id)},
   });
   polling.scheduleRefresh();polling.scheduleRefresh();assert.equal(timers.size,1);
   polling.stopRefresh();assert.equal(timers.size,0);

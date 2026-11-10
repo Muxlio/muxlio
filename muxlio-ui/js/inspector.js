@@ -99,7 +99,7 @@ function transcriptSectionMarkup(act,runId){
   if(act.state!=='running')return '';
   if(!activationHasTranscript(act))return '';
   const cached=activationTranscripts.get(act.id);
-  const transcriptUrl=`#transcript/${encodeURIComponent(runId||current||'')}/${encodeURIComponent(act.id)}`;
+  const transcriptUrl=`/transcripts/${encodeURIComponent(runId||current||'')}/${encodeURIComponent(act.id)}`;
   const rawText=cached?.agent||'';
   const isWaiting=!cached?.agent&&act.state==='running';
   const bodyContent=isWaiting
@@ -167,7 +167,7 @@ function renderInspectorWb(act){
   const outRef=act.outputRef||act.outputArtifact||(act.outputs&&Object.keys(act.outputs)[0]?Object.keys(act.outputs)[0]+'.json':'—');
   const evidences=act.evidence||act.criteria||[];
   const route=act.route||'';
-  const transcriptUrl=`#transcript/${encodeURIComponent(current||'')}/${encodeURIComponent(act.id)}`;
+  const transcriptUrl=`/transcripts/${encodeURIComponent(current||'')}/${encodeURIComponent(act.id)}`;
   const hasTranscript=activationHasTranscript(act);
   replaceHTMLPreservingDetails(body,`
     <div class="insp-section">
@@ -459,7 +459,7 @@ function workerCapabilityMarkup(cap,workerID=''){
  if(typeof cap==='string')cap={name:cap};
  const readiness=cap.readiness?.ready===true?'ready':cap.readiness?.ready===false?'blocked':'unknown';
  const label={ready:'Ready',blocked:'Blocked',unknown:'Readiness unavailable'}[readiness];
- return `<a href="#worker-capability/${encodeURIComponent(workerID)}/${encodeURIComponent(cap.name||'')}/${encodeURIComponent(cap.version||'')}" class="worker-capability-chip worker-capability-chip--${readiness}" title="${esc(cap.name||'Unnamed capability')} · ${label}" aria-label="Inspect ${esc(cap.name||'unnamed capability')}: ${label}"><span class="worker-capability-dot" aria-hidden="true"></span><span>${esc(cap.name||'Unnamed capability')}</span></a>`;
+ return `<a href="/worker-capabilities/${encodeURIComponent(workerID)}/${encodeURIComponent(cap.name||'')}/${encodeURIComponent(cap.version||'')}" class="worker-capability-chip worker-capability-chip--${readiness}" title="${esc(cap.name||'Unnamed capability')} · ${label}" aria-label="Inspect ${esc(cap.name||'unnamed capability')}: ${label}"><span class="worker-capability-dot" aria-hidden="true"></span><span>${esc(cap.name||'Unnamed capability')}</span></a>`;
 }
 function workerCapabilityDetailMarkup(cap,workerID=''){
  if(!cap)return '';
@@ -484,7 +484,7 @@ async function loadWorkers(){
       rosterEl.innerHTML=roster.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>${roster.map(x=>{const anchor=encodeURIComponent(x.workerId),id=esc(x.workerId),status=x.draining?'draining':busy.has(x.workerId)?'busy':'idle',caps=(x.capabilities||[]).map(cap=>workerCapabilityMarkup(cap,x.workerId)).filter(Boolean).join(', ')||'—';return `<tr id="worker-roster-${anchor}"><td class="primary-cell"><strong>${id}</strong>${Object.keys(x.labels||{}).length?`<details><summary>Placement &amp; isolation labels</summary><pre>${esc(pretty(x.labels))}</pre></details>`:''}</td><td><span class="state ${status==='busy'?'running':'queued'}">${status}</span></td><td class="num">${esc(x.capacity)}</td><td class="mono">${caps}</td><td class="num">${esc(date(x.lastSeen))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No workers available</strong>No workers have heartbeated within the coordinator window. Start a worker and register it with the coordinator.</div>';
     }
     const workerLink=id=>`<a href="#worker-roster-${encodeURIComponent(id)}" style="color:var(--teal)"><strong>${esc(id)}</strong></a>`;
-    $('#workerList').innerHTML=assignments.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Run</th><th>Activation</th><th>Generation</th><th>Lease until</th><th>State</th></tr></thead><tbody>${assignments.map(x=>`<tr><td class="primary-cell">${workerLink(x.workerId)}</td><td><a href="#run/${encodeURIComponent(x.runId)}" style="color:var(--teal)">${esc(x.runId)}</a></td><td class="mono">${esc(x.activationId)}</td><td>${esc(x.generation)}</td><td style="color:var(--muted)">${esc(date(x.leaseUntil))}</td><td><span class="state ${esc(x.state)}">${esc(x.state)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No active assignments</strong>The coordinator is not reporting any active worker assignments right now.</div>';
+    $('#workerList').innerHTML=assignments.length?`<div class="tablebox"><table><thead><tr><th>Worker</th><th>Run</th><th>Activation</th><th>Generation</th><th>Lease until</th><th>State</th></tr></thead><tbody>${assignments.map(x=>`<tr><td class="primary-cell">${workerLink(x.workerId)}</td><td><a href="/runs/${encodeURIComponent(x.runId)}" style="color:var(--teal)">${esc(x.runId)}</a></td><td class="mono">${esc(x.activationId)}</td><td>${esc(x.generation)}</td><td style="color:var(--muted)">${esc(date(x.leaseUntil))}</td><td><span class="state ${esc(x.state)}">${esc(x.state)}</span></td></tr>`).join('')}</tbody></table></div>`:'<div class="tablebox empty"><strong>No active assignments</strong>The coordinator is not reporting any active worker assignments right now.</div>';
   }catch(e){
     if(e.name==='AbortError')return;
     const err=`<div class="notice error" role="alert">Unable to load workers: ${esc(e.message)}</div>`;

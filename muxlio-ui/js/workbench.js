@@ -108,8 +108,8 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   const terminal=['succeeded','failed','cancelled'].includes(run.state);
   const idle=terminal&&!items.length;
   const summary=wbActivityStateSummary(counts,total);
-  const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<p class="wb-activity-empty subtle">${idle?'No activations need attention. Completed count reflects materialized nodes only.':'No activations materialized yet.'}</p>`;
-  const html=`<details class="wb-activity-details" data-preserve-key="wb-activity" open><summary><span class="wb-activity-heading"><strong>Current activity</strong><span class="subtle">${esc(summary)}</span></span></summary>${itemHtml}</details>`;
+  const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<div class="wb-activity-empty${idle?' is-complete':''}"><span class="wb-activity-empty-mark" aria-hidden="true">${idle?'✓':'·'}</span><span><strong>${idle?'No activations need attention.':'No activations materialized yet.'}</strong>${idle?'<small>Completed count reflects materialized nodes only.</small>':''}</span></div>`;
+  const html=`<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong></span></summary>${itemHtml}</details>`;
   const announce=items.length?`${items.length} items need attention or are in progress. ${summary}.`:(idle?`Run ${run.state}. ${summary}.`:'');
   return {html,signature,announce,visible:!idle||!terminal||actsList.length>0};
 }
@@ -129,7 +129,7 @@ function renderWbActivity(run,acts){
 }
 document.addEventListener('click',event=>{
   const transcript=event.target.closest('[data-wb-transcript]');
-  if(transcript&&current){location.hash=`#transcript/${encodeURIComponent(current)}/${encodeURIComponent(transcript.dataset.wbTranscript)}`;return;}
+  if(transcript&&current){navigateTo(`/transcripts/${encodeURIComponent(current)}/${encodeURIComponent(transcript.dataset.wbTranscript)}`);return;}
   const focusAct=event.target.closest('[data-wb-focus-act]');
   if(focusAct){showWbTab('graph');loadActivation(focusAct.dataset.wbFocusAct);return;}
   const focusInput=event.target.closest('[data-wb-focus-input]');
@@ -397,7 +397,7 @@ async function openRun(id){
   }catch(err){
     if(wb)wb.hidden=true;
     $('#runDetail').hidden=false;
-    $('#runDetail').innerHTML=`<div class="page"><div class="notice error" role="alert">Unable to load run: ${esc(err.message)} <a href="#runs" style="color:var(--teal)">← Back to runs</a></div></div>`;
+    $('#runDetail').innerHTML=`<div class="page"><div class="notice error" role="alert">Unable to load run: ${esc(err.message)} <a href="/runs" style="color:var(--teal)">← Back to runs</a></div></div>`;
   }
 }
 

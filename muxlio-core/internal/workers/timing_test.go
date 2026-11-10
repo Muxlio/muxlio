@@ -52,7 +52,9 @@ func TestRemoteTimingExcludesDispatchAndCompletionDelays(t *testing.T) {
 			if err := RunRemoteWorker(ctx, RemoteWorkerConfig{CoordinatorURL: "http://coordinator", WorkerID: "worker", HTTPClient: client, HeartbeatInterval: time.Second, WorkBase: t.TempDir()}, timingExecutor{err: executionErr}); err != nil {
 				t.Fatal(err)
 			}
-			if completion.ExecutionDurationMS == nil || *completion.ExecutionDurationMS < 10 || *completion.ExecutionDurationMS >= 150 {
+			// Millisecond durations truncate, so allow timer granularity around the
+			// executor's 10 ms sleep while still rejecting missing or dispatch time.
+			if completion.ExecutionDurationMS == nil || *completion.ExecutionDurationMS < 5 || *completion.ExecutionDurationMS >= 150 {
 				t.Fatalf("worker timing includes queue/completion delay: %+v", completion)
 			}
 			if (completion.State == "failed") != failed {

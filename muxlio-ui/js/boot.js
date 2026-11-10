@@ -26,5 +26,5 @@ function loadWorkflows(force){}
 function loadArtifacts(force){}
 function renderArtifacts(){}
 // workspace.js will call navigate() and handle connection status
-window.addEventListener('hashchange',navigate);
+window.addEventListener('popstate',navigate);
 // initial navigation handled by workspace.js

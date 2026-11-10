@@ -6,7 +6,7 @@ const usage=readFileSync(new URL('./js/usage-summary.js',import.meta.url),'utf8'
 const wb=readFileSync(new URL('./js/workbench.js',import.meta.url),'utf8');
 let now=Date.parse('2026-01-01T00:01:00Z');
 class Clock extends Date { constructor(...args){super(...(args.length?args:[now]))} static now(){return now} }
-const context=vm.createContext({Date:Clock,document:{addEventListener(){}},location:{hash:'#runs'},get:()=>null,runAttempts:[]});
+const context=vm.createContext({Date:Clock,document:{addEventListener(){}},location:{pathname:'/runs',search:''},currentRoute:()=>'/runs',get:()=>null,runAttempts:[]});
 vm.runInContext(readFileSync(new URL("./js/format.js",import.meta.url),"utf8")+usage+'\n'+core+'\n'+wb,context);
 const run={id:'r',state:'running',createdAt:'2026-01-01T00:00:00Z',updatedAt:'2026-01-01T00:00:10Z',totalExecutionTimeMs:0};
 context.run=run;

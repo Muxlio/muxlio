@@ -9,7 +9,7 @@
 .graph-panel{border-right:0}
 @media(max-width:680px){
   .content:has(#detailView:not([hidden]) #workbenchView:not([hidden]) #wbTabGraph:not([hidden])){background:var(--bg)}
-  #wbTabGraph{background:#0e1316 radial-gradient(circle,#2a363c 1px,transparent 1px) 0 0/20px 20px}
+  #wbTabGraph{background:#0e1316 radial-gradient(circle,#20282c 1px,transparent 1px) 0 0/24px 24px}
 }
 .inspector-panel{width:auto;min-width:0}
 @media(max-width:680px){.shell{grid-template-columns:1fr}.rail{width:auto}.wb-body{grid-template-columns:minmax(0,1fr)}}
@@ -107,14 +107,17 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .operation-states { display:flex; flex-wrap:wrap; gap:6px; }
 .run-attention { margin:0 0 16px; }
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.wb-activity{margin:0 0 14px;padding:12px 14px}
+.wb-activity{margin:0;padding:6px 16px;background:var(--surface);border:0;border-bottom:1px solid var(--border);border-radius:0;overflow:visible}
 .wb-activity-details{margin:0;border:0}
-.wb-activity-details>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px}
+.wb-activity-details>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;justify-content:space-between}
 .wb-activity-details>summary::-webkit-details-marker{display:none}
-.wb-activity-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
-.wb-activity-heading strong{font-size:12px}
-.wb-activity-list{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px}
-.wb-activity-item{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface2)}
+.wb-activity-details>summary::after{content:"";width:7px;height:7px;flex:none;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg) translateY(-2px);transition:transform .16s ease}
+.wb-activity-details[open]>summary::after{transform:rotate(225deg) translate(-2px,-1px)}
+.wb-activity-heading{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.wb-activity-heading strong{font-size:13px;letter-spacing:-.01em}
+.wb-activity-heading>.subtle{font-size:11px;padding:4px 8px;border:1px solid var(--border);background:var(--surface2);font-variant-numeric:tabular-nums}
+.wb-activity-list{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.wb-activity-item{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:0;background:var(--surface2)}
 .wb-activity-item--attention{border-color:color-mix(in srgb,var(--amber) 35%,var(--border))}
 .wb-activity-item-main{min-width:0;flex:1 1 200px;display:grid;gap:4px}
 .wb-activity-item-main strong{font-size:12px}
@@ -122,7 +125,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .wb-activity-timing{font-size:10px;color:var(--muted2);font-variant-numeric:tabular-nums}
 .wb-activity-item-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .wb-activity-action{font-size:10px;padding:4px 8px}
-.wb-activity-empty{margin:10px 0 0;font-size:11px}
+.wb-activity-empty{display:flex;align-items:flex-start;gap:10px;margin:14px 0 0;padding:8px 2px 2px;background:transparent;font-size:12px}
+.wb-activity-empty-mark{display:grid;place-items:center;flex:none;width:20px;height:20px;background:var(--green-soft);color:var(--green);font-size:12px;font-weight:700}
+.wb-activity-empty>span:last-child{display:grid;gap:3px}
+.wb-activity-empty strong{font-size:12px;font-weight:600;color:var(--ink)}
+.wb-activity-empty small{font-size:11px;color:var(--muted)}
 @media(max-width:600px){.wb-activity-item-actions{width:100%}}
 .state.detached { color:var(--teal); }
 .state.awaiting_reconciliation { color:var(--amber); }

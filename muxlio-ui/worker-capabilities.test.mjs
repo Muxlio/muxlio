@@ -13,7 +13,7 @@ const chip=vm.runInNewContext(source.slice(source.indexOf('function formatWorker
 test('worker chips retain readiness while deferring verbose details',()=>{
  const html=chip({name:'generic/echo',version:'2',readiness:{ready:false,checks:[{name:'binary',passed:false,message:'Verbose diagnostic'}]}},'worker');
  assert.match(html,/worker-capability-chip--blocked/);assert.match(html,/Inspect generic\/echo: Blocked/);assert.doesNotMatch(html,/Verbose diagnostic|Version 2|<details/);
- assert.match(html,/href="#worker-capability\/worker\/generic%2Fecho\/2"/);assert.doesNotMatch(html,/data-ops-action|<button/);
+ assert.match(html,/href="\/worker-capabilities\/worker\/generic%2Fecho\/2"/);assert.doesNotMatch(html,/data-ops-action|<button/);
 });
 
 test('capability page loads directly from the API and handles withdrawn capabilities',async()=>{

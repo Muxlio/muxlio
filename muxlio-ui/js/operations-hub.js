@@ -3,7 +3,7 @@ const hubState={operationOffset:0,automation:'schedules',retentionOffset:0,repor
 const hubPages=new Map(),hubRequests=new Map();
 const revisionViews=new Map(),revisionAvailability=new Map();
 const hubID=value=>encodeURIComponent(value);
-const hubRun=id=>id?`<a href="#run/${hubID(id)}">${esc(id)}</a>`:'Unavailable';
+const hubRun=id=>id?`<a href="/runs/${hubID(id)}">${esc(id)}</a>`:'Unavailable';
 const hubButton=(action,label,attributes='')=>`<button type="button" class="btn ghost" data-ops-action="${action}" ${attributes}>${label}</button>`;
 function hubSet(id,html){const el=document.getElementById(id);if(el)replaceHTMLPreservingDetails(el,html)}
 function hubTable(headers,rows,empty='No records'){return rows.length?`<div class="tablebox ops-table"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`:`<div class="tablebox empty"><strong>${esc(empty)}</strong></div>`}
@@ -38,7 +38,7 @@ async function resolveOperationalAttempt(run,id){
  const form=hubDialog('Resolve uncertain execution',`<p>${esc(attempt.awaitReconciliationReason||'Verify the external outcome before resolving this attempt.')}</p><label>Verified outcome<select name="outcome"><option value="not-applied">Not applied — the old operation cannot commit later</option><option value="completed">Completed — record the verified result</option></select></label>${hubText('Evidence and reason','reason','','required')}${hubText('Verified executor result JSON (for completed outcomes)','result','','data-completed-result')}<label class="ops-check"><input name="verified" type="checkbox" required>I verified the external outcome and understand this records an operational decision.</label>`,async f=>{
   const outcome=f.elements.outcome.value,body={outcome,reason:f.elements.reason.value.trim()};if(!body.reason)throw Error('Record the evidence used for this decision.');
   if(outcome==='completed'){body.result=hubJSON(f.elements.result.value,'Verified result');if(body.result?.executionSucceeded!==true)throw Error('A completed outcome requires a verified successful executor result.');}
-  await hubPost(`/v1/runs/${hubID(run)}/attempts/${hubID(id)}/resolve`,body);if(location.hash==='#operations')await loadOpsDashboard();else if(current===run)await openRun(run);
+  await hubPost(`/v1/runs/${hubID(run)}/attempts/${hubID(id)}/resolve`,body);if(currentRoute()==='/operations')await loadOpsDashboard();else if(current===run)await openRun(run);
  },'Record resolution');
  const update=()=>{const field=form.querySelector('[data-completed-result]');field.hidden=form.elements.outcome.value!=='completed';form.elements.result.required=!field.hidden};form.elements.outcome.onchange=update;update();
 }
@@ -51,7 +51,7 @@ loadWorkers=async function(){
   const active=assignments.filter(a=>Date.parse(a.leaseUntil)>now);
   const slots=workers.filter(w=>live(w)&&!w.draining).reduce((n,w)=>n+w.capacity,0),occupied=active.filter(a=>workers.some(w=>w.workerId===a.workerId&&live(w)&&!w.draining)).length;
   hubSet('workerCapacitySummary',hubMetric('Live workers',workers.filter(live).length)+hubMetric('Occupied / available capacity',`${occupied} / ${slots}`,`${Math.max(0,slots-occupied)} unoccupied slots on accepting workers`)+hubMetric('Stale workers',workers.filter(w=>!live(w)).length)+hubMetric('Expired active leases',assignments.length-active.length));
-  hubSet('workerList',hubTable(['Worker','Run','Activation','Lease','Generation','State'],assignments.map(a=>`<tr><td><a href="#workers" data-worker-focus="${esc(a.workerId)}">${esc(a.workerId)}</a></td><td>${hubRun(a.runId)}</td><td class="ops-id">${esc(a.activationId)}</td><td>${esc(date(a.leaseUntil))}<small>${Date.parse(a.leaseUntil)>now?`${esc(fmtDuration(Date.parse(a.leaseUntil)-now))} remaining`:'Expired'}</small></td><td>${esc(a.generation)}</td><td>${hubStatus(a.state)}</td></tr>`),'No active assignments'));
+  hubSet('workerList',hubTable(['Worker','Run','Activation','Lease','Generation','State'],assignments.map(a=>`<tr><td><a href="/workers" data-worker-focus="${esc(a.workerId)}">${esc(a.workerId)}</a></td><td>${hubRun(a.runId)}</td><td class="ops-id">${esc(a.activationId)}</td><td>${esc(date(a.leaseUntil))}<small>${Date.parse(a.leaseUntil)>now?`${esc(fmtDuration(Date.parse(a.leaseUntil)-now))} remaining`:'Expired'}</small></td><td>${esc(a.generation)}</td><td>${hubStatus(a.state)}</td></tr>`),'No active assignments'));
   return hubTable(['Worker','Health','Slots','Readiness and compatibility','Last heartbeat'],workers.map(w=>{
    const count=active.filter(a=>a.workerId===w.workerId).length,status=!live(w)?'stale':w.draining?'draining':count?'busy':'idle';
    return `<tr id="worker-roster-${hubID(w.workerId)}"><td><strong>${esc(w.workerId)}</strong></td><td>${hubStatus(status)}</td><td>${esc(count)} / ${esc(w.capacity)}${live(w)?`<meter min="0" max="${esc(Math.max(1,w.capacity))}" value="${esc(count)}" aria-label="Occupied worker slots"></meter>`:'<small>Availability unavailable</small>'}</td><td class="worker-capabilities-cell"><div class="worker-capability-list">${(w.capabilities||[]).map(cap=>workerCapabilityMarkup(cap,w.workerId)).join('')||'Capabilities unavailable'}</div></td><td>${esc(date(w.lastSeen))}<small>${esc(fmtDuration(Math.max(0,now-Date.parse(w.lastSeen))))} ago</small></td></tr>`;
@@ -122,7 +122,7 @@ async function createOperationalAutomation(){
 
 async function loadRunComparison(){
  const form=document.getElementById('compareRunsForm');if(!form)return;
- const params=new URLSearchParams(location.hash.split('?')[1]||'');
+ const params=new URLSearchParams(currentRoute().split('?')[1]||'');
  if(params.has('before'))form.elements.before.value=params.get('before');if(params.has('after'))form.elements.after.value=params.get('after');
  const recent=await api('/v1/runs?limit=200');hubSet('comparisonRunChoices',(recent.runs||[]).map(r=>`<option value="${esc(r.id)}">${esc(r.workflowName||'Workflow')} · ${esc(r.state)}</option>`).join(''));
  if(params.get('before')&&params.get('after'))await compareOperationalRuns(params.get('before'),params.get('after'));
@@ -145,7 +145,7 @@ async function forkOperationalRun(id){
  hubDialog('Fork run',fields,async f=>{
   const body={input:hubJSON(f.elements.input.value,'Fork input'),reuseActivations:[...f.querySelectorAll('[name="reuse"]:checked')].map(x=>x.value),start:f.elements.start.checked};
   if(f.elements.planDigest.value)body.planDigest=f.elements.planDigest.value;
-  const result=await hubPost(`/v1/runs/${hubID(id)}/fork`,body);location.hash=`#run/${hubID(result.runId)}`;
+  const result=await hubPost(`/v1/runs/${hubID(id)}/fork`,body);navigateTo(`/runs/${hubID(result.runId)}`);
  },'Create fork');
 }
 
@@ -165,7 +165,7 @@ function setRetentionDeadline(id=''){
  const preview=async()=>{const key=form.elements.id.value.trim();if(!key)return;try{const run=await api(`/v1/runs/${hubID(key)}?summary=true`);if(form.elements.id.value.trim()!==key)return;form.querySelector('[data-retention-current]').textContent=`Current state: ${run.state}. ${run.pinned?'Pinned. ':''}${run.retainedUntil?'Current deadline: '+date(run.retainedUntil):'Default retention policy.'}`;if(run.retainedUntil){const d=new Date(run.retainedUntil);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());form.elements.until.value=d.toISOString().slice(0,16)}}catch(err){form.querySelector('[data-retention-current]').textContent=err.message}};
  form.elements.id.onchange=preview;if(id)preview();
 }
-async function refreshRetentionContext(){if(location.hash==='#retention')await loadRetention();else if(current)await openRun(current)}
+async function refreshRetentionContext(){if(currentRoute()==='/retention')await loadRetention();else if(current)await openRun(current)}
 
 function evidenceDocument(documents){
  if(documents.length===1){const doc=documents[0];if(doc?.manifest?.datasetId&&Array.isArray(doc.results))return {kind:'evaluation',document:doc};if(Array.isArray(doc?.configurations)||doc?.manifest?.suite&&Array.isArray(doc.observations))return {kind:'benchmark',document:doc};}
@@ -264,7 +264,7 @@ document.addEventListener('change',event=>{
 document.addEventListener('submit',async event=>{
  const form=event.target;
  if(form.id==='artifactRevisionsForm'){event.preventDefault();await loadArtifactRevisions(form.elements.run.value.trim(),'globalRevisions',0);return;}
- if(form.id==='compareRunsForm'){event.preventDefault();const before=form.elements.before.value.trim(),after=form.elements.after.value.trim();if(before&&after){const hash=`#compare?before=${hubID(before)}&after=${hubID(after)}`;if(location.hash===hash)await compareOperationalRuns(before,after);else location.hash=hash;}return;}
+ if(form.id==='compareRunsForm'){event.preventDefault();const before=form.elements.before.value.trim(),after=form.elements.after.value.trim();if(before&&after){const hash=`/compare?before=${hubID(before)}&after=${hubID(after)}`;if(currentRoute()===hash)await compareOperationalRuns(before,after);else navigateTo(hash);}return;}
  if(form.id!=='importReportForm')return;
  event.preventDefault();const status=form.querySelector('[role="status"]'),button=form.querySelector('[type="submit"]');button.disabled=true;status.textContent='Importing recorded results…';
  try{const files=[...form.elements.files.files];if(files.reduce((n,f)=>n+f.size,0)>7*1024*1024)throw Error('Choose result files totaling at most 7 MiB.');const docs=await Promise.all(files.map(async f=>hubJSON(await f.text(),f.name))),body=evidenceDocument(docs);body.name=form.elements.name.value.trim();const result=await hubPost('/v1/reports',body);status.textContent='Imported immutable result evidence.';form.reset();await loadEvidence();await openEvidence(result.id);}catch(err){status.textContent=err.message}finally{button.disabled=false}
@@ -296,7 +296,7 @@ document.addEventListener('click',async event=>{
    case 'view-revision':{const item=revisionViews.get(d.target)?.items.find(e=>String(e.seq)===d.seq);if(item)showArtifactOutput(item.payload.snapshot,item.payload.snapshot.name);break;}
    case 'pin-revision':addRetentionPin('artifact',d.digest);break;
    case 'check-artifact':{const response=await uiFetch(`/v1/artifacts/${hubID(d.digest)}`,{method:'HEAD'}),label=response.status===200?'Available':response.status===410?'Expired by retention':response.status===404?'Unavailable':'Check failed';revisionAvailability.set(d.digest,label);const field=button.closest('tr')?.querySelector('[data-artifact-availability]');if(field)field.textContent=label;break;}
-   case 'view-run':location.hash=`#run/${hubID(d.run)}`;break;
+   case 'view-run':navigateTo(`/runs/${hubID(d.run)}`);break;
    case 'resolve':await resolveOperationalAttempt(d.run||current,d.attempt);break;
    case 'create-automation':await createOperationalAutomation();break;
    case 'automation-history':await showAutomationHistory(d.kind,d.id);break;
@@ -307,7 +307,7 @@ document.addEventListener('click',async event=>{
    case 'run-deadline':setRetentionDeadline(d.run);break;
    case 'pin-run':if(d.pinned!=='true'){await hubPost('/v1/retention',{kind:'run',id:d.run,pinned:true});await refreshRetentionContext();break;}d.kind='run';d.id=d.run;
    case 'unpin':hubDialog('Remove retention pin',`<p>Remove the pin on <code>${esc(d.id)}</code>? The data becomes eligible for the existing retention policy; this action does not delete it immediately.</p>`,async()=>{await hubPost('/v1/retention',{kind:d.kind,id:d.id,pinned:false});await refreshRetentionContext()},'Remove pin');break;
-   case 'compare-current':location.hash=`#compare?before=${hubID(current)}`;break;
+   case 'compare-current':navigateTo(`/compare?before=${hubID(current)}`);break;
    case 'fork-source':await forkOperationalRun(d.run);break;
    case 'compare-inputs':{const c=hubState.comparison;showArtifactOutput(null,'Inputs and pinned plans',{baseline:{input:c.before.input,plan:c.beforePlan},comparison:{input:c.after.input,plan:c.afterPlan}});break;}
    case 'compare-node':{const row=hubState.comparison.activations[Number(d.nodeIndex)];showArtifactOutput(null,`${row.nodeId} · output comparison`,{baseline:row.before?.outputs,comparison:row.after?.outputs});break;}

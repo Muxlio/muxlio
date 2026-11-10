@@ -579,31 +579,34 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			return
 		}
 		assets := map[string]string{
-			"/operations.css":       "operations.css",
-			"/":                     "index.html",
-			"/app.css":              "app.css",
-			"/workspace.js":         "workspace.js",
-			"/workspace.css":        "workspace.css",
-			"/js/markdown.js":       "js/markdown.js",
-			"/js/json.js":           "js/json.js",
-			"/js/core.js":           "js/core.js",
-			"/js/format.js":         "js/format.js",
-			"/js/usage-summary.js":  "js/usage-summary.js",
-			"/js/workbench.js":      "js/workbench.js",
-			"/js/inspector.js":      "js/inspector.js",
-			"/js/live.js":           "js/live.js",
-			"/js/transcript.js":           "js/transcript.js",
-			"/js/analytics-accounting.js": "js/analytics-accounting.js",
-			"/js/analytics-filters.js":      "js/analytics-filters.js",
+			"/operations.css":                "operations.css",
+			"/":                              "index.html",
+			"/app.css":                       "app.css",
+			"/workspace.js":                  "workspace.js",
+			"/workspace.css":                 "workspace.css",
+			"/js/markdown.js":                "js/markdown.js",
+			"/js/json.js":                    "js/json.js",
+			"/js/core.js":                    "js/core.js",
+			"/js/format.js":                  "js/format.js",
+			"/js/usage-summary.js":           "js/usage-summary.js",
+			"/js/workbench.js":               "js/workbench.js",
+			"/js/inspector.js":               "js/inspector.js",
+			"/js/live.js":                    "js/live.js",
+			"/js/transcript.js":              "js/transcript.js",
+			"/js/analytics-accounting.js":    "js/analytics-accounting.js",
+			"/js/analytics-filters.js":       "js/analytics-filters.js",
 			"/js/analytics-retry-latency.js": "js/analytics-retry-latency.js",
-			"/js/analytics.js":              "js/analytics.js",
-			"/js/operations.js":     "js/operations.js",
-			"/js/operations-hub.js": "js/operations-hub.js",
-			"/js/boot.js":           "js/boot.js",
-			"/logo.png":             "logo.png",
-			"/favicon.ico":          "favicon.ico",
+			"/js/analytics.js":               "js/analytics.js",
+			"/js/operations.js":              "js/operations.js",
+			"/js/operations-hub.js":          "js/operations-hub.js",
+			"/js/boot.js":                    "js/boot.js",
+			"/logo.png":                      "logo.png",
+			"/favicon.ico":                   "favicon.ico",
 		}
 		name, ok := assets[r.URL.Path]
+		if !ok && isUIRoute(r.URL.EscapedPath()) {
+			name, ok = "index.html", true
+		}
 		if !ok {
 			api.ServeHTTP(w, r)
 			return
@@ -629,4 +632,20 @@ func withRequestBodyLimit(next http.Handler) http.Handler {
 		}
 		http.MaxBytesHandler(next, limit).ServeHTTP(w, r)
 	})
+}
+
+// Only known browser routes receive the app shell. Unknown APIs/assets retain 404s.
+func isUIRoute(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	switch parts[0] {
+	case "runs":
+		return len(parts) == 1 || (len(parts) == 2 && parts[1] != "")
+	case "worker-capabilities":
+		return (len(parts) == 3 || len(parts) == 4) && parts[1] != "" && parts[2] != ""
+	case "transcripts":
+		return len(parts) == 3 && parts[1] != "" && parts[2] != ""
+	case "operations", "automation", "retention", "workers", "live", "workflows", "artifacts", "analytics", "compare", "evidence":
+		return len(parts) == 1
+	}
+	return path == "/"
 }

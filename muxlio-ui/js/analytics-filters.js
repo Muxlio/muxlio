@@ -25,8 +25,8 @@ function analyticsDefaultFilters(now = new Date()) {
   };
 }
 
-function analyticsFiltersFromHash(hash = location.hash) {
-  const base = hash.startsWith('#analytics') ? hash : '#analytics';
+function analyticsFiltersFromURL(hash = currentRoute()) {
+  const base = hash.startsWith('/analytics') ? hash : '/analytics';
   const query = base.includes('?') ? base.slice(base.indexOf('?') + 1) : '';
   const params = new URLSearchParams(query);
   const filters = analyticsDefaultFilters();
@@ -56,7 +56,7 @@ function analyticsFiltersFromHash(hash = location.hash) {
   return filters;
 }
 
-function analyticsFiltersToHash(filters) {
+function analyticsFiltersToURL(filters) {
   const params = new URLSearchParams();
   if (filters.preset && filters.preset !== '30d') params.set('range', filters.preset);
   if (filters.preset === 'custom') {
@@ -71,7 +71,7 @@ function analyticsFiltersToHash(filters) {
   if (filters.drill) params.set('drill', filters.drill);
   if (filters.page > 1) params.set('page', String(filters.page));
   const qs = params.toString();
-  return qs ? `#analytics?${qs}` : '#analytics';
+  return qs ? `/analytics?${qs}` : '/analytics';
 }
 
 function analyticsResolveRange(filters, now = new Date()) {

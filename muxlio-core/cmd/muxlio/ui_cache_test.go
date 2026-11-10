@@ -73,3 +73,30 @@ func TestServiceUIServesPageScripts(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceUIDirectRoutes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	handler := serviceUI(http.NotFoundHandler(), dir, "")
+	for _, path := range []string{"/runs", "/runs/run-a", "/runs/a%2Fb", "/analytics?range=7d", "/transcripts/run-a/node%2Fa", "/worker-capabilities/local/generic%2Fecho/1", "/worker-capabilities/local/generic%2Fecho/"} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+			if response.Code != 200 {
+				t.Fatalf("%s %s: %d", method, path, response.Code)
+			}
+			if method == http.MethodHead && response.Body.Len() != 0 {
+				t.Fatalf("HEAD body: %s", path)
+			}
+		}
+	}
+	for _, path := range []string{"/unknown", "/js/unknown.js", "/v1/unknown", "/runs/a/extra"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		if response.Code != 404 {
+			t.Fatalf("%s: %d", path, response.Code)
+		}
+	}
+}

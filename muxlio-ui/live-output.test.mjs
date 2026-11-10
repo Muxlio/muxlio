@@ -27,7 +27,7 @@ function renderLiveMeta(entry){
   const act=entry.act,attempt=entry.attempt;
   const executor=(attempt&&attempt.state!=='queued'?attempt.executor:'')||act.executorHint||act.executor||'—';
   const attemptState=attempt?.state||'—';
-  const transcriptUrl='#transcript/'+encodeURIComponent(entry.runId)+'/'+encodeURIComponent(act.id);
+  const transcriptUrl='/transcripts/'+encodeURIComponent(entry.runId)+'/'+encodeURIComponent(act.id);
   document.meta=entry;
   document.lastTranscriptUrl=transcriptUrl;
 }
@@ -105,8 +105,8 @@ assert.equal(ctx.document.meta.attempt.state, 'succeeded', 'finishing an activat
 // ── transcript URL test ───────────────────────────────────────────────────
 // After applyCompleted, the transcript URL must encode run + activation IDs.
 assert.ok(
-  ctx.document.lastTranscriptUrl === '#transcript/run-b/act-2',
-  `transcript URL must be #transcript/<runId>/<actId>, got: ${ctx.document.lastTranscriptUrl}`,
+  ctx.document.lastTranscriptUrl === '/transcripts/run-b/act-2',
+  `transcript URL must be /transcripts/<runId>/<actId>, got: ${ctx.document.lastTranscriptUrl}`,
 );
 
 stopLivePoll();

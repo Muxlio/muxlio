@@ -21,7 +21,7 @@ function makeCtx(overrides = {}) {
     URLSearchParams,
     AbortController,
     Intl,
-    location: { hash: '#analytics' },
+    location: { pathname: '/analytics', search: '' }, currentRoute:()=>'/analytics',
     ...overrides,
   };
 }
@@ -29,7 +29,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromHash, analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, analyticsTokenVolume, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromURL, analyticsDefaultFilters, analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile})`,
     ctx,
   );
 }
@@ -227,20 +227,25 @@ console.log('daily bucket aggregation passed');
 
   // Charts carry the current page's totals, outcomes, timing and usage views.
   assert.match(content, /analytics-chart-grid/, 'chart grid rendered');
-  assert.match(content, /Task time by adapter/, 'task timing section present');
+  assert.match(content, /Median worker time · executor/, 'executor latency chart present');
   assert.match(content, /Run outcomes · 30 days/, 'run outcomes section present');
-  assert.match(content, /Daily tokens · 30 days/, 'token usage section present');
-  assert.match(content, /Median workflow duration/, 'workflow timing section present');
-  assert.match(content, /Agent failure rate/, 'failure rate section present');
+  assert.match(content, /Usage by executor/, 'executor usage chart present');
+  assert.match(content, /Median worker time · workflow/, 'workflow latency chart present');
+  assert.match(content, /Run outcomes/, 'outcomes section present');
   assert.equal(model.runs.length,2, 'total runs retained');
   assert.equal(model.stateCounts.succeeded,1);
   assert.equal(model.stateCounts.failed,1);
   assert.match(content, /2 runs \(1 succeeded, 1 failed\)/, 'run volume chart exposes both state counts');
-  assert.match(content, /50%/, 'one failed out of two completed attempts');
+  assert.match(content, /<h3 class="analytics-breakdown-title">Run outcomes<\/h3>/, 'run outcome chart renders');
   assert.match(content, /executorA/, 'executor is identified in charts');
-  assert.match(content, /in=2\.0K out=800 cached=200/, 'token chart exposes all reported totals');
-  assert.match(content, /incomplete token data|provider did not report/, 'incomplete token data note present');
-  assert.match(content, /href="#run\/r1"/, 'link to contributing run present');
+  assert.equal(model.executorUsage.get('executorA').input,2000);
+  assert.equal(model.executorUsage.get('executorA').output,800);
+  assert.equal(model.executorUsage.get('executorA').cached,200);
+  assert.doesNotMatch(content, /incomplete token data|provider did not report/, 'text summary is omitted from the graph-led view');
+  assert.match(content,/data-analytics-drill="executor:executorA"/, 'executor opens contributing attempts');
+  renderAnalytics(model,{drill:'executor:executorA'});
+  assert.match(content, /<dialog[^>]*aria-labelledby="analyticsDrillTitle"/);
+  assert.match(content, /href="\/runs\/r1"/, 'link to contributing run present');
   assert.equal(model.runsWithUnavailableUsage,1, 'incomplete token records remain tracked');
   assert.equal(model.executorStats.get('executorA').missingUsage,1);
   assert.ok(model.executorUsage.get('executorA').runIds.has('r1'), 'contributing run identity retained');
@@ -267,15 +272,15 @@ console.log('renderAnalytics HTML structure checks passed');
   renderAnalytics(model);
   assert.match(content, /analytics-chart-grid/, 'chart grid rendered for empty state');
   assert.equal(model.runs.length,0, 'zero total runs');
-  assert.match(content, /aria-label="No reported data"/, 'empty charts explicitly mark missing data');
+  assert.doesNotMatch(content, /No attempts loaded yet/, 'empty analytics avoids the removed prose summary');
   assert.match(content, /No runs in the last 30 days/, 'empty sparkline message shown');
-  assert.match(content, /Daily tokens · 30 days/, 'token section present even with no data');
+  assert.doesNotMatch(content, /No attempts loaded yet/, 'no-attempt state keeps the graph-led layout');
 }
 console.log('renderAnalytics empty-state checks passed');
 
 // Analytics is discoverable and explains missing data when no usage exists.
 {
-  assert.match(indexSource, /href="#analytics" id="analyticsNav"/, 'analytics navigation link is present');
+  assert.match(indexSource, /href="\/analytics" id="analyticsNav"/, 'analytics navigation link is present');
   const { buildAnalyticsModel, renderAnalytics } = getHelpers(makeCtx());
   const now = new Date().toISOString();
   const runs = [
@@ -294,8 +299,7 @@ console.log('renderAnalytics empty-state checks passed');
   vm.runInNewContext(`${analyticsSource}; renderAnalytics(model)`, {
     ...makeCtx({ document: { getElementById: () => output } }), model: emptyModel,
   });
-  assert.match(output.value, /no attempt records/);
-  assert.match(output.value, /no provider-reported token usage/);
+  assert.doesNotMatch(output.value, /no attempt records|no provider-reported token usage/);
   assert.equal(emptyModel.runsWithNoAttempts,1, 'missing attempt history remains distinct');
   assert.equal(emptyModel.runsWithUnavailableUsage,1, 'unreported usage remains distinct');
   assert.equal(emptyModel.totals,null, 'missing usage cannot become numeric totals');
@@ -362,20 +366,20 @@ console.log('XSS escaping checks passed');
   assert.equal(model.executorUsage.get('executorC').output, null);
   assert.equal(model.runsWithNoAttempts, 1);
   renderAnalytics(model);
-  assert.match(output.innerHTML, /200 ms \(n=2\)/);
-  assert.match(output.innerHTML, /4.0 s \(n=1\)/);
-  assert.match(output.innerHTML, /0 ms \(n=1\)/);
-  assert.match(output.innerHTML, /1 missing timing; 0 in progress/);
+  assert.match(output.innerHTML, /200 ms/);
+  assert.equal(a.elapsedSumMs/a.elapsedSamples,4000);
+  assert.match(output.innerHTML, /0 ms/);
+  assert.equal(a.missingTiming,1);
   assert.match(output.innerHTML, /Unavailable/);
-  assert.match(output.innerHTML, /href="#run\/mixed%2Frun"/);
+  renderAnalytics(model,{drill:'executor:executorA'});
+  assert.match(output.innerHTML, /href="\/runs\/mixed%2Frun"/);
   assert.equal(a.taskTimeTotal,4400, 'chart timing includes worker and legacy samples');
   assert.equal(a.taskTimeCount,3);
-  assert.match(output.innerHTML, /1\.5 s/, 'chart shows the combined average');
-  assert.match(output.innerHTML, /100 ms/, 'lowest worker duration shown');
-  assert.match(output.innerHTML, /4\.0 s/, 'highest legacy duration shown');
-  assert.match(output.innerHTML, /3 completed attempts; 1 use timestamp elapsed time/, 'legacy timing fallback is explained');
-  assert.match(output.innerHTML, /adapter-series-value">0 ms</, 'reported zero duration shown');
-  assert.match(output.innerHTML, /adapter-series-value">—</, 'missing timing remains unavailable');
+  assert.equal(a.taskTimeTotal/a.taskTimeCount,4400/3);
+  assert.equal(a.taskTimeMin,100);
+  assert.equal(a.taskTimeMax,4000);
+  assert.match(output.innerHTML, /0 ms/, 'reported zero duration shown');
+  assert.match(output.innerHTML, /Unavailable/, 'missing timing remains unavailable');
   assert.ok(a.runIds.has('mixed/run'), 'contributing run identity retained');
   assert.doesNotMatch(output.innerHTML, /NaN/);
 }
@@ -392,7 +396,7 @@ console.log('mixed executor timing, legacy and partial usage checks passed');
   let resolveRuns;
   const pending = new Promise(resolve => { resolveRuns = resolve; });
   const { loadAnalytics } = getHelpers(makeCtx({
-    location: { hash: '#analytics' },
+    location: { pathname: '/analytics', search: '' }, currentRoute:()=>'/analytics',
     document: {
       getElementById(id) { return id === 'analyticsContent' ? output : null; },
       querySelector: () => null,
@@ -428,10 +432,10 @@ console.log('Analytics bootstrap and loading checks passed');
   assert.equal(model.attemptErrors.size, 1);
   assert.equal(model.runsWithNoAttempts, 0, 'failed fetch is not an empty attempt history');
   await loadAnalytics();
-  assert.match(output.innerHTML, /role="status"[^>]*>Partial data · 1 runs/, 'partial fetch results are announced');
-  assert.match(output.innerHTML, /statistics are partial/);
+  assert.match(output.innerHTML, /class="analytics-data-status" role="status"><summary>Partial data · 1 runs/, 'partial fetch results are announced');
+  assert.match(output.innerHTML, /Statistics are partial/);
   assert.match(output.innerHTML, /service &lt;offline&gt;/);
-  assert.match(output.innerHTML, /href="#run\/bad"/);
+  assert.match(output.innerHTML, /href="\/runs\/bad"/);
   assert.equal(model.attemptErrors.get('bad'),'service <offline>', 'failed fetch reason retained');
   assert.match(output.innerHTML, /executorZ/);
   assert.ok(model.attemptErrors.has('bad'), 'failed run identity retained');
@@ -482,17 +486,16 @@ console.log('Analytics API empty slice checks passed');
 // Missing token fields cannot produce a numeric relative-volume bar.
 {
   const output = {innerHTML:''};
-  const {buildAnalyticsModel, renderAnalytics} = getHelpers(makeCtx({document:{getElementById:()=>output}}));
+  const {buildAnalyticsModel, renderAnalytics, analyticsTokenVolume} = getHelpers(makeCtx({document:{getElementById:()=>output}}));
   const runs = [{id:'partial',state:'succeeded'}, {id:'zero',state:'succeeded'}];
   const model = buildAnalyticsModel(runs, new Map([
     ['partial', [{executor:'partialExecutor',state:'succeeded',usage:{input:100}}]],
     ['zero', [{executor:'zeroExecutor',state:'succeeded',usage:{input:0,output:0,cached:0}}]],
   ]));
   renderAnalytics(model);
-  const row = name => output.innerHTML.match(new RegExp(`<tr>\\s*<td[^>]*><strong>${name}</strong>[\\s\\S]*?</tr>`, 'g')).at(-1);
-  assert.match(row('partialExecutor'), /<td>Unavailable<\/td>/);
-  assert.doesNotMatch(row('partialExecutor'), /abc-bar/);
-  assert.match(row('zeroExecutor'), /width:0\.0%/);
+  assert.equal(analyticsTokenVolume(100,null,null),null,'partial token data has no inferred total');
+  assert.deepEqual(JSON.parse(JSON.stringify(analyticsTokenVolume(0,0,0))),{volume:0,nonCachedInput:0,cached:0,output:0},'reported zeros remain zero');
+  assert.match(output.innerHTML,/Attempts by executor/);
 }
 console.log('Partial token relative-volume checks passed');
 
@@ -518,16 +521,15 @@ console.log('Partial token chart checks passed');
 // Cached tokens are a subset of input; volume must not count them twice.
 {
   const output = { innerHTML: '' };
-  const { buildAnalyticsModel, renderAnalytics, tokenSparklineMarkup } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
+  const { buildAnalyticsModel, renderAnalytics, tokenSparklineMarkup, analyticsTokenVolume } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
   const usage = { input: 100, output: 20, cached: 30 };
   const runs = [{ id: 'run', state: 'succeeded', createdAt: new Date().toISOString() }];
   const model = buildAnalyticsModel(runs, new Map([
     ['run', [{ executor: 'generic', state: 'succeeded', usage }]],
   ]));
   renderAnalytics(model);
-  const row = output.innerHTML.match(/<tr>\s*<td[^>]*><strong>generic<\/strong>[\s\S]*?<\/tr>/)?.[0] ?? '';
-  assert.match(row, /abc-bar[^>]*>120</, 'relative token volume is input+output, not input+output+cached');
-  assert.doesNotMatch(row, /abc-bar[^>]*>150</, 'cached must not inflate relative volume');
+  assert.equal(analyticsTokenVolume(usage.input,usage.output,usage.cached).volume,120,'relative token volume is input+output, not input+output+cached');
+  assert.match(output.innerHTML,/Usage by executor/);
   const spark = tokenSparklineMarkup(model.tokenBuckets);
   const bucket = model.tokenBuckets.find(b => b.hasData);
   assert.equal(bucket.input + bucket.output, 120, 'fixture billable volume');
@@ -590,11 +592,11 @@ console.log('Analytics UTC date checks passed');
   const output = { innerHTML: '' };
   const { renderAnalytics: render } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
   render(model);
-  assert.match(output.innerHTML, /Reported usage/);
+  assert.match(output.innerHTML, />Usage</);
   assert.match(output.innerHTML, /Cost · observed/);
   assert.match(output.innerHTML, /analyticsMeasureSelect/);
-  assert.match(output.innerHTML, /finishedAt/);
-  assert.match(output.innerHTML, /href="#run\/run-1"/);
+  render(model,{drill:'executor:'+attempts[0].executor});
+  assert.match(output.innerHTML, /href="\/runs\/run-1"/);
 }
 console.log('analytics credits and cost checks passed');
 
@@ -637,8 +639,8 @@ for (const staleFailure of [false, true]) {
 console.log('Analytics overlapping-load checks passed');
 
 {
-  const { analyticsFiltersFromHash, analyticsResolveRange, analyticsDayBuckets, analyticsBucketForTimestamp, buildAnalyticsModel } = getHelpers(makeCtx());
-  const filters = analyticsFiltersFromHash('#analytics?range=7d&state=failed&workflow=demo');
+  const { analyticsFiltersFromURL, analyticsDefaultFilters, analyticsResolveRange, analyticsDayBuckets, analyticsBucketForTimestamp, buildAnalyticsModel } = getHelpers(makeCtx());
+  const filters = analyticsFiltersFromURL('/analytics?range=7d&state=failed&workflow=demo');
   assert.equal(filters.preset, '7d');
   assert.deepEqual(Array.from(filters.states), ['failed']);
   assert.equal(filters.workflow, 'demo');
@@ -720,12 +722,29 @@ console.log('analytics filter URL and bucket boundary checks passed');
   const { renderAnalytics: renderRetry } = getHelpers(makeCtx({ document: { getElementById: () => output } }));
   renderRetry(model);
   assert.match(output.innerHTML, /Failure, retry, and latency/);
-  assert.match(output.innerHTML, /Succeeded after retry/);
-  assert.match(output.innerHTML, /small sample \(n=/);
+  assert.match(output.innerHTML, /Succeeded · retried/);
   assert.match(output.innerHTML, /data-analytics-drill="latencyWorkflow:wf-a"/);
-  assert.match(output.innerHTML, /Queue delay is shown only when/);
-  assert.match(output.innerHTML, /href="#run\/retry"/);
+  assert.match(output.innerHTML, /href="\/runs\/retry"/);
 }
 console.log('analytics retry latency checks passed');
 
 assert.match(indexSource, /analytics-retry-latency\.js/, 'retry latency module wired from index');
+
+// Selecting evidence stays local to the loaded dataset, provides context, and restores focus.
+{
+ let modalOpens=0,focused=0,cancelHandler;const urls=[];
+ const close={click(){this.onclick()}},trigger={getAttribute:()=> 'executor:generic/echo',focus:()=>focused++};
+ const dialog={showModal(){modalOpens++},addEventListener(type,fn){if(type==='cancel')cancelHandler=fn}};
+ const output={innerHTML:'',querySelector(selector){return selector==='#analyticsCloseDrill'?close:selector==='#analyticsDrilldown'?dialog:null},querySelectorAll(selector){return selector==='[data-analytics-drill]'?[trigger]:[]}};
+ const ctx=makeCtx({document:{getElementById:()=>output},window:{history:{pushState(_,__,url){urls.push(url)}}}});
+ const {buildAnalyticsModel,renderAnalytics,analyticsDefaultFilters}=getHelpers(ctx);
+ const time=new Date().toISOString();
+ const model=buildAnalyticsModel([{id:'run-a',workflowName:'Build',state:'succeeded',createdAt:time}],new Map([['run-a',[{id:'attempt-a',nodeId:'implement',activationId:'run-a:implement',executor:'generic/echo',state:'succeeded',startedAt:time,finishedAt:time,usage:{input:100,output:20,cached:30}}]]]),new Map(),{filters:analyticsDefaultFilters()});
+ renderAnalytics(model);trigger.onclick();
+ assert.equal(modalOpens,1);assert.match(output.innerHTML,/Executor · generic\/echo/);assert.match(output.innerHTML,/>implement<\/a>/);
+ assert.match(output.innerHTML,/Open run ↗/);assert.match(output.innerHTML,/>120<\/td>/);
+ assert.match(urls.at(-1),/^\/analytics\?.*drill=/);assert.doesNotMatch(urls.at(-1),/#/);
+ let prevented=false;cancelHandler({preventDefault(){prevented=true}});
+ assert.ok(prevented);assert.equal(focused,1);assert.doesNotMatch(output.innerHTML,/<dialog/);assert.doesNotMatch(urls.at(-1),/drill=/);
+}
+console.log('Analytics evidence panel interactions passed');

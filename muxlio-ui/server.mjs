@@ -77,6 +77,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
       '/js/transcript.js': 'text/javascript',
       '/js/analytics-accounting.js': 'text/javascript',
       '/js/analytics-filters.js': 'text/javascript',
+      '/js/analytics-retry-latency.js': 'text/javascript',
       '/js/analytics.js': 'text/javascript',
       '/js/operations.js': 'text/javascript',
       '/js/operations-hub.js': 'text/javascript',
@@ -92,7 +93,7 @@ export function createUIServer({ coordinatorURL = apiURL, uiDirectory = director
       } catch { res.writeHead(404).end('Not found'); }
       return;
     }
-    if (pathname !== '/') {
+    if (!/^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+|worker-capabilities\/[^/]+\/[^/]+(?:\/[^/]+)?|operations|automation|retention|workers|live|workflows|artifacts|analytics|compare|evidence)\/?$/.test(pathname) && pathname !== '/') {
       res.writeHead(404).end('Not found');
       return;
     }

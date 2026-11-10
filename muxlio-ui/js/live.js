@@ -104,9 +104,9 @@ function renderLiveMeta(entry){
   const act=entry.act,attempt=entry.attempt;
   const executor=(attempt&&attempt.state!=='queued'?attempt.executor:'')||act.executorHint||act.executor||'—';
   const attemptState=attempt?.state||'—';
-  const transcriptUrl=`#transcript/${encodeURIComponent(entry.runId)}/${encodeURIComponent(act.id)}`;
+  const transcriptUrl=`/transcripts/${encodeURIComponent(entry.runId)}/${encodeURIComponent(act.id)}`;
   meta.innerHTML=`<dl class="live-meta-kv">
-    <dt>Run</dt><dd class="mono"><a href="#run/${encodeURIComponent(entry.runId)}" style="color:var(--teal)">${esc(entry.runId)}</a>${entry.workflowName?` · ${esc(entry.workflowName)}`:''}</dd>
+    <dt>Run</dt><dd class="mono"><a href="/runs/${encodeURIComponent(entry.runId)}" style="color:var(--teal)">${esc(entry.runId)}</a>${entry.workflowName?` · ${esc(entry.workflowName)}`:''}</dd>
     <dt>Node</dt><dd>${esc(act.nodeId)} <span class="state ${esc(stateClass(act.state)||'')}">${esc(act.state)}</span></dd>
     <dt>Executor</dt><dd>${esc(executor)}</dd>
     <dt>Attempt</dt><dd>${attempt?`#${esc(attempt.retryNumber)} · <span class="state ${esc(stateClass(attemptState)||'')}">${esc(attemptState)}</span>`:'—'}</dd>

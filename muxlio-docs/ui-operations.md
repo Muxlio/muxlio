@@ -32,3 +32,18 @@ The UI is intended for a trusted network. Read the
 [execution security guide](architecture/execution-security.md) before exposing it
 beyond that environment. API fields and operational details are in the
 [operations reference](architecture/operations-reference.md).
+
+## Browser links and analytics
+
+UI pages use normal paths such as `/runs`, `/runs/<run-id>`, and `/analytics`.
+These links support direct loading, refresh, and browser back/forward navigation.
+Existing hash bookmarks are replaced with their path equivalent when opened.
+Analytics filters and chart selections are preserved in the URL query string.
+
+Analytics shows reported usage, trends, executor activity, and timing/retry
+breakdowns. Select a chart bar or **View attempts** to open a titled panel of
+matching records. **Open run** opens the run workbench; the step link opens its
+transcript. Closing the panel or pressing Escape returns to the chart without
+reloading the dataset. Advanced state, executor, and timezone filters are under
+**More filters**. Reported subtotals retain their coverage and do not imply
+complete consumption when some measurements are missing.

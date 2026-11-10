@@ -671,6 +671,9 @@ td.primary-cell small{display:block;margin-top:3px}
 .tok-output{background:var(--blue)}
 .tok-cached{background:var(--amber)}
 .analytics-data-status{color:var(--amber);font-size:12px;margin-bottom:12px}
+.analytics-data-status>summary{cursor:pointer;width:fit-content}
+.analytics-data-status ul{margin:8px 0 0;padding-left:20px;color:var(--muted);font-size:11px}
+.analytics-data-status a{color:var(--teal)}
 .analytics-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px}
 .analytics-pager p{margin:0 auto 0 0}
 .analytics-usage-head{margin-bottom:16px}
@@ -713,6 +716,7 @@ td.primary-cell small{display:block;margin-top:3px}
 .spark-seg.tok-in{background:var(--teal)}
 .spark-seg.tok-out{background:#4b9be0}
 .spark-seg.tok-cached{background:var(--amber)}
+.spark-seg.tok-total{background:var(--blue)}
 .spark-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);padding-top:5px}
 
 /* Sparkline legend */
@@ -749,3 +753,65 @@ td.primary-cell small{display:block;margin-top:3px}
 .markdown-body pre code{padding:0;background:none}
 .markdown-body blockquote{border-left:3px solid var(--border);margin:.85em 0;padding-left:1em;color:var(--muted)}
 .markdown-body hr{border:0;border-top:1px solid var(--border);margin:1em 0}
+
+/* Analytics keeps evidence close to its selection without moving the dashboard. */
+.analytics-section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
+.analytics-section-heading h2,.analytics-drill-head h2{margin:0;font-size:18px;letter-spacing:-.025em}
+.analytics-eyebrow{margin:0 0 6px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+.analytics-executors{margin-top:24px;padding:24px}
+.analytics-data-notes{font-size:12px;color:var(--muted);margin-bottom:16px}
+.analytics-drilldown{width:min(1100px,calc(100vw - 48px));max-height:calc(100dvh - 64px);margin:auto;padding:28px;color:var(--ink);border:1px solid var(--border);border-radius:16px;box-shadow:0 24px 100px #0005;overflow:auto}
+.analytics-drilldown::backdrop{background:#10182099;backdrop-filter:blur(3px)}
+.analytics-drill-head{position:sticky;top:-28px;background:var(--surface);z-index:1;padding:12px 0 18px;border-bottom:1px solid var(--border)}
+.analytics-drilldown>.subtle{margin:18px 0}
+.analytics-drilldown .tablebox{max-height:60vh;overflow:auto}
+.analytics-drilldown td{max-width:280px;overflow-wrap:anywhere}
+.analytics-filters{padding:20px 24px;margin-bottom:24px}
+.analytics-filter-form select,.analytics-filter-form input{min-height:36px;padding:7px 10px}
+.analytics-filter-chips:empty{display:none}
+.analytics-pager{font-size:12px;margin-top:12px;color:var(--muted)}
+@media(max-width:700px){.analytics-section-heading{align-items:flex-start;flex-direction:column;gap:8px}.analytics-drilldown{width:calc(100vw - 20px);max-height:calc(100dvh - 24px);padding:18px}.analytics-drill-head{top:-18px}.analytics-executors,.analytics-filters{padding:18px}.analytics-filter-form label{flex:1 1 130px}}
+.analytics-advanced{position:relative;align-self:flex-end}
+.analytics-advanced>summary{cursor:pointer;min-height:36px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px}
+.analytics-advanced-fields{position:absolute;top:44px;left:0;z-index:5;display:grid;grid-template-columns:repeat(2,minmax(120px,1fr));gap:16px;min-width:320px;padding:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 36px #0002}
+.analytics-advanced:not([open])>.analytics-advanced-fields{display:none}
+@media(max-width:700px){.analytics-advanced-fields{position:static;min-width:0;grid-template-columns:1fr}.analytics-advanced{flex:1 1 100%}}
+
+/* Keep the analytics canvas compact and give charts the visual weight. */
+#analyticsContent{display:flex;flex-direction:column;gap:14px}
+#analyticsContent>.analytics-filters{margin:0;padding:14px 18px}
+#analyticsContent>.analytics-data-status{margin:0}
+#analyticsContent>.analytics-usage-head{margin:0;padding:12px 16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+#analyticsContent>.analytics-usage-head h2{margin:0;font-size:12px;color:var(--muted)}
+#analyticsContent>.analytics-usage-head .analytics-provenance{flex:1 1 100%;order:3;margin:0;font-size:11px}
+#analyticsContent>.analytics-usage-head .analytics-usage-primary{margin:0;gap:8px 22px}
+#analyticsContent .analytics-usage-measure{min-width:90px}
+#analyticsContent .analytics-usage-val{font-size:16px}
+#analyticsContent .analytics-chart-card{padding:18px 20px}
+#analyticsContent .analytics-chart-card h2{margin-bottom:14px}
+#analyticsContent .analytics-chart-card .spark-bars,#analyticsContent .analytics-chart-card .spark-col{height:190px}
+#analyticsContent .analytics-usage-trends{margin:0}
+#analyticsContent .analytics-toolbar{display:flex;justify-content:space-between;align-items:center;margin:0 0 12px}
+#analyticsContent .analytics-usage-trends>.subtle{margin:0 0 12px;font-size:11px}
+#analyticsContent .analytics-breakdown-grid{gap:24px;margin-top:18px}
+#analyticsContent .analytics-breakdown-title{font-size:11px;margin-bottom:8px}
+#analyticsContent .analytics-bar-chart{gap:9px}
+#analyticsContent .abc-row{gap:12px}
+#analyticsContent .abc-track{height:16px}
+#analyticsContent .analytics-chart-grid{gap:14px}
+#analyticsContent .analytics-primary-charts{grid-template-columns:minmax(0,1fr)}
+#analyticsContent .analytics-executor-charts{grid-template-columns:repeat(3,minmax(0,1fr))}
+#analyticsContent .analytics-executors{margin:0;padding:16px}
+#analyticsContent .analytics-section-heading{margin-bottom:10px}
+#analyticsContent .analytics-data-notes{margin-bottom:8px}
+#analyticsContent .analytics-retry-latency{margin:0}
+#analyticsContent .analytics-retry-grid{gap:12px;margin:8px 0}
+@media(max-width:700px){
+  #analyticsContent{gap:10px}
+  #analyticsContent>.analytics-filters{padding:12px}
+  #analyticsContent>.analytics-usage-head{gap:10px;padding:12px}
+  #analyticsContent .analytics-chart-card{padding:14px}
+  #analyticsContent .analytics-chart-card .spark-bars,#analyticsContent .analytics-chart-card .spark-col{height:150px}
+  #analyticsContent .analytics-toolbar{align-items:flex-start;flex-direction:column;gap:8px}
+  #analyticsContent .analytics-executor-charts{grid-template-columns:minmax(0,1fr)}
+}

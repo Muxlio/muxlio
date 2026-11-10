@@ -259,49 +259,27 @@ function analyticsRetryLatencyMarkup(model) {
   const rl = model.retryLatency;
   if (!rl) return '';
   const o = rl.runOutcomes;
-  const outcomeRows = [
-    ['Succeeded (no retry)', o.succeededNoRetry, o.terminalRuns],
-    ['Succeeded after retry', o.succeededAfterRetry, o.terminalRuns],
-    ['Final failed run', o.finalFailed, o.terminalRuns],
-    ['Cancelled run', o.cancelledRuns, o.terminalRuns],
-  ].map(([label, count, denom]) => {
-    const pct = denom ? `${Math.round(100 * count / denom)}%` : '—';
-    return `<tr><td>${esc(label)}</td><td class="num">${count}</td><td class="num">${esc(pct)}</td><td class="subtle">of ${denom} terminal runs</td></tr>`;
-  }).join('');
-  const attemptRows = [
-    ['Failed attempt, later recovered', o.recoveredFailureAttempts],
-    ['Failed attempt on final failed run', o.finalFailureAttempts],
-    ['Cancelled attempt', o.cancelledAttempts],
-  ].map(([label, count]) => `<tr><td>${esc(label)}</td><td class="num">${count}</td></tr>`).join('');
-
-  const overhead = rl.retryOverhead;
-  const overheadLine = overhead.extraAttempts
-    ? `${overhead.extraAttempts} non-final attempts across ${overhead.activationsWithRetry} activations · worker ${overhead.workerMs != null ? fmtDuration(overhead.workerMs) : 'Unavailable'} · coordinator ${overhead.coordinatorMs != null ? fmtDuration(overhead.coordinatorMs) : 'Unavailable'}`
-    : 'No retry chains in the current window.';
-
-  const fu = rl.failedRetriedUsage;
-  const usageLine = fu.attempts
-    ? `${fu.attempts} failed or retried attempts · reporting ${fu.reporting}, partial ${fu.partial}, unknown ${fu.unknown} · tokens ${fu.tokens != null ? fmtTok(fu.tokens) : 'Unavailable'} · cost observed ${fu.costObserved != null ? fmtCostUsd(fu.costObserved) : 'Unavailable'} · cost estimated ${fu.costEstimated != null ? fmtCostUsd(fu.costEstimated) : 'Unavailable'}`
-    : 'No completed failed or retried attempts.';
-
-  const distribHead = `<thead><tr><th scope="col">Group</th><th scope="col">Worker median / p95</th><th scope="col">Coordinator median / p95</th><th scope="col">Queue median / p95</th><th scope="col">Drill</th></tr></thead>`;
-  const distribRow = (row, kind) => `<tr>
-    <th scope="row">${esc(row.label)}</th>
-    <td class="num">${analyticsDistribCell(row.worker)}</td>
-    <td class="num">${analyticsDistribCell(row.coordinator)}</td>
-    <td class="num">${analyticsDistribCell(row.queue)}</td>
-    <td><button type="button" class="btn ghost" data-analytics-drill="${esc(`${kind}:${row.label}`)}">Attempts</button></td>
-  </tr>`;
-
-  const wfRows = rl.byWorkflow.slice(0, 15).map(row => distribRow(row, 'latencyWorkflow')).join('') || '<tr><td colspan="5" class="subtle">No timing samples</td></tr>';
-  const exRows = rl.byExecutor.slice(0, 15).map(row => distribRow(row, 'latencyExecutor')).join('') || '<tr><td colspan="5" class="subtle">No timing samples</td></tr>';
+  const bars = (items, colorVar, fmt, drillKind = '') => items.some(item => item.value > 0)
+    ? barChartMarkup(items, { colorVar, fmt, drillKind })
+    : '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
+  const outcomeData = [
+    ['Succeeded · no retry', o.succeededNoRetry], ['Succeeded · retried', o.succeededAfterRetry],
+    ['Failed', o.finalFailed], ['Cancelled', o.cancelledRuns],
+  ].map(([label, value]) => ({ label, value }));
+  const attemptData = [
+    ['Recovered failures', o.recoveredFailureAttempts], ['Final failures', o.finalFailureAttempts],
+    ['Cancelled', o.cancelledAttempts],
+  ].map(([label, value]) => ({ label, value }));
+  const medianRows = rows => rows.slice(0, 10).filter(row => row.worker?.median != null)
+    .map(row => ({ label: row.label, value: row.worker.median }));
+  const formatLatency = value => fmtDuration(value);
 
   const contribRows = rl.contributors.slice(0, 25).map(c => {
     const dur = c.timing.workerMs != null ? fmtDuration(c.timing.workerMs) : c.timing.coordinatorMs != null ? fmtDuration(c.timing.coordinatorMs) : 'Unavailable';
     return `<tr>
       <td>${esc(c.workflow)}</td>
       <td>${esc(c.executor)}</td>
-      <td><a class="analytics-run-link" href="#run/${encodeURIComponent(c.runId)}">${esc(c.runId)}</a></td>
+      <td><a class="analytics-run-link" href="/runs/${encodeURIComponent(c.runId)}">${esc(c.runId)}</a></td>
       <td class="subtle">retry ${esc(c.retryNumber)} · ${esc(c.state)}</td>
       <td class="num">${esc(dur)}</td>
     </tr>`;
@@ -309,25 +287,22 @@ function analyticsRetryLatencyMarkup(model) {
 
   return `<section class="analytics-panel analytics-retry-latency analytics-chart-wide" aria-labelledby="analyticsRetryLatencyTitle">
     <h2 id="analyticsRetryLatencyTitle">Failure, retry, and latency</h2>
-    <p class="subtle">${esc(rl.interpretation)}</p>
     <div class="analytics-retry-grid">
-      <div>
+      <section class="analytics-chart-card">
         <h3 class="analytics-breakdown-title">Run outcomes</h3>
-        <div class="tablebox"><table><thead><tr><th scope="col">Outcome</th><th scope="col">Count</th><th scope="col">Share</th><th scope="col">Denominator</th></tr></thead><tbody>${outcomeRows}</tbody></table></div>
-      </div>
-      <div>
+        ${bars(outcomeData, '--teal')}
+      </section>
+      <section class="analytics-chart-card">
         <h3 class="analytics-breakdown-title">Attempt outcomes</h3>
-        <div class="tablebox"><table><thead><tr><th scope="col">Outcome</th><th scope="col">Count</th></tr></thead><tbody>${attemptRows}</tbody></table></div>
-      </div>
+        ${bars(attemptData, '--red')}
+      </section>
     </div>
-    <p class="subtle">Retry overhead. ${esc(overheadLine)}</p>
-    <p class="subtle">Failed and retried usage. ${esc(usageLine)} Coverage reflects executor-reported values only; retries may still contribute useful work.</p>
-    <h3 class="analytics-breakdown-title">Latency by workflow</h3>
-    <div class="tablebox"><table>${distribHead}<tbody>${wfRows}</tbody></table></div>
-    <h3 class="analytics-breakdown-title">Latency by executor</h3>
-    <div class="tablebox"><table>${distribHead}<tbody>${exRows}</tbody></table></div>
-    <details class="analytics-details"><summary>Slow or failing attempts (sorted)</summary>
+    <div class="analytics-retry-grid">
+      <section class="analytics-chart-card"><h3 class="analytics-breakdown-title">Median worker time · workflow</h3>${bars(medianRows(rl.byWorkflow), '--blue',formatLatency,'latencyWorkflow')}</section>
+      <section class="analytics-chart-card"><h3 class="analytics-breakdown-title">Median worker time · executor</h3>${bars(medianRows(rl.byExecutor), '--teal',formatLatency,'latencyExecutor')}</section>
+    </div>
+    <section class="analytics-slow-attempts"><h3 class="analytics-breakdown-title">Slow or failing attempts</h3>
       <div class="tablebox"><table><thead><tr><th scope="col">Workflow</th><th scope="col">Executor</th><th scope="col">Run</th><th scope="col">Attempt</th><th scope="col">Duration</th></tr></thead><tbody>${contribRows || '<tr><td colspan="5">None</td></tr>'}</tbody></table></div>
-    </details>
+    </section>
   </section>`;
 }

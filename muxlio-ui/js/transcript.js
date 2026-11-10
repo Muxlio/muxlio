@@ -38,7 +38,7 @@ function renderTranscriptMeta(runId, act, attempt) {
   const executor = (attempt && attempt.state !== 'queued' ? attempt.executor : '') || act.executorHint || act.executor || '—';
   const attemptState = attempt?.state || '—';
   meta.innerHTML = `<dl class="live-meta-kv transcript-meta-kv">
-    <dt>Run</dt><dd class="mono"><a href="#run/${encodeURIComponent(runId)}" style="color:var(--teal)">${esc(runId)}</a></dd>
+    <dt>Run</dt><dd class="mono"><a href="/runs/${encodeURIComponent(runId)}" style="color:var(--teal)">${esc(runId)}</a></dd>
     <dt>Node</dt><dd>${esc(act.nodeId)} <span class="state ${esc(stateClass(act.state) || '')}">${esc(act.state)}</span></dd>
     <dt>Agent</dt><dd>${esc(executor)}</dd>
     <dt>Attempt</dt><dd>${attempt ? `#${esc(attempt.retryNumber)} · <span class="state ${esc(stateClass(attemptState) || '')}">${esc(attemptState)}</span>` : '—'}</dd>
@@ -46,7 +46,7 @@ function renderTranscriptMeta(runId, act, attempt) {
   const desc = document.getElementById('transcriptDesc');
   if (desc) desc.textContent = `${act.nodeId} · ${act.state}`;
   const back = document.getElementById('transcriptBackLink');
-  if (back) { back.href = `#run/${encodeURIComponent(runId)}`; back.textContent = '← Back to run'; }
+  if (back) { back.href = `/runs/${encodeURIComponent(runId)}`; back.textContent = '← Back to run'; }
 }
 
 function scheduleTranscriptPagePoll(runId, actId) {

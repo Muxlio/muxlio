@@ -118,7 +118,7 @@ async function startEventStream(id){
   }catch(err){if(err.name!=='AbortError'&&!eventStreamUnsupported)connectionError(err);}
   finally{
     if(eventStreamController===controller){eventStreamController=null;eventStreamRun=null;
-      if(!eventStreamUnsupported&&!eventStreamTerminal&&location.hash===`#run/${encodeURIComponent(id)}`)eventStreamRetry=setTimeout(()=>startEventStream(id),1000);
+      if(!eventStreamUnsupported&&!eventStreamTerminal&&currentRoute()===`/runs/${encodeURIComponent(id)}`)eventStreamRetry=setTimeout(()=>startEventStream(id),1000);
     }
   }
 }
@@ -269,7 +269,7 @@ openRun=async function(id){
       const wb=document.getElementById('workbenchView');
       if(wb)wb.hidden=true;
       const rd=document.getElementById('runDetail');
-      if(rd){rd.hidden=false;rd.innerHTML=`<div class="page"><div class="notice error" role="alert">Unable to load run: ${esc(err.message)}. <a href="#runs" style="color:var(--teal)">← Back to runs</a></div></div>`}
+      if(rd){rd.hidden=false;rd.innerHTML=`<div class="page"><div class="notice error" role="alert">Unable to load run: ${esc(err.message)}. <a href="/runs" style="color:var(--teal)">← Back to runs</a></div></div>`}
     }
   }
 };
@@ -283,25 +283,25 @@ function connectionError(err){lastRefresh=lastRefresh||null;}
 
 // ── auto-refresh ──────────────────────────────────────────────────────────
 function stopRefresh(){clearTimeout(refreshTimer);refreshTimer=null;}
-function scheduleRefresh(){stopRefresh();if(!['#analytics','#compare','#evidence','#retention'].some(hash=>location.hash.startsWith(hash))&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
+function scheduleRefresh(){stopRefresh();if(!['/analytics','/compare','/evidence','/retention'].some(hash=>currentRoute().startsWith(hash))&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
 async function refreshWorkspace(){
   if(refreshBusy){scheduleRefresh();return;}
   refreshBusy=true;
   const epoch=refreshEpoch;
   try{
-    if(location.hash.startsWith('#run/'))await openRun(current);
-    else if(location.hash.startsWith('#transcript/')){
-      const parts=location.hash.slice('#transcript/'.length).split('/');
+    if(currentRoute().startsWith('/runs/'))await openRun(current);
+    else if(currentRoute().startsWith('/transcripts/')){
+      const parts=currentRoute().slice('/transcripts/'.length).split('/');
       if(parts.length>=2&&typeof refreshTranscriptState==='function')
         await refreshTranscriptState(decodeURIComponent(parts[0]),decodeURIComponent(parts[1]));
     }
-    else if(location.hash==='#operations')await loadOpsDashboard();
-    else if(location.hash==='#automation')await loadAutomation();
-    else if(location.hash==='#workers')await loadWorkers();
-    else if(location.hash==='#live'&&typeof loadLive==='function')await loadLive();
-    else if(location.hash==='#runs')await loadRuns();
-    else if(location.hash==='#artifacts')await loadArtifacts();
-    else if(location.hash==='#workflows')await loadWorkflows();
+    else if(currentRoute()==='/operations')await loadOpsDashboard();
+    else if(currentRoute()==='/automation')await loadAutomation();
+    else if(currentRoute()==='/workers')await loadWorkers();
+    else if(currentRoute()==='/live'&&typeof loadLive==='function')await loadLive();
+    else if(currentRoute()==='/runs')await loadRuns();
+    else if(currentRoute()==='/artifacts')await loadArtifacts();
+    else if(currentRoute()==='/workflows')await loadWorkflows();
     else{runs=await fetchRuns();if(epoch===refreshEpoch){message('');renderOverview();renderRuns();connectionOK();}}
   }catch(err){if(epoch===refreshEpoch)connectionError(err);}
   finally{refreshBusy=false;scheduleRefresh();}
@@ -320,8 +320,8 @@ navigate=function(){
   _baseNavigate();
   scheduleRefresh();
 };
-window.removeEventListener('hashchange',_baseNavigate);
-window.addEventListener('hashchange',navigate);
+window.removeEventListener('popstate',_baseNavigate);
+window.addEventListener('popstate',navigate);
 
 // ── topbar: replace connection span + add pause button ───────────────────
 // The new layout has .top-actions — inject the sync indicator and pause btn
@@ -359,6 +359,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)stopRefresh
 window.addEventListener('pagehide',()=>{stopRefresh();for(const c of requestControllers)c.abort();});
 
 // ── kick off ──────────────────────────────────────────────────────────────
+migrateLegacyRoute();
 navigate();
 
 // ── Workflows view ────────────────────────────────────────────────────────
@@ -490,7 +491,7 @@ function renderArtifacts(){
     <tbody>${filtered.map(a=>`
       <tr>
         <td class="primary-cell"><strong>${esc(a.name)}</strong>${a.mime?`<small>${esc(a.mime)}</small>`:''}</td>
-        <td><a href="#run/${encodeURIComponent(a.runId)}" style="color:var(--teal)">${esc(a.workflowName||a.runId)}</a><small style="display:block;color:var(--muted)">${esc(a.nodeId)}</small></td>
+        <td><a href="/runs/${encodeURIComponent(a.runId)}" style="color:var(--teal)">${esc(a.workflowName||a.runId)}</a><small style="display:block;color:var(--muted)">${esc(a.nodeId)}</small></td>
         <td class="mono">${esc(a.path||a.mime||'—')}</td>
         <td class="mono">${a.digest?esc(a.digest.slice(0,22))+'…':'—'}</td>
         <td class="row-actions">
@@ -532,22 +533,22 @@ async function downloadArtifact(digest,filename,btn){
 // Hook into auto-refresh for the new views.
 const _origRefreshWorkspace=refreshWorkspace;
 refreshWorkspace=async function(){
-  if(location.hash==='#workflows'){
+  if(currentRoute()==='/workflows'){
     const epoch=refreshEpoch;
     try{await loadWorkflows();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
     finally{scheduleRefresh();}
     return;
   }
-  if(location.hash==='#artifacts'){
+  if(currentRoute()==='/artifacts'){
     const epoch=refreshEpoch;
     try{await loadArtifacts();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
     finally{scheduleRefresh();}
     return;
   }
-  if(location.hash==='#analytics'){stopRefresh();return;}
-  if(location.hash.startsWith('#transcript/')){
+  if(currentRoute()==='/analytics'){stopRefresh();return;}
+  if(currentRoute().startsWith('/transcripts/')){
     const epoch=refreshEpoch;
-    const parts=location.hash.slice('#transcript/'.length).split('/');
+    const parts=currentRoute().slice('/transcripts/'.length).split('/');
     if(parts.length>=2&&typeof refreshTranscriptState==='function'){
       try{await refreshTranscriptState(decodeURIComponent(parts[0]),decodeURIComponent(parts[1]));if(epoch===refreshEpoch)connectionOK();}
       catch(err){if(epoch===refreshEpoch)connectionError(err);}

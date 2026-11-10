@@ -14,8 +14,8 @@ const {buildWbActivityMarkup,materializedStateCounts}=vm.runInNewContext(`${form
 test('materialized counts avoid percentage framing',()=>{
   const counts=materializedStateCounts([{state:'succeeded'},{state:'running'},{state:'queued'}]);
   const {html}=buildWbActivityMarkup({id:'run',state:'running',overview:{activations:3,completed:1}},[{id:'a',nodeId:'task.a',state:'running'},{id:'b',nodeId:'each__0',state:'queued',queueReason:'Waiting for capacity'}],[{activationId:'a',state:'running',startedAt:'2026-06-01T11:59:00Z',retryNumber:0}]);
-  assert.match(html,/3 materialized/);
-  assert.match(html,/1 running/);
+  assert.match(html,/class="wb-activity-details"[^>]*>/);
+  assert.doesNotMatch(html,/3 materialized|1 running|<details[^>]*\bopen\b/);
   assert.doesNotMatch(html,/\b\d{1,3}%\b|estimated time remaining/i);
   assert.match(html,/Waiting for capacity/);
   assert.equal(counts.succeeded,1);
