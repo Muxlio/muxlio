@@ -230,6 +230,9 @@ const inspectorPoll = prodInspector.slice(
   prodInspector.indexOf('function activationHasTranscript'),
 );
 assert.doesNotMatch(inspectorPoll, /limit=20/, 'workbench transcript polling must request the full log stream');
+assert.match(inspectorPoll, /statePollCount\+\+/, 'workbench transcript poll must periodically re-check activation state');
+assert.match(inspectorPoll, /\/activations\/\$\{encodeURIComponent\(actId\)\}/, 'workbench transcript poll must read activation state from the API');
+assert.match(prodTranscript, /a\.state !== 'queued'/, 'transcript page must ignore queued retries when picking the latest attempt');
 const transcriptPoll = prodTranscript.slice(
   prodTranscript.indexOf('function scheduleTranscriptPagePoll'),
   prodTranscript.indexOf('async function refreshTranscriptState'),

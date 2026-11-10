@@ -41,19 +41,48 @@ function updateTranscriptPanel(text,live){
   }
   if(live&&atBottom)el.scrollTop=el.scrollHeight;
 }
+function activationIsStreamingWorkbench(act){
+  if(!act)return false;
+  if(['succeeded','failed','cancelled'].includes(act.state))return false;
+  return act.state==='running';
+}
 function scheduleTranscriptPoll(act,runId){
   stopTranscriptPoll();
   const token=transcriptPollToken,actId=act.id;
+  let statePollCount=0;
+  let trackedAct=act;
   async function tick(){
     if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
     try{
       const d=await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
       if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
-      updateTranscriptPanel(mergeActivationLogs(actId,d.logs||[]),act.state==='running');
+      const live=activationData.find(a=>a.id===actId)||trackedAct;
+      updateTranscriptPanel(mergeActivationLogs(actId,d.logs||[]),activationIsStreamingWorkbench(live));
     }catch{}
     if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
-    const live=activationData.find(a=>a.id===actId);
-    if(live&&live.state==='running')transcriptPollTimer=setTimeout(tick,TRANSCRIPT_POLL_MS);
+    statePollCount++;
+    if(statePollCount%5===0){
+      try{
+        const fresh=await api(`/v1/runs/${encodeURIComponent(runId)}/activations/${encodeURIComponent(actId)}`);
+        if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
+        if(fresh){
+          const wasStreaming=activationIsStreamingWorkbench(trackedAct);
+          trackedAct=fresh;
+          const idx=activationData.findIndex(a=>a.id===actId);
+          if(idx>=0)activationData[idx]=fresh;
+          if(wasStreaming&&!activationIsStreamingWorkbench(fresh)){
+            updateTranscriptPanel(activationTranscripts.get(actId)?.agent||'',false);
+            const section=document.getElementById('inspTranscriptSection');
+            if(section)section.remove();
+            return;
+          }
+        }
+      }catch{}
+    }
+    if(token!==transcriptPollToken||selectedActivation!==actId||current!==runId)return;
+    const live=activationData.find(a=>a.id===actId)||trackedAct;
+    if(activationIsStreamingWorkbench(live))transcriptPollTimer=setTimeout(tick,TRANSCRIPT_POLL_MS);
+    else updateTranscriptPanel(activationTranscripts.get(actId)?.agent||'',false);
   }
   tick();
 }
@@ -98,13 +127,13 @@ function buildAttemptUsageMarkup(act){
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
   const actAttempts=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
   if(!actAttempts.length)return '';
-  const formatTokens=n=>fmtTokens(n||0);
+  const tokenCell=value=>esc(value==null?'—':fmtTokens(value));
   const rows=actAttempts.map((a,i)=>{
     const label=String(attemptOffset+i+1);
     if(a.usage==null){
       return `<tr><td>${esc(label)}</td><td colspan="3" class="num" style="color:var(--muted)">—</td></tr>`;
     }
-    return `<tr><td>${esc(label)}</td><td class="num">${esc(formatTokens(a.usage.input))}</td><td class="num">${esc(formatTokens(a.usage.output))}</td><td class="num">${esc(formatTokens(a.usage.cached))}</td></tr>`;
+    return `<tr><td>${esc(label)}</td><td class="num">${tokenCell(a.usage.input)}</td><td class="num">${tokenCell(a.usage.output)}</td><td class="num">${tokenCell(a.usage.cached)}</td></tr>`;
   });
   return `<div class="insp-section">
     <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Token usage</div>

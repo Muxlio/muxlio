@@ -181,6 +181,19 @@ console.log('buildWbStats token stat checks passed');
   // Must NOT include a numeric usage table with zeros
   assert.doesNotMatch(htmlAllNull, /<td class="num">0<\/td>/, 'unavailable must not render as zero');
 
+  const ctxPartial = makeInspCtx([
+    { activationId: 'act-partial', retryNumber: 0, state: 'succeeded', usage: { input: 0, output: null, cached: null } },
+  ]);
+  const { buildAttemptUsageMarkup: buPartial } = vm.runInNewContext(
+    `${wbSource}; ${inspSource}; ({buildAttemptUsageMarkup})`,
+    ctxPartial,
+  );
+  const htmlPartial = buPartial({ id: 'act-partial', nodeId: 'n', state: 'succeeded' });
+  assert.match(htmlPartial, /<td class="num">0<\/td>/, 'reported zero input stays zero');
+  assert.doesNotMatch(htmlPartial, /<td class="num">0<\/td><td class="num">0<\/td><td class="num">0<\/td>/,
+    'missing output and cached must not render as zero');
+  assert.match(htmlPartial, /<td class="num">—<\/td>/g);
+
   for (const usage of [null, { input: 0, output: 0, cached: 0 }]) {
     const context = makeInspCtx([
       { activationId: 'agent', executor: 'custom/agent', retryNumber: 1, state: 'succeeded', usage },

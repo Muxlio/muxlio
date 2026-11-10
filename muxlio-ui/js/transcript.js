@@ -111,7 +111,7 @@ async function refreshTranscriptState(runId, actId) {
     const act = graphData;
     if (!act) return;
     tpageActState = act.state || '';
-    const attempts = (attemptsData.attempts || []).filter(a => a.activationId === actId)
+    const attempts = (attemptsData.attempts || []).filter(a => a.activationId === actId && a.state !== 'queued')
       .sort((a, b) => (b.retryNumber || 0) - (a.retryNumber || 0));
     const latestAttempt = attempts[0] || null;
     renderTranscriptMeta(runId, act, latestAttempt);
