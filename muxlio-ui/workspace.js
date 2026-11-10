@@ -118,7 +118,7 @@ async function startEventStream(id){
   }catch(err){if(err.name!=='AbortError'&&!eventStreamUnsupported)connectionError(err);}
   finally{
     if(eventStreamController===controller){eventStreamController=null;eventStreamRun=null;
-      if(!eventStreamUnsupported&&!eventStreamTerminal&&currentRoute()===`/runs/${encodeURIComponent(id)}`)eventStreamRetry=setTimeout(()=>startEventStream(id),1000);
+      if(!eventStreamUnsupported&&!eventStreamTerminal&&currentRoute().split('?')[0]===`/runs/${encodeURIComponent(id)}`)eventStreamRetry=setTimeout(()=>startEventStream(id),1000);
     }
   }
 }
@@ -289,19 +289,20 @@ async function refreshWorkspace(){
   refreshBusy=true;
   const epoch=refreshEpoch;
   try{
-    if(currentRoute().startsWith('/runs/'))await openRun(current);
-    else if(currentRoute().startsWith('/transcripts/')){
-      const parts=currentRoute().slice('/transcripts/'.length).split('/');
+    const path=currentRoute().split('?')[0];
+    if(path.startsWith('/runs/'))await openRun(current);
+    else if(path.startsWith('/transcripts/')){
+      const parts=path.slice('/transcripts/'.length).split('/');
       if(parts.length>=2&&typeof refreshTranscriptState==='function')
         await refreshTranscriptState(decodeURIComponent(parts[0]),decodeURIComponent(parts[1]));
     }
-    else if(currentRoute()==='/operations')await loadOpsDashboard();
-    else if(currentRoute()==='/automation')await loadAutomation();
-    else if(currentRoute()==='/workers')await loadWorkers();
-    else if(currentRoute()==='/live'&&typeof loadLive==='function')await loadLive();
-    else if(currentRoute()==='/runs')await loadRuns();
-    else if(currentRoute()==='/artifacts')await loadArtifacts();
-    else if(currentRoute()==='/workflows')await loadWorkflows();
+    else if(path==='/operations')await loadOpsDashboard();
+    else if(path==='/automation')await loadAutomation();
+    else if(path==='/workers')await loadWorkers();
+    else if(path==='/live'&&typeof loadLive==='function')await loadLive();
+    else if(path==='/runs')await loadRuns();
+    else if(path==='/artifacts')await loadArtifacts();
+    else if(path==='/workflows')await loadWorkflows();
     else{runs=await fetchRuns();if(epoch===refreshEpoch){message('');renderOverview();renderRuns();connectionOK();}}
   }catch(err){if(epoch===refreshEpoch)connectionError(err);}
   finally{refreshBusy=false;scheduleRefresh();}
@@ -533,22 +534,23 @@ async function downloadArtifact(digest,filename,btn){
 // Hook into auto-refresh for the new views.
 const _origRefreshWorkspace=refreshWorkspace;
 refreshWorkspace=async function(){
-  if(currentRoute()==='/workflows'){
+  const path=currentRoute().split('?')[0];
+  if(path==='/workflows'){
     const epoch=refreshEpoch;
     try{await loadWorkflows();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
     finally{scheduleRefresh();}
     return;
   }
-  if(currentRoute()==='/artifacts'){
+  if(path==='/artifacts'){
     const epoch=refreshEpoch;
     try{await loadArtifacts();if(epoch===refreshEpoch)connectionOK();}catch(err){if(epoch===refreshEpoch)connectionError(err);}
     finally{scheduleRefresh();}
     return;
   }
-  if(currentRoute()==='/analytics'){stopRefresh();return;}
-  if(currentRoute().startsWith('/transcripts/')){
+  if(path==='/analytics'){stopRefresh();return;}
+  if(path.startsWith('/transcripts/')){
     const epoch=refreshEpoch;
-    const parts=currentRoute().slice('/transcripts/'.length).split('/');
+    const parts=path.slice('/transcripts/'.length).split('/');
     if(parts.length>=2&&typeof refreshTranscriptState==='function'){
       try{await refreshTranscriptState(decodeURIComponent(parts[0]),decodeURIComponent(parts[1]));if(epoch===refreshEpoch)connectionOK();}
       catch(err){if(epoch===refreshEpoch)connectionError(err);}

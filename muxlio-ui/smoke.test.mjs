@@ -121,7 +121,7 @@ try {
 
   assert.match(app,/scheduleTranscriptPoll\(act,current\)/,'workbench inspector should poll activation logs while running');
   assert.match(html,/id="liveView"/,'live output page should be present');
-  assert.match(app,/hash==='\/live'/, 'navigation should route to the live output page');
+  assert.match(app,/path==='\/live'/, 'navigation should route to the live output page');
   assert.match(app,/logs\?activationId=/,'live page should reuse the log chunk API');
   const liveSource = await (await fetch(`${baseURL}/js/live.js`)).text();
   assert.match(liveSource,/function stopLivePoll\(/,'live page should stop polling on navigation');

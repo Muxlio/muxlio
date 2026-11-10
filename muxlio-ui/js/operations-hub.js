@@ -38,7 +38,7 @@ async function resolveOperationalAttempt(run,id){
  const form=hubDialog('Resolve uncertain execution',`<p>${esc(attempt.awaitReconciliationReason||'Verify the external outcome before resolving this attempt.')}</p><label>Verified outcome<select name="outcome"><option value="not-applied">Not applied — the old operation cannot commit later</option><option value="completed">Completed — record the verified result</option></select></label>${hubText('Evidence and reason','reason','','required')}${hubText('Verified executor result JSON (for completed outcomes)','result','','data-completed-result')}<label class="ops-check"><input name="verified" type="checkbox" required>I verified the external outcome and understand this records an operational decision.</label>`,async f=>{
   const outcome=f.elements.outcome.value,body={outcome,reason:f.elements.reason.value.trim()};if(!body.reason)throw Error('Record the evidence used for this decision.');
   if(outcome==='completed'){body.result=hubJSON(f.elements.result.value,'Verified result');if(body.result?.executionSucceeded!==true)throw Error('A completed outcome requires a verified successful executor result.');}
-  await hubPost(`/v1/runs/${hubID(run)}/attempts/${hubID(id)}/resolve`,body);if(currentRoute()==='/operations')await loadOpsDashboard();else if(current===run)await openRun(run);
+  await hubPost(`/v1/runs/${hubID(run)}/attempts/${hubID(id)}/resolve`,body);if(currentRoute().split('?')[0]==='/operations')await loadOpsDashboard();else if(current===run)await openRun(run);
  },'Record resolution');
  const update=()=>{const field=form.querySelector('[data-completed-result]');field.hidden=form.elements.outcome.value!=='completed';form.elements.result.required=!field.hidden};form.elements.outcome.onchange=update;update();
 }
@@ -165,7 +165,7 @@ function setRetentionDeadline(id=''){
  const preview=async()=>{const key=form.elements.id.value.trim();if(!key)return;try{const run=await api(`/v1/runs/${hubID(key)}?summary=true`);if(form.elements.id.value.trim()!==key)return;form.querySelector('[data-retention-current]').textContent=`Current state: ${run.state}. ${run.pinned?'Pinned. ':''}${run.retainedUntil?'Current deadline: '+date(run.retainedUntil):'Default retention policy.'}`;if(run.retainedUntil){const d=new Date(run.retainedUntil);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());form.elements.until.value=d.toISOString().slice(0,16)}}catch(err){form.querySelector('[data-retention-current]').textContent=err.message}};
  form.elements.id.onchange=preview;if(id)preview();
 }
-async function refreshRetentionContext(){if(currentRoute()==='/retention')await loadRetention();else if(current)await openRun(current)}
+async function refreshRetentionContext(){if(currentRoute().split('?')[0]==='/retention')await loadRetention();else if(current)await openRun(current)}
 
 function evidenceDocument(documents){
  if(documents.length===1){const doc=documents[0];if(doc?.manifest?.datasetId&&Array.isArray(doc.results))return {kind:'evaluation',document:doc};if(Array.isArray(doc?.configurations)||doc?.manifest?.suite&&Array.isArray(doc.observations))return {kind:'benchmark',document:doc};}
