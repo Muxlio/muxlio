@@ -732,8 +732,8 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			result, err := e.pollRemote(req, a, node)
 			return result.Outputs, err
 		}
-		if a.AwaitReconciliationReason != "" || a.State == "running" || a.State == "awaiting_reconciliation" {
-			if _, queued := e.executor.(workers.QueuedExecutor); queued && a.State == "running" && a.AwaitReconciliationReason == "" {
+		if a.AwaitReconciliationReason != "" || a.State == "running" || a.State == "queued" || a.State == "awaiting_reconciliation" {
+			if _, queued := e.executor.(workers.QueuedExecutor); queued && (a.State == "running" || a.State == "queued") && a.AwaitReconciliationReason == "" {
 				recoveredBase = a.RetryNumber - 1
 				break
 			}
@@ -813,22 +813,34 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		coordinatorlog.RegisterSecrets(guarded.Secrets)
 		started := time.Now()
-		if recordErr := e.admitAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "running", StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey}); recordErr != nil {
+		attemptStatus := "running"
+		if _, queued := e.executor.(workers.QueuedExecutor); queued {
+			attemptStatus = "queued"
+		}
+		if recordErr := e.admitAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptStatus, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey}); recordErr != nil {
 			return nil, recordErr
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets, req.AttemptID)
 		guarded.LogSink = logSink
 		guarded.TimeoutSeconds = node.TimeoutSeconds
 		guarded.QueueTimeoutSeconds = node.QueueTimeoutSeconds
+		// Fallback must be reachable even when the primary never admits work.
+		// Explicit queue policies remain authoritative.
+		if guarded.QueueTimeoutSeconds == nil && len(node.FallbackExecutors) > 0 {
+			seconds := 60.0
+			guarded.QueueTimeoutSeconds = &seconds
+		}
 		attemptID := req.AttemptID
 		guarded.OnExecutionReturned = func() {
 			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})
 		}
 		result, err := workers.ExecuteAttempt(e.executor, guarded)
-		if req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || (result.Error != "" && !remoteTerminalFailure(result))) && e.context().Err() == nil {
+		var queueTimeout workers.QueueTimeoutError
+		admissionExpired := errors.As(err, &queueTimeout)
+		if !admissionExpired && req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || (result.Error != "" && !remoteTerminalFailure(result))) && e.context().Err() == nil {
 			err = workers.UncertainExecutionError{}
 		}
-		safeRedispatch := false
+		safeRedispatch := admissionExpired
 		var uncertain workers.UncertainExecutionError
 		if errors.As(err, &uncertain) {
 			if req.Session == nil && (req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key"))) {
@@ -855,7 +867,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			return result.Outputs, err
 		}
 
-		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		if err != nil && !admissionExpired && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			_ = e.store.AppendEvent(runID, "execution.cancellation_requested", req.AttemptID, map[string]any{"reason": err.Error(), "termination": "unconfirmed", "externalEffects": "completion unknown"})
 		}
 		_ = logSink.Close()
@@ -877,7 +889,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		// Per-node execution timeout: record the attempt as cancelled with an
 		// actionable diagnostic. Do not replay while external completion is unknown.
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) && !admissionExpired {
 			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
 			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			lastErr = fmt.Errorf("muxlio: %s", failureMsg)

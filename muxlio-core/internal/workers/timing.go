@@ -13,6 +13,15 @@ type QueuedExecutor interface {
 	ExecuteQueued(ExecuteRequest) (ExecuteResult, error)
 }
 
+// QueueTimeoutError proves admission expired before any worker claimed the attempt.
+// Unlike an execution timeout, it is safe to retry under the task effect policy.
+type QueueTimeoutError struct{ Deadline time.Time }
+
+func (e QueueTimeoutError) Error() string {
+	return fmt.Sprintf("queue timeout: no worker admitted the attempt before %s", e.Deadline.Format(time.RFC3339Nano))
+}
+func (QueueTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
 // ExecuteAttempt propagates cancellation without claiming that an executor's
 // return proves an external effect was rolled back or even stopped.
 func ExecuteAttempt(executor Executor, req ExecuteRequest) (result ExecuteResult, executionErr error) {

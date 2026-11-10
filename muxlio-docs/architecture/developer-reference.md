@@ -225,6 +225,15 @@ muxlio run examples/batch.plan.json examples/batch.input.json \
   --json
 ```
 
+Queued attempts and their activations remain `queued` until a worker claims the
+assignment; a running workflow can therefore be waiting for admission without
+an agent process executing. Tasks with `fallbackExecutors` default to a 60-second
+admission timeout when `queueTimeoutSeconds` is omitted. Set an explicit positive
+`queueTimeoutSeconds` to override this window. An admission timeout proves the
+attempt never reached a worker and can advance to retry/fallback within the task's
+retry and effect policy. An execution timeout does not prove termination and
+continues to require the existing cancellation/reconciliation handling.
+
 Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command` → `command`). The generic `command` executor passes `program` and `args` directly to the process without a shell. `task({ executor: 'command', ... })` automatically provides typed process outputs, so success is available as `result.passed`, including in `repeatUntil` conditions; no `outputs` declaration is needed. With `onNonZero: 'return'`, a nonzero exit produces `passed: false` so the workflow can run its fix step; `onNonZero: 'fail'` fails the step instead. Command details are also top-level outputs: `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`. Declare `outputs` only to add artifacts or customize a schema. `signal` is null unless the process was terminated by a signal, and stdout/stderr contain bounded previews. Declared files are collected from `MUXLIO_OUTPUT_DIR`.
 
 `agent/a2a` executes a remote agent using `params: { url: 'https://agent.example', stream: true, timeout: '30s' }`. It discovers `/.well-known/agent-card.json`; `cardUrl` can select another card on the same origin. This adapter supports [A2A 0.3.0 JSON-RPC](https://a2a-protocol.org/v0.3.0/specification/), including an advertised alternate JSON-RPC interface. Other versions, required extensions, unsupported input modes, and unsupported authentication fail explicitly. Only HTTP bearer authentication is supported; supply `A2A_TOKEN` through the shared request secret mechanism, never in workflow parameters or URLs. HTTPS is required except on loopback; redirects and cross-origin card endpoints are rejected. Discovery and authentication are checked at invocation, not by the readiness probe.

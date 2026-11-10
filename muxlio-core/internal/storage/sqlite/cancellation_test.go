@@ -177,3 +177,51 @@ func TestLostWorkerCannotEscapeTimeoutOrCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueTimeoutAllowsFreshFallbackDispatch(t *testing.T) {
+	s := openTemp(t)
+	if err := s.CreateRun(&state.Run{ID: "run", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateActivation(&state.Activation{ID: "act", RunID: "run", NodeID: "node", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(-time.Second)
+	raw, _ := json.Marshal(workers.ExecuteRequest{QueueDeadline: &deadline})
+	d := state.Dispatch{AssignmentID: "first", RunID: "run", ActivationID: "act", AttemptID: "first", Executor: "primary", Request: raw}
+	if err := s.EnqueueDispatch(d); err != nil {
+		t.Fatal(err)
+	}
+	acts, err := s.ListActivations("run")
+	if err != nil || len(acts) != 1 || acts[0].State != "queued" {
+		t.Fatalf("queued activations=%+v err=%v", acts, err)
+	}
+	if expired, err := s.ExpireQueuedAttempt("first", time.Now()); err != nil || !expired {
+		t.Fatalf("expired=%v err=%v", expired, err)
+	}
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{ID: "second", RunID: "run", ActivationID: "act", Executor: "fallback", State: "queued", StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	d.AssignmentID = "second"
+	d.AttemptID = "second"
+	d.Executor = "fallback"
+	d.Request = []byte(`{}`)
+	if err := s.EnqueueDispatch(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterWorker(state.Worker{ID: "worker", Capacity: 1, Capabilities: []state.WorkerCapability{{Name: "fallback"}}, LastSeen: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, _, err := s.ClaimDispatch("worker", time.Now().Add(time.Minute))
+	if err != nil || claimed == nil || claimed.AttemptID != "second" {
+		t.Fatalf("claim=%+v err=%v", claimed, err)
+	}
+	acts, err = s.ListActivations("run")
+	if err != nil || len(acts) != 1 || acts[0].State != "running" {
+		t.Fatalf("running activations=%+v err=%v", acts, err)
+	}
+	attempts, err := s.ListExecutionAttempts("run", "")
+	if err != nil || len(attempts) != 1 || attempts[0].State != "running" {
+		t.Fatalf("claimed state=%+v err=%v", attempts, err)
+	}
+}

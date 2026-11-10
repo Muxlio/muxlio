@@ -490,8 +490,27 @@ func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND dispatches.state='completed'`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND (dispatches.state='completed' OR (dispatches.state='cancelled' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=dispatches.attempt_id)))`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
+	if err != nil {
+		return err
+	}
+	updated, err := tx.Exec(`UPDATE activations SET state='queued' WHERE id=? AND state='running' AND EXISTS (SELECT 1 FROM dispatches WHERE attempt_id=? AND state='pending')`, d.ActivationID, d.AttemptID)
+	if err != nil {
+		return err
+	}
+	if n, err := updated.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		if err := appendEvent(tx, d.RunID, state.EventTypeForActivationState("queued"), d.ActivationID, nil); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UnclaimedDispatch proves a request never reached a worker. An expired,
@@ -665,6 +684,32 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 	if _, err = tx.Exec(`UPDATE assignments SET coordinator_epoch=? WHERE activation_id=?`, epoch, selected.ActivationID); err != nil {
 		return nil, 0, err
 	}
+	startedAttempt, err := tx.Exec(`UPDATE execution_attempts SET state='running' WHERE id=? AND state='queued'`, selected.AttemptID)
+	if err != nil {
+		return nil, 0, err
+	}
+	var retryNumber int
+	if n, err := startedAttempt.RowsAffected(); err != nil {
+		return nil, 0, err
+	} else if n > 0 {
+		if err := tx.QueryRow(`SELECT retry_number FROM execution_attempts WHERE id=?`, selected.AttemptID).Scan(&retryNumber); err != nil {
+			return nil, 0, err
+		}
+		if err := appendEvent(tx, selected.RunID, state.EventExecutionAttempt, selected.ActivationID, map[string]any{"attemptId": selected.AttemptID, "executor": selected.Executor, "state": "running", "retryNumber": retryNumber}); err != nil {
+			return nil, 0, err
+		}
+	}
+	updated, err := tx.Exec(`UPDATE activations SET state='running' WHERE id=? AND state='queued'`, selected.ActivationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if n, err := updated.RowsAffected(); err != nil {
+		return nil, 0, err
+	} else if n > 0 {
+		if err := appendEvent(tx, selected.RunID, state.EventActivationRunning, selected.ActivationID, nil); err != nil {
+			return nil, 0, err
+		}
+	}
 	if err := registerWorkerTiming(tx, state.Assignment{AttemptID: selected.AttemptID, AssignmentID: selected.AssignmentID, RunID: selected.RunID, ActivationID: selected.ActivationID, WorkerID: workerID}, generation); err != nil {
 		return nil, 0, err
 	}
@@ -673,6 +718,9 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, 0, err
+	}
+	if retryNumber > 0 {
+		coordinatorlog.AttemptStarted(selected.RunID, selected.ActivationID, selected.Executor, retryNumber)
 	}
 	coordinatorlog.WorkerAssigned(selected.RunID, selected.ActivationID, workerID, selected.Executor, selected.AttemptID)
 	return selected, generation, nil

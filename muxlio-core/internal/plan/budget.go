@@ -79,9 +79,6 @@ func (e *Engine) admitAttempt(a state.ExecutionAttempt) error {
 		return err
 	}
 	l := e.plan.Limits
-	if l == nil {
-		return e.store.RecordExecutionAttempt(a)
-	}
 	attempts, err := e.store.ListExecutionAttempts(a.RunID, "")
 	if err != nil {
 		return err
@@ -92,12 +89,15 @@ func (e *Engine) admitAttempt(a state.ExecutionAttempt) error {
 			return nil
 		}
 	}
+	if l == nil {
+		return e.store.RecordExecutionAttempt(a)
+	}
 	if l.MaxAttempts != nil && len(attempts) >= *l.MaxAttempts {
 		return budgetExceeded("maxAttempts")
 	}
 	active := 0
 	for _, old := range attempts {
-		if old.State == "running" || old.State == "awaiting_reconciliation" || old.State == "cancelled" || old.AwaitReconciliationReason != "" {
+		if old.State == "queued" || old.State == "running" || old.State == "awaiting_reconciliation" || old.State == "cancelled" || old.AwaitReconciliationReason != "" {
 			active++
 		}
 	}

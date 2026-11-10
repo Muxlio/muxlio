@@ -630,7 +630,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 					return workers.ExecuteResult{}, err
 				}
 				if expired {
-					return workers.ExecuteResult{}, fmt.Errorf("queue timeout: no worker admitted the attempt before %s: %w", req.QueueDeadline.Format(time.RFC3339Nano), context.DeadlineExceeded)
+					return workers.ExecuteResult{}, workers.QueueTimeoutError{Deadline: *req.QueueDeadline}
 				}
 			}
 			if r, found, err := read(); found || err != nil {
