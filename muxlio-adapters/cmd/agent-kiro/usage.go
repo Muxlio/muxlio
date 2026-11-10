@@ -34,3 +34,7 @@ func mergeTerminalUsage(prior, terminal *adapter.TokenUsage) *adapter.TokenUsage
 	}
 	return contract.NewTokenUsage(in, out, ca)
 }
+
+func mergeTerminalCredits(prior, terminal *contract.ProviderCredit) (*contract.ProviderCredit, error) {
+	return contract.MergeProviderCredits(prior, terminal)
+}

@@ -36,6 +36,13 @@ function fmtCostUsd(value){
  if(typeof value!=='number'||!Number.isFinite(value)||value<0)return 'Unavailable';
  return '$'+value.toFixed(4);
 }
+function fmtCredits(value){
+ if(typeof value!=='number'||!Number.isFinite(value)||value<0)return 'Unavailable';
+ if(value===0)return '0';
+ if(value<0.01)return value.toPrecision(3);
+ if(value>=1000)return `${(value/1000).toFixed(2)}K`;
+ return value.toFixed(4).replace(/\.?0+$/,'');
+}
 function fmtTok(value){return MuxlioFormat.tokens(value)}
 function fmtDuration(value){return MuxlioFormat.duration(value)}
 function duration(start,end){return MuxlioFormat.elapsed(start,end)}

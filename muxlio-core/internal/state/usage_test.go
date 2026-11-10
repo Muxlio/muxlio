@@ -41,6 +41,20 @@ func TestUsageSummaryMissingIsNullAndReportedZeroIsZero(t *testing.T) {
 	}
 }
 
+func TestUsageSummaryAggregatesCreditsByUnit(t *testing.T) {
+	first, second, other := 0.1, 0.25, 9.0
+	attempts := []ExecutionAttempt{
+		{Measurements: &contract.Measurements{Credit: &contract.ProviderCredit{Unit: "credit", Amount: &first}}},
+		{Measurements: &contract.Measurements{Credit: &contract.ProviderCredit{Unit: "credit", Amount: &second}}},
+		{Measurements: &contract.Measurements{Credit: &contract.ProviderCredit{Unit: "point", Amount: &other}}},
+		{},
+	}
+	s := SummarizeUsage(attempts)
+	if len(s.Credits) != 2 || s.Credits[0].Unit != "credit" || s.Credits[0].Observed == nil || *s.Credits[0].Observed != 0.35 || s.Credits[0].Unknown != 2 || s.Credits[1].Unit != "point" || s.Credits[1].Unknown != 3 {
+		t.Fatalf("credits=%+v", s.Credits)
+	}
+}
+
 func TestUsageSummaryPartialTokensRemainUnknown(t *testing.T) {
 	partial := contract.NewTokenUsage(ptrInt64(9), nil, nil)
 	s := SummarizeUsage([]ExecutionAttempt{{Usage: partial}})

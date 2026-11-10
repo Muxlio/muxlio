@@ -133,14 +133,17 @@ window starts at persisted run creation, includes queueing and pauses, and cance
 with a `run.interrupted` event containing `run deadline exceeded`.
 
 Executor results retain optional observed `usage` token counts and may supply
-`measurements: { estimatedTokens, costUsd, estimatedCostUsd }`. Costs are in USD.
-These fields pass through the shared executor protocol, remote workers and attempt
+`measurements: { estimatedTokens, costUsd, estimatedCostUsd, credit }`. Costs are
+in USD. Provider credits use explicit unit identity and provenance
+(`per-turn` or `cumulative`) and are never converted into tokens or USD. These
+fields pass through the shared executor protocol, remote workers and attempt
 storage without provider-specific interpretation. No cost or token estimates are
 inferred by the coordinator. Token consumption is input plus output; cached tokens
 are an input subset. An observed measurement takes precedence over its estimate.
-`GET /v1/runs/:id` exposes `usage.tokens` and `usage.costUsd`, each containing
-nullable `observed` and `estimated` subtotals and an `unknown` attempt count.
-Unavailable values remain null; a reported zero remains zero.
+`GET /v1/runs/:id` exposes `usage.tokens`, `usage.costUsd`, and optional
+`usage.credits` (per unit identity), each containing nullable observed subtotals
+and an `unknown` attempt count where applicable. Unavailable values remain null;
+a reported zero remains zero.
 
 Token and cost thresholds check consumption before admission and after completion.
 They stop subsequent work and fail a run whose final attempt exceeded a threshold;

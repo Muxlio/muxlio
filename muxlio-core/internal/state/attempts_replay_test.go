@@ -44,3 +44,35 @@ func TestRecordExecutionAttemptPreservesObservationsOnReplaySQLite(t *testing.T)
 		t.Fatalf("measurements lost on replay: %+v", attempts[0].Measurements)
 	}
 }
+
+func TestRecordExecutionAttemptPreservesCreditsOnReplaySQLite(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "attempts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.CreateRun(&state.Run{ID: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	credit := 0.18065595854063016
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "running",
+		StartedAt: time.Now(),
+		Measurements: &contract.Measurements{Credit: &contract.ProviderCredit{Unit: "credit", Amount: &credit, Provenance: contract.CreditProvenancePerTurn}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
+		ID: "a-1", RunID: "r", ActivationID: "act", State: "failed",
+		StartedAt: time.Now(), FinishedAt: time.Now(), Failure: "interrupted",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := s.ListExecutionAttempts("r", "act")
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("attempts=%v err=%v", attempts, err)
+	}
+	if attempts[0].Measurements == nil || attempts[0].Measurements.Credit == nil || attempts[0].Measurements.Credit.Amount == nil {
+		t.Fatalf("credit measurements lost on replay: %+v", attempts[0].Measurements)
+	}
+}

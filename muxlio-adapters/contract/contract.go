@@ -25,10 +25,12 @@ type OutputDecl struct {
 
 // Measurements contains optional accounting supplied by an executor. Estimates
 // never replace observed token usage. Costs are USD; no prices are inferred.
+// Provider credits are reported separately with explicit unit identity.
 type Measurements struct {
-	EstimatedTokens  *int64   `json:"estimatedTokens,omitempty"`
-	CostUSD          *float64 `json:"costUsd,omitempty"`
-	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
+	EstimatedTokens  *int64          `json:"estimatedTokens,omitempty"`
+	CostUSD          *float64        `json:"costUsd,omitempty"`
+	EstimatedCostUSD *float64        `json:"estimatedCostUsd,omitempty"`
+	Credit           *ProviderCredit `json:"credit,omitempty"`
 }
 
 func (m *Measurements) Validate() error {
@@ -42,6 +44,9 @@ func (m *Measurements) Validate() error {
 		if cost != nil && (math.IsNaN(*cost) || math.IsInf(*cost, 0) || *cost < 0) {
 			return fmt.Errorf("cost must be finite and non-negative")
 		}
+	}
+	if err := validateProviderCredit(m.Credit); err != nil {
+		return fmt.Errorf("credit: %w", err)
 	}
 	return nil
 }

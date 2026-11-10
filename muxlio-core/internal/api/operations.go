@@ -463,6 +463,31 @@ func validateEvidenceMeasurements(value any) error {
 						}
 					}
 				}
+				if credits, exists := usage["credits"]; exists && credits != nil {
+					rows, ok := credits.([]any)
+					if !ok {
+						return fmt.Errorf("invalid credit usage totals")
+					}
+					for _, item := range rows {
+						row, ok := item.(map[string]any)
+						if !ok {
+							return fmt.Errorf("invalid credit usage total")
+						}
+						if unit, ok := row["unit"].(string); !ok || strings.TrimSpace(unit) == "" {
+							return fmt.Errorf("invalid credit unit")
+						}
+						for _, metric := range []string{"observed", "unknown"} {
+							number, exists := row[metric]
+							if !exists || number == nil {
+								continue
+							}
+							n, ok := number.(float64)
+							if !ok || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) || (metric == "unknown" && math.Trunc(n) != n) {
+								return fmt.Errorf("invalid credit usage measurement")
+							}
+						}
+					}
+				}
 			}
 			// Input/output JSON belongs to the experiment, not its measurement schema.
 			if key != "input" && key != "output" && key != "outputs" && key != "configuration" && key != "plan" {

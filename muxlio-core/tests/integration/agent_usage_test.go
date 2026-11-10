@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"encoding/json"
+	"math"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -36,19 +37,21 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 	}
 	reported := &state.TokenUsage{Input: 120, Output: 30, Cached: 40}
 	cursorReported := &state.TokenUsage{Input: 160, Output: 30, Cached: 40}
+	kiroCredit := 0.18065595854063016
 	for _, tc := range []struct {
 		executor, cli, events string
 		wantUsage             *state.TokenUsage
+		wantCredit            *float64
 	}{
 		{"agent/antigravity", "agy", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
-{"type":"result","status":"success"}`, reported},
+{"type":"result","status":"success"}`, reported, nil},
 		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40}}
-{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}},
+{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}, nil},
 		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
-{"type":"turn.completed","usage":null}`, reported},
+{"type":"turn.completed","usage":null}`, reported, nil},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
-{"type":"result"}`, cursorReported},
-		{"agent/kiro", "kiro-cli", string(kiroEvents), nil},
+{"type":"result"}`, cursorReported, nil},
+		{"agent/kiro", "kiro-cli", string(kiroEvents), nil, &kiroCredit},
 	} {
 		for _, fail := range []bool{false, true} {
 			name := tc.executor + "/success"
@@ -109,6 +112,15 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 				if attempt.State != wantState || (tc.wantUsage == nil && attempt.Usage != nil) ||
 					(tc.wantUsage != nil && (attempt.Usage == nil || *attempt.Usage != *tc.wantUsage)) {
 					t.Fatalf("stored attempt = %+v, usage = %+v", attempt, attempt.Usage)
+				}
+				if tc.wantCredit == nil {
+					if attempt.Measurements != nil && attempt.Measurements.Credit != nil {
+						t.Fatalf("unexpected credit measurements: %+v", attempt.Measurements)
+					}
+				} else if attempt.Measurements == nil || attempt.Measurements.Credit == nil || attempt.Measurements.Credit.Amount == nil {
+					t.Fatalf("missing credit measurements: %+v", attempt.Measurements)
+				} else if math.Abs(*attempt.Measurements.Credit.Amount-*tc.wantCredit) > 1e-9 || attempt.Measurements.Credit.Unit != "credit" {
+					t.Fatalf("credit = %+v, want %v credit", attempt.Measurements.Credit, *tc.wantCredit)
 				}
 			})
 		}

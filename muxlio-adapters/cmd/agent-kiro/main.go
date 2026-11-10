@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func main() {
@@ -94,6 +95,7 @@ func main() {
 	var runErr string
 	var completed bool
 	var usage *adapter.TokenUsage
+	var measurements *contract.Measurements
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -119,6 +121,12 @@ func main() {
 		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
 			if reported := parseKiroUsage(ev["data"]); reported != nil {
 				usage = mergeTerminalUsage(usage, reported)
+			}
+			if reportedCredit := parseKiroCredits(ev["data"]); reportedCredit != nil {
+				merged, err := mergeTerminalCredits(creditMeasurement(measurements), reportedCredit)
+				if err == nil && merged != nil {
+					measurements = withCreditMeasurement(measurements, merged)
+				}
 			}
 		}
 
@@ -212,7 +220,7 @@ func main() {
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(stdoutTail.String()), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
-		adapter.FailWithUsage(usage, "agent-kiro: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithObserved(usage, measurements, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
@@ -234,7 +242,26 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage, Measurements: measurements})
+}
+
+func creditMeasurement(m *contract.Measurements) *contract.ProviderCredit {
+	if m == nil {
+		return nil
+	}
+	return m.Credit
+}
+
+func withCreditMeasurement(m *contract.Measurements, credit *contract.ProviderCredit) *contract.Measurements {
+	if credit == nil {
+		return m
+	}
+	if m == nil {
+		return &contract.Measurements{Credit: credit}
+	}
+	next := *m
+	next.Credit = credit
+	return &next
 }
 
 func parseKiroUsage(result json.RawMessage) *adapter.TokenUsage {

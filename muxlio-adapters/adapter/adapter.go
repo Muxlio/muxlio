@@ -150,7 +150,13 @@ func Fail(format string, args ...any) {
 // instead of being recorded as unavailable. A nil usage is reported as absent
 // (omitted via omitempty), matching Fail.
 func FailWithUsage(usage *TokenUsage, format string, args ...any) {
-	_ = WriteResponse(Response{Outputs: map[string]any{}, Error: fmt.Sprintf(format, args...), Usage: usage})
+	FailWithObserved(usage, nil, format, args...)
+}
+
+// FailWithObserved retains provider-reported usage and optional measurements on
+// failed attempts without inferring missing values.
+func FailWithObserved(usage *TokenUsage, measurements *contract.Measurements, format string, args ...any) {
+	_ = WriteResponse(Response{Outputs: map[string]any{}, Error: fmt.Sprintf(format, args...), Usage: usage, Measurements: measurements})
 	os.Exit(0)
 }
 

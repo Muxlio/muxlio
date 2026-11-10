@@ -69,9 +69,16 @@ export interface UsageTotal {
   unknown: number;
 }
 
+export interface CreditUsageTotal {
+  unit: string;
+  observed: number | null;
+  unknown: number;
+}
+
 export interface UsageSummary {
   tokens: UsageTotal;
   costUsd: UsageTotal;
+  credits?: CreditUsageTotal[];
 }
 
 /**

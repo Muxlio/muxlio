@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +141,60 @@ func TestKiroStreamMergesPartialSessionUsage(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.Input != 99 || resp.Usage.Output != 30 || resp.Usage.Cached != 40 {
 		t.Fatalf("usage = %+v, want input=99 output=30 cached=40", resp.Usage)
+	}
+}
+
+func TestKiroStreamReportsCreditsWithoutTokens(t *testing.T) {
+	bin := buildAgentKiro(t)
+	workDir := t.TempDir()
+	binDir := t.TempDir()
+	stream, err := os.ReadFile(filepath.Join("testdata", "credit-only.stream.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := filepath.Join(binDir, "kiro-cli")
+	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + string(stream) + "EOF\n"
+	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req, err := json.Marshal(map[string]any{
+		"contractVersion":      "1",
+		"workspace":            workDir,
+		"workDir":              workDir,
+		"executor":             "agent/kiro",
+		"task":                 "credit-only",
+		"hostExecutionAllowed": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli}
+	cmd.Stdin = strings.NewReader(string(req))
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Usage         json.RawMessage `json:"usage"`
+		Measurements  struct {
+			Credit *struct {
+				Unit   string   `json:"unit"`
+				Amount *float64 `json:"amount"`
+			} `json:"credit"`
+		} `json:"measurements"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
+	}
+	if len(resp.Usage) > 0 && string(resp.Usage) != "null" {
+		t.Fatalf("usage = %s, want unavailable", resp.Usage)
+	}
+	want := 0.18065595854063016
+	if resp.Measurements.Credit == nil || resp.Measurements.Credit.Amount == nil || math.Abs(*resp.Measurements.Credit.Amount-want) > 1e-9 {
+		t.Fatalf("measurements = %+v", resp.Measurements)
 	}
 }
 

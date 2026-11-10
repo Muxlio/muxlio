@@ -14,6 +14,11 @@ test('cost totals preserve zero versus unavailable',()=>{
  for(const [value,expected] of [[0,'$0.0000'],[0.25,'$0.2500'],[null,'Unavailable'],[undefined,'Unavailable'],[NaN,'Unavailable'],[-1,'Unavailable']])assert.equal(ctx.fmtCostUsd(value),expected);
 });
 
+test('credit totals preserve fractional precision',()=>{
+ const ctx=vm.runInNewContext(`${readFileSync(new URL('./js/format.js',import.meta.url),'utf8')};({fmtCredits})`);
+ for(const [value,expected] of [[0,'0'],[0.18065595854063016,'0.1807'],[0.25,'0.25'],[null,'Unavailable'],[NaN,'Unavailable'],[-1,'Unavailable']])assert.equal(ctx.fmtCredits(value),expected);
+});
+
 test('durations automatically scale from milliseconds through days',()=>{
  for(const [value,expected] of [[0,'0 ms'],[25,'25 ms'],[1000,'1.0 s'],[60000,'1m 0s'],[90000,'1m 30s'],[3600000,'1h 0m'],[5400000,'1h 30m'],[86400000,'1d 0h'],[90000000,'1d 1h'],[null,'Unavailable'],[Infinity,'Unavailable']])assert.equal(format.duration(value),expected);
  assert.equal(format.duration(90,'seconds'),'1m 30s');
