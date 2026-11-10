@@ -68,12 +68,10 @@ function analyticsActivationAttempts(attempts) {
   return byActivation;
 }
 
-function analyticsAttemptRecoveredFailure(attempt, activationAttempts, runState) {
+function analyticsAttemptRecoveredFailure(attempt, activationAttempts) {
   if (attempt.state !== 'failed') return false;
   const idx = activationAttempts.findIndex(a => a.id === attempt.id && a.retryNumber === attempt.retryNumber);
-  const laterSuccess = activationAttempts.slice(idx + 1).some(a => a.state === 'succeeded');
-  if (laterSuccess) return true;
-  return runState === 'succeeded' && idx < activationAttempts.length - 1;
+  return activationAttempts.slice(idx + 1).some(a => a.state === 'succeeded');
 }
 
 function analyticsRetryOverheadForActivation(activationAttempts) {
@@ -147,6 +145,9 @@ function buildAnalyticsRetryLatency(flatAttempts, runs) {
     runOutcomes.terminalRuns++;
     if (run.state === 'cancelled') {
       runOutcomes.cancelledRuns++;
+      for (const attempt of (attemptsByRun.get(run.id) || []).filter(a => a.state !== 'queued')) {
+        if (attempt.state === 'cancelled') runOutcomes.cancelledAttempts++;
+      }
       continue;
     }
     if (run.state === 'failed') {
@@ -169,7 +170,7 @@ function buildAnalyticsRetryLatency(flatAttempts, runs) {
       for (const attempt of activationAttempts) {
         if (attempt.state === 'cancelled') runOutcomes.cancelledAttempts++;
         if (attempt.state === 'failed') {
-          if (analyticsAttemptRecoveredFailure(attempt, activationAttempts, run.state)) {
+          if (analyticsAttemptRecoveredFailure(attempt, activationAttempts)) {
             runOutcomes.recoveredFailureAttempts++;
           } else if (run.state === 'failed') {
             runOutcomes.finalFailureAttempts++;

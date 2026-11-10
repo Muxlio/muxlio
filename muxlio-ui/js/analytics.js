@@ -598,12 +598,18 @@ function analyticsDrillRecords(model, drill, measureId) {
       .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
   }
   if (kind === 'latencyWorkflow') {
-    return model.flatAttempts.filter(({ run }) => (run.workflowName || 'Unnamed workflow') === key)
-      .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
+    return model.flatAttempts.filter(({ attempt, run }) => {
+      if ((run.workflowName || 'Unnamed workflow') !== key) return false;
+      if (analyticsAttemptPending(attempt.state)) return false;
+      return analyticsAttemptTiming(attempt).workerMs != null;
+    }).map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
   }
   if (kind === 'latencyExecutor') {
-    return model.flatAttempts.filter(({ attempt }) => (attempt.executor || 'unknown') === key)
-      .map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
+    return model.flatAttempts.filter(({ attempt }) => {
+      if ((attempt.executor || 'unknown') !== key) return false;
+      if (analyticsAttemptPending(attempt.state)) return false;
+      return analyticsAttemptTiming(attempt).workerMs != null;
+    }).map(({ attempt, run }) => ({ kind: 'attempt', run, attempt }));
   }
   return [];
 }

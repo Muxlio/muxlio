@@ -29,7 +29,7 @@ function makeCtx(overrides = {}) {
 // Helper to extract buildAnalyticsModel and rendering helpers from source.
 function getHelpers(ctx) {
   return vm.runInNewContext(
-    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, analyticsTokenVolume, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromURL, analyticsDefaultFilters, analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile})`,
+    `${analyticsSource}; ({buildAnalyticsModel, fmtTok, barChartMarkup, sparklineMarkup, tokenSparklineMarkup, analyticsTokenVolume, renderAnalytics, loadAnalyticsData, loadAnalytics, analyticsSummarizeUsage, analyticsAttemptBucketTime, analyticsMeasureCatalog, analyticsFiltersFromURL, analyticsDefaultFilters, analyticsResolveRange, analyticsRangeThroughNow, analyticsRunInRange, analyticsDayBuckets, analyticsBucketForTimestamp, analyticsDateTimeLocalValue, buildAnalyticsRetryLatency, analyticsAttemptRecoveredFailure, analyticsAttemptTiming, analyticsPercentile, analyticsDrillRecords})`,
     ctx,
   );
 }
@@ -676,7 +676,7 @@ console.log('analytics filter URL and bucket boundary checks passed');
 
 // Retry, latency distributions, and timing separation.
 {
-  const { buildAnalyticsModel, buildAnalyticsRetryLatency, analyticsAttemptTiming, analyticsPercentile, renderAnalytics } = getHelpers(makeCtx());
+  const { buildAnalyticsModel, buildAnalyticsRetryLatency, analyticsAttemptRecoveredFailure, analyticsAttemptTiming, analyticsPercentile, analyticsDrillRecords, renderAnalytics } = getHelpers(makeCtx());
   assert.equal(analyticsPercentile([100, 200, 300], 0.95), 300);
   assert.equal(analyticsPercentile([], 0.5), null);
   const t = analyticsAttemptTiming({
@@ -721,6 +721,7 @@ console.log('analytics filter URL and bucket boundary checks passed');
   assert.equal(rl.runOutcomes.succeededAfterRetry, 1);
   assert.equal(rl.runOutcomes.finalFailed, 1);
   assert.equal(rl.runOutcomes.cancelledRuns, 1);
+  assert.equal(rl.runOutcomes.cancelledAttempts, 1, 'cancelled attempts count on terminal cancelled runs');
   assert.equal(rl.runOutcomes.recoveredFailureAttempts, 1);
   assert.equal(rl.runOutcomes.finalFailureAttempts, 1);
   assert.equal(rl.retryOverhead.extraAttempts, 1);
@@ -738,6 +739,27 @@ console.log('analytics filter URL and bucket boundary checks passed');
   assert.match(output.innerHTML, /Succeeded · retried/);
   assert.match(output.innerHTML, /data-analytics-drill="latencyWorkflow:wf-a"/);
   assert.match(output.innerHTML, /href="\/runs\/retry"/);
+
+  const activation = [
+    { id: 'f0', retryNumber: 0, state: 'failed' },
+    { id: 'r1', retryNumber: 1, state: 'running' },
+  ];
+  assert.equal(
+    analyticsAttemptRecoveredFailure(activation[0], activation),
+    false,
+    'failed attempt is not recovered while a later attempt is still running',
+  );
+
+  const wfRuns = [{ id: 'mix', state: 'succeeded', workflowName: 'wf-mix', createdAt: '2026-06-01T00:00:00Z' }];
+  const wfAttempts = [
+    { id: 'timed', activationId: 'a', executor: 'exec-x', retryNumber: 0, state: 'succeeded', executionDurationMs: 120 },
+    { id: 'notimed', activationId: 'b', executor: 'exec-x', retryNumber: 0, state: 'cancelled' },
+  ];
+  const wfMap = new Map([['mix', wfAttempts]]);
+  const wfModel = buildAnalyticsModel(wfRuns, wfMap);
+  const latencyDrill = analyticsDrillRecords(wfModel, 'latencyWorkflow:wf-mix');
+  assert.equal(latencyDrill.length, 1);
+  assert.equal(latencyDrill[0].attempt.id, 'timed');
 }
 console.log('analytics retry latency checks passed');
 
