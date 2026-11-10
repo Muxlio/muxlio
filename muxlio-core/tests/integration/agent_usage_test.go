@@ -42,7 +42,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 		{"agent/antigravity", "agy", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
 {"type":"result","status":"success"}`, reported},
 		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40}}
-{"type":"result","usage":null}`, reported},
+{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}},
 		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
 {"type":"turn.completed","usage":null}`, reported},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}

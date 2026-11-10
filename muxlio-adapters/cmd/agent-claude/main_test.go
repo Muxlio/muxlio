@@ -262,7 +262,7 @@ func TestAgentClaudeAdapterReportsUsageOnSuccess(t *testing.T) {
 	if resp.Usage == nil {
 		t.Fatal("expected non-nil usage from successful result event")
 	}
-	if resp.Usage.Input != 100 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
+	if resp.Usage.Input != 130 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
 		t.Fatalf("usage mismatch: %+v", resp.Usage)
 	}
 }
@@ -312,7 +312,45 @@ func TestAgentClaudeAdapterPreservesUsageOnFailure(t *testing.T) {
 	if resp.Usage == nil {
 		t.Fatal("expected non-nil usage from failed result event that reported usage")
 	}
-	if resp.Usage.Input != 7 || resp.Usage.Output != 3 || resp.Usage.Cached != 2 {
+	if resp.Usage.Input != 9 || resp.Usage.Output != 3 || resp.Usage.Cached != 2 {
+		t.Fatalf("usage mismatch: %+v", resp.Usage)
+	}
+}
+
+func TestAgentClaudeAdapterReportsInclusiveUsageWithCacheCreation(t *testing.T) {
+	bin := buildAgentClaude(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir,
+		"executor":  "agent/claude",
+		"task":      "do nothing",
+		"workDir":   workDir,
+		"nodeId":    "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error string              `json:"error"`
+		Usage *adapter.TokenUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Usage == nil {
+		t.Fatal("expected usage")
+	}
+	if resp.Usage.Input != 170 || resp.Usage.Output != 20 || resp.Usage.Cached != 30 {
 		t.Fatalf("usage mismatch: %+v", resp.Usage)
 	}
 }

@@ -1,10 +1,12 @@
 package conformance_test
 
 import (
-	"github.com/muxlio/muxlio-adapters/conformancetest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/muxlio/muxlio-adapters/conformancetest"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 var bundledAdapters = []conformancetest.Fixture{
@@ -15,7 +17,8 @@ var bundledAdapters = []conformancetest.Fixture{
 		Binary:   "agent-claude",
 		CLIName:  "claude",
 		// stream-json: result event with usage + text; Claude needs a result event to complete.
-		SuccessStream: `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40},"result":"All done."}`,
+		SuccessStream:   `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40},"result":"All done."}`,
+		ExpectedUsage: &contract.TokenUsage{Input: 160, Output: 30, Cached: 40},
 	},
 	{
 		Executor: "agent/codex",

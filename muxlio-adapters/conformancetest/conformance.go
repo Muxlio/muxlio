@@ -30,6 +30,8 @@ type Fixture struct {
 	RawOutput        bool
 	// UsageUnavailable separates structured protocols without token usage from raw stdout.
 	UsageUnavailable bool
+	// ExpectedUsage overrides the default bundled success usage assertion when set.
+	ExpectedUsage *contract.TokenUsage
 	// Script and CancelScript supply interactive provider fixtures when needed.
 	Script          func(stream, stderr string, code int, scratch string) string
 	CancelScript    string
@@ -122,8 +124,14 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 							if resp.Usage != nil {
 								t.Fatal("usage must be unavailable")
 							}
-						} else if resp.Usage == nil || !resp.Usage.Equal(contract.TokenUsage{Input: 120, Output: 30, Cached: 40}) {
-							t.Fatalf("usage = %+v", resp.Usage)
+						} else {
+							want := contract.TokenUsage{Input: 120, Output: 30, Cached: 40}
+							if f.ExpectedUsage != nil {
+								want = *f.ExpectedUsage
+							}
+							if resp.Usage == nil || !resp.Usage.Equal(want) {
+								t.Fatalf("usage = %+v", resp.Usage)
+							}
 						}
 					}
 					if tc.name == "crash" && resp.Usage != nil {

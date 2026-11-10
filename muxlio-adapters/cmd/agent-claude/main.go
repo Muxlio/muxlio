@@ -141,7 +141,7 @@ func main() {
 			}
 		case "result":
 			completed = true
-			if reported := adapter.ParseTokenUsage(ev["usage"]); reported != nil {
+			if reported := parseClaudeTokenUsage(ev["usage"]); reported != nil {
 				usage = reported
 			}
 			// Collect final text if not already streamed.
