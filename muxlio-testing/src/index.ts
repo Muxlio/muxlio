@@ -126,8 +126,15 @@ export async function testWorkflow(
       // malformed output remain harness errors rather than execution states.
       const failed = error as { stdout?: string };
       if (!failed.stdout) throw error;
-      const result = JSON.parse(failed.stdout);
-      if (typeof result.runId !== 'string' || typeof result.state !== 'string') throw error;
+      let result: unknown;
+      try {
+        result = JSON.parse(failed.stdout);
+      } catch {
+        throw error;
+      }
+      if (!result || typeof result !== 'object') throw error;
+      const record = result as Record<string, unknown>;
+      if (typeof record.runId !== 'string' || record.state !== 'failed') throw error;
       stdout = failed.stdout;
     }
     const result = JSON.parse(stdout);
