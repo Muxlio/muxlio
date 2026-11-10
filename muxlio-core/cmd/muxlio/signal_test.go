@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func TestSignalAcceptsTokenFlags(t *testing.T) {
+	var gotAuth string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"delivered":true}`))
+	}))
+	defer s.Close()
+	code := cmdSignal([]string{"run-1", "--name", "sig", "--server", s.URL, "--token", "cli-secret"}, "")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if gotAuth != "Bearer cli-secret" {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+}
+
 func TestSignalInputRequests(t *testing.T) {
 	calls := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

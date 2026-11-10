@@ -14,7 +14,9 @@ import (
 
 func cmdSignal(args []string, dataDir string) int {
 	fs := flag.NewFlagSet("signal", flag.ContinueOnError)
-	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL")
+	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile name")
+	tokenFlag := fs.String("token", "", "bearer authentication token")
+	tokenFile := fs.String("token-file", "", "file containing bearer authentication token")
 	name := fs.String("name", "", "signal name to deliver")
 	requestID := fs.String("request-id", "", "durable input request ID to respond to")
 	list := fs.Bool("list-requests", false, "list durable input requests")
@@ -29,10 +31,14 @@ func cmdSignal(args []string, dataDir string) int {
 		return 2
 	}
 	runID := fs.Arg(0)
-	serverURL, token, err := resolveServer(*server, dataDir)
+	serverURL, profileToken, err := resolveServer(*server, dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
+	}
+	token := loadToken(*tokenFlag, *tokenFile)
+	if token == "" {
+		token = profileToken
 	}
 
 	payload := []byte("{}")

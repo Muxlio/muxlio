@@ -61,6 +61,29 @@ func TestCLIRunAcceptsServerAfterPositionals(t *testing.T) {
 	}
 }
 
+func TestCLISignalAcceptsGlobalTokenBeforeCommand(t *testing.T) {
+	if os.Getenv("MUXLIO_TEST_CLI") == "1" {
+		return
+	}
+	var gotAuth string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"delivered":true}`))
+	}))
+	defer s.Close()
+
+	bin := os.Args[0]
+	cmd := exec.Command(bin, "-test.run=^TestCLIProcess$", "--", "--token", "global-tok", "--server", s.URL, "signal", "run-1", "--name", "sig")
+	cmd.Env = append(os.Environ(), "MUXLIO_TEST_CLI=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("global --token before signal: %v\n%s", err, out)
+	}
+	if gotAuth != "Bearer global-tok" {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+}
+
 func TestCLIStatusAcceptsGlobalFlagsBeforeCommand(t *testing.T) {
 	if os.Getenv("MUXLIO_TEST_CLI") == "1" {
 		return

@@ -19,6 +19,29 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
+func TestTestEventAcceptsForwardedTokenFlags(t *testing.T) {
+	dir := t.TempDir()
+	secretFile := filepath.Join(dir, "secret")
+	payloadFile := filepath.Join(dir, "payload.json")
+	if err := os.WriteFile(secretFile, []byte("0123456789abcdef"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payloadFile, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Flags are accepted for compatibility with global muxlio client options.
+	code := cmdTestEvent([]string{
+		"--token", "unused",
+		"--token-file", filepath.Join(dir, "missing"),
+		"--server", "http://127.0.0.1:9",
+		"--secret-file", secretFile,
+		"trigger", payloadFile,
+	}, "")
+	if code == 2 {
+		t.Fatal("forwarded --token/--token-file must parse")
+	}
+}
+
 func TestWebhookStartsAndExecutesPinnedRun(t *testing.T) {
 	s, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
 	if err != nil {

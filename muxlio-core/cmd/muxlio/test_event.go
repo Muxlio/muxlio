@@ -23,6 +23,8 @@ import (
 func cmdTestEvent(args []string, dataDir string) int {
 	fs := flag.NewFlagSet("test-event", flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile")
+	fs.String("token", "", "bearer authentication token (ignored; webhook uses trigger secret)")
+	fs.String("token-file", "", "file containing bearer authentication token (ignored)")
 	secretFile := fs.String("secret-file", "", "file containing trigger HMAC secret")
 	key := fs.String("idempotency-key", "", "delivery idempotency key")
 	header := fs.String("signature-header", trigger.DefaultSignatureHeader, "signature header")
