@@ -1284,6 +1284,35 @@ func (s *mcpServer) send(resp jsonRPCResponse) {
 	_ = s.enc.Encode(resp)
 }
 
+func (s *mcpServer) handleTransportLine(line []byte) {
+	message, response, code, detail := decodeHTTPMessage(line)
+	if code != 0 {
+		s.send(jsonRPCResponse{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error:   &jsonRPCError{Code: code, Message: detail},
+		})
+		return
+	}
+	if response {
+		return
+	}
+	if message.Method == "initialize" {
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := json.Unmarshal(message.Params, &params); err != nil || params.ProtocolVersion == "" {
+			s.send(jsonRPCResponse{
+				JSONRPC: "2.0",
+				ID:      message.ID,
+				Error:   &jsonRPCError{Code: -32602, Message: "initialize requires protocolVersion"},
+			})
+			return
+		}
+	}
+	s.handle(message)
+}
+
 func (s *mcpServer) handle(msg jsonRPCRequest) {
 	meta, rpcErr := requestMetadata(msg.Params, s.transportVersion)
 	if rpcErr != nil {
@@ -1423,18 +1452,7 @@ func Main() {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var msg jsonRPCRequest
-		if err := json.Unmarshal(line, &msg); err != nil {
-			// Malformed message: emit a parse error response with null ID.
-			srv.send(jsonRPCResponse{
-				JSONRPC: "2.0",
-				ID:      nil,
-				Error:   &jsonRPCError{Code: -32700, Message: "parse error: " + err.Error()},
-			})
-			continue
-		}
-		msg.JSONRPC = "2.0"
-		srv.handle(msg)
+		srv.handleTransportLine(line)
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(os.Stderr, "muxlio-mcp: read error:", err)

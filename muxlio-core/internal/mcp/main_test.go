@@ -520,7 +520,7 @@ func TestMCPInitialize(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`1`),
 		Method:  "initialize",
-		Params:  json.RawMessage(`{}`),
+		Params:  json.RawMessage(`{"protocolVersion":"` + mcpProtocolVersion + `","capabilities":{},"clientInfo":{"name":"test","version":"1"}}`),
 	}
 	srv.handle(req)
 
