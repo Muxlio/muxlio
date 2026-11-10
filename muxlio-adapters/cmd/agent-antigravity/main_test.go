@@ -290,6 +290,74 @@ func TestAgentAntigravityAdapterMessageEventUsesNestedMessage(t *testing.T) {
 	}
 }
 
+func TestAgentAntigravityAdapterAggregatesInterruptedStepUsage(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"init","conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a"}'` + "\n" +
+		`echo '{"event":"step_update","step_update":{"conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a","step_index":3,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":10302,"output_tokens":582,"thinking_tokens":551,"cache_read_tokens":8113,"total_tokens":10884}}}'` + "\n" +
+		`echo '{"event":"step_update","step_update":{"conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a","step_index":4,"state":"DONE","step_type":"checkpoint","usage":{"input_tokens":116,"output_tokens":7,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":123}}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error string              `json:"error"`
+		Usage *adapter.TokenUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	if resp.Error == "" || !strings.Contains(resp.Error, "stream ended without a completion event") {
+		t.Fatalf("expected interrupted stream error, got %q", resp.Error)
+	}
+	if resp.Usage == nil || resp.Usage.Input != 10418 || resp.Usage.Output != 589 || resp.Usage.Cached != 8113 {
+		t.Fatalf("usage = %+v, want input=10418 output=589 cached=8113", resp.Usage)
+	}
+}
+
+func TestAgentAntigravityAdapterStepUsageUsesTerminalResultTotals(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"step_update","step_update":{"conversation_id":"c1","step_index":3,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":10302,"output_tokens":582,"cache_read_tokens":8113}}}'` + "\n" +
+		`echo '{"event":"step_update","step_update":{"conversation_id":"c1","step_index":4,"state":"DONE","step_type":"checkpoint","usage":{"input_tokens":116,"output_tokens":7,"cache_read_tokens":0}}}'` + "\n" +
+		`echo '{"event":"result","result":{"status":"SUCCESS","response":"ok","usage":{"input_tokens":10418,"output_tokens":589,"cache_read_tokens":8113}}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error string              `json:"error"`
+		Usage *adapter.TokenUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	if resp.Usage == nil || resp.Usage.Input != 10418 || resp.Usage.Output != 589 || resp.Usage.Cached != 8113 {
+		t.Fatalf("usage = %+v, want terminal cumulative totals", resp.Usage)
+	}
+}
+
 func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()

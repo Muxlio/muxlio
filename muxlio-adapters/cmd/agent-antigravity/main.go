@@ -101,6 +101,7 @@ func main() {
 	var runErr string
 	var completed bool
 	var usage *adapter.TokenUsage
+	var stepUsage stepUsageTracker
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -162,11 +163,13 @@ func main() {
 					}
 				}
 			}
+			var reported *adapter.TokenUsage
 			if u := adapter.ParseTokenUsage(ev["usage"]); u != nil {
-				usage = u
+				reported = u
 			} else if u := adapter.ParseTokenUsage(ev["stats"]); u != nil {
-				usage = u
+				reported = u
 			}
+			usage = mergeTerminalUsage(usage, reported)
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "response", "text", "content"} {
 				var s string
@@ -220,20 +223,29 @@ func main() {
 			}
 		case "step_update":
 			var update struct {
-				TextDelta string          `json:"text_delta"`
-				Usage     json.RawMessage `json:"usage"`
+				ConversationID string          `json:"conversation_id"`
+				StepIndex      int             `json:"step_index"`
+				State          string          `json:"state"`
+				TextDelta      string          `json:"text_delta"`
+				Usage          json.RawMessage `json:"usage"`
 			}
 			if json.Unmarshal(ev["step_update"], &update) == nil {
 				if update.TextDelta != "" {
 					adapter.CaptureAgentText(&textChunks, update.TextDelta)
 				}
-				if u := adapter.ParseTokenUsage(update.Usage); u != nil {
-					usage = u
+				var err error
+				usage, err = accumulateStepUsage(usage, &stepUsage, update.ConversationID, update.StepIndex, update.State, update.Usage)
+				if err != nil {
+					runErr = appendFailure(runErr, formatUsageErr(err))
 				}
 			}
 		case "usage":
 			if u := adapter.ParseTokenUsage(json.RawMessage(line)); u != nil {
-				usage = u
+				var err error
+				usage, err = addTokenUsage(usage, u)
+				if err != nil {
+					runErr = appendFailure(runErr, formatUsageErr(err))
+				}
 			}
 		case "completion", "done":
 			completed = true
