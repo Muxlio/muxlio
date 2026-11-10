@@ -4,9 +4,10 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const format=readFileSync(new URL('./js/format.js',import.meta.url),'utf8');
+const usage=readFileSync(new URL('./js/usage-summary.js',import.meta.url),'utf8');
 const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
 const hub=readFileSync(new URL('./js/operations-hub.js',import.meta.url),'utf8');
-const helpers=vm.runInNewContext(`${format}\n${operations}\n${hub};({evidenceDocument,reportRows,evidenceMarkup,hubUsage,hubClientPage,comparisonMarkup,attemptRowMarkup})`,{
+const helpers=vm.runInNewContext(`${format}\n${usage}\n${operations}\n${hub};({evidenceDocument,reportRows,evidenceMarkup,hubUsage,hubClientPage,comparisonMarkup,attemptRowMarkup})`,{
  document:{addEventListener(){},getElementById(){return null}},loadWorkers(){},showWbTab(){},
  esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),stateClass:()=>'',date:String,current:null
 });

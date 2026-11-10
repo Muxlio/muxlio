@@ -25,23 +25,6 @@ function sumRunTokenUsage(attempts){
   return anyReported?dims:null;
 }
 
-function tokenDimensionCoverage(dimensions,dimension,attempts,runState){
-  if(!dimensions)return '';
-  const row=dimensions[dimension]||{};
-  const reported=row.reporting??0;
-  const pending=dimensions.coverage?.pending??0;
-  const accountable=(dimensions.coverage?.attempts??attempts) - pending;
-  if(reported<=0){
-    if(pending>0&&['running','queued','waiting','paused'].includes(runState))return ` · pending (${pending} ${pending===1?'attempt':'attempts'})`;
-    return '';
-  }
-  const coverage=accountable>0&&reported<accountable?` · ${reported}/${accountable} attempts`:'';
-  const pendingNote=pending>0&&['running','queued','waiting','paused'].includes(runState)?` · ${pending} pending`:'';
-  return coverage+pendingNote;
-}
-
-// Round token counts using the largest readable compact unit.
-
 // Prefer worker measurements; older attempts retain coordinator timestamps.
 // Sum attempt durations individually so parallel work and retries are included.
 function sumExecutionTime(attempts){
@@ -64,36 +47,27 @@ function sumExecutionTime(attempts){
 function buildWbStats(r,acts){
   const total=r.overview?.activations??acts.length,done=r.overview?.completed??acts.filter(a=>a.state==='succeeded').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
-  const dimensions=r.overview?.usage?.tokenDimensions??r.usage?.tokenDimensions;
+  const usage=r.overview?.usage??r.usage;
+  const dimensions=usage?.tokenDimensions;
   const attemptCount=r.overview?.attempts??dimensions?.coverage?.attempts??attempts.length;
-  const fallbackUsage=r.overview?.tokens??sumRunTokenUsage(attempts);
-  // The full-run endpoint carries the shared UsageSummary at r.usage. Prefer
-  // its per-dimension subtotals so initial workbench renders match summary API.
-  const usage=dimensions?{
-    input:dimensions.input?.observed??null,
-    output:dimensions.output?.observed??null,
-    cached:dimensions.cached?.observed??null,
-  }:fallbackUsage;
+  const legacyTotals=r.overview?.tokens;
+  const fallbackUsage=legacyTotals&&typeof legacyTotals.input==='number'?legacyTotals:(dimensions?null:sumRunTokenUsage(attempts));
   const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
-  const hasAttempts=attemptCount>0;
-  const tokenValue=(field)=>{
-    if(!hasAttempts)return '—';
-    const value=usage?.[field];
-    return value!=null?fmtTokens(value):'Unavailable';
-  };
-  const tokenStats=['input','output','cached'].map(field=>({
-    val:tokenValue(field),
-    label:`${field==='cached'?'Cached':field[0].toUpperCase()+field.slice(1)} tokens${tokenDimensionCoverage(dimensions,field,attemptCount,r.state)}`,
-  }));
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
     {val:formatElapsed(r.createdAt,elapsedEnd),label:'Elapsed time',cls:''},
     {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:'',title:'Sum across execution attempts, including retries and parallel tasks. Uses worker durations when recorded; older attempts use coordinator start and finish times, which can include dispatch overhead.'},
   ];
-  return stats.map(s=>`<div class="stat"${s.title?` title="${esc(s.title)}"`:''}><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('')+
-    tokenStats.map(s=>`<div class="stat"><div class="stat-val">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
+  const progress=stats.map(s=>`<div class="stat"${s.title?` title="${esc(s.title)}"`:''}><div class="stat-val ${s.cls}">${esc(s.val)}</div><div class="stat-label">${esc(s.label)}</div></div>`).join('');
+  const presentation=buildUsagePresentation(usage||{},{
+    attemptCount,
+    runState:r.state,
+    runError:r.error,
+    fallbackTokens:fallbackUsage,
+  });
+  return progress+buildWorkbenchUsageMarkup(presentation,{linkAttempts:attemptCount>0||!!attempts.length});
 }
 
 function graphMarkup(acts,scopes,runComplete){

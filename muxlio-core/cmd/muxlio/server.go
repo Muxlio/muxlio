@@ -588,6 +588,7 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			"/js/json.js":           "js/json.js",
 			"/js/core.js":           "js/core.js",
 			"/js/format.js":         "js/format.js",
+			"/js/usage-summary.js":  "js/usage-summary.js",
 			"/js/workbench.js":      "js/workbench.js",
 			"/js/inspector.js":      "js/inspector.js",
 			"/js/live.js":           "js/live.js",

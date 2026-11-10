@@ -52,9 +52,10 @@ assert.ok(calls.some(path=>path.includes('/outputs?offset=50')),'artifact pages 
 assert.equal(renders.at(-1).graph.activations.length,10000,'paging history never truncates the graph');
 
 const format=readFileSync(new URL('./js/format.js',import.meta.url),'utf8');
+const usage=readFileSync(new URL('./js/usage-summary.js',import.meta.url),'utf8');
 const operations=readFileSync(new URL('./js/operations.js',import.meta.url),'utf8');
 const opsContext=vm.createContext({document:{addEventListener(){},getElementById:panel},esc:s=>String(s).replaceAll('<','&lt;'),fmtDuration:String,date:String,stateClass:String,activationData:[{id:'activation',nodeId:'find-and-fix'}]});
-vm.runInContext(format+'\n'+operations,opsContext);
+vm.runInContext(format+'\n'+usage+'\n'+operations,opsContext);
 opsContext.renderRunOperations({id:'large-run',planDigest:'sha256:pinned',limits:{maxAttempts:100},overview:{attempts:20,heldAttempts:1,attemptStates:{detached:2,awaiting_reconciliation:1},usage:{tokens:{observed:0,unknown:2},costUsd:{estimated:1}}}});
 assert.match(panel('runAttention').innerHTML,/need reconciliation/);
 assert.match(panel('runAttention').innerHTML,/2 remote operations/);

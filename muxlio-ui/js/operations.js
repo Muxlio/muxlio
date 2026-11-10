@@ -1,22 +1,6 @@
 // Run operations use the shared executor contract. States and capabilities are
 // shown as reported, independently of the adapter providing them.
 let operationsOffset=0,operationsRun=null,operationsRequest=0;
-function usageCardMarkup(label,value,format,extraRows=[]){
- const rows=[['Observed',value?.observed],['Estimated',value?.estimated],...extraRows];
- const pending=value?.pending>0?`<div class="usage-coverage"><dt>Pending attempts</dt><dd>${esc(value.pending)}</dd></div>`:'';
- const reporting=Number.isInteger(value?.reporting)&&value.reporting>=0?`<div class="usage-coverage"><dt>Reporting attempts</dt><dd>${esc(value.reporting)}</dd></div>`:'';
- return `<section class="usage-card"><h3>${esc(label)}</h3><dl>${rows.map(([name,total])=>`<div><dt>${name}</dt><dd>${esc(total==null?'Unavailable':format(total))}</dd></div>`).join('')}<div class="usage-coverage"><dt>Unreported attempts</dt><dd>${esc(Number.isInteger(value?.unknown)&&value.unknown>=0?value.unknown:'Unavailable')}</dd></div>${pending}${reporting}</dl></section>`;
-}
-function tokenDimensionRows(dimensions){
- if(!dimensions)return [];
- const note=(row)=>{
-  if(!row||row.reporting<=0)return '';
-  const accountable=(dimensions.coverage?.attempts??0)-(dimensions.coverage?.pending??0);
-  return accountable>0&&row.reporting<accountable?` (${row.reporting}/${accountable} attempts)`:'';
- };
- return [['Input subtotal',dimensions.input?.observed,note(dimensions.input)],['Output subtotal',dimensions.output?.observed,note(dimensions.output)],['Cached subtotal',dimensions.cached?.observed,note(dimensions.cached)]]
-   .map(([name,total,suffix])=>[`${name}${suffix}`,total]);
-}
 function attemptRowMarkup(a){
  const validation=a.result?.validationFailure,outcome=a.awaitReconciliationReason||validation?.message||a.failure||(a.result?.executionSucceeded?'Executor completed':'');
  const activation=typeof activationData!=='undefined'?(activationData||[]).find(item=>item.id===a.activationId):null;
@@ -37,9 +21,7 @@ function renderRunOperations(run){
  const panel=document.getElementById('runContract');if(!panel)return;
  const limits=run.limits||{};
  const rows=[['Plan version',run.planDigest||'Unavailable'],['End-to-end deadline',run.deadlineSeconds?date(new Date(Date.parse(run.createdAt)+run.deadlineSeconds*1000)):'No deadline'],['Attempts',`${overview.attempts??0}${limits.maxAttempts!=null?' / '+limits.maxAttempts:''}`],['Activations',`${overview.activations??0}${limits.maxActivations!=null?' / '+limits.maxActivations:''}`],['Active attempt limit',limits.maxActiveAttempts??'Unlimited'],['Token limit',limits.maxTokens!=null?fmtTokens(limits.maxTokens):'Unlimited'],['Cost limit',limits.maxCostUsd!=null?'$'+limits.maxCostUsd:'Unlimited'],['Missing usage policy',limits.missingUsage||'fail-closed'],['Retention',run.pinned?'Pinned':run.retainedUntil?`Retained until ${date(run.retainedUntil)}`:'Service retention policy']];
- const creditCards=(overview.usage?.credits||[]).map(row=>usageCardMarkup(`Credits (${row.unit||'unit unavailable'})`,row,fmtCredits)).join('');
- const tokenExtras=tokenDimensionRows(overview.usage?.tokenDimensions).map(([name,total])=>[name,total]);
- const markup=`<div class="operations-summary"><div class="operations-heading"><div><h2>Usage</h2><p class="subtle">Across ${esc(overview.attempts??0)} attempts. Observed values were reported by executors; estimates were supplied by executors. Provider credits use executor-reported units and are not converted into tokens or cost. Unreported attempts have neither value. Pending attempts are excluded from coverage. Totals can be incomplete.</p></div><div class="operation-states">${Object.entries(states).map(([state,count])=>`<span class="state ${esc(stateClass(state))}">${esc(state)} · ${esc(count)}</span>`).join('')}</div></div><div class="usage-grid">${usageCardMarkup('Tokens',overview.usage?.tokens,fmtTokens,tokenExtras)}${usageCardMarkup('Cost',overview.usage?.costUsd,fmtCostUsd)}${creditCards}</div></div>`;
+ const markup=buildOperationsUsageSectionMarkup(overview.usage,overview.attempts??0,states);
  if(typeof replaceHTMLPreservingDetails==="function")replaceHTMLPreservingDetails(panel,markup);else panel.innerHTML=markup;
  const settings=document.getElementById('runSettings');if(settings){const html=`<details class="execution-contract" data-preserve-key="execution-contract"><summary>Execution settings <span>Limits, retention and pinned plan</span></summary><dl class="contract-fields">${rows.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${run.fork?`<p>Forked from <a href="#run/${encodeURIComponent(run.fork.sourceRunId)}">${esc(run.fork.sourceRunId)}</a> · ${run.fork.reuseActivations?.length||0} selected reuse candidates</p>`:''}</details>`;if(typeof replaceHTMLPreservingDetails==='function')replaceHTMLPreservingDetails(settings,html);else settings.innerHTML=html;}
  if(typeof wbActiveTab!=='undefined'&&wbActiveTab==='operations')loadRunOperations();
