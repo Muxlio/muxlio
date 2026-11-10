@@ -1,0 +1,12 @@
+{
+  "byNode": {
+    "submit-remote": {
+      "outputs": {
+        "result": {
+          "digest": "sha256:fake-a2a-result",
+          "mime": "application/json"
+        }
+      }
+    }
+  }
+}

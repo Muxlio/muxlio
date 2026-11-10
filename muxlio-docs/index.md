@@ -72,11 +72,12 @@ Follow a run in the UI at `http://localhost:7600` or ask your assistant for its 
 
 <div class="home-section-heading"><div><span class="section-kicker">EXPLORE MUXLIO</span><h2>Guides and reference</h2></div></div>
 <div class="path-grid">
-  <a class="path-card" href="service/"><span class="path-number">01</span><span><strong>Service Guide</strong><small>Set up a workspace and start the service.</small></span><span class="path-arrow">↗</span></a>
-  <a class="path-card" href="mcp/"><span class="path-number">02</span><span><strong>MCP Integration</strong><small>Connect an assistant and build your workflow.</small></span><span class="path-arrow">↗</span></a>
-  <a class="path-card" href="ui-operations/"><span class="path-number">03</span><span><strong>Observability UI</strong><small>Follow progress, read reports, and inspect results.</small></span><span class="path-arrow">↗</span></a>
-  <a class="path-card" href="benchmarks/"><span class="path-number">04</span><span><strong>Benchmarks</strong><small>Understand what the reference suite measures.</small></span><span class="path-arrow">↗</span></a>
-  <a class="path-card" href="architecture/overview/"><span class="path-number">05</span><span><strong>Architecture &amp; reference</strong><small>Execution contracts, tools, configuration, and security.</small></span><span class="path-arrow">↗</span></a>
-  <a class="path-card" href="https://github.com/Muxlio/muxlio/tree/main/recipes/implement-features"><span class="path-number">06</span><span><strong>Implement-features recipe</strong><small>Read the workflow, tasks, and example inputs.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="adapters/"><span class="path-number">01</span><span><strong>Choosing an adapter</strong><small>Native CLIs, ACP local agents, and A2A remote services.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="service/"><span class="path-number">02</span><span><strong>Service Guide</strong><small>Set up a workspace and start the service.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="mcp/"><span class="path-number">03</span><span><strong>MCP Integration</strong><small>Connect an assistant and build your workflow.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="ui-operations/"><span class="path-number">04</span><span><strong>Observability UI</strong><small>Follow progress, read reports, and inspect results.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="benchmarks/"><span class="path-number">05</span><span><strong>Benchmarks</strong><small>Understand what the reference suite measures.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="architecture/overview/"><span class="path-number">06</span><span><strong>Architecture &amp; reference</strong><small>Execution contracts, tools, configuration, and security.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="https://github.com/Muxlio/muxlio/tree/main/recipes/implement-features"><span class="path-number">07</span><span><strong>Implement-features recipe</strong><small>Read the workflow, tasks, and example inputs.</small></span><span class="path-arrow">↗</span></a>
 </div>
 <p class="home-readme">Build your own workflows with the <a href="architecture/developer-reference/">CLI and SDK reference ↗</a></p>

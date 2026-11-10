@@ -100,6 +100,7 @@ muxlio service restart
 
 | Start here | Go deeper |
 | --- | --- |
+| [Which adapter should I use?](muxlio-docs/adapters.md) — native CLIs, ACP, and A2A | [Adapter capability reference](muxlio-docs/architecture/developer-reference.md#run-with-real-adapters) |
 | [Service Guide](muxlio-docs/service.md) — setup and service controls | [Service reference](muxlio-docs/architecture/service-reference.md) |
 | [MCP Integration](muxlio-docs/mcp.md) — build and run from your assistant | [MCP tools and protocol](muxlio-docs/architecture/mcp-reference.md) |
 | [Observability UI](muxlio-docs/ui-operations.md) — follow progress and results | [Operations API](muxlio-docs/architecture/operations-reference.md) |

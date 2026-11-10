@@ -177,6 +177,9 @@ With no `--adapters`, `run` uses the fake executor, which generates placeholder 
 
 ### A small local authoring loop
 
+`examples/acp.workflow.ts` and `examples/a2a.workflow.ts` are minimal ACP and A2A
+workflows with fake-config dry runs; see [Which adapter should I use?](../adapters.md).
+
 `examples/local.workflow.ts` mixes an inline command task with an inline agent
 summary task. From a built checkout, check the bindings, fake-run the same plan,
 and inspect its persisted result:
@@ -207,6 +210,10 @@ for its graph, queue reason, attempts, and artifacts. `muxlio cancel RUN_ID
 http://127.0.0.1:7600` continues a paused run.
 
 ### Run with real adapters
+
+For a capability comparison, decision guide, and minimal ACP/A2A examples, see
+[Which adapter should I use?](../adapters.md). The subsections below are the
+authoritative reference for configuration and limitations.
 
 After `npm run setup` or `build-release.sh`, adapters live under `~/.muxlio/libexec/muxlio/adapters` (see `muxlio env`). Point `run` at that directory with an absolute workspace:
 

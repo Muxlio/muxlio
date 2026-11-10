@@ -5,6 +5,8 @@ on:
     branches: ["main"]
     paths:
       - "muxlio-docs/**"
+      - "examples/acp.*"
+      - "examples/a2a.*"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
       - ".github/requirements-docs.txt"
@@ -12,6 +14,8 @@ on:
     branches: ["main"]
     paths:
       - "muxlio-docs/**"
+      - "examples/acp.*"
+      - "examples/a2a.*"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
       - ".github/requirements-docs.txt"

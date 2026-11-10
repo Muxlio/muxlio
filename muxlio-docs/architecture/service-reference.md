@@ -445,4 +445,5 @@ Task/context references survive local adapter exit; polls and reconciliation
 query the known task without repeating submission. Streaming reconnects by task
 ID and fetches a complete snapshot to recover missed artifacts. Unknown
 submission outcomes without task IDs remain inconclusive; no provider-side
-idempotency is claimed. See the [adapter configuration and limitations](developer-reference.md#run-with-real-adapters).
+idempotency is claimed. See [Which adapter should I use?](../adapters.md) and the
+[adapter configuration and limitations](developer-reference.md#run-with-real-adapters).

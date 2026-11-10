@@ -1,0 +1,12 @@
+{
+  "byNode": {
+    "run-acp-agent": {
+      "outputs": {
+        "answer": {
+          "digest": "sha256:fake-acp-answer",
+          "mime": "application/json"
+        }
+      }
+    }
+  }
+}

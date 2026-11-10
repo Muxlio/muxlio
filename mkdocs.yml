@@ -55,6 +55,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Choosing an adapter: adapters.md
   - Service Guide: service.md
   - MCP Integration: mcp.md
   - Observability UI: ui-operations.md
