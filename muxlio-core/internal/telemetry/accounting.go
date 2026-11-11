@@ -28,14 +28,17 @@ func UsageMetrics(ctx context.Context, a *contract.Accounting) {
 	}
 	provider := ""
 	for _, e := range a.Entries {
-		if e.Tokens == nil {
+		if e.Tokens == nil || e.Provider == "" {
 			continue
 		}
-		if e.Provider == "" || (provider != "" && provider != e.Provider) {
+		if provider == "" {
+			provider = e.Provider
+			continue
+		}
+		if provider != e.Provider {
 			provider = "unknown"
 			break
 		}
-		provider = e.Provider
 	}
 	if provider == "" {
 		provider = "unknown"

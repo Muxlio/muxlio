@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -99,5 +100,63 @@ func TestUsageMetricsSeparateCollectedEstimatesAndSubsets(t *testing.T) {
 	}
 	if len(seen) != len(want) || estimates != 5 || costs != 1 {
 		t.Fatalf("missing metric families: collected=%v estimates=%d costs=%d", seen, estimates, costs)
+	}
+}
+
+func TestUsageMetricsProviderNameFromTokenEntries(t *testing.T) {
+	old := otel.GetMeterProvider()
+	defer otel.SetMeterProvider(old)
+
+	measure := func(n contract.Count) contract.Measure[contract.Count] {
+		return contract.Measure[contract.Count]{Collected: &contract.Reading[contract.Count]{Value: n, Source: "fixture", Fidelity: "metered"}}
+	}
+	tokens := &contract.TokenMeasures{Input: measure("1"), Output: measure("1")}
+	coverage := []contract.MeterCoverage{{Key: contract.AccountingKey{Kind: "tokens"}, State: "complete"}}
+
+	for _, tc := range []struct {
+		providers []string
+		want      string
+	}{
+		{[]string{"", "anthropic"}, "anthropic"},
+		{[]string{"anthropic", ""}, "anthropic"},
+		{[]string{"anthropic", "anthropic"}, "anthropic"},
+		{[]string{"anthropic", "openai"}, "unknown"},
+	} {
+		t.Run(fmt.Sprintf("%v", tc.providers), func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+			otel.SetMeterProvider(provider)
+			defer provider.Shutdown(context.Background())
+
+			entries := make([]contract.AccountingEntry, len(tc.providers))
+			for i, name := range tc.providers {
+				entries[i] = contract.AccountingEntry{ID: fmt.Sprintf("call-%d", i), Provider: name, Tokens: tokens}
+			}
+			UsageMetrics(context.Background(), &contract.Accounting{Revision: 1, Final: true, Entries: entries, Coverage: coverage})
+			var result metricdata.ResourceMetrics
+			if err := reader.Collect(context.Background(), &result); err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			for _, scope := range result.ScopeMetrics {
+				for _, m := range scope.Metrics {
+					sum, ok := m.Data.(metricdata.Sum[int64])
+					if !ok || len(sum.DataPoints) == 0 {
+						continue
+					}
+					for _, attr := range sum.DataPoints[0].Attributes.ToSlice() {
+						if string(attr.Key) == "gen_ai.provider.name" {
+							got = attr.Value.AsString()
+						}
+					}
+					if got != "" {
+						break
+					}
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("gen_ai.provider.name: got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
