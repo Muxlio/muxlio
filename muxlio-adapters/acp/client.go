@@ -272,8 +272,7 @@ func (c *Client) Execute(ctx context.Context, cwd, prompt string) error {
 	}
 	c.session = session.ID
 	if c.ModelSelected != nil {
-		raw, _ := json.Marshal(map[string]json.RawMessage{"configOptions": session.ConfigOptions})
-		for _, model := range SelectedModels(raw) {
+		for _, model := range selectedModelsAtSessionSetup(session.ConfigOptions, c.pendingUpdates) {
 			c.ModelSelected(model)
 		}
 	}

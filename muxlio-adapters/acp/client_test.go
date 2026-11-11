@@ -168,6 +168,21 @@ func TestCancellationWithBlockedWriter(t *testing.T) {
 	}
 }
 
+func TestModelSelectedFromPendingConfigOptionUpdate(t *testing.T) {
+	pre := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session","update":{"sessionUpdate":"config_option_update","configOptions":[{"category":"model","currentValue":"from-pending"}]}}}` + "\n"
+	stream := initialized + "\n" + pre + sessionCreated + "\n" + complete + "\n"
+	var requests bytes.Buffer
+	var models []string
+	client := New(strings.NewReader(stream), &requests)
+	client.ModelSelected = func(id string) { models = append(models, id) }
+	if err := client.Execute(context.Background(), "/workspace", "prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "from-pending" {
+		t.Fatalf("model selection from pre-response update lost: %v", models)
+	}
+}
+
 // JSON numbers may use equivalent encodings on the wire.
 func TestResponseIDFormats(t *testing.T) {
 	for name, completeLine := range map[string]string{
