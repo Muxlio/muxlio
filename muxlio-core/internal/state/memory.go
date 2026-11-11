@@ -724,6 +724,15 @@ func (s *Memory) CancelRunWork(runID string) error {
 	return nil
 }
 
+func preserveAwaitReconciliationReasonOnReplay(state string) bool {
+	switch state {
+	case "failed", "succeeded", "cancelled", "resolved":
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	if a.OperationRef != nil {
 		ref := *a.OperationRef
@@ -790,6 +799,12 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 			}
 			if a.ExecutionDurationMS == nil {
 				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
+			}
+			if a.StartedAt.IsZero() {
+				a.StartedAt = s.attempts[i].StartedAt
+			}
+			if a.AwaitReconciliationReason == "" && preserveAwaitReconciliationReasonOnReplay(a.State) {
+				a.AwaitReconciliationReason = s.attempts[i].AwaitReconciliationReason
 			}
 
 			if a.Accounting == nil {
