@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/telemetry"
@@ -175,6 +178,70 @@ func TestScriptTelemetryPreservesExecutorCancellationContext(t *testing.T) {
 	result, err := executor.Execute(ExecuteRequest{Executor: "generic"})
 	if err != nil || !strings.Contains(result.Error, "cancelled") {
 		t.Fatalf("executor context lost: %v, %s", err, result.Error)
+	}
+}
+
+func TestRemoteWorkerAttemptTelemetryReportsAccounting(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	defer otel.SetTracerProvider(old)
+	defer provider.Shutdown(context.Background())
+
+	m := func(n contract.Count) contract.Measure[contract.Count] {
+		return contract.Measure[contract.Count]{Collected: &contract.Reading[contract.Count]{Value: n, Source: "fixture", Fidelity: "metered"}}
+	}
+	accounting := &contract.Accounting{
+		Revision: 1, Final: true,
+		Entries:  []contract.AccountingEntry{{ID: "call", Tokens: &contract.TokenMeasures{Input: m("9"), Output: m("2")}}},
+		Coverage: []contract.MeterCoverage{{Key: contract.AccountingKey{Kind: "tokens"}, State: "complete"}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "register"):
+			_ = json.NewEncoder(w).Encode(remoteRegistrationResult{CoordinatorEpoch: 1})
+		case strings.HasSuffix(r.URL.Path, "heartbeat"):
+			_ = json.NewEncoder(w).Encode(remoteHeartbeatResult{CoordinatorEpoch: 1})
+		case strings.HasSuffix(r.URL.Path, "assignments") && !strings.HasSuffix(r.URL.Path, "complete"):
+			_ = json.NewEncoder(w).Encode(remoteAssignment{AssignmentID: "a", RunID: "r", ActivationID: "act", AttemptID: "attempt", CoordinatorEpoch: 1, Generation: 1, Request: json.RawMessage(`{"executor":"test"}`)})
+		case strings.HasSuffix(r.URL.Path, "complete"):
+			cancel()
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return w.Result(), nil
+	})}
+	executor := accountingMetricExecutor{snapshot: accounting}
+	if err := RunRemoteWorker(ctx, RemoteWorkerConfig{CoordinatorURL: "http://coordinator", WorkerID: "worker", HTTPClient: client, HeartbeatInterval: time.Second, WorkBase: t.TempDir()}, executor); err != nil {
+		t.Fatal(err)
+	}
+	var workerSpan *tracetest.SpanStub
+	want := map[string]int64{telemetry.GenAIUsageInputTokens: 9, telemetry.GenAIUsageOutputTokens: 2}
+	for i := range exporter.GetSpans() {
+		if exporter.GetSpans()[i].Name == "muxlio.worker.attempt" {
+			workerSpan = &exporter.GetSpans()[i]
+			break
+		}
+	}
+	if workerSpan == nil {
+		t.Fatal("worker attempt span missing")
+	}
+	for _, attr := range workerSpan.Attributes {
+		key := string(attr.Key)
+		if value, ok := want[key]; ok {
+			if attr.Value.AsInt64() != value {
+				t.Fatalf("unexpected %s=%d", key, attr.Value.AsInt64())
+			}
+			delete(want, key)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing worker usage attributes: %v", want)
 	}
 }
 

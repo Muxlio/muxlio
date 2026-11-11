@@ -447,6 +447,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			defer execCancel()
 			started := time.Now()
 			r, e := runExecutor.Execute(executeReq)
+			telemetry.Usage(execCtx, r.Accounting)
 			endAttempt(e != nil || r.Error != "" || execCtx.Err() != nil)
 			telemetry.Duration(execCtx, "muxlio.execution.duration", time.Since(started), executeReq.Executor)
 			if execCtx.Err() != nil {
