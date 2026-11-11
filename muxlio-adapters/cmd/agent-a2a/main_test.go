@@ -459,6 +459,34 @@ func TestRedirectCannotForwardBearerCredentials(t *testing.T) {
 	}
 }
 
+func TestPathPrefixedURLDiscoversAgentCard(t *testing.T) {
+	const prefix = "/v1/agent"
+	var rpc string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == prefix+"/.well-known/agent-card.json" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"protocolVersion": "0.3.0", "url": rpc, "defaultInputModes": []string{"text/plain"},
+			})
+			return
+		}
+		if r.URL.Path == prefix+"/rpc" && r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": "muxlio", "result": map[string]any{
+				"kind": "task", "id": "t1", "contextId": "c1", "status": map[string]any{"state": "working"},
+			}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer s.Close()
+	rpc = s.URL + prefix + "/rpc"
+	raw, _ := json.Marshal(params{URL: s.URL + prefix})
+	req := adapter.Request{Executor: "agent/a2a", Params: raw, Task: "work"}
+	result := invoke(t, req)
+	if result.Error != "" || result.RemoteTask == nil || !result.RemoteTask.Pending {
+		t.Fatalf("path-prefixed discovery: %+v", result)
+	}
+}
+
 func TestOversizedRemoteResponsesRejected(t *testing.T) {
 	for _, stage := range []string{"discovery", "submission"} {
 		t.Run(stage, func(t *testing.T) {

@@ -232,7 +232,11 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 	}
 	cardURL := p.CardURL
 	if cardURL == "" {
-		cardURL = base.Scheme + "://" + base.Host + "/.well-known/agent-card.json"
+		var joinErr error
+		cardURL, joinErr = url.JoinPath(p.URL, ".well-known/agent-card.json")
+		if joinErr != nil {
+			return fail(joinErr)
+		}
 	}
 	discovery, err := validURL(cardURL)
 	if err != nil {
