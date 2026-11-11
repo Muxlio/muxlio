@@ -124,11 +124,7 @@ func main() {
 		// ACP reports turn metadata on sessionUpdate before runFinished. The
 		// final event may carry no usage; do not discard already reported counts.
 		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
-			var config struct {
-				Update json.RawMessage `json:"update"`
-			}
-			_ = json.Unmarshal(ev["data"], &config)
-			for _, id := range acp.SelectedModels(config.Update) {
+			for _, id := range acp.SelectedModels(kiroSessionUpdateBody(ev["data"])) {
 				_ = recorder.ReportModel(contract.AccountingModel{ID: id, Role: "selected", Source: "kiro-session-config"})
 			}
 			if reported := parseKiroUsage(ev["data"]); reported != nil {
@@ -147,19 +143,17 @@ func main() {
 		switch evType {
 		case "sessionUpdate":
 			var payload struct {
-				Update struct {
-					Kind    string `json:"sessionUpdate"`
-					Content struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"update"`
+				Kind    string `json:"sessionUpdate"`
+				Content struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
 			}
-			if raw, ok := ev["data"]; ok {
+			if raw := kiroSessionUpdateBody(ev["data"]); len(raw) > 0 {
 				_ = json.Unmarshal(raw, &payload)
 			}
-			if payload.Update.Kind == "agent_message_chunk" && payload.Update.Content.Type == "text" {
-				adapter.CaptureAgentText(&textChunks, payload.Update.Content.Text)
+			if payload.Kind == "agent_message_chunk" && payload.Content.Type == "text" {
+				adapter.CaptureAgentText(&textChunks, payload.Content.Text)
 			}
 		case "text":
 			// Incremental assistant text.
@@ -261,6 +255,28 @@ func main() {
 	}
 
 	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Accounting: finalAccounting})
+}
+
+// kiroSessionUpdateBody returns the ACP session/update payload carried in a
+// stream-json sessionUpdate event. Kiro normally nests it under data.update; a
+// bare update object in data is accepted when it already carries sessionUpdate.
+func kiroSessionUpdateBody(data json.RawMessage) json.RawMessage {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	var wrapped struct {
+		Update json.RawMessage `json:"update"`
+	}
+	if json.Unmarshal(data, &wrapped) == nil && len(wrapped.Update) > 0 && string(wrapped.Update) != "null" {
+		return wrapped.Update
+	}
+	var probe struct {
+		Kind string `json:"sessionUpdate"`
+	}
+	if json.Unmarshal(data, &probe) == nil && probe.Kind != "" {
+		return data
+	}
+	return nil
 }
 
 func parseKiroUsage(result json.RawMessage) *adapter.TokenCounters {

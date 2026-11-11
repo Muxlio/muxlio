@@ -93,6 +93,14 @@ func TestNativeTurnIdentityDeduplicatesButRejectsConflictingAmounts(t *testing.T
 	}
 }
 
+func TestParseKiroCreditAmountAcceptsCreditUnitCasing(t *testing.T) {
+	raw := `{"update":{"_meta":{"kiro":{"kind":"turn_completion","promptTurnSummaries":[{"unit":"Credit","usage":0.1}]}}}}`
+	got := parseKiroCreditAmount(json.RawMessage(raw))
+	if got == nil || *got != "0.1" {
+		t.Fatalf("credit = %+v", got)
+	}
+}
+
 func TestParseKiroCreditsFromTurnCompletion(t *testing.T) {
 	if got := parseKiroCreditAmount(json.RawMessage(`{"kind":"turn_completion","promptTurnSummaries":[{"unit":"credit","usage":1e-7}]}`)); got == nil || *got != "0.0000001" {
 		t.Fatalf("scientific notation lost: %v", got)

@@ -83,7 +83,7 @@ func parseKiroCreditAmount(raw json.RawMessage) *contract.Amount {
 	}
 	var total *contract.Amount
 	for _, entry := range entries {
-		if entry.Unit != "credit" {
+		if strings.ToLower(strings.TrimSpace(entry.Unit)) != "credit" {
 			continue
 		}
 		amount, err := accounting.ParseJSONAmount(json.RawMessage(entry.Usage.String()))

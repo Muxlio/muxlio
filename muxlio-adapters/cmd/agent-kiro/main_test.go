@@ -247,6 +247,97 @@ func buildAgentKiro(t *testing.T) string {
 	return bin
 }
 
+func TestKiroStreamCapturesFlatSessionUpdateText(t *testing.T) {
+	bin := buildAgentKiro(t)
+	workDir := t.TempDir()
+	binDir := t.TempDir()
+	stream := `{"type":"sessionUpdate","data":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"flat-chunk"}}}
+{"type":"runFinished","data":{"status":"success"}}
+`
+	cli := filepath.Join(binDir, "kiro-cli")
+	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
+	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req, err := json.Marshal(map[string]any{
+		"contractVersion":      "1",
+		"workspace":            workDir,
+		"workDir":              workDir,
+		"executor":             "agent/kiro",
+		"task":                 "flat-chunk",
+		"hostExecutionAllowed": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli}
+	cmd.Stdin = strings.NewReader(string(req))
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Outputs map[string]any `json:"outputs"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := resp.Outputs["_text"].(map[string]any)
+	if text == nil || text["data"] != "flat-chunk" {
+		t.Fatalf("_text = %+v", resp.Outputs)
+	}
+}
+
+func TestKiroStreamReportsModelFromFlatConfigUpdate(t *testing.T) {
+	bin := buildAgentKiro(t)
+	workDir := t.TempDir()
+	binDir := t.TempDir()
+	stream := `{"type":"sessionUpdate","data":{"sessionUpdate":"config_option_update","configOptions":[{"category":"model","currentValue":"sonnet-flat"}]}}
+{"type":"runFinished","data":{"status":"success","finalText":"done"}}
+`
+	cli := filepath.Join(binDir, "kiro-cli")
+	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
+	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req, err := json.Marshal(map[string]any{
+		"contractVersion":      "1",
+		"workspace":            workDir,
+		"workDir":              workDir,
+		"executor":             "agent/kiro",
+		"task":                 "flat-config",
+		"hostExecutionAllowed": true,
+		"params":               json.RawMessage(`{"model":"auto"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli}
+	cmd.Stdin = strings.NewReader(string(req))
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Accounting *contract.Accounting `json:"accounting"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range resp.Accounting.Models {
+		if m.Role == "selected" && m.ID == "sonnet-flat" {
+			return
+		}
+	}
+	t.Fatalf("selected model missing: %+v", resp.Accounting.Models)
+}
+
 func TestKiroAdapterTreatsRunErrorAsTerminalEvent(t *testing.T) {
 	bin := buildAgentKiro(t)
 	workDir := t.TempDir()
