@@ -54,6 +54,46 @@ func TestParseCursorTokenUsageDoesNotReportUncachedInputWhenFoldOverflows(t *tes
 	}
 }
 
+func TestParseCursorTokenUsageTreatsNullCacheFieldsAsAbsent(t *testing.T) {
+	raw := `{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12,"cacheWriteTokens":null}`
+	got := parseCursorTokenUsage(json.RawMessage(raw))
+	if got == nil {
+		t.Fatal("expected usage when cacheWriteTokens is null")
+	}
+	in, inOK := got.ReportedInput()
+	if !inOK || in != 112 {
+		t.Fatalf("input=%d ok=%v, want 112", in, inOK)
+	}
+	cached, cachedOK := got.ReportedCached()
+	if !cachedOK || cached != 12 {
+		t.Fatalf("cached=%d ok=%v, want 12", cached, cachedOK)
+	}
+	if got.CacheWrite != nil {
+		t.Fatalf("cache write should stay unavailable when null, got %v", *got.CacheWrite)
+	}
+
+	got = parseCursorTokenUsage(json.RawMessage(`{"inputTokens":100,"outputTokens":40,"cacheReadTokens":null}`))
+	if got == nil {
+		t.Fatal("expected usage when cacheReadTokens is null")
+	}
+	in, inOK = got.ReportedInput()
+	if !inOK || in != 100 {
+		t.Fatalf("input=%d ok=%v, want 100", in, inOK)
+	}
+	if _, cachedOK := got.ReportedCached(); cachedOK {
+		t.Fatal("cached should be unavailable when cacheReadTokens is null")
+	}
+
+	got = parseCursorTokenUsage(json.RawMessage(`{"inputTokens":100,"outputTokens":40,"cacheWriteTokens":null}`))
+	if got == nil {
+		t.Fatal("expected usage when only cacheWriteTokens is null")
+	}
+	in, inOK = got.ReportedInput()
+	if !inOK || in != 100 {
+		t.Fatalf("input=%d ok=%v, want 100", in, inOK)
+	}
+}
+
 func TestMergeTerminalUsagePreservesPriorDimensionsWhenPartial(t *testing.T) {
 	prior := parseCursorTokenUsage(json.RawMessage(`{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}`))
 	terminal := parseCursorTokenUsage(json.RawMessage(`{"inputTokens":110}`))

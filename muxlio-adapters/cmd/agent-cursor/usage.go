@@ -24,7 +24,13 @@ func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenCounters {
 	for _, key := range []string{"cache_creation_input_tokens", "cacheCreationInputTokens", "cacheWriteTokens"} {
 		if b, ok := values[key]; ok {
 			var n *int64
-			if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
+			if json.Unmarshal(b, &n) != nil {
+				return nil
+			}
+			if n == nil {
+				continue
+			}
+			if *n < 0 {
 				return nil
 			}
 			result.CacheWrite = n
@@ -53,7 +59,13 @@ func parseCursorCounters(raw json.RawMessage) *adapter.TokenCounters {
 				continue
 			}
 			var n *int64
-			if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
+			if json.Unmarshal(b, &n) != nil {
+				return 0, false, true
+			}
+			if n == nil {
+				continue
+			}
+			if *n < 0 {
 				return 0, false, true
 			}
 			return *n, true, true
@@ -69,7 +81,18 @@ func parseCursorCounters(raw json.RawMessage) *adapter.TokenCounters {
 	}
 
 	if !uncachedOK || (!cacheReadOK && !cacheWriteOK) {
-		return base
+		if base != nil {
+			return base
+		}
+		if !uncachedOK {
+			return base
+		}
+		var out *int64
+		if v, ok, _ := readCount("output_tokens", "outputTokens", "candidates_token_count", "completion_tokens"); ok {
+			out = &v
+		}
+		in := uncached
+		return adapter.NewTokenCounters(&in, out, nil)
 	}
 
 	input := uncached

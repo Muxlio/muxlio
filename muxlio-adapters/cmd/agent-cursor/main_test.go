@@ -179,6 +179,26 @@ echo '{"type":"result","subtype":"success","result":"done"}'`
 	}
 }
 
+func TestCursorAdapterPreservesUsageWhenCacheReadNull(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","result":"done","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":null}}'`)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 100 || fixtureTokens(t, got.Accounting).Output != 40 {
+		t.Fatalf("usage = %+v, want input=100 output=40", fixtureTokens(t, got.Accounting))
+	}
+}
+
+func TestCursorAdapterPreservesUsageWhenCacheWriteNull(t *testing.T) {
+	got := runCursorFixture(t, `echo '{"type":"result","result":"done","usage":{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12,"cacheWriteTokens":null}}'`)
+	if got.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", got.Error)
+	}
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 112 || fixtureTokens(t, got.Accounting).Output != 40 || fixtureTokens(t, got.Accounting).Cached != 12 {
+		t.Fatalf("usage = %+v, want input=112 output=40 cached=12", fixtureTokens(t, got.Accounting))
+	}
+}
+
 func TestCursorAdapterLeavesUsageAbsentWhenNotReported(t *testing.T) {
 	got := runCursorFixture(t, `echo '{"type":"result","result":"done"}'`)
 	if got.Error != "" {
