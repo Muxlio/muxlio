@@ -16,6 +16,17 @@ func TestParseProbeResultValid(t *testing.T) {
 	}
 }
 
+func TestParseProbeResultPassedChecksOverrideReadyFalse(t *testing.T) {
+	raw := []byte(`{"ready":false,"checks":[{"name":"binary","passed":true,"message":"found"}]}`)
+	got, err := ParseProbeResult(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Ready {
+		t.Fatal("all passed checks must make the result ready")
+	}
+}
+
 func TestParseProbeResultFailedCheckOverridesReady(t *testing.T) {
 	// An adapter might claim ready while reporting a failed check; the parser
 	// must reconcile so a single missed check is never advertised as ready.

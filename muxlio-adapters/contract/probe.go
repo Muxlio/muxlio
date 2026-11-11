@@ -95,6 +95,7 @@ func ParseProbeResult(raw []byte) (ProbeResult, error) {
 	if len(result.Checks) == 0 {
 		return result, fmt.Errorf("probe result requires checks")
 	}
+	result.Ready = true
 	for _, c := range result.Checks {
 		if c.Name == "" {
 			return ProbeResult{}, fmt.Errorf("probe check requires name")
