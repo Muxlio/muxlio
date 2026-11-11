@@ -131,7 +131,7 @@ export async function testWorkflow(
     const result = JSON.parse(stdout);
 
     return {
-      error: result.error || undefined,
+      error: typeof result.error === 'string' ? result.error : undefined,
       accounting: result.accounting,
       runId: result.runId,
       state: result.state,

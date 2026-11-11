@@ -39,6 +39,13 @@ test('nonzero CLI exit still returns structured workflow failures', async () => 
   assert.equal(result.output, null);
 });
 
+test('preserves empty string workflow errors from structured CLI failures', async () => {
+  const cliPath = fakeCli(JSON.stringify({ runId: 'run-empty', state: 'failed', error: '', output: null }), 1);
+  const result = await testWorkflow(compiled(), { input: {}, cliPath });
+  assert.equal(result.state, 'failed');
+  assert.equal(result.error, '');
+});
+
 test('nonzero CLI exit rejects nonterminal or unknown states as harness failures', async () => {
   for (const state of ['running', 'cancelled', 'unexpected']) {
     const cliPath = fakeCli(JSON.stringify({ runId: 'run-state', state }), 1);

@@ -198,6 +198,28 @@ test('evaluation configuration cannot bypass runners through dryRun', async () =
   assert.ok(!('dryRun' in report.manifest.configuration));
 });
 
+test('evaluation configuration cannot pin case inputs into the manifest', async () => {
+  const captured = [];
+  const base = {
+    dataset: dataset(), versions: versions().slice(0, 1),
+    configuration: { executors: { byNode: {} } },
+    runner: { id: 'capture/v1', async run(_, options) {
+      captured.push(options);
+      return { state: 'succeeded', output: { answer: 42 } };
+    } },
+  };
+  const clean = await evaluateWorkflow(base);
+  const noisy = await evaluateWorkflow({
+    ...base,
+    configuration: { ...base.configuration, input: { question: 'manifest noise' } },
+  });
+  assert.equal(captured.length, 6);
+  assert.ok(captured.every(options => options.input.question !== 'manifest noise'));
+  assert.ok(!('input' in clean.manifest.configuration));
+  assert.ok(!('input' in noisy.manifest.configuration));
+  assert.equal(clean.manifest.id, noisy.manifest.id);
+});
+
 test('evaluation dryRun cannot bypass the default CLI runner', async () => {
   const report = await evaluateWorkflow({
     dataset: dataset(), versions: versions().slice(0, 1),

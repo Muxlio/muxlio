@@ -190,7 +190,7 @@ export async function evaluateWorkflow<I, O>(options: EvaluationOptions<I, O>): 
 function pinConfiguration(
   configuration: EvaluationOptions<unknown, unknown>['configuration'],
 ): Omit<TestWorkflowOptions, 'input' | 'dryRun'> {
-  const { dryRun: _ignored, ...rest } = (configuration ?? {}) as TestWorkflowOptions;
+  const { dryRun: _ignoredDryRun, input: _ignoredInput, ...rest } = (configuration ?? {}) as TestWorkflowOptions;
   return snapshot(rest);
 }
 
