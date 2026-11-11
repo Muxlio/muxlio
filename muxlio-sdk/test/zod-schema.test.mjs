@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { zodToJsonSchema } from '../dist/index.js';
+import { workflow, zodToJsonSchema } from '../dist/index.js';
 import { z } from 'zod';
 
 test('zod array min/max maps to JSON Schema bounds', () => {
@@ -14,6 +14,33 @@ test('zod array min/max maps to JSON Schema bounds', () => {
 test('zod refinements preserve the underlying JSON Schema shape', () => {
   const schema = zodToJsonSchema(z.string().min(3).refine((value) => value.includes('@')));
   assert.deepEqual(schema, { type: 'string', minLength: 3 });
+});
+
+test('zod string regex and exact length map to JSON Schema pattern and bounds', () => {
+  assert.deepEqual(zodToJsonSchema(z.string().regex(/^[a-z0-9._-]+$/)), {
+    type: 'string',
+    pattern: '^[a-z0-9._-]+$',
+  });
+  assert.deepEqual(zodToJsonSchema(z.string().length(5)), {
+    type: 'string',
+    minLength: 5,
+    maxLength: 5,
+  });
+  assert.deepEqual(zodToJsonSchema(z.string().length(5).min(7)), {
+    type: 'string',
+    minLength: 7,
+    maxLength: 5,
+  });
+  assert.deepEqual(zodToJsonSchema(z.string().regex(/^a/).regex(/z$/)), {
+    type: 'string',
+    allOf: [{ pattern: '^a' }, { pattern: 'z$' }],
+  });
+  assert.equal(zodToJsonSchema(z.string().regex(/^abc$/i)).pattern, '(?i)^abc$');
+  const { plan } = workflow('pattern-input', {
+    input: z.object({ id: z.string().regex(/^[a-z]+$/) }),
+    build: () => ({}),
+  });
+  assert.equal(plan.inputSchema.properties.id.pattern, '^[a-z]+$');
 });
 
 test('zod discriminatedUnion compiles to anyOf object variants', () => {

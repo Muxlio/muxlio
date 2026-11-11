@@ -49,10 +49,31 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
   if (schema instanceof z.ZodString) {
     const out: JSONSchema = { type: 'string' };
     const checks = (schema as any)._def?.checks ?? [];
+    const patterns: string[] = [];
     for (const check of checks) {
-      if (check.kind === 'min') out['minLength'] = check.value;
-      if (check.kind === 'max') out['maxLength'] = check.value;
+      if (check.kind === 'min') {
+        out['minLength'] = Math.max((out['minLength'] as number | undefined) ?? 0, check.value);
+      }
+      if (check.kind === 'max') {
+        const current = out['maxLength'] as number | undefined;
+        out['maxLength'] = current == null ? check.value : Math.min(current, check.value);
+      }
+      if (check.kind === 'length') {
+        const minLength = out['minLength'] as number | undefined;
+        const maxLength = out['maxLength'] as number | undefined;
+        out['minLength'] = minLength == null ? check.value : Math.max(minLength, check.value);
+        out['maxLength'] = maxLength == null ? check.value : Math.min(maxLength, check.value);
+      }
+      if (check.kind === 'regex' && check.regex) {
+        let pattern = (check.regex as RegExp).source;
+        const flags = (check.regex as RegExp).flags;
+        const goFlags = `${flags.includes('i') ? 'i' : ''}${flags.includes('m') ? 'm' : ''}${flags.includes('s') ? 's' : ''}`;
+        if (goFlags) pattern = `(?${goFlags})${pattern}`;
+        patterns.push(pattern);
+      }
     }
+    if (patterns.length === 1) out['pattern'] = patterns[0];
+    if (patterns.length > 1) out['allOf'] = patterns.map(pattern => ({ pattern }));
     return out;
   }
   if (schema instanceof z.ZodNumber) {
