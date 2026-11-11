@@ -505,7 +505,7 @@ func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND (dispatches.state='completed' OR (dispatches.state='cancelled' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=dispatches.attempt_id)))`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
+	_, err = tx.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND (dispatches.state='completed' OR (dispatches.state='cancelled' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=dispatches.attempt_id)) OR (dispatches.state='pending' AND NOT EXISTS (SELECT 1 FROM assignments WHERE activation_id=dispatches.activation_id)))`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
 	if err != nil {
 		return err
 	}

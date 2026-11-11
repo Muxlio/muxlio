@@ -224,6 +224,21 @@ func TestRecoveredEnqueueDoesNotRequeueClaimedAttempt(t *testing.T) {
 	if err := st.EnqueueDispatch(request); err != nil {
 		t.Fatal(err)
 	}
+	// A newly generated attempt must not replace work that has already been
+	// claimed for this activation.
+	replacement := request
+	replacement.AttemptID = "replacement-attempt"
+	replacement.AssignmentID = "replacement-assignment"
+	if err := st.EnqueueDispatch(replacement); err != nil {
+		t.Fatal(err)
+	}
+	var attemptID string
+	if err := st.db.QueryRow(`SELECT attempt_id FROM dispatches WHERE activation_id='activation'`).Scan(&attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if attemptID != request.AttemptID {
+		t.Fatalf("claimed dispatch replaced with attempt %q, want %q", attemptID, request.AttemptID)
+	}
 	claimed, _, err = st.ClaimDispatch("worker", time.Now().Add(time.Minute))
 	if err != nil || claimed != nil {
 		t.Fatalf("duplicate claim: %v,%v", claimed, err)
