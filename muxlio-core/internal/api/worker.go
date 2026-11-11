@@ -292,7 +292,11 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 				return
 			}
 			raw, err := contract.CanonicalAccounting(req.Accounting)
-			if err != nil || len(raw) > 64<<10 {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, CodeBadRequest, "invalid accounting snapshot")
+				return
+			}
+			if len(raw) > 64<<10 {
 				writeError(w, http.StatusRequestEntityTooLarge, CodeBadRequest, "accounting snapshot exceeds 64 KiB")
 				return
 			}

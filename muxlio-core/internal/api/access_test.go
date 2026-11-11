@@ -101,7 +101,7 @@ func TestCoordinatorRejectsCredentialValuesBeforeDispatch(t *testing.T) {
 func TestScopedWorkerNamedRegister(t *testing.T) {
 	for _, endpoint := range []struct{ method, suffix string }{
 		{"POST", "heartbeat"}, {"GET", "assignments"},
-		{"POST", "assignments/log"}, {"POST", "assignments/complete"},
+		{"POST", "assignments/log"}, {"POST", "assignments/accounting"}, {"POST", "assignments/complete"},
 	} {
 		for _, worker := range []string{"one", "register"} {
 			t.Run(worker+"/"+endpoint.suffix, func(t *testing.T) {
@@ -157,7 +157,7 @@ func TestScopedRegisterWorkerCannotClaimOrComplete(t *testing.T) {
 	}
 	call("POST", "/v1/workers/register/heartbeat", "attacker", `{"workerId":"one","protocolVersion":"v1","capacity":0}`, 403)
 	call("GET", "/v1/workers/register/assignments", "attacker", `{"workerId":"one"}`, 403)
-	for _, endpoint := range []string{"log", "complete"} {
+	for _, endpoint := range []string{"log", "accounting", "complete"} {
 		call("POST", "/v1/workers/register/assignments/"+endpoint, "attacker", `{"workerId":"one"}`, 403)
 	}
 	assignments, err := s.ListAssignments("private")

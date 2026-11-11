@@ -198,6 +198,9 @@ func isWorkerProtocolPath(path, method string) bool {
 		if len(parts) == 3 && parts[2] == "log" {
 			return method == http.MethodPost
 		}
+		if len(parts) == 3 && parts[2] == "accounting" {
+			return method == http.MethodPost
+		}
 		if len(parts) == 3 && parts[2] == "complete" {
 			return method == http.MethodPost
 		}

@@ -154,4 +154,24 @@ func TestIsWorkerProtocolPath(t *testing.T) {
 	if !isWorkerProtocolPath("/v1/workers/w1/assignments/complete", http.MethodPost) {
 		t.Fatal("complete should be worker protocol")
 	}
+	if !isWorkerProtocolPath("/v1/workers/w1/assignments/accounting", http.MethodPost) {
+		t.Fatal("accounting append should be worker protocol")
+	}
+}
+
+func TestAuthWorkerTokenAccountingAppend(t *testing.T) {
+	const client = "client-secret"
+	const worker = "worker-secret"
+	backend := &workerBackendFixture{}
+	protocol := NewWorkerProtocolHandler(backend)
+	handler := WithAuth(NewRouter(state.New(), nil, protocol), client, worker)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/workers/remote/assignments/accounting", strings.NewReader(`{"protocolVersion":"v1"}`))
+	req.Header.Set("Authorization", "Bearer "+worker)
+	req.RemoteAddr = "203.0.113.1:4444"
+	handler.ServeHTTP(resp, req)
+	if resp.Code == http.StatusForbidden {
+		t.Fatalf("worker token must reach accounting endpoint, got 403: %s", resp.Body.String())
+	}
 }
