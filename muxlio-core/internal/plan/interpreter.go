@@ -23,6 +23,13 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
+type attemptAccountingSink struct {
+	record func(contract.Accounting) error
+}
+
+func (s attemptAccountingSink) Append(a contract.Accounting) error { return s.record(a) }
+func (s attemptAccountingSink) Close() error                       { return nil }
+
 func generateRunID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -351,7 +358,7 @@ func (e *Engine) Run(runID string) (runErr error) {
 		if err != nil {
 			return err
 		}
-		if err := e.checkUsage(attempts, false); err != nil {
+		if err := e.checkAccounting(attempts, false); err != nil {
 			_ = e.store.SetRunError(runID, err)
 			return err
 		}
@@ -822,6 +829,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets, req.AttemptID)
 		guarded.LogSink = logSink
+		guarded.AccountingSink = attemptAccountingSink{record: func(snapshot contract.Accounting) error {
+			return e.store.RecordAccountingSnapshot(req.AttemptID, snapshot)
+		}}
 		guarded.TimeoutSeconds = node.TimeoutSeconds
 		guarded.QueueTimeoutSeconds = node.QueueTimeoutSeconds
 		// Fallback must be reachable even when the primary never admits work.
@@ -846,14 +856,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if req.Session == nil && (req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key"))) {
 				safeRedispatch = true
 			} else {
-				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Usage: result.Usage, Measurements: result.Measurements}
+				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Accounting: result.Accounting}
 				var reconciled workers.ExecuteResult
 				reconciled, safeRedispatch, err = e.reconcileEffect(guarded, a, node)
 				if err == nil && !safeRedispatch {
 					// Lookup usage belongs to its own invocation, not the original operation.
-					observed, measurements := result.Usage, result.Measurements
+					originalAccounting := result.Accounting
 					result = reconciled
-					result.Usage, result.Measurements = observed, measurements
+					result.Accounting = originalAccounting
 				}
 				if safeRedispatch {
 					err = fmt.Errorf("previous operation confirmed not applied")
@@ -862,7 +872,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}
 		if err == nil && remotePending(result) {
 			_ = logSink.Close()
-			a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS}
+			a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS}
 			result, err = e.pollRemote(guarded, a, node)
 			return result.Outputs, err
 		}
@@ -884,19 +894,19 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
 				failureMsg = fmt.Sprintf("run deadline exceeded (node %q, attempt %d)", node.ID, attemptBase+attempt)
 			}
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			return nil, ctxErr
 		}
 		// Per-node execution timeout: record the attempt as cancelled with an
 		// actionable diagnostic. Do not replay while external completion is unknown.
 		if errors.Is(err, context.DeadlineExceeded) && !admissionExpired {
 			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			lastErr = fmt.Errorf("muxlio: %s", failureMsg)
 			return nil, lastErr
 		}
 		if errors.Is(err, context.Canceled) {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
 			return nil, err
 		}
 		if result.Logs != "" {
@@ -1001,7 +1011,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			heldReason = awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)
 			attemptState = "awaiting_reconciliation"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Usage: result.Usage, Measurements: result.Measurements, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
 			return nil, recordErr
 		}
 		if e.plan.Limits != nil {
@@ -1009,7 +1019,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if err != nil {
 				return nil, err
 			}
-			if err := e.checkUsage(attempts, false); err != nil {
+			if err := e.checkAccounting(attempts, false); err != nil {
 				return nil, err
 			}
 		}

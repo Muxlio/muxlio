@@ -2,14 +2,13 @@ package main
 
 import (
 	"github.com/muxlio/muxlio-adapters/adapter"
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // mergeTerminalUsage applies event usage the same way as the Cursor adapter.
 // Complete terminal totals replace any prior aggregate; partial terminal usage
 // overlays only the dimensions present so a later sessionUpdate cannot drop
 // counts already reported on an earlier update.
-func mergeTerminalUsage(prior, terminal *adapter.TokenUsage) *adapter.TokenUsage {
+func mergeTerminalUsage(prior, terminal *adapter.TokenCounters) *adapter.TokenCounters {
 	if terminal == nil {
 		return prior
 	}
@@ -32,9 +31,5 @@ func mergeTerminalUsage(prior, terminal *adapter.TokenUsage) *adapter.TokenUsage
 	} else if v, ok := prior.ReportedCached(); ok {
 		ca = &v
 	}
-	return contract.NewTokenUsage(in, out, ca)
-}
-
-func mergeTerminalCredits(prior, terminal *contract.ProviderCredit) (*contract.ProviderCredit, error) {
-	return contract.MergeProviderCredits(prior, terminal)
+	return adapter.NewTokenCounters(in, out, ca)
 }

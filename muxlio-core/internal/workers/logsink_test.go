@@ -42,14 +42,14 @@ func TestStoreLogSinkPersistsIncrementalChunks(t *testing.T) {
 func TestReadAdapterLogLines(t *testing.T) {
 	rec := &logRecorder{}
 	sink := NewStoreLogSink(rec, "run-1", "act-1", nil)
-	input := "{\"stream\":\"agent\",\"text\":\"token\"}\n{\"text\":\"more\"}\n"
+	input := "{}\n{\"stream\":\"\",\"text\":\"\"}\n{\"stream\":\"agent\",\"text\":\"token\"}\n{\"text\":\"more\"}\n{}\n"
 	if err := ReadAdapterLogLines(strings.NewReader(input), sink); err != nil {
 		t.Fatal(err)
 	}
 	if err := sink.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.chunks) != 2 || string(rec.chunks[0].Data) != "token" || string(rec.chunks[1].Data) != "more" {
+	if len(rec.chunks) != 1 || string(rec.chunks[0].Data) != "token" {
 		t.Fatalf("chunks=%+v", rec.chunks)
 	}
 }

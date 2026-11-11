@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func TestTailBufferKeepsLastLimitBytes(t *testing.T) {
@@ -231,7 +232,7 @@ func TestAgentClaudeAdapterReportsUsageOnSuccess(t *testing.T) {
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
-		`echo '{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30}}'` + "\n"
+		`echo '{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30,"cache_creation_input_tokens":0}}'` + "\n"
 	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +251,8 @@ func TestAgentClaudeAdapterReportsUsageOnSuccess(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -259,12 +260,7 @@ func TestAgentClaudeAdapterReportsUsageOnSuccess(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected non-nil usage from successful result event")
-	}
-	if resp.Usage.Input != 130 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
-	}
+	assertClaudeTokens(t, resp.Accounting, "130", "50", "30")
 }
 
 // TestAgentClaudeAdapterPreservesUsageOnFailure verifies that a terminal
@@ -276,7 +272,7 @@ func TestAgentClaudeAdapterPreservesUsageOnFailure(t *testing.T) {
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
-		`echo '{"type":"result","is_error":true,"error":"model overloaded","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":2}}'` + "\n" +
+		`echo '{"type":"result","is_error":true,"error":"model overloaded","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":2,"cache_creation_input_tokens":0}}'` + "\n" +
 		"echo 'provider error' >&2\n" +
 		"exit 1\n"
 	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
@@ -300,8 +296,8 @@ func TestAgentClaudeAdapterPreservesUsageOnFailure(t *testing.T) {
 		t.Fatalf("adapter should exit 0 on adapter error, got %d", cmd.ProcessState.ExitCode())
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -309,12 +305,7 @@ func TestAgentClaudeAdapterPreservesUsageOnFailure(t *testing.T) {
 	if resp.Error == "" || !strings.Contains(resp.Error, "agent-claude:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected non-nil usage from failed result event that reported usage")
-	}
-	if resp.Usage.Input != 9 || resp.Usage.Output != 3 || resp.Usage.Cached != 2 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
-	}
+	assertClaudeTokens(t, resp.Accounting, "9", "3", "2")
 }
 
 func TestAgentClaudeAdapterReportsInclusiveUsageWithCacheCreation(t *testing.T) {
@@ -341,18 +332,13 @@ func TestAgentClaudeAdapterReportsInclusiveUsageWithCacheCreation(t *testing.T) 
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected usage")
-	}
-	if resp.Usage.Input != 170 || resp.Usage.Output != 20 || resp.Usage.Cached != 30 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
-	}
+	assertClaudeTokens(t, resp.Accounting, "170", "20", "30")
 }
 
 // TestAgentClaudeAdapterUsageAbsentWhenNotReported verifies the adapter does
@@ -412,20 +398,12 @@ func TestAgentClaudeAdapterReportsEstimatedCostOnSuccess(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Measurements *struct {
-			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
-			CostUSD          *float64 `json:"costUsd"`
-		} `json:"measurements"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.0812 {
-		t.Fatalf("measurements = %+v", resp.Measurements)
-	}
-	if resp.Measurements.CostUSD != nil {
-		t.Fatalf("client estimate mislabeled observed: %+v", resp.Measurements)
-	}
+	assertClaudeCost(t, resp.Accounting, "0.0812")
 }
 
 func TestAgentClaudeAdapterPreservesEstimatedCostOnFailure(t *testing.T) {
@@ -449,10 +427,8 @@ func TestAgentClaudeAdapterPreservesEstimatedCostOnFailure(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error        string `json:"error"`
-		Measurements *struct {
-			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
-		} `json:"measurements"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -460,9 +436,7 @@ func TestAgentClaudeAdapterPreservesEstimatedCostOnFailure(t *testing.T) {
 	if resp.Error == "" {
 		t.Fatal("expected failure response")
 	}
-	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.05 {
-		t.Fatalf("measurements = %+v", resp.Measurements)
-	}
+	assertClaudeCost(t, resp.Accounting, "0.05")
 }
 
 func TestAgentClaudeAdapterLatestResultCostWins(t *testing.T) {
@@ -486,16 +460,12 @@ func TestAgentClaudeAdapterLatestResultCostWins(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Measurements *struct {
-			EstimatedCostUSD *float64 `json:"estimatedCostUsd"`
-		} `json:"measurements"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if resp.Measurements == nil || resp.Measurements.EstimatedCostUSD == nil || *resp.Measurements.EstimatedCostUSD != 0.1 {
-		t.Fatalf("measurements = %+v, want latest terminal total", resp.Measurements)
-	}
+	assertClaudeCost(t, resp.Accounting, "0.1")
 }
 
 func buildAgentClaude(t *testing.T) string {
@@ -512,4 +482,25 @@ func buildAgentClaude(t *testing.T) string {
 		t.Fatalf("go build agent-claude: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func assertClaudeTokens(t *testing.T, a *contract.Accounting, input, output, cache string) {
+	t.Helper()
+	if a == nil || !a.Final || len(a.Entries) != 1 || a.Entries[0].Tokens == nil {
+		t.Fatalf("missing accounting: %+v", a)
+	}
+	v := a.Entries[0].Tokens
+	if v.Input.Collected == nil || string(v.Input.Collected.Value) != input || v.Output.Collected == nil || string(v.Output.Collected.Value) != output || v.CacheRead.Collected == nil || string(v.CacheRead.Collected.Value) != cache {
+		t.Fatalf("unexpected tokens: %+v", v)
+	}
+}
+func assertClaudeCost(t *testing.T, a *contract.Accounting, want string) {
+	t.Helper()
+	if a == nil || !a.Final || len(a.Entries) != 1 || len(a.Entries[0].Costs) != 1 {
+		t.Fatalf("missing cost accounting: %+v", a)
+	}
+	c := a.Entries[0].Costs[0]
+	if c.Currency != "USD" || c.Basis != "api-equivalent" || c.Amount.Collected == nil || string(c.Amount.Collected.Value) != want || c.Amount.Collected.Fidelity != "provider-estimate" || c.Amount.Estimated != nil {
+		t.Fatalf("unexpected cost: %+v", c)
+	}
 }

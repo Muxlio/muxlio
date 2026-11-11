@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -92,7 +94,7 @@ func TestAttemptsAPIExposesUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Attempt with reported usage.
-	if err := store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "att-1", RunID: "run-usage", ActivationID: "act-usage", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Usage: &state.TokenUsage{Input: 100, Output: 50, Cached: 25}}); err != nil {
+	if err := store.RecordExecutionAttempt(state.ExecutionAttempt{ID: "att-1", RunID: "run-usage", ActivationID: "act-usage", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Accounting: testaccounting.Tokens(100, 50, 25)}); err != nil {
 		t.Fatal(err)
 	}
 	// Attempt with no usage (provider unavailable).
@@ -117,17 +119,26 @@ func TestAttemptsAPIExposesUsage(t *testing.T) {
 
 	// First attempt carries usage.
 	att1 := page.Attempts[0]
-	usage, ok := att1["usage"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected usage object in attempt 1, got %v", att1)
+	rawAccounting, err := json.Marshal(att1["accounting"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if usage["input"] != float64(100) || usage["output"] != float64(50) || usage["cached"] != float64(25) {
-		t.Fatalf("usage values mismatch: %v", usage)
+	var accounting contract.Accounting
+	if err = json.Unmarshal(rawAccounting, &accounting); err != nil {
+		t.Fatal(err)
 	}
-
-	// Second attempt has no usage key (missing = unavailable, not zero).
-	if _, ok := page.Attempts[1]["usage"]; ok {
-		t.Fatalf("missing usage should be omitted, not reported as zero: %v", page.Attempts[1])
+	if testaccounting.TokenValue(&accounting, "input") != 100 || testaccounting.TokenValue(&accounting, "output") != 50 || testaccounting.TokenValue(&accounting, "cached") != 25 {
+		t.Fatalf("accounting values mismatch: %v", att1)
+	}
+	if _, ok := page.Attempts[1]["accounting"]; ok {
+		t.Fatal("missing accounting became zero")
+	}
+	for _, attempt := range page.Attempts {
+		for _, old := range []string{"usage", "measurements"} {
+			if _, exists := attempt[old]; exists {
+				t.Fatalf("legacy alias %s", old)
+			}
+		}
 	}
 }
 
@@ -142,12 +153,12 @@ func TestRunAPIExposesUnavailableUsage(t *testing.T) {
 	response := httptest.NewRecorder()
 	NewRouter(store, nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/runs/usage", nil))
 	var body struct {
-		Usage state.UsageSummary `json:"usage"`
+		Accounting state.AccountingSummary `json:"accounting"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || body.Usage.Tokens.Observed != nil || body.Usage.Tokens.Unknown != 1 || body.Usage.CostUSD.Observed != nil || body.Usage.CostUSD.Unknown != 1 {
+	if response.Code != http.StatusOK || body.Accounting.Tokens.KnownSubtotal != nil || body.Accounting.Tokens.Attempts.Unknown != 1 {
 		t.Fatalf("response=%s", response.Body.String())
 	}
 }
@@ -263,6 +274,9 @@ func (f *workerBackendFixture) Complete(string, WorkerCompletion) error {
 	return nil
 }
 func (f *workerBackendFixture) AppendWorkerLog(string, WorkerLogAppend) error { return nil }
+func (f *workerBackendFixture) RecordWorkerAccounting(string, WorkerAccountingAppend) error {
+	return nil
+}
 
 func TestWorkerProtocolLifecycleMessages(t *testing.T) {
 	backend := &workerBackendFixture{}

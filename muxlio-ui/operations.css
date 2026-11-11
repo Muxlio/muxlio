@@ -30,3 +30,4 @@
 .rail .nav{flex-shrink:0}.rail{overflow-y:auto}
 @media(max-width:760px){.ops-compare-form,.ops-import-form,.ops-comparison-columns{grid-template-columns:1fr}.ops-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-dialog{padding:18px}.ops-form .btn{justify-self:start}}
 @media(max-width:680px){.rail .nav{flex:1 1 100%;min-width:0;max-width:100%;overflow-x:auto;flex-wrap:nowrap}.rail .nav a{flex-shrink:0}}
+.ops-comparison-side .usage-column+.usage-column{border-left:none;border-top:1px solid var(--border)}

@@ -54,6 +54,7 @@ func taskResult(state string) map[string]any {
 }
 
 type fixture struct {
+	metadata   any
 	mu         sync.Mutex
 	server     *httptest.Server
 	methods    []string
@@ -123,11 +124,36 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": "muxlio", "result": taskResult(f.state)})
+		result := taskResult(f.state)
+		if f.metadata != nil {
+			result["metadata"] = f.metadata
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": "muxlio", "result": result})
 	}))
 	f.card = map[string]any{"protocolVersion": "0.3.0", "url": f.server.URL + "/rpc", "preferredTransport": "JSONRPC", "defaultInputModes": []string{"text/plain"}, "capabilities": map[string]any{"streaming": true}}
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+func TestA2AMetadataAndRepeatedPollsNeverInventAccounting(t *testing.T) {
+	f := newFixture(t)
+	f.state = "completed"
+	f.metadata = map[string]any{"usage": map[string]any{"totalTokens": 100}, "accounting": map[string]any{"revision": 1, "final": true}}
+	req := f.request()
+	req.Outputs = nil
+	first := invoke(t, req)
+	if first.Error != "" || first.Accounting != nil || first.RemoteAccounting != nil {
+		t.Fatalf("A2A invented accounting: %+v", first)
+	}
+	req.RemoteTask = first.RemoteTask
+	req.Action = "poll"
+	for i := 0; i < 10; i++ {
+		result := invoke(t, req)
+		if result.Error != "" || result.Accounting != nil || result.RemoteAccounting != nil {
+			t.Fatalf("A2A poll invented accounting: %+v", result)
+		}
+	}
 }
 func (f *fixture) request() adapter.Request {
 	raw, _ := json.Marshal(params{URL: f.server.URL})
@@ -138,7 +164,7 @@ func TestRemoteTaskOutlivesAdapterAndResumesAfterStreamDisconnect(t *testing.T) 
 	f := newFixture(t)
 	req := f.request()
 	first := invoke(t, req)
-	if first.Error != "" || first.RemoteTask == nil || !first.RemoteTask.Pending || first.RemoteTask.ContextID != "remote-context" || first.Usage != nil {
+	if first.Error != "" || first.RemoteTask == nil || !first.RemoteTask.Pending || first.RemoteTask.ContextID != "remote-context" || first.Accounting != nil {
 		t.Fatalf("submission: %+v", first)
 	}
 	// Persist through JSON as the coordinator does; the submitting process has exited.
@@ -158,7 +184,7 @@ func TestRemoteTaskOutlivesAdapterAndResumesAfterStreamDisconnect(t *testing.T) 
 	f.state = "completed"
 	f.mu.Unlock()
 	done := invoke(t, req)
-	if done.Error != "" || done.RemoteTask.Pending || done.Usage != nil {
+	if done.Error != "" || done.RemoteTask.Pending || done.Accounting != nil {
 		t.Fatalf("completion: %+v", done)
 	}
 	if done.Outputs["answer"].(map[string]any)["ok"] != true || done.Outputs["report"].(map[string]any)["path"] == "" {

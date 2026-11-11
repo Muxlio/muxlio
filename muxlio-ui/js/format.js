@@ -1,6 +1,15 @@
 // Shared display units. Numeric durations are milliseconds unless specified.
 const MuxlioFormat=Object.freeze({
  tokens(value){
+  if(typeof value==='string'){
+   if(!/^(0|[1-9][0-9]*)$/.test(value))return 'Unavailable';
+   const count=BigInt(value);
+   const compact=(scale,suffix)=>{const tenths=(count*10n+scale/2n)/scale;return `${tenths/10n}.${tenths%10n}${suffix}`};
+   if(count>=999950000n)return compact(1000000000n,'B');
+   if(count>=999950n)return compact(1000000n,'M');
+   if(count>=1000n)return compact(1000n,'K');
+   return value;
+  }
   if(typeof value!=='number'||!Number.isFinite(value)||value<0)return 'Unavailable';
   if(value>=999950000)return `${(value/1e9).toFixed(1)}B`;
   if(value>=999950)return `${(value/1e6).toFixed(1)}M`;

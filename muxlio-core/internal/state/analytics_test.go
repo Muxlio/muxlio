@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"testing"
 	"time"
 )
@@ -27,7 +28,7 @@ func TestQueryAnalyticsRespectsCreatedAtAndState(t *testing.T) {
 		if err := s.RecordExecutionAttempt(ExecutionAttempt{
 			ID: spec.id + "-a", RunID: spec.id, ActivationID: "act", Executor: "agent/a",
 			State: "succeeded", StartedAt: spec.at, FinishedAt: spec.at,
-			Usage: &TokenUsage{Input: 10, Output: 5},
+			Accounting: testaccounting.Tokens(10, 5, 0),
 		}); err != nil {
 			t.Fatal(err)
 		}

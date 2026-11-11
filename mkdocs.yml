@@ -59,6 +59,7 @@ nav:
   - Service Guide: service.md
   - MCP Integration: mcp.md
   - Observability UI: ui-operations.md
+  - Accounting: accounting.md
   - Benchmarks: benchmarks.md
   - Architecture:
       - Overview: architecture/overview.md

@@ -6,6 +6,7 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -95,7 +96,7 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS input_requests (run_id TEXT NOT NULL, request_id TEXT NOT NULL, activation_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, schema_json TEXT, expires_at TEXT, permissions_json TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'pending', response_json TEXT, responder_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, fulfilled_at TEXT, idempotency_key TEXT NOT NULL DEFAULT '', PRIMARY KEY(run_id, request_id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_input_requests_run ON input_requests(run_id, state)`,
 	`CREATE TABLE IF NOT EXISTS log_chunks (run_id TEXT NOT NULL, activation_id TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, timestamp TEXT NOT NULL, PRIMARY KEY(activation_id,stream,seq), FOREIGN KEY(run_id) REFERENCES runs(id))`,
-	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', usage_json TEXT, execution_duration_ms INTEGER, FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS execution_attempts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, retry_number INTEGER NOT NULL, executor TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, failure TEXT NOT NULL DEFAULT '', execution_duration_ms INTEGER, accounting_json TEXT, accounting_revision INTEGER NOT NULL DEFAULT 0, accounting_final INTEGER NOT NULL DEFAULT 0, accounting_hash TEXT, accounting_assignment TEXT, accounting_generation INTEGER, remote_accounting_revision TEXT, remote_accounting_hash TEXT, operation_attempt_id TEXT NOT NULL DEFAULT '', operation_action TEXT NOT NULL DEFAULT '', FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE TABLE IF NOT EXISTS worker_execution_timings (attempt_id TEXT NOT NULL, assignment_id TEXT NOT NULL, generation INTEGER NOT NULL, run_id TEXT NOT NULL, activation_id TEXT NOT NULL, worker_id TEXT NOT NULL, duration_ms INTEGER CHECK(duration_ms>=0), PRIMARY KEY(attempt_id,assignment_id,generation))`,
 	`CREATE INDEX IF NOT EXISTS idx_execution_attempts_run ON execution_attempts(run_id, activation_id, retry_number)`,
 	`CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
@@ -146,8 +147,6 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE workers ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE workers ADD COLUMN labels_json TEXT NOT NULL DEFAULT '{}'`,
 		// Attempt-level token usage reported by the executor/adapter.
-		`ALTER TABLE execution_attempts ADD COLUMN usage_json TEXT`,
-		`ALTER TABLE execution_attempts ADD COLUMN measurements_json TEXT`,
 		`ALTER TABLE execution_attempts ADD COLUMN result_json TEXT`,
 		`ALTER TABLE execution_attempts ADD COLUMN execution_duration_ms INTEGER`,
 		`ALTER TABLE activations ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0`,
@@ -376,6 +375,17 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 		return len(result) > 0 && bytes.Equal(saved, result[0]), nil
 	}
 	if len(result) > 0 {
+		var completion struct {
+			Accounting *contract.Accounting `json:"accounting"`
+		}
+		if err := json.Unmarshal(result[0], &completion); err != nil {
+			return false, err
+		}
+		if completion.Accounting != nil {
+			if err := recordWorkerAccountingTx(tx, a, *completion.Accounting); err != nil {
+				return false, err
+			}
+		}
 		if _, err = tx.Exec(`INSERT INTO worker_results(attempt_id,result_json) VALUES(?,?) ON CONFLICT(attempt_id) DO NOTHING`, a.AttemptID, result[0]); err != nil {
 			return false, err
 		}
@@ -669,12 +679,17 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 	if selected == nil {
 		return nil, 0, tx.Commit()
 	}
-	if err = reserveAdmission(tx, cfg, *selected, demand, time.Now()); err != nil {
-		return nil, 0, err
-	}
 	var generation int64
 	err = tx.QueryRow(`SELECT generation FROM assignments WHERE activation_id=?`, selected.ActivationID).Scan(&generation)
 	if err != nil && err != sql.ErrNoRows {
+		return nil, 0, err
+	}
+	if blocked, err := prepareWorkerReplay(tx, *selected, generation); err != nil {
+		return nil, 0, err
+	} else if blocked {
+		return nil, 0, tx.Commit()
+	}
+	if err = reserveAdmission(tx, cfg, *selected, demand, time.Now()); err != nil {
 		return nil, 0, err
 	}
 	generation++
@@ -1171,19 +1186,57 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		return err
 	}
 	defer tx.Rollback()
-	usageJSON, err := marshalUsage(a.Usage)
-	if err != nil {
-		return err
+	var priorRevision int64
+	var priorFinal int
+	var priorHash sql.NullString
+	var prior state.ExecutionAttempt
+	var priorRef sql.NullString
+	readErr := tx.QueryRow(`SELECT accounting_revision,accounting_final,accounting_hash,run_id,activation_id,executor,operation_attempt_id,operation_action,operation_ref_json FROM execution_attempts WHERE id=?`, a.ID).Scan(&priorRevision, &priorFinal, &priorHash, &prior.RunID, &prior.ActivationID, &prior.Executor, &prior.OperationAttemptID, &prior.OperationAction, &priorRef)
+	if readErr != nil && readErr != sql.ErrNoRows {
+		return readErr
 	}
-	var measurementsJSON any
-	if a.Measurements != nil {
-		raw, err := json.Marshal(a.Measurements)
-		if err != nil {
+	if priorRef.Valid {
+		if err := json.Unmarshal([]byte(priorRef.String), &prior.OperationRef); err != nil {
 			return err
 		}
-		measurementsJSON = string(raw)
+	}
+	if err := state.ValidateAttemptOwnership(prior, a); err != nil {
+		return err
 	}
 	var resultJSON any
+	var accountingJSON, accountingHash any
+	accountingRevision, accountingFinal := int64(0), 0
+	if a.Accounting != nil {
+		if err := a.Accounting.Validate(); err != nil {
+			return err
+		}
+		raw, marshalErr := contract.CanonicalAccounting(*a.Accounting)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256(raw))
+		if priorFinal != 0 && int64(a.Accounting.Revision) > priorRevision {
+			return fmt.Errorf("accounting snapshot is already final")
+		} else if int64(a.Accounting.Revision) < priorRevision {
+			accountingJSON = nil
+			accountingHash = nil
+			accountingRevision = 0
+			accountingFinal = 0
+		} else if int64(a.Accounting.Revision) == priorRevision && priorRevision > 0 {
+			if !priorHash.Valid || priorHash.String != hash {
+				return fmt.Errorf("accounting revision conflict")
+			}
+			accountingJSON = nil
+			accountingHash = nil
+			accountingRevision = 0
+			accountingFinal = 0
+		} else {
+			accountingJSON, accountingHash, accountingRevision = string(raw), hash, int64(a.Accounting.Revision)
+			if a.Accounting.Final {
+				accountingFinal = 1
+			}
+		}
+	}
 	if a.Result != nil {
 		raw, marshalErr := json.Marshal(a.Result)
 		if marshalErr != nil {
@@ -1199,7 +1252,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		}
 		operationRefJSON = string(raw)
 	}
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,measurements_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?),?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET measurements_json=COALESCE(excluded.measurements_json,execution_attempts.measurements_json),state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,usage_json=COALESCE(excluded.usage_json,execution_attempts.usage_json),result_json=COALESCE(excluded.result_json,execution_attempts.result_json),execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms),effect=COALESCE(NULLIF(execution_attempts.effect,''),excluded.effect),idempotency_key=COALESCE(NULLIF(execution_attempts.idempotency_key,''),excluded.idempotency_key),operation_ref_json=COALESCE(excluded.operation_ref_json,execution_attempts.operation_ref_json),await_reconciliation_reason=excluded.await_reconciliation_reason`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, usageJSON, resultJSON, a.ID, a.ExecutionDurationMS, a.Effect, a.IdempotencyKey, operationRefJSON, a.AwaitReconciliationReason, measurementsJSON)
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,accounting_revision,accounting_final,accounting_hash,operation_attempt_id,operation_action) VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?),?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,result_json=COALESCE(excluded.result_json,execution_attempts.result_json),execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms),effect=COALESCE(NULLIF(execution_attempts.effect,''),excluded.effect),idempotency_key=COALESCE(NULLIF(execution_attempts.idempotency_key,''),excluded.idempotency_key),operation_ref_json=COALESCE(excluded.operation_ref_json,execution_attempts.operation_ref_json),await_reconciliation_reason=excluded.await_reconciliation_reason,accounting_json=COALESCE(excluded.accounting_json,execution_attempts.accounting_json),accounting_revision=CASE WHEN excluded.accounting_revision>execution_attempts.accounting_revision THEN excluded.accounting_revision ELSE execution_attempts.accounting_revision END,accounting_final=MAX(execution_attempts.accounting_final,excluded.accounting_final),accounting_hash=COALESCE(excluded.accounting_hash,execution_attempts.accounting_hash),operation_attempt_id=COALESCE(NULLIF(execution_attempts.operation_attempt_id,''),excluded.operation_attempt_id),operation_action=COALESCE(NULLIF(execution_attempts.operation_action,''),excluded.operation_action)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, resultJSON, a.ID, a.ExecutionDurationMS, a.Effect, a.IdempotencyKey, operationRefJSON, a.AwaitReconciliationReason, accountingJSON, accountingRevision, accountingFinal, accountingHash, a.OperationAttemptID, a.OperationAction)
 	if err != nil {
 		return err
 	}
@@ -1214,12 +1267,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	if a.Result != nil {
 		payload["result"] = a.Result
 	}
-	if a.Measurements != nil {
-		payload["measurements"] = a.Measurements
-	}
-	if a.Usage != nil {
-		payload["usage"] = a.Usage
-	}
+
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
@@ -1250,6 +1298,59 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	return nil
 }
 
+func (s *Store) RecordAccountingSnapshot(attemptID string, snapshot contract.Accounting) error {
+	raw, err := contract.CanonicalAccounting(snapshot)
+	if err != nil {
+		return err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var revision int64
+	var final int
+	var priorHash sql.NullString
+	var runID, activationID string
+	err = tx.QueryRow(`SELECT accounting_revision,accounting_final,accounting_hash,run_id,activation_id FROM execution_attempts WHERE id=?`, attemptID).Scan(&revision, &final, &priorHash, &runID, &activationID)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("accounting attempt does not exist")
+	}
+	if err != nil {
+		return err
+	}
+	if int64(snapshot.Revision) < revision {
+		return fmt.Errorf("stale accounting revision")
+	}
+	if int64(snapshot.Revision) == revision {
+		if priorHash.Valid && priorHash.String == hash {
+			return tx.Commit()
+		}
+		return fmt.Errorf("accounting revision conflict")
+	}
+	if final != 0 {
+		return fmt.Errorf("accounting snapshot is already final")
+	}
+	res, err := tx.Exec(`UPDATE execution_attempts SET accounting_json=?,accounting_revision=?,accounting_final=?,accounting_hash=? WHERE id=? AND accounting_revision=? AND accounting_final=0`, string(raw), snapshot.Revision, boolInt(snapshot.Final), hash, attemptID, revision)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("accounting snapshot compare-and-swap failed")
+	}
+	if err := appendEvent(tx, runID, state.EventAccountingUpdated, activationID, map[string]any{"attemptId": attemptID, "revision": snapshot.Revision, "hash": hash}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListExecutionAttempts(runID, activationID string) ([]state.ExecutionAttempt, error) {
 	return s.ListExecutionAttemptPage(runID, activationID, 0, -1, true)
 }
@@ -1265,7 +1366,7 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offset, limit int, details bool, attemptID string, analyticsOrder bool) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,usage_json,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,measurements_json FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,operation_attempt_id,operation_action FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -1278,7 +1379,7 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 	if !details && limit < 0 {
 		query = strings.Replace(query, "result_json", "NULL", 1)
 		query = strings.Replace(query, "operation_ref_json", "NULL", 1)
-		query = strings.Replace(query, "failure,usage_json", "'',usage_json", 1)
+		query = strings.Replace(query, "failure,result_json", "'',result_json", 1)
 	} else if !details {
 		query = strings.Replace(query, "result_json", "json_remove(result_json,'$.outputs','$.validationFailure.actual','$.validationFailure.expected')", 1)
 	}
@@ -1299,10 +1400,10 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 	for rows.Next() {
 		var a state.ExecutionAttempt
 		var started, finished string
-		var usageJSON, resultJSON, measurementsJSON sql.NullString
+		var resultJSON, accountingJSON sql.NullString
 		var execDuration sql.NullInt64
 		var operationRefJSON, effect, idempotencyKey, awaitReconciliation sql.NullString
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &usageJSON, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &measurementsJSON); err != nil {
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &accountingJSON, &a.OperationAttemptID, &a.OperationAction); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -1318,16 +1419,16 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 				return nil, err
 			}
 		}
-		if measurementsJSON.Valid {
-			if err := json.Unmarshal([]byte(measurementsJSON.String), &a.Measurements); err != nil {
+		if accountingJSON.Valid {
+			if err := json.Unmarshal([]byte(accountingJSON.String), &a.Accounting); err != nil {
 				return nil, err
 			}
 		}
-		a.Usage, err = unmarshalUsage(usageJSON)
 		if execDuration.Valid {
 			value := execDuration.Int64
 			a.ExecutionDurationMS = &value
 		}
+
 		if effect.Valid {
 			a.Effect = effect.String
 		}
@@ -2131,30 +2232,6 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// marshalUsage serialises attempt token usage to a JSON column value. A nil
-// pointer (provider did not report usage) is stored as NULL so that it can be
-// distinguished from a reported zero on read-back.
-func marshalUsage(u *state.TokenUsage) ([]byte, error) {
-	if u == nil {
-		return nil, nil
-	}
-	return json.Marshal(u)
-}
-
-// unmarshalUsage deserialises the usage_json column. A NULL or empty value
-// yields a nil pointer (explicitly unavailable); a present JSON object yields
-// a non-nil pointer even when all counts are zero (reported as zero).
-func unmarshalUsage(v sql.NullString) (*state.TokenUsage, error) {
-	if !v.Valid || v.String == "" {
-		return nil, nil
-	}
-	var u state.TokenUsage
-	if err := json.Unmarshal([]byte(v.String), &u); err != nil {
-		return nil, fmt.Errorf("muxlio: parsing attempt usage: %w", err)
-	}
-	return &u, nil
 }
 
 func stateKeys(m map[string]any) []string {

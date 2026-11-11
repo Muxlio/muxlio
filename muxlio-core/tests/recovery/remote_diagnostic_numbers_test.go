@@ -112,7 +112,7 @@ func TestRemoteNumericDiagnosticRecovery(t *testing.T) {
 				}
 				checkNumericDiagnostic(t, d, value, false)
 				checkNumericJSON(t, result.Outputs["value"], value)
-				if result.Usage != nil || a.Usage != nil {
+				if result.Accounting != nil || a.Accounting != nil {
 					t.Fatal("unavailable usage changed")
 				}
 				checkNumericDiagnostic(t, a.Result.Diagnostic, value, true)

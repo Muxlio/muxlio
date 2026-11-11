@@ -222,7 +222,7 @@ func TestReferenceCommandIntegration(t *testing.T) {
 			if !obs.Correct || len(obs.Queue) == 0 || obs.WallTimeMS <= 0 || obs.ManualInterventions != 0 {
 				t.Fatalf("invalid observation: %+v", obs)
 			}
-			if obs.Usage.CostUSD.Observed != nil || obs.Usage.Tokens.Observed != nil {
+			if len(obs.Accounting.Costs) != 0 || obs.Accounting.Tokens.KnownSubtotal != nil {
 				t.Fatal("command did not report model usage; must remain unavailable")
 			}
 			var saved observation

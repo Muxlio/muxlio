@@ -187,7 +187,12 @@ func (c *client) rpc(ctx context.Context, method string, p any) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
-	return decodeRPC(raw)
+	t, err := decodeRPC(raw)
+	if err != nil {
+		return t, err
+	}
+
+	return t, nil
 }
 
 func execute(parent context.Context, req *adapter.Request) adapter.Response {
@@ -360,7 +365,8 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 	if err != nil {
 		return fail(err)
 	}
-	return finish(req, t, endpoint)
+	result := finish(req, t, endpoint)
+	return result
 }
 
 func remotePrompt(req *adapter.Request) string {

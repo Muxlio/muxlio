@@ -2,11 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/muxlio/muxlio-adapters/contract"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
 
@@ -20,8 +21,8 @@ func TestAnalyticsEndpointBoundedAndFiltered(t *testing.T) {
 	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
 		ID: "a1", RunID: "run", ActivationID: "act", Executor: "cursor",
 		State: "succeeded", StartedAt: at, FinishedAt: at,
-		Usage:  &state.TokenUsage{Input: 3, Output: 1},
-		Result: &state.AttemptResult{Outputs: map[string]any{"x": 1}},
+		Accounting: testaccounting.Tokens(3, 1, 0),
+		Result:     &state.AttemptResult{Outputs: map[string]any{"x": 1}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestAnalyticsPreservesZeroReportedUsage(t *testing.T) {
 	zero := int64(0)
 	if err := s.RecordExecutionAttempt(state.ExecutionAttempt{
 		ID: "a1", RunID: "run", ActivationID: "act", Executor: "cursor",
-		State: "succeeded", StartedAt: at, FinishedAt: at, Usage: contract.NewTokenUsage(&zero, nil, nil),
+		State: "succeeded", StartedAt: at, FinishedAt: at, Accounting: testaccounting.Tokens(zero, 0, 0),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,12 +161,19 @@ func TestAnalyticsPreservesZeroReportedUsage(t *testing.T) {
 	if !ok {
 		t.Fatal("bad attempt shape")
 	}
-	usageObj, ok := attempt["usage"].(map[string]any)
-	if !ok {
-		t.Fatalf("usage missing: %v", attempt["usage"])
+	rawAccounting, err := json.Marshal(attempt["accounting"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if usageObj["input"] == nil {
-		t.Fatalf("reported zero input stripped: %+v", usageObj)
+	var accounting contract.Accounting
+	if err = json.Unmarshal(rawAccounting, &accounting); err != nil {
+		t.Fatal(err)
+	}
+	if testaccounting.TokenValue(&accounting, "input") != 0 {
+		t.Fatal("reported zero stripped")
+	}
+	if _, old := attempt["usage"]; old {
+		t.Fatal("legacy usage exposed")
 	}
 }
 

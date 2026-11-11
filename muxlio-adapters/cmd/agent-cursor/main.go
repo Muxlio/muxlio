@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func main() {
@@ -71,8 +70,9 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var streamErr string
 	completed := false
-	var usage *adapter.TokenUsage
-	var usageErr error
+	usageSequence := 0
+	accountingRecorder := adapter.NewTokenRecorder("cursor-stream")
+	_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -89,6 +89,11 @@ func main() {
 			continue
 		}
 		switch eventType {
+		case "system":
+			var selected string
+			if json.Unmarshal(event["model"], &selected) == nil && selected != "" {
+				_ = accountingRecorder.ReportModel(selected, "selected", "cursor-init")
+			}
 		case "assistant":
 			for _, text := range assistantText(event["message"]) {
 				adapter.CaptureAgentText(&textChunks, text)
@@ -103,16 +108,17 @@ func main() {
 			}
 		case "usage":
 			if reported := parseCursorTokenUsage(event["usage"]); reported != nil {
-				var err error
-				usage, err = addTokenUsage(usage, reported)
-				if err != nil && usageErr == nil {
-					usageErr = err
+				usageSequence++
+				if err := accountingRecorder.Delta(fmt.Sprintf("usage-%d", usageSequence), reported); err != nil {
+					adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
 				}
 			}
 		case "result":
 			completed = true
 			if reported := parseCursorTokenUsage(event["usage"]); reported != nil {
-				usage = mergeTerminalUsage(usage, reported)
+				if err := accountingRecorder.Replace(reported); err != nil {
+					adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+				}
 			}
 			if textChunks.Len() == 0 {
 				for _, text := range resultText(event) {
@@ -126,6 +132,7 @@ func main() {
 			completed = true
 		}
 	}
+	finalAccounting := accountingRecorder.Finish()
 	readErr := scanner.Err()
 	if readErr != nil {
 		_ = cmd.Process.Kill()
@@ -133,7 +140,7 @@ func main() {
 	waitErr := cmd.Wait()
 	adapter.AppendLogChunk("stderr", diagnostics.String())
 	fail := func(format string, args ...any) {
-		_ = adapter.WriteResponse(adapter.Response{Error: fmt.Sprintf(format, args...), Logs: diagnostics.String(), Usage: usage})
+		_ = adapter.WriteResponse(adapter.Response{Error: fmt.Sprintf(format, args...), Logs: diagnostics.String(), Accounting: finalAccounting})
 	}
 	if readErr != nil {
 		fail("agent-cursor: reading stream: %v", readErr)
@@ -145,10 +152,6 @@ func main() {
 	}
 	if streamErr != "" {
 		fail("agent-cursor: %s", streamErr)
-		return
-	}
-	if usageErr != nil {
-		fail("agent-cursor: aggregating usage: %v", usageErr)
 		return
 	}
 	if waitErr != nil {
@@ -164,7 +167,7 @@ func main() {
 	if len(missing) > 0 {
 		errMsg = fmt.Sprintf("agent-cursor did not write expected output files: %s", strings.Join(missing, ", "))
 	}
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Logs: diagnostics.String(), Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Logs: diagnostics.String(), Accounting: finalAccounting})
 }
 
 func assistantText(raw json.RawMessage) []string {
@@ -219,14 +222,6 @@ func subtypeIndicatesError(value string) bool {
 		return true
 	}
 	return strings.HasPrefix(lower, "error_")
-}
-
-func addTokenUsage(total, reported *adapter.TokenUsage) (*adapter.TokenUsage, error) {
-	sum, err := contract.AddTokenUsage(total, reported)
-	if err != nil {
-		return total, err
-	}
-	return sum, nil
 }
 
 func resultError(event map[string]json.RawMessage) string {

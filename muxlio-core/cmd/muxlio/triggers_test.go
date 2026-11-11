@@ -375,7 +375,7 @@ func TestWebhookNumericAttemptOutputs(t *testing.T) {
 					t.Fatalf("attempts=%v err=%v", attempts, err)
 				}
 				assertExactJSON(t, attempts[0].Result.Outputs["value"], value)
-				if attempts[0].Usage != nil {
+				if attempts[0].Accounting != nil {
 					t.Fatal("missing usage became available")
 				}
 				switch mode {

@@ -742,7 +742,11 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 			// redaction, which treats any key containing "token" as a secret.
 			var response map[string]any
 			_ = json.Unmarshal(out, &response)
-			response["usage"] = state.SummarizeUsage(attempts)
+			summary, summaryErr := state.SummarizeAccounting(attempts)
+			if summaryErr != nil {
+				die(summaryErr.Error())
+			}
+			response["accounting"] = summary
 			out, _ = json.Marshal(response)
 			fmt.Println(string(out))
 			return 1
@@ -757,11 +761,11 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 	if jsonOut {
 		attempts, _ := engine.Store().ListExecutionAttempts(runID, "")
 		out, _ := json.MarshalIndent(map[string]any{
-			"usage":  state.SummarizeUsage(attempts),
-			"runId":  runID,
-			"state":  run.State,
-			"output": run.Output,
-			"events": formatEvents(events),
+			"accounting": accountingSummaryForCLI(attempts),
+			"runId":      runID,
+			"state":      run.State,
+			"output":     run.Output,
+			"events":     formatEvents(events),
 		}, "", "  ")
 		fmt.Println(string(out))
 	} else {
@@ -994,4 +998,12 @@ func emitDiagnostic(path string, err error, jsonOut bool) {
 		fmt.Fprintln(os.Stderr, diagnostic.Redact(d.Error()))
 		fmt.Fprintln(os.Stderr, "fix:", d.Fix)
 	}
+}
+
+func accountingSummaryForCLI(attempts []state.ExecutionAttempt) any {
+	s, err := state.SummarizeAccounting(attempts)
+	if err != nil {
+		die(err.Error())
+	}
+	return s
 }

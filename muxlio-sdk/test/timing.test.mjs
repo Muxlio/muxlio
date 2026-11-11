@@ -22,7 +22,7 @@ test('both authoring APIs preserve independent timing controls', () => {
 
 test('both authoring APIs pin run-wide admission and accounting limits', () => {
   const limits = { maxAttempts: 20, maxActivations: 100, maxActiveAttempts: 3,
-    maxTokens: 50000, maxCostUsd: 2, missingUsage: 'fail-closed' };
+    accounting: [{kind:'tokens',maximum:'50000'}, {kind:'cost',currency:'USD',basis:'api-equivalent',maximum:'2'}] };
   const symbolic = workflow('bounded', { limits, build: () => {} });
   const builder = defineWorkflow({ name: 'bounded', limits, build: () => {} });
   for (const { plan } of [symbolic, builder]) {

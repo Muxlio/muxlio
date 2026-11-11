@@ -141,8 +141,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .operations-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
 .operations-heading h2{margin:0 0 6px;font-size:18px}
 .operations-heading p{margin:0;font-size:12px}
-.usage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-.usage-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:20px}
+.usage-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;border:1px solid var(--border);background:var(--surface)}
+.usage-column{min-width:0}
+.usage-column+.usage-column{border-left:1px solid var(--border)}
+.usage-card{min-width:0;padding:20px}
+.usage-card+.usage-card{border-top:1px solid var(--border)}
 .usage-card h3{margin:0 0 18px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.07em}
 .usage-card dl{margin:0;display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .usage-card dt,.contract-fields dt,.attempt-metrics dt{font-size:11px;color:var(--muted);margin-bottom:6px}
@@ -167,4 +170,4 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .attempt-outcome p{margin:0;white-space:pre-wrap}.attempt-validation{display:block;color:var(--red);font-weight:600;margin-bottom:6px}
 @container(max-width:780px){.attempt-card{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.attempt-metrics{grid-column:1/-1}.attempt-actions{grid-column:1/-1;flex-direction:row}}
 @media(max-width:1100px){.attempt-card{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.attempt-metrics{grid-column:1/-1}.attempt-actions{grid-column:1/-1;flex-direction:row}.contract-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:650px){.usage-grid{grid-template-columns:1fr}.operations-heading{flex-direction:column}.contract-fields{grid-template-columns:1fr}.execution-contract summary span{display:block;margin:6px 0 0}.attempt-card{gap:16px;padding:14px}.attempt-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.usage-grid{grid-template-columns:1fr}.usage-column+.usage-column{border-left:none;border-top:1px solid var(--border)}.operations-heading{flex-direction:column}.contract-fields{grid-template-columns:1fr}.execution-contract summary span{display:block;margin:6px 0 0}.attempt-card{gap:16px;padding:14px}.attempt-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}

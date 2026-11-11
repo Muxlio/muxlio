@@ -50,10 +50,10 @@ func TestParseResultRejectsMalformedCompletion(t *testing.T) {
 			}
 		})
 	}
-	for _, raw := range []string{`{}`, `{"usage":null}`, `{"usage":{"input":0,"output":0,"cached":0}}`} {
+	for _, raw := range []string{`{}`, `{"accounting":null}`} {
 		result, err := ParseResult([]byte(raw))
-		if err != nil || (result.Usage != nil) != strings.Contains(raw, `"input"`) {
-			t.Fatalf("usage availability changed: %+v, %v", result, err)
+		if err != nil || result.Accounting != nil {
+			t.Fatalf("accounting availability changed: %+v %v", result, err)
 		}
 	}
 }
@@ -82,22 +82,6 @@ func TestExactOptionalRevisions(t *testing.T) {
 		err := m.Check(tc.executor, tc.implementation, tc.protocol, map[string]string{tc.capability: tc.revision})
 		if (err == nil) != tc.ok {
 			t.Errorf("%+v: %v", tc, err)
-		}
-	}
-}
-
-func TestUsageAvailabilitySurvivesWireRoundTrip(t *testing.T) {
-	for _, usage := range []*TokenUsage{nil, {}, {Input: 10}} {
-		raw, err := json.Marshal(Result{Usage: usage})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var result Result
-		if err := json.Unmarshal(raw, &result); err != nil {
-			t.Fatal(err)
-		}
-		if (result.Usage == nil) != (usage == nil) || (usage != nil && !result.Usage.Equal(*usage)) {
-			t.Fatalf("usage lost: %s", raw)
 		}
 	}
 }
@@ -391,42 +375,6 @@ func TestCompatibilityCheckedBeforeDispatch(t *testing.T) {
 // TestTokenUsageNilDistinctFromZero verifies the nil-vs-zero invariant: a nil
 // pointer means the provider did not report usage; a non-nil zero value is a
 // reported zero. Neither may be estimated from credits or context-window data.
-func TestTokenUsageNilDistinctFromZero(t *testing.T) {
-	// Round-trip nil.
-	var nilUsage *TokenUsage
-	raw, _ := json.Marshal(Result{Outputs: map[string]any{}, Usage: nilUsage})
-	if strings.Contains(string(raw), `"usage"`) {
-		t.Errorf("nil usage must be omitted from JSON, got: %s", raw)
-	}
-
-	// Round-trip reported zero.
-	zeroUsage := &TokenUsage{}
-	raw, _ = json.Marshal(Result{Outputs: map[string]any{}, Usage: zeroUsage})
-	if !strings.Contains(string(raw), `"usage"`) {
-		t.Errorf("reported zero must be present in JSON, got: %s", raw)
-	}
-	var result Result
-	if err := json.Unmarshal(raw, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Usage == nil || !result.Usage.Equal(TokenUsage{}) {
-		t.Errorf("reported zero not recovered: %+v", result.Usage)
-	}
-
-	// Round-trip populated usage.
-	filled := &TokenUsage{Input: 100, Output: 50, Cached: 25}
-	raw, _ = json.Marshal(Result{Outputs: map[string]any{}, Usage: filled})
-	var result2 Result
-	if err := json.Unmarshal(raw, &result2); err != nil {
-		t.Fatal(err)
-	}
-	if result2.Usage == nil || !result2.Usage.Equal(*filled) {
-		t.Errorf("usage values not recovered: %+v", result2.Usage)
-	}
-}
-
-// TestRemoteTaskReferenceRoundTrip verifies that RemoteTaskReference survives
-// JSON serialization with both ID and optional URL.
 func TestRemoteTaskReferenceRoundTrip(t *testing.T) {
 	for _, ref := range []RemoteTaskReference{
 		{ID: "task-abc"},
@@ -471,17 +419,5 @@ func TestProgressEventRequiresNonEmptyStream(t *testing.T) {
 	}
 	if decodedEmpty.Stream != "" {
 		t.Fatal("unexpected non-empty stream")
-	}
-}
-
-func TestOptionalMeasurementsDoNotInventTokens(t *testing.T) {
-	result, err := ParseResult([]byte(`{"measurements":{"estimatedTokens":42,"costUsd":0,"estimatedCostUsd":0.25}}`))
-	if err != nil || result.Usage != nil || result.Measurements == nil || *result.Measurements.CostUSD != 0 || *result.Measurements.EstimatedTokens != 42 {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
-	for _, raw := range []string{`{"measurements":{"costUsd":-1}}`, `{"measurements":{"estimatedTokens":-1}}`, `{"measurements":{"estimatedCostUsd":-1}}`} {
-		if _, err := ParseResult([]byte(raw)); err == nil {
-			t.Fatalf("accepted %s", raw)
-		}
 	}
 }

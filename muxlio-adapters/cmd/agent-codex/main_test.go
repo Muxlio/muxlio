@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func TestTailBufferKeepsLastLimitBytes(t *testing.T) {
@@ -206,8 +207,8 @@ func TestAgentCodexAdapterReportsUsageOnSuccess(t *testing.T) {
 		`echo '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"cached_input_tokens":30}}'` + "\n"
 	out, _ := runCodexAdapter(t, script)
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -215,12 +216,7 @@ func TestAgentCodexAdapterReportsUsageOnSuccess(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected non-nil usage from successful turn.completed event")
-	}
-	if resp.Usage.Input != 100 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
-	}
+	assertCodexAccounting(t, resp.Accounting, "100", "50", "30")
 }
 
 // TestAgentCodexAdapterPreservesUsageOnFailure verifies that a run which
@@ -238,8 +234,8 @@ func TestAgentCodexAdapterPreservesUsageOnFailure(t *testing.T) {
 		t.Fatalf("adapter should exit 0 on adapter error, got %d", ps.ExitCode())
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -250,12 +246,7 @@ func TestAgentCodexAdapterPreservesUsageOnFailure(t *testing.T) {
 	if !strings.Contains(resp.Error, "model response stream ended unexpectedly") {
 		t.Fatalf("expected turn.failed message in error, got %q", resp.Error)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected non-nil usage from failed run that reported usage")
-	}
-	if resp.Usage.Input != 7 || resp.Usage.Output != 3 || resp.Usage.Cached != 2 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
-	}
+	assertCodexAccounting(t, resp.Accounting, "7", "3", "2")
 }
 
 // TestAgentCodexAdapterUsageAbsentWhenNotReported verifies the adapter does
@@ -335,8 +326,8 @@ func TestAgentCodexAdapterSkipsTransientReconnect(t *testing.T) {
 		`echo '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5,"cached_input_tokens":2}}'` + "\n"
 	out, _ := runCodexAdapter(t, script)
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -344,9 +335,7 @@ func TestAgentCodexAdapterSkipsTransientReconnect(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("transient reconnect should not fail the run, got error: %q", resp.Error)
 	}
-	if resp.Usage == nil || resp.Usage.Input != 10 || resp.Usage.Output != 5 || resp.Usage.Cached != 2 {
-		t.Fatalf("expected usage from turn.completed after reconnect skip, got %+v", resp.Usage)
-	}
+	assertCodexAccounting(t, resp.Accounting, "10", "5", "2")
 }
 
 // TestAgentCodexAdapterUsageAbsentOnCleanFailure verifies that a run which
@@ -394,8 +383,8 @@ func TestAgentCodexAdapterUsageLastTurnWins(t *testing.T) {
 		`echo '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"cached_input_tokens":30}}'` + "\n"
 	out, _ := runCodexAdapter(t, script)
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -403,12 +392,7 @@ func TestAgentCodexAdapterUsageLastTurnWins(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil {
-		t.Fatal("expected non-nil usage from last turn.completed")
-	}
-	if resp.Usage.Input != 100 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
-		t.Fatalf("expected last turn.completed usage {100,50,30}, got %+v", resp.Usage)
-	}
+	assertCodexAccounting(t, resp.Accounting, "100", "50", "30")
 }
 
 func buildAgentCodex(t *testing.T) string {
@@ -467,5 +451,16 @@ esac
 	}
 	if !found {
 		t.Fatalf("missing login failure: %s", raw)
+	}
+}
+
+func assertCodexAccounting(t *testing.T, a *contract.Accounting, input, output, cache string) {
+	t.Helper()
+	if a == nil || !a.Final || len(a.Entries) != 1 || a.Entries[0].Tokens == nil {
+		t.Fatalf("missing final accounting: %+v", a)
+	}
+	tokens := a.Entries[0].Tokens
+	if tokens.Input.Collected == nil || string(tokens.Input.Collected.Value) != input || tokens.Output.Collected == nil || string(tokens.Output.Collected.Value) != output || tokens.CacheRead.Collected == nil || string(tokens.CacheRead.Collected.Value) != cache {
+		t.Fatalf("unexpected accounting: %+v", tokens)
 	}
 }

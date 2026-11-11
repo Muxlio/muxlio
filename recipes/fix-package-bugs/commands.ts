@@ -5,6 +5,9 @@ const {spawnSync} = require('node:child_process');
 const {writeFileSync} = require('node:fs');
 const {join} = require('node:path');
 const [kind, path, target] = process.argv.slice(1);
+// Leave one minute for report output and adapter shutdown before the task's
+// ten-minute deadline. Every command consumes the same overall budget.
+const deadline = Date.now() + 540000;
 const checks = kind === 'go'
   ? [['package tests', 'go', ['test', target], path], ['package vet', 'go', ['vet', target], path]]
   : kind === 'npm'
@@ -16,7 +19,8 @@ if (!checks.length) throw new Error('Unsupported package kind: ' + kind);
 checks.push(
   ['repository build', 'npm', ['run', 'build'], '.'],
   ['repository tests', 'npm', ['test'], '.'],
-  ['UI regression tests', 'npm', ['--prefix', 'muxlio-ui', 'test'], '.'],
+  ...(kind === 'ui' && path === 'muxlio-ui' ? [] : [['UI regression tests', 'npm', ['--prefix', 'muxlio-ui', 'test'], '.']]),
+  ['UI smoke tests', 'npm', ['--prefix', 'muxlio-ui', 'run', 'smoke'], '.'],
   ['core regression tests', 'go', ['test', './...'], 'muxlio-core'],
   ['adapter regression tests', 'go', ['test', './...'], 'muxlio-adapters'],
 );
@@ -25,11 +29,15 @@ const results = [];
 for (const [label, program, args, cwd] of checks) {
   const start = Date.now();
   console.log('\n=== ' + label + ' ===');
-  const result = spawnSync(program, args, {cwd, stdio: 'inherit', timeout: 600000});
+  const remaining = deadline - Date.now();
+  const skipped = remaining <= 0;
+  const result = skipped
+    ? {status: null, signal: null, error: new Error('Verification time budget exhausted')}
+    : spawnSync(program, args, {cwd, stdio: 'inherit', timeout: remaining});
   const exitCode = result.status;
   const error = result.error?.message;
   const passed = !error && !result.signal && exitCode === 0;
-  results.push({label, program, args, cwd, passed, exitCode, signal: result.signal, error, durationMs: Date.now() - start});
+  results.push({label, program, args, cwd, passed, exitCode, signal: result.signal, error, skipped, durationMs: Date.now() - start});
   console.log('\n=== ' + label + ': ' + (passed ? 'passed' : 'FAILED') + ', exit ' + exitCode + (error ? ', ' + error : '') + ' ===');
   if (!passed) failed = true;
 }

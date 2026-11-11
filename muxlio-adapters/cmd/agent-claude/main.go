@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/adapter"
 	"github.com/muxlio/muxlio-adapters/contract"
 )
@@ -98,8 +99,12 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var runErr string
 	completed := false
-	var usage *adapter.TokenUsage
-	var measurements *contract.Measurements
+	var confirmedTokens *contract.TokenMeasures
+	var confirmedCosts []contract.CostMeasure
+	recorder := accounting.NewRecorder()
+	_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	publisher := adapter.NewAccountingPublisher()
+	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -122,6 +127,11 @@ func main() {
 		_ = json.Unmarshal(typeRaw, &evType)
 
 		switch evType {
+		case "system":
+			var selected string
+			if json.Unmarshal(ev["model"], &selected) == nil && selected != "" {
+				_ = recorder.ReportModel(contract.AccountingModel{ID: selected, Role: "selected", Source: "claude-init"})
+			}
 		// Claude Code CLI stream-json event types:
 		//   assistant  — carries message.content (array of content blocks or string)
 		//   text       — carries data.content (incremental text delta)
@@ -142,12 +152,37 @@ func main() {
 				adapter.CaptureAgentText(&textChunks, payload.Content)
 			}
 		case "result":
-			completed = true
-			if reported := parseClaudeTokenUsage(ev["usage"]); reported != nil {
-				usage = reported
+			var models map[string]json.RawMessage
+			if json.Unmarshal(ev["modelUsage"], &models) == nil {
+				for id := range models {
+					_ = recorder.ReportModel(contract.AccountingModel{ID: id, Role: "served", Source: "claude-result-model-usage"})
+				}
 			}
-			if estimated := parseClaudeEstimatedCostUSD(ev); estimated != nil {
-				measurements = withEstimatedCost(measurements, estimated)
+			completed = true
+			entry, decodeErr := claudeAccountingEntry(ev)
+			if decodeErr != nil {
+				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+			}
+			if entry.Tokens != nil {
+				confirmedTokens = entry.Tokens
+			} else {
+				entry.Tokens = confirmedTokens
+			}
+			if len(entry.Costs) > 0 {
+				confirmedCosts = entry.Costs
+			} else {
+				entry.Costs = confirmedCosts
+			}
+			if err := recorder.ReplaceScope("invocation", []accounting.Part{{Scope: "invocation", Entry: entry}}); err == nil {
+				if entry.Tokens != nil {
+					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
+				}
+				if len(entry.Costs) > 0 {
+					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "api-equivalent"}, "partial", "source-coverage-unverified")
+				}
+				if snapshot, err := recorder.Snapshot(); err == nil {
+					_ = publisher.Publish(*snapshot, true)
+				}
 			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "text", "content"} {
@@ -197,12 +232,16 @@ func main() {
 	if !completed {
 		runErr = appendFailure(runErr, "claude stream ended without a result event")
 	}
+	finalAccounting, accountingErr := adapter.FinalizeAccounting(recorder, publisher)
+	if accountingErr != nil {
+		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
+	}
 	if runErr != "" {
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from the terminal result event so
 		// failed attempts that still returned usage are recorded, not estimated
 		// as zero/unavailable. usage is nil when no result event was parsed.
-		adapter.FailWithObserved(usage, measurements, "agent-claude: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithAccounting(finalAccounting, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
@@ -221,7 +260,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage, Measurements: measurements})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Accounting: finalAccounting})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

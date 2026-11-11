@@ -5,26 +5,6 @@ function nodeDisplayName(nodeId){return /^each__\d+$/.test(nodeId||'')?'each':no
 function stateClass(s){return{succeeded:'succeeded',failed:'failed',running:'running',waiting:'waiting',paused:'paused',queued:'queued',cancelled:'cancelled'}[s]||''}
 function checkIcon(s){if(s==='succeeded')return `<span class="node-card-check succeeded">✓</span>`;if(s==='failed')return `<span class="node-card-check failed">✕</span>`;if(s==='running')return `<span class="node-card-check running">⟳</span>`;return ''}
 
-// sumRunTokenUsage aggregates reported dimensions across attempts. Missing
-// attempts do not clear dimensions reported elsewhere; null means unavailable.
-function sumRunTokenUsage(attempts){
-  if(!attempts||!attempts.length)return null;
-  let anyReported=false;
-  const dims={input:null,output:null,cached:null};
-  for(const a of attempts){
-    if(a.usage==null)continue;
-    const reported=['input','output','cached'].some(name=>typeof a.usage[name]==='number');
-    if(!reported)continue;
-    anyReported=true;
-    for(const name of ['input','output','cached']){
-      const value=a.usage[name];
-      if(typeof value!=='number')continue;
-      dims[name]=(dims[name]??0)+value;
-    }
-  }
-  return anyReported?dims:null;
-}
-
 // Prefer worker measurements; older attempts retain coordinator timestamps.
 // Sum attempt durations individually so parallel work and retries are included.
 function sumExecutionTime(attempts){
@@ -61,16 +41,20 @@ function materializedStateCounts(acts){
   const counts={};for(const act of acts||[])counts[act.state||'queued']=(counts[act.state||'queued']||0)+1;return counts;
 }
 function wbActivityStripSummary(items){
-  let running=0,waiting=0,attention=0;
+  let running=0,waiting=0,paused=0,attention=0;
+  const runStatus=(items||[]).find(item=>item.scope==='run')?.title;
   for(const item of items||[]){
+    if(item.scope==='run')continue;
     if(item.tone==='attention')attention++;
     else if(item.tone==='progress')running++;
-    else if(item.tone==='waiting'||item.tone==='paused'||item.tone==='queued'||item.tone==='running')waiting++;
+    else if(item.tone==='paused')paused++;
+    else if(item.tone==='waiting'||item.tone==='queued')waiting++;
   }
-  const parts=[];
+  const parts=runStatus?[runStatus]:[];
   if(running)parts.push(`${running} running`);
   if(waiting)parts.push(`${waiting} waiting`);
-  if(attention)parts.push(`${attention} need attention`);
+  if(paused)parts.push(`${paused} paused`);
+  if(attention)parts.push(`${attention} ${attention===1?'needs':'need'} attention`);
   if(parts.length)return parts.join(' · ');
   return 'No actionable activity';
 }
@@ -82,7 +66,7 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   if(runWait){
     const since=run.updatedAt||run.createdAt,elapsed=since?formatElapsed(since,nowIso):null;
   const runDetail={created:'Run created and waiting to start.',waiting:'Run is waiting for admission or capacity.',paused:'Run is paused.'}[run.state]||'Waiting for coordinator admission or worker capacity.';
-    items.push({tone:'running',title:`Run ${run.state}`,detail:runDetail,elapsed,timing:elapsed?`Waiting ${elapsed}`:'Timing unavailable',actions:`${run.state==='paused'?wbActivityButton('Resume run','data-run-action="resume"'):''}`});
+    items.push({scope:'run',tone:run.state==='paused'?'paused':'waiting',title:`Run ${run.state}`,detail:runDetail,elapsed,timing:elapsed?`${run.state==='paused'?'Paused':'Waiting'} ${elapsed}`:'Timing unavailable',actions:`${run.state==='paused'?wbActivityButton('Resume run','data-run-action="resume"'):''}`});
   }
   if(run.error&&!runWait)items.push({tone:'attention',title:'Run failed',detail:run.error,actions:wbActivityButton('Inspect operations','data-open-operations')});
   const held=attemptList.filter(a=>a.awaitReconciliationReason);
@@ -119,7 +103,7 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   const idle=terminal&&!items.length;
   const itemHtml=items.length?`<ul class="wb-activity-list" role="list">${items.map(item=>`<li class="wb-activity-item wb-activity-item--${esc(item.tone)}"><div class="wb-activity-item-main"><span class="state ${esc(stateClass(item.tone==='attention'?'failed':item.tone==='progress'?'running':item.tone==='paused'?'paused':item.tone==='waiting'?'waiting':item.tone==='queued'?'queued':'waiting'))}">${esc(item.tone==='attention'?'Needs attention':item.tone==='progress'?'Running':item.tone==='paused'?'Paused':item.tone==='waiting'?'Waiting':item.tone==='queued'?'Queued':'Waiting')}</span><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p>${item.timing?`<span class="wb-activity-timing">${esc(item.timing)}</span>`:''}</div><div class="wb-activity-item-actions">${item.actions||''}</div></li>`).join('')}</ul>`:`<div class="wb-activity-empty${idle?' is-complete':''}"><span class="wb-activity-empty-mark" aria-hidden="true">${idle?'✓':'·'}</span><span><strong>${idle?'No activations need attention.':'No activations materialized yet.'}</strong>${idle?'<small>Completed count reflects materialized nodes only.</small>':''}</span></div>`;
   const html=`<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong><span class="wb-activity-strip-summary subtle">${esc(stripSummary)}</span></span></summary>${itemHtml}</details>`;
-  const announce=items.length?stripSummary:(idle?`Run ${run.state}. ${stripSummary}.`:'');
+  const announce=items.length?`Current activity. ${stripSummary.split(' · ').join('. ')}.`:(idle?`Run ${run.state}. ${stripSummary}.`:'Current activity. No actionable activity.');
   return {html,signature,announce,visible:!idle||!terminal||actsList.length>0};
 }
 function renderWbActivity(run,acts){
@@ -133,7 +117,7 @@ function renderWbActivity(run,acts){
   if(panel._activitySignature===signature)return;
   panel._activitySignature=signature;
   const announcer=document.getElementById('wbActivityAnnounce');
-  if(announce&&announcer&&signature!==wbActivitySignature){announcer.textContent=announce;wbActivitySignature=signature;}
+  if(announce&&announcer&&announce!==wbActivitySignature){announcer.textContent=announce;wbActivitySignature=announce;}
   if(typeof replaceHTMLPreservingDetails==='function')replaceHTMLPreservingDetails(panel,html);else panel.innerHTML=html;
 }
 document.addEventListener('click',event=>{
@@ -155,11 +139,9 @@ document.addEventListener('click',event=>{
 function buildWbStats(r,acts){
   const total=r.overview?.activations??acts.length,done=r.overview?.completed??acts.filter(a=>a.state==='succeeded').length;
   const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
-  const usage=r.overview?.usage??r.usage;
+  const usage=r.overview?.accounting??r.accounting;
   const dimensions=usage?.tokenDimensions;
   const attemptCount=r.overview?.attempts??dimensions?.coverage?.attempts??attempts.length;
-  const legacyTotals=r.overview?.tokens;
-  const fallbackUsage=legacyTotals&&typeof legacyTotals.input==='number'?legacyTotals:(dimensions?null:sumRunTokenUsage(attempts));
   const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
   const stats=[
@@ -173,9 +155,8 @@ function buildWbStats(r,acts){
     attemptCount,
     runState:r.state,
     runError:r.error,
-    fallbackTokens:fallbackUsage,
   });
-  return progress+buildWorkbenchUsageMarkup(presentation,{linkAttempts:attemptCount>0||!!attempts.length});
+  return progress+buildWorkbenchUsageMarkup(presentation);
 }
 
 function graphMarkup(acts,scopes,runComplete){

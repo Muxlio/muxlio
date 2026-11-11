@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func TestRunPagesKeepLargePayloadsOutOfLists(t *testing.T) {
 				if err := s.SetActivationOutputs(id, map[string]any{"report": "LARGE_OUTPUT_SENTINEL"}); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.RecordExecutionAttempt(state.ExecutionAttempt{ID: id + "-attempt", RunID: "run", ActivationID: id, State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Result: &state.AttemptResult{ExecutionSucceeded: true, Outputs: map[string]any{"value": "LARGE_OUTPUT_SENTINEL"}}, Usage: &state.TokenUsage{}}); err != nil {
+				if err := s.RecordExecutionAttempt(state.ExecutionAttempt{ID: id + "-attempt", RunID: "run", ActivationID: id, State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Result: &state.AttemptResult{ExecutionSucceeded: true, Outputs: map[string]any{"value": "LARGE_OUTPUT_SENTINEL"}}, Accounting: testaccounting.Tokens(0, 0, 0)}); err != nil {
 					t.Fatal(err)
 				}
 				if err := s.AppendEvent("run", state.EventArtifactSnapshot, id+"-attempt", map[string]any{"activationId": id, "snapshot": map[string]any{"name": "report", "digest": "sha256:test"}}); err != nil {
@@ -91,7 +92,7 @@ func TestRunPagesKeepLargePayloadsOutOfLists(t *testing.T) {
 			if summary["activations"] != float64(105) || summary["attempts"] != float64(105) {
 				t.Fatalf("partial totals: %v", summary)
 			}
-			if summary["tokens"].(map[string]any)["input"] != float64(0) {
+			if summary["accounting"].(map[string]any)["tokens"].(map[string]any)["knownSubtotal"] != "0" {
 				t.Fatal("reported zero lost")
 			}
 			page := get("/v1/runs/run/snapshots?limit=20")

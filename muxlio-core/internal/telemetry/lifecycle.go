@@ -2,6 +2,8 @@ package telemetry
 
 import (
 	"context"
+	"github.com/muxlio/muxlio-adapters/accounting"
+	"strconv"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -80,15 +82,51 @@ func Slots(ctx context.Context, workerID string, used, capacity int) {
 
 // Usage exports only counts explicitly reported by the executor contract.
 // Missing usage stays absent, and an explicitly reported zero stays zero.
-func Usage(ctx context.Context, usage *contract.TokenUsage) {
-	if usage == nil {
+func Usage(ctx context.Context, usage *contract.Accounting) {
+	if usage == nil || !usage.Final {
 		return
 	}
-	trace.SpanFromContext(ctx).SetAttributes(
-		attribute.Int64(GenAIUsageInputTokens, usage.Input),
-		attribute.Int64(GenAIUsageOutputTokens, usage.Output),
-		attribute.Int64(GenAIUsageCacheReadTokens, usage.Cached),
-	)
+	if err := usage.Validate(); err != nil {
+		return
+	}
+	summary, err := accounting.SummarizeAccounting([]accounting.AttemptView{{State: "succeeded", Accounting: usage}})
+	if err != nil || summary.Tokens.Completeness != "complete" {
+		return
+	}
+	dims := []struct {
+		key     attribute.Key
+		measure accounting.SummaryAmount
+		present func(*contract.TokenMeasures) bool
+	}{
+		{GenAIUsageInputTokens, summary.TokenDimensions.Input, func(t *contract.TokenMeasures) bool {
+			return collectedTokenReading(t.Input)
+		}},
+		{GenAIUsageOutputTokens, summary.TokenDimensions.Output, func(t *contract.TokenMeasures) bool {
+			return collectedTokenReading(t.Output)
+		}},
+		{GenAIUsageCacheReadTokens, summary.TokenDimensions.CacheRead, func(t *contract.TokenMeasures) bool {
+			return collectedTokenReading(t.CacheRead)
+		}},
+	}
+	for _, dim := range dims {
+		if dim.measure.EffectiveTotal == nil || dim.measure.EstimatedFallbackSubtotal != nil {
+			continue
+		}
+		complete := true
+		for _, entry := range usage.Entries {
+			if entry.Tokens != nil && !dim.present(entry.Tokens) {
+				complete = false
+				break
+			}
+		}
+		if !complete {
+			continue
+		}
+		n, err := strconv.ParseInt(*dim.measure.EffectiveTotal, 10, 64)
+		if err == nil {
+			trace.SpanFromContext(ctx).SetAttributes(dim.key.Int64(n))
+		}
+	}
 }
 
 // LeaseAge measures time since claim or the last acknowledged renewal.

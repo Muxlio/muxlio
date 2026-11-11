@@ -1,95 +1,44 @@
 /* ── analytics ─────────────────────────────────── */
 // Cross-run operational insights: run volume, outcomes, timing, and
-// provider-reported usage (tokens, credits, costs). Aggregated client-side
-// from runs + attempts using the shared UsageSummary semantics.
+// canonical accounting totals supplied by the coordinator.
 
-async function loadAnalyticsDataLegacy(filters, range, attemptErrors = new Map(), signal) {
-  const runsData = await api('/v1/runs', { signal });
-  if (runsData.runs !== null && !Array.isArray(runsData.runs)) throw new Error('Invalid runs response');
-  const attemptsByRun = new Map();
-  let runs = (runsData.runs || []).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  const includeRange = analyticsRangeThroughNow(range);
-  runs = runs.filter(r => analyticsRunInRange(r, includeRange));
-  const concurrency = 12;
-  for (let start = 0; start < runs.length; start += concurrency) await Promise.all(runs.slice(start, start + concurrency).map(async run => {
-    try {
-      const d = await api(`/v1/runs/${encodeURIComponent(run.id)}/attempts?details=false`, { signal });
-      if (d.attempts !== null && !Array.isArray(d.attempts)) throw new Error('Invalid attempts response');
-      attemptsByRun.set(run.id, d.attempts || []);
-    } catch (err) {
-      attemptErrors.set(run.id, err.message || 'Request failed');
-    }
-  }));
-  const applied = analyticsApplyFiltersToModelInputs(runs, attemptsByRun, filters, includeRange);
-  return buildAnalyticsModel(applied.runs, applied.attemptsByRun, attemptErrors, {
-    range, filters, totalRuns: applied.runs.length, hasMore: false, legacy: true,
-  });
-}
-
-async function loadAnalyticsApiPages(filters, range, signal) {
+async function loadAnalyticsApiPage(filters, range, signal) {
   const runs = [];
   const attemptsByRun = new Map();
-  let page = 1;
-  let totalRuns = 0;
-  let populations;
-  let stateCounts;
-  let pagesFetched = 0;
-  let offset = 0;
-  let hasMore = false;
-
-  for (;;) {
-    const data = await api(`/v1/analytics?${analyticsFiltersQueryString({ ...filters, page }, range)}`, { signal });
-    if (!Array.isArray(data.runs)) throw new Error('Invalid analytics runs response');
-    pagesFetched++;
-    for (const run of data.runs) runs.push(run);
-    for (const [id, list] of Object.entries(data.attemptsByRun || {})) {
-      attemptsByRun.set(id, Array.isArray(list) ? list : []);
-    }
-    totalRuns = data.totalRuns ?? runs.length;
-    populations = data.populations ?? populations;
-    stateCounts = data.stateCounts ?? stateCounts;
-    offset = data.offset ?? offset;
-    hasMore = !!data.hasMore && runs.length < totalRuns;
-    // Avoid looping forever if a changing/inconsistent backend reports more
-    // rows but returns an empty page. Preserve that partial scope in the UI.
-    if (!hasMore || data.runs.length === 0) break;
-    page++;
+  const data = await api(`/v1/analytics?${analyticsFiltersQueryString(filters, range)}`, { signal });
+  if (!Array.isArray(data.runs)) throw new Error('Invalid analytics runs response');
+  runs.push(...data.runs);
+  for (const run of runs) {
+    const list = data.attemptsByRun?.[run.id];
+    const attempts = Array.isArray(list) ? list : [];
+    for (const attempt of attempts) attempt.accountingSummary = data.accountingByAttempt?.[attempt.id];
+    attemptsByRun.set(run.id, attempts);
   }
   runs.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   return {
+    accountingData: data,
     runs,
     attemptsByRun,
-    totalRuns,
-    populations,
-    stateCounts,
-    pagesFetched,
-    offset,
-    hasMore,
+    totalRuns: data.totalRuns ?? runs.length,
+    populations: data.populations,
+    offset: data.offset ?? Math.max(0, ((filters.page || 1) - 1) * 200),
+    hasMore: !!data.hasMore,
   };
 }
 
 async function loadAnalyticsData(filters = analyticsFiltersFromURL(), signal) {
   const range = analyticsResolveRange(filters);
   const attemptErrors = new Map();
-  let snapshot;
-  try {
-    snapshot = await loadAnalyticsApiPages(filters, range, signal);
-  } catch (err) {
-    if (/HTTP 404|unavailable/i.test(err?.message || '')) {
-      return loadAnalyticsDataLegacy(filters, range, attemptErrors, signal);
-    }
-    throw err;
-  }
-  const { runs, attemptsByRun, totalRuns, populations, stateCounts, pagesFetched, offset, hasMore } = snapshot;
+  const snapshot=await loadAnalyticsApiPage(filters,range,signal);
+  const { runs, attemptsByRun, totalRuns, populations, offset, hasMore } = snapshot;
   const model = buildAnalyticsModel(runs, attemptsByRun, attemptErrors, {
+    accountingData:snapshot.accountingData,
     range,
-    filters: { ...filters, page: 1 },
+    filters: { ...filters },
     totalRuns,
     hasMore,
     populations,
-    stateCounts,
     offset,
-    pagesFetched,
   });
   if (totalRuns >= 3) {
     const prior = analyticsPriorRange(range);
@@ -116,7 +65,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
   const filters = ctx.filters || analyticsDefaultFilters();
   const range = ctx.range || analyticsResolveRange(filters);
   const tz = filters.tz || 'UTC';
-  const stateCounts = analyticsStateCountsFromContext(ctx, runs);
+  const stateCounts = analyticsStateCounts(runs);
 
   const dayBucketTemplate = () => analyticsDayBuckets(range, tz);
 
@@ -141,15 +90,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
   let runsWithUnavailableUsage = 0;
   const bucketProvenance = { finishedAt: 0, startedAt: 0, runCreatedAt: 0 };
 
-  const tokenBuckets = dayBucketTemplate().map(b => ({
-    ...b,
-    input: null,
-    output: null,
-    cached: null,
-    hasData: false,
-  }));
-  const tokenBucketByDate = new Map(tokenBuckets.map(b => [b.dateKey, b]));
-
+  const tokenBuckets=[];
   for (const r of runs) {
     if (attemptErrors.has(r.id)) continue;
     const attempts = attemptsByRun.get(r.id) || [];
@@ -173,26 +114,9 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
       if (a.state === 'succeeded') stats.succeeded++;
       if (a.state === 'failed') stats.failed++;
 
-      const usage = analyticsUsage(a.usage);
-      const bucketTime = analyticsAttemptBucketTime(a, r);
-      if (bucketTime) bucketProvenance[bucketTime.provenance] = (bucketProvenance[bucketTime.provenance] || 0) + 1;
-
-      if (!analyticsAttemptPending(a.state)) {
-        if (usage) {
-          if (bucketTime) {
-            const b = analyticsBucketForTimestamp(bucketTime.ms, range, tz);
-            const key = b?.dateKey || analyticsBucketKey(new Date(bucketTime.ms), range, tz);
-            const tb = tokenBucketByDate.get(key);
-            if (tb) {
-              for (const field of ['input', 'output', 'cached']) {
-                if (usage[field] != null) tb[field] = (tb[field] ?? 0) + usage[field];
-              }
-              tb.hasData = true;
-            }
-          }
-        }
-      }
-
+      const tokenRow=a.accountingSummary?.tokens;
+      const usage=tokenRow?.knownSubtotal!=null;
+      const bucketTime=analyticsAttemptBucketTime(a,r);if(bucketTime)bucketProvenance.finishedAt++;
       if (a.state === 'running') {
         stats.running++;
         continue;
@@ -222,35 +146,18 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
         stats.taskTimeMax = Math.max(stats.taskTimeMax ?? 0, taskDuration);
       }
 
-      if (!usage) { stats.missingUsage++; incompleteUsage = true; continue; }
-      stats.usageSamples++;
-      if (Object.values(usage).some(value => value == null)) { stats.missingUsage++; incompleteUsage = true; }
-      let entry = executorUsage.get(execKey);
-      if (!entry) {
-        entry = { input: null, output: null, cached: null, runIds: new Set() };
-        executorUsage.set(execKey, entry);
-      }
-      for (const field of ['input', 'output', 'cached']) {
-        if (usage[field] != null) entry[field] = (entry[field] ?? 0) + usage[field];
-      }
-      entry.runIds.add(r.id);
+      if(!usage){stats.missingUsage++;incompleteUsage=true;continue}
+      stats.usageSamples++;if(tokenRow.completeness!=='complete'){stats.missingUsage++;incompleteUsage=true}
+
     }
     if (hasCompletedAttempt && incompleteUsage) runsWithUnavailableUsage++;
   }
 
   const attemptRows = flatAttempts.map(({ attempt }) => attempt);
-  const usageSummary = analyticsSummarizeUsage(attemptRows);
-  const measures = analyticsMeasureCatalog(usageSummary);
-  const measureRollups = buildAnalyticsMeasureRollups(flatAttempts, measures, dayBucketTemplate(), range, tz);
-  const retryLatency = buildAnalyticsRetryLatency(flatAttempts, runs);
-
-  let totalInput = null, totalOutput = null, totalCached = null, anyTokenData = false;
-  for (const [, e] of executorUsage) {
-    if (e.input != null) totalInput = (totalInput ?? 0) + e.input;
-    if (e.output != null) totalOutput = (totalOutput ?? 0) + e.output;
-    if (e.cached != null) totalCached = (totalCached ?? 0) + e.cached;
-    anyTokenData = true;
-  }
+  const usageSummary=ctx.accountingData?.accounting||{};
+  const measures=analyticsMeasureCatalog(usageSummary);
+  const measureRollups=buildAnalyticsMeasureRollups(flatAttempts,measures,analyticsDayBuckets(range,'UTC'),range,'UTC',ctx.accountingData||{});
+  const retryLatency=buildAnalyticsRetryLatency(flatAttempts,runs);
 
   return {
     runs,
@@ -263,7 +170,7 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
     executorUsage,
     runsWithNoAttempts,
     runsWithUnavailableUsage,
-    totals: anyTokenData ? { input: totalInput, output: totalOutput, cached: totalCached } : null,
+    totals: null,
     flatAttempts,
     attemptCount: attemptRows.length,
     usageSummary,
@@ -279,98 +186,24 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
     comparison: ctx.comparison,
     legacy: !!ctx.legacy,
     retryLatency,
-    pagesFetched: ctx.pagesFetched ?? 1,
+    offset: ctx.offset ?? 0,
   };
 }
 
-function buildAnalyticsMeasureRollups(flatAttempts, measures, dayTemplate, range, tz = 'UTC') {
-  const rollups = new Map();
-  for (const measure of measures) {
-    const buckets = dayTemplate.map(b => ({ ...b, total: null, reporting: 0, hasData: false }));
-    const bucketByDate = new Map(buckets.map(b => [b.dateKey, b]));
-    const byExecutor = new Map();
-    const byWorkflow = new Map();
-    const evidence = [];
-    let subtotal = null;
-    let reporting = 0;
-
-    for (const { attempt, run } of flatAttempts) {
-      if (analyticsAttemptPending(attempt.state)) continue;
-      const value = analyticsMeasureValueForAttempt(attempt, measure);
-      const row = {
-        runId: run.id,
-        attemptId: attempt.id || '',
-        executor: attempt.executor || 'unknown',
-        workflow: run.workflowName || 'Unnamed workflow',
-        value,
-        bucketProvenance: null,
-      };
-      if (value != null) {
-        reporting++;
-        subtotal = (subtotal ?? 0) + value;
-        const execKey = row.executor;
-        const wfKey = row.workflow;
-        if (!byExecutor.has(execKey)) byExecutor.set(execKey, { label: execKey, value: 0, runIds: new Set() });
-        if (!byWorkflow.has(wfKey)) byWorkflow.set(wfKey, { label: wfKey, value: 0, runIds: new Set() });
-        const ex = byExecutor.get(execKey);
-        ex.value += value;
-        ex.runIds.add(run.id);
-        const wf = byWorkflow.get(wfKey);
-        wf.value += value;
-        wf.runIds.add(run.id);
-        const bucketTime = analyticsAttemptBucketTime(attempt, run);
-        if (bucketTime) {
-          row.bucketProvenance = bucketTime.provenance;
-          const bk = analyticsBucketForTimestamp(bucketTime.ms, range, tz);
-          const key = bk?.dateKey || analyticsBucketKey(new Date(bucketTime.ms), range, tz);
-          const b = bucketByDate.get(key);
-          if (b) {
-            b.total = (b.total ?? 0) + value;
-            b.reporting++;
-            b.hasData = true;
-          }
-        }
-      }
-      evidence.push(row);
-    }
-
-    rollups.set(measure.id, {
-      measure,
-      buckets,
-      byExecutor: [...byExecutor.values()].sort((a, b) => b.value - a.value),
-      byWorkflow: [...byWorkflow.values()].sort((a, b) => b.value - a.value),
-      evidence,
-      subtotal,
-      reporting,
-    });
-  }
-  return rollups;
+function buildAnalyticsMeasureRollups(flatAttempts,measures,dayTemplate,range,tz='UTC',data={}){
+ const rollups=new Map();
+ for(const measure of measures){
+  const row=analyticsMeasureSummary(data.accounting,measure),subtotal=analyticsMeasureExact(data.accounting,measure);
+  const buckets=dayTemplate.map(b=>{const summary=data.accountingByDay?.[b.dateKey],exactTotal=analyticsMeasureExact(summary,measure);return {...b,total:analyticsChartValue(exactTotal),exactTotal,reporting:analyticsReporting(analyticsMeasureSummary(summary,measure)),hasData:exactTotal!=null}});
+  const groups=(source)=>Object.entries(source||{}).map(([label,summary])=>{const exactValue=analyticsMeasureExact(summary,measure);return {label,value:analyticsChartValue(exactValue),exactValue,runIds:new Set()}}).filter(x=>x.exactValue!=null).sort((a,b)=>b.value-a.value);
+  const evidence=flatAttempts.map(({attempt,run})=>{const exactValue=analyticsMeasureExact(attempt.accountingSummary,measure);return {runId:run.id,attemptId:attempt.id||'',executor:attempt.executor||'unknown',workflow:run.workflowName||'Unnamed workflow',value:analyticsChartValue(exactValue),exactValue,bucketProvenance:attempt.finishedAt?'finishedAt':null}});
+  rollups.set(measure.id,{measure,buckets,byExecutor:groups(data.accountingByExecutor),byWorkflow:groups(data.accountingByWorkflow),evidence,subtotal,reporting:analyticsReporting(row),precisionWarning:analyticsPrecisionWarning(subtotal),completeness:row?.completeness||'unknown'});
+ }
+ return rollups;
 }
 
 function analyticsNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function analyticsUsage(usage) {
-  if (usage == null) return null;
-  const values = Object.fromEntries(['input', 'output', 'cached'].map(field => {
-    const reported = analyticsUsageFieldReported(usage, field);
-    return [field, reported === undefined ? null : reported];
-  }));
-  return Object.values(values).some(value => value != null) ? values : null;
-}
-
-function analyticsTokenVolume(input, output, cached) {
-  const inN = analyticsNumber(input);
-  const outN = analyticsNumber(output);
-  const cachedN = analyticsNumber(cached);
-  if (inN == null || outN == null || (cachedN != null && cachedN > inN)) return null;
-  return {
-    volume: inN + outN,
-    nonCachedInput: cachedN == null ? null : inN - cachedN,
-    cached: cachedN,
-    output: outN,
-  };
 }
 
 function barChartMarkup(items, opts = {}) {
@@ -381,7 +214,7 @@ function barChartMarkup(items, opts = {}) {
   return `<div class="analytics-bar-chart" role="list">${items.map(it => {
     const pct = maxVal > 0 ? Math.max(0, Math.min(100, (it.value / maxVal) * 100)) : 0;
     const label = it.label;
-    const val = opts.fmt ? opts.fmt(it.value) : String(it.value);
+    const val = opts.fmt ? opts.fmt(it.exactValue??it.value) : String(it.value);
     const drillKey = it.drillKey || it.label;
     const drill = drillKind ? ` data-analytics-drill="${esc(`${drillKind}:${drillKey}`)}"` : '';
     const tag = drillKind ? 'button' : 'div';
@@ -431,43 +264,6 @@ function sparklineMarkup(buckets, opts = {}) {
   </div>`;
 }
 
-function tokenSparklineMarkup(tokenBuckets, opts = {}) {
-  const volumes = tokenBuckets.map(b => analyticsTokenVolume(b.input, b.output, b.cached)?.volume ?? 0);
-  const maxTotal = Math.max(...volumes, 1);
-  const hasAny = tokenBuckets.some(b => b.hasData);
-  if (!hasAny) return '';
-
-  const bars = tokenBuckets.map(b => {
-    const parts = analyticsTokenVolume(b.input, b.output, b.cached);
-    const total = parts?.volume ?? 0;
-    const totalH = maxTotal > 0 ? (total / maxTotal) * 56 : 0;
-    const inH = total > 0 && parts ? (parts.nonCachedInput / total) * totalH : 0;
-    const outH = total > 0 && parts ? (parts.output / total) * totalH : 0;
-    const cacH = total > 0 && parts ? (parts.cached / total) * totalH : 0;
-    const tip = `${b.label}: in=${fmtTok(b.input)} out=${fmtTok(b.output)} cached=${fmtTok(b.cached)}`;
-    const drill = opts.drillKind ? ` data-analytics-drill="${esc(`${opts.drillKind}:${b.dateKey}`)}"` : '';
-    const tag = opts.drillKind ? 'button' : 'div';
-    const btnType = opts.drillKind ? ' type="button"' : '';
-    return `<${tag} class="spark-col${opts.drillKind ? ' spark-drill' : ''}"${btnType}${drill} title="${esc(tip)}" aria-label="${esc(tip)}">
-      <div class="spark-bar-wrap" style="height:${Math.max(1, Math.round(totalH))}px">
-        ${parts?.cached == null && total > 0 ? `<div class="spark-seg tok-total" style="height:${Math.round(totalH)}px"></div>` : ''}
-        ${parts?.cached != null && cacH > 0 ? `<div class="spark-seg tok-cached" style="height:${Math.round(cacH)}px"></div>` : ''}
-        ${parts?.cached != null && outH > 0 ? `<div class="spark-seg tok-out" style="height:${Math.round(outH)}px"></div>` : ''}
-        ${parts?.cached != null && inH > 0 ? `<div class="spark-seg tok-in"  style="height:${Math.round(inH)}px"></div>` : ''}
-      </div>
-    </${tag}>`;
-  }).join('');
-
-  const labels = tokenBuckets
-    .filter((_, i) => i === 0 || i === Math.floor(tokenBuckets.length / 2) || i === tokenBuckets.length - 1)
-    .map(b => `<span>${esc(b.label)}</span>`).join('');
-
-  return `<div class="sparkline" role="img" aria-label="${esc(opts.ariaLabel || 'Token usage')}">
-    <div class="spark-bars">${bars}</div>
-    <div class="spark-axis">${labels}</div>
-  </div>`;
-}
-
 function usageMeasureSparklineMarkup(rollup, opts = {}) {
   if (!rollup) return '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
   const buckets = rollup.buckets;
@@ -478,7 +274,7 @@ function usageMeasureSparklineMarkup(rollup, opts = {}) {
   const bars = buckets.map(b => {
     const total = b.total ?? 0;
     const totalH = maxTotal > 0 ? (total / maxTotal) * 56 : 0;
-    const tip = `${b.label}: ${fmt(total)} · ${b.reporting} attempts`;
+    const tip = `${b.label}: ${fmt(b.exactTotal??total)} · ${b.reporting} attempts`;
     const drill = opts.drillKind ? ` data-analytics-drill="${esc(`${opts.drillKind}:${b.dateKey}`)}"` : '';
     const tag = opts.drillKind ? 'button' : 'div';
     const btnType = opts.drillKind ? ' type="button"' : '';
@@ -523,14 +319,11 @@ function analyticsFilterBarMarkup(model) {
     : '';
   const total = model.totalRuns ?? model.runs.length;
   const loaded = model.runs.length;
-  const scopeNote = model.hasMore
-    ? `Charts include ${loaded} of ${total} matching runs on this load; usage and cost totals below reflect only loaded attempts until more runs are retrieved.`
-    : (model.pagesFetched > 1
-      ? `Charts aggregate all ${total} matching runs (${model.pagesFetched} API requests). Run charts use createdAt · usage buckets use attempt time.`
-      : `${total} runs in window · run charts use createdAt · usage buckets use attempt time.`);
-  const paging = model.hasMore
-    ? `<div class="analytics-pager"><p class="subtle" role="status">${esc(scopeNote)}</p><button type="button" class="btn ghost" data-analytics-page="${(f.page || 1) + 1}">Load more runs</button></div>`
-    : `<div class="analytics-pager"><p class="subtle" role="status">${esc(scopeNote)}</p></div>`;
+  const offset = model.offset || 0;
+  const scopeNote = `Runs ${loaded ? offset + 1 : 0}–${offset + loaded} of ${total} · charts and accounting show this page`;
+  const previous = (f.page || 1) > 1 ? `<button type="button" class="btn ghost" data-analytics-page="${f.page - 1}">Previous</button>` : '';
+  const next = model.hasMore ? `<button type="button" class="btn ghost" data-analytics-page="${(f.page || 1) + 1}">Next</button>` : '';
+  const paging = `<div class="analytics-pager"><p class="subtle" role="status">${esc(scopeNote)}</p>${previous}${next}</div>`;
   return `<section class="analytics-panel analytics-filters" aria-label="Analytics filters">
     <form id="analyticsFiltersForm" class="analytics-filter-form">
       <div class="analytics-filter-row">
@@ -625,7 +418,7 @@ function analyticsDrilldownMarkup(model, drill, measureId) {
   const rows = records.slice(0, 100).map(rec => {
     if(rec.kind==='attempt' && rec.value==null){
       const match=evidence.find(row=>row.runId===rec.run.id && row.attemptId===(rec.attempt.id||''));
-      if(match?.value!=null)rec={...rec,value:match.value};
+      if(match?.value!=null)rec={...rec,value:match.exactValue??match.value};
     }
     if (rec.kind === 'run') {
       return `<tr><td>Run</td><td>${esc(rec.run.workflowName || 'Unnamed workflow')}</td><td><a class="analytics-run-link" href="/runs/${encodeURIComponent(rec.run.id)}">Open run ↗</a></td><td>—</td><td>${esc(rec.run.state)}</td><td class="subtle">createdAt</td></tr>`;
@@ -731,7 +524,7 @@ function analyticsDetailsMarkup(model, measureId) {
   const durationRows = [...model.executorStats].filter(([,s])=>s.durationSamples).map(([label,s])=>({label,value:s.durationSumMs/s.durationSamples})).sort((a,b)=>b.value-a.value).slice(0,10);
   const duration = value => fmtDuration(value);
   const card = (title, items, opts) => `<section class="analytics-chart-card"><h2>${title}</h2>${items.length?barChartMarkup(items,opts):'<div class="analytics-chart-empty" aria-label="No reported data">—</div>'}</section>`;
-  const usageRows = measureId && model.measureRollups?.get(measureId)?.byExecutor?.slice(0,10).map(row=>({label:row.label,value:row.value})) || [];
+  const usageRows = measureId && model.measureRollups?.get(measureId)?.byExecutor?.slice(0,10).map(row=>({label:row.label,value:row.value,exactValue:row.exactValue})) || [];
   const usageFmt = value => analyticsFormatMeasureValue(model.measureRollups.get(measureId).measure,value);
   return `<div class="analytics-chart-grid analytics-executor-charts">
     ${card('Attempts by executor',rows,{drillKind:'executor'})}
@@ -752,15 +545,15 @@ function renderAnalytics(model, options = {}) {
   const windowLabel = preset === '30d' ? '30 days' : (range?.label || 'selected window');
   const emptyRunLabel = preset === '30d' ? 'No runs in the last 30 days.' : 'No runs in the selected window.';
   const rollup = measureId ? model.measureRollups?.get(measureId) : null;
-  const measureFmt = v => rollup ? analyticsFormatMeasureValue(rollup.measure, v) : fmtTok(v);
+  const measureFmt = v => rollup ? analyticsFormatMeasureValue(rollup.measure, v) : String(v);
 
   const empty = '<div class="analytics-chart-empty" aria-label="No reported data">—</div>';
   const bars = (items, opts) => items.length ? barChartMarkup(items, opts) : empty;
   const card = (title, chart, wide = false) => `<section class="analytics-chart-card${wide ? ' analytics-chart-wide' : ''}"><h2>${title}</h2>${chart}</section>`;
   const legend = items => `<div class="spark-legend">${items.map(([label, cls]) => `<span class="spark-legend-item"><span class="spark-swatch ${cls}"></span>${label}</span>`).join('')}</div>`;
 
-  const executorBreakdown = rollup ? rollup.byExecutor.slice(0, 10).map(row => ({ label: row.label, value: row.value })) : [];
-  const workflowBreakdown = rollup ? rollup.byWorkflow.slice(0, 10).map(row => ({ label: row.label, value: row.value })) : [];
+  const executorBreakdown = rollup ? rollup.byExecutor.slice(0, 10) : [];
+  const workflowBreakdown = rollup ? rollup.byWorkflow.slice(0, 10) : [];
 
   const warning = model.attemptErrors?.size ? `<details class="analytics-data-status" role="status"><summary>Partial data · ${model.attemptErrors.size} runs</summary><ul>${[...model.attemptErrors].map(([id,error])=>`<li>Statistics are partial · <a href="/runs/${encodeURIComponent(id)}">${esc(id)}</a> · ${esc(error)}</li>`).join('')}</ul></details>` : '';
   const sparkOpts = { drillKind: 'runVolume', ariaLabel: `Run volume · ${windowLabel}`, emptyLabel: emptyRunLabel };
@@ -770,7 +563,7 @@ function renderAnalytics(model, options = {}) {
     + warning
     + (drill ? analyticsDrilldownMarkup(model, drill, measureId) : '')
     + (model.measures?.length ? `<section class="analytics-chart-card analytics-chart-wide analytics-usage-trends"><div class="analytics-usage-head"><h2>Usage</h2>${analyticsMeasureToolbarMarkup(model, measureId)}</div>
-      ${usageMeasureSparklineMarkup(rollup, measureSparkOpts)}
+      ${rollup?.precisionWarning?'<p class="subtle">Chart heights use approximate numbers; labels retain exact decimal values.</p>':''}${usageMeasureSparklineMarkup(rollup, measureSparkOpts)}
       <div class="analytics-breakdown-grid">
         <div><h3 class="analytics-breakdown-title">By executor</h3>${bars(executorBreakdown, { fmt: measureFmt, drillKind: 'executor' })}</div>
         <div><h3 class="analytics-breakdown-title">By workflow</h3>${bars(workflowBreakdown, { fmt: measureFmt, drillKind: 'workflow' })}</div>

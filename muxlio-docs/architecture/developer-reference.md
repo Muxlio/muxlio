@@ -529,20 +529,20 @@ The default runner uses the CLI with fake executors. For real experiments,
 provide `runner: { id: 'my-runner/v1', async run(workflow, options) { ... } }`
 that executes `workflow.plan` with `options.input` and returns the shared
 `EvaluationExecution` shape (`state`, `output`, optional `runId`, `error`, and
-`usage`). Configuration is passed to each run. Give runners and scorers new
+`accounting`). Configuration is passed to each run. Give runners and scorers new
 versioned IDs when their implementations change, and version the dataset ID
 when its schema changes. Inputs, plans, expectations, and configuration must
 be JSON serializable with finite numbers. Functions, symbols, bigint values,
 and undefined array entries are rejected before execution.
 
 The report includes ordered case/version results, execution duration, errors,
-usage, and named scores. Missing usage is `null`; measured zero remains zero.
-Usage retains the shared observed/estimated/unknown fields without inferring
-tokens. The manifest contains copied plans, recomputed plan digests, a dataset
+accounting, and named scores. Missing accounting is `null`; reported zero remains zero.
+Accounting retains exact decimal strings, collected and estimated contributions,
+fidelity and coverage without inferring tokens. The manifest contains copied plans, recomputed plan digests, a dataset
 digest (including expected outputs), a configuration digest, runner/scorer IDs,
 and a content-derived evaluation ID. Plans, cases, and configuration are copied
 before execution so caller or runner mutations cannot change subsequent runs.
-Returned execution output and usage are also copied to isolate each result.
+Returned execution output and accounting are also copied to isolate each result.
 These identities pin the experiment specification; external model behavior and
 services can still vary. Keep the dataset alongside the manifest for replay.
 
@@ -894,7 +894,7 @@ history page; live events use a separate bounded feed. Artifact bytes, full
 attempt results, and run input/output values load when opened.
 
 The **Operations & usage** tab shows the pinned version, run limits, detached
-operations, reconciliation holds, and observed/estimated/unavailable accounting.
+operations, reconciliation holds, and collected/estimated/unavailable accounting.
 Worker details expose readiness checks, capability contracts and placement
 labels. Persistent sessions expose supported input-delivery policies and receipts.
 Token counts automatically use K, M, or B units.

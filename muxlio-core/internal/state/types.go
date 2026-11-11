@@ -114,14 +114,6 @@ type Dispatch struct {
 	Request      []byte `json:"request"`
 }
 
-// TokenUsage records the input, output, and cached token counts reported by
-// an executor for a single execution attempt. A nil pointer means the provider
-// did not report usage; this is intentionally distinct from a reported zero,
-// which is represented by a non-nil pointer with all fields set to zero. The
-// distinction lets consumers tell "unavailable" from "free/empty" — missing
-// provider usage must remain explicitly unavailable, not be reported as zero.
-type TokenUsage = contract.TokenUsage
-
 // ValueValidationFailure describes a runtime contract violation. Missing is
 // distinct from a reported JSON null. Expected is the declared JSON Schema.
 type ValueValidationFailure struct {
@@ -156,19 +148,22 @@ type AttemptResult struct {
 // executor termination; execution.returned events and worker diagnostics record
 // later returns separately, without asserting external effect completion.
 type ExecutionAttempt struct {
-	Measurements        *contract.Measurements `json:"measurements,omitempty"`
-	ID                  string                 `json:"id"`
-	RunID               string                 `json:"runId"`
-	ActivationID        string                 `json:"activationId"`
-	RetryNumber         int                    `json:"retryNumber"`
-	Executor            string                 `json:"executor"`
-	State               string                 `json:"state"`
-	StartedAt           time.Time              `json:"startedAt"`
-	FinishedAt          time.Time              `json:"finishedAt"`
-	Failure             string                 `json:"failure,omitempty"`
-	Result              *AttemptResult         `json:"result,omitempty"`
-	Usage               *TokenUsage            `json:"usage,omitempty"`
-	ExecutionDurationMS *int64                 `json:"executionDurationMs,omitempty"`
+	OperationAttemptID       string               `json:"operationAttemptId,omitempty"`
+	OperationAction          string               `json:"operationAction,omitempty"`
+	AccountingRemoteRevision string               `json:"-"`
+	AccountingRemoteHash     string               `json:"-"`
+	Accounting               *contract.Accounting `json:"accounting,omitempty"`
+	ID                       string               `json:"id"`
+	RunID                    string               `json:"runId"`
+	ActivationID             string               `json:"activationId"`
+	RetryNumber              int                  `json:"retryNumber"`
+	Executor                 string               `json:"executor"`
+	State                    string               `json:"state"`
+	StartedAt                time.Time            `json:"startedAt"`
+	FinishedAt               time.Time            `json:"finishedAt"`
+	Failure                  string               `json:"failure,omitempty"`
+	Result                   *AttemptResult       `json:"result,omitempty"`
+	ExecutionDurationMS      *int64               `json:"executionDurationMs,omitempty"`
 
 	// Effect is the declared policy: pure, idempotent-with-key, reconcilable,
 	// nonretryable, or a legacy alias. It is
@@ -339,6 +334,7 @@ const (
 	EventLoopIterated        = "loop.iterated"
 	EventWorkerActivity      = "worker.activity"
 	EventExecutionAttempt    = "execution.attempt"
+	EventAccountingUpdated   = "execution.accounting.updated"
 )
 
 // AttemptDiagnostics returns the shared diagnostics from failed execution attempts.

@@ -38,6 +38,7 @@ type dispatchStore interface {
 	RenewWorkerLeases(string, []state.AssignmentLease, time.Time, time.Time) error
 	RecoverWorkerLeases() error
 	AppendWorkerLogChunk(state.Assignment, state.LogChunk) (bool, error)
+	RecordWorkerAccountingSnapshot(state.Assignment, contract.Accounting) (bool, error)
 	WorkerResult(string) ([]byte, error)
 	LookupWorkerAssignment(string, string) (*state.Assignment, error)
 	RecordWorkerDiagnostic(string, []byte) error
@@ -237,7 +238,15 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if req.ExecutionDurationMS != nil && *req.ExecutionDurationMS < 0 {
 		return invalidCompletionError{message: "executionDurationMs must be non-negative"}
 	}
-	result := workers.ExecuteResult{OutputErrors: req.OutputErrors, AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Usage: req.Usage, Measurements: req.Measurements, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	if req.Accounting != nil {
+		if _, err := contract.CanonicalAccounting(*req.Accounting); err != nil {
+			return invalidCompletionError{message: "invalid completion accounting: " + err.Error()}
+		}
+	}
+	if err := req.RemoteAccounting.Validate(); err != nil {
+		return invalidCompletionError{message: "invalid remote completion accounting: " + err.Error()}
+	}
+	result := workers.ExecuteResult{OutputErrors: req.OutputErrors, AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Accounting: req.Accounting, RemoteAccounting: req.RemoteAccounting, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
 	if req.Error != nil {
 		result.Error = req.Error.Message
 	}
@@ -381,6 +390,29 @@ func (c *Coordinator) AppendWorkerLog(workerID string, req WorkerLogAppend) erro
 		WorkerID: workerID, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID, Generation: req.Generation,
 	}, state.LogChunk{RunID: req.RunID, ActivationID: req.ActivationID, Stream: req.Stream,
 		Seq: req.Seq, Data: req.Data, Snapshot: req.Snapshot, Timestamp: time.Now()})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return staleAssignmentError{}
+	}
+	return nil
+}
+
+func (c *Coordinator) RecordWorkerAccounting(workerID string, req WorkerAccountingAppend) error {
+	if c.store == nil {
+		return errors.New("worker dispatch storage unavailable")
+	}
+	if c.initErr != nil {
+		return c.initErr
+	}
+	if req.CoordinatorEpoch != c.epoch {
+		return staleAssignmentError{}
+	}
+	if err := req.Accounting.Validate(); err != nil {
+		return err
+	}
+	ok, err := c.store.RecordWorkerAccountingSnapshot(state.Assignment{CoordinatorEpoch: req.CoordinatorEpoch, RunID: req.RunID, ActivationID: req.ActivationID, WorkerID: workerID, AssignmentID: req.AssignmentID, AttemptID: req.AttemptID, Generation: req.Generation}, req.Accounting)
 	if err != nil {
 		return err
 	}

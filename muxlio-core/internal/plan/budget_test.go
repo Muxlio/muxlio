@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
@@ -96,15 +98,16 @@ func TestUsageLimitsAndMissingUsagePolicy(t *testing.T) {
 		calls  int
 		reason string
 	}{
-		{"closed tokens", &RunLimits{MaxTokens: budgetPtr(int64(10))}, workers.ExecuteResult{}, 1, "unavailable"},
-		{"open tokens", &RunLimits{MaxTokens: budgetPtr(int64(10)), MissingUsage: "fail-open"}, workers.ExecuteResult{}, 8, ""},
-		{"reported zero", &RunLimits{MaxTokens: budgetPtr(int64(10))}, workers.ExecuteResult{Usage: &state.TokenUsage{}}, 8, ""},
-		{"tokens", &RunLimits{MaxTokens: budgetPtr(int64(10))}, workers.ExecuteResult{Usage: &state.TokenUsage{Input: 6, Output: 5, Cached: 6}}, 1, "maxTokens"},
-		{"cost", &RunLimits{MaxCostUSD: budgetPtr(0.5)}, workers.ExecuteResult{Measurements: &contract.Measurements{CostUSD: budgetPtr(0.6)}}, 1, "maxCostUsd"},
-		{"closed cost", &RunLimits{MaxCostUSD: budgetPtr(0.5)}, workers.ExecuteResult{}, 1, "unavailable"},
-		{"estimate closed", &RunLimits{MaxTokens: budgetPtr(int64(10))}, workers.ExecuteResult{Measurements: &contract.Measurements{EstimatedTokens: budgetPtr(int64(11))}}, 1, "unavailable"},
-		{"estimate open", &RunLimits{MaxTokens: budgetPtr(int64(10)), MissingUsage: "fail-open"}, workers.ExecuteResult{Measurements: &contract.Measurements{EstimatedTokens: budgetPtr(int64(11))}}, 1, "maxTokens"},
-		{"cost estimate open", &RunLimits{MaxCostUSD: budgetPtr(0.5), MissingUsage: "fail-open"}, workers.ExecuteResult{Measurements: &contract.Measurements{EstimatedCostUSD: budgetPtr(0.6)}}, 1, "maxCostUsd"},
+
+		{"closed tokens", selectorLimit("tokens", "10", "", ""), workers.ExecuteResult{}, 1, "missing-accounting"},
+		{"open tokens", selectorLimit("tokens", "10", "fail-open", ""), workers.ExecuteResult{}, 8, ""},
+		{"reported zero", selectorLimit("tokens", "10", "", ""), workers.ExecuteResult{Accounting: budgetAccounting("tokens", "0", false)}, 8, ""},
+		{"tokens", selectorLimit("tokens", "10", "", ""), workers.ExecuteResult{Accounting: budgetAccounting("tokens", "11", false)}, 1, "budget-exhausted"},
+		{"cost", selectorLimit("cost", "0.5", "", ""), workers.ExecuteResult{Accounting: budgetAccounting("cost", "0.6", false)}, 1, "budget-exhausted"},
+		{"closed cost", selectorLimit("cost", "0.5", "", ""), workers.ExecuteResult{}, 1, "missing-accounting"},
+		{"estimate closed", selectorLimit("tokens", "10", "", ""), workers.ExecuteResult{Accounting: budgetAccounting("tokens", "11", true)}, 1, "missing-accounting"},
+		{"estimate opt in", selectorLimit("tokens", "10", "fail-open", "collected-or-estimated"), workers.ExecuteResult{Accounting: budgetAccounting("tokens", "11", true)}, 1, "budget-exhausted"},
+		{"cost estimate opt in", selectorLimit("cost", "0.5", "fail-open", "collected-or-estimated"), workers.ExecuteResult{Accounting: budgetAccounting("cost", "0.6", true)}, 1, "budget-exhausted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := workers.NewFake().ByNode("work", tc.result)
@@ -121,7 +124,7 @@ func TestUsageLimitsAndMissingUsagePolicy(t *testing.T) {
 				t.Fatalf("calls=%d", len(fake.Calls()))
 			}
 			attempts, _ := e.store.ListExecutionAttempts(id, "")
-			if tc.result.Usage == nil && attempts[0].Usage != nil {
+			if tc.result.Accounting == nil && attempts[0].Accounting != nil {
 				t.Fatal("missing tokens became zero")
 			}
 		})
@@ -165,7 +168,7 @@ func TestReconciliationCannotBypassAttemptLimit(t *testing.T) {
 }
 
 func TestRunLimitValidation(t *testing.T) {
-	for _, l := range []*RunLimits{{MaxAttempts: budgetPtr(-1)}, {MaxActivations: budgetPtr(-1)}, {MaxActiveAttempts: budgetPtr(-1)}, {MaxTokens: budgetPtr(int64(-1))}, {MaxCostUSD: budgetPtr(-1.0)}, {MissingUsage: "ignore"}} {
+	for _, l := range []*RunLimits{{MaxAttempts: budgetPtr(-1)}, {MaxActivations: budgetPtr(-1)}, {MaxActiveAttempts: budgetPtr(-1)}, {Accounting: []accounting.Limit{{Kind: "tokens", Maximum: "-1"}}}, {Accounting: []accounting.Limit{{Kind: "cost", Maximum: "0.5"}}}, {Accounting: []accounting.Limit{{Kind: "tokens", Maximum: "10", OnMissing: "ignore"}}}} {
 		if !HasErrors(Validate(budgetPlan(l, false))) {
 			t.Fatalf("accepted %+v", l)
 		}
@@ -173,9 +176,9 @@ func TestRunLimitValidation(t *testing.T) {
 }
 
 func TestBudgetFailureCannotBeRetriedPastCompletedAttempt(t *testing.T) {
-	p := budgetPlan(&RunLimits{MaxTokens: budgetPtr(int64(1))}, false)
+	p := budgetPlan(selectorLimit("tokens", "1", "", ""), false)
 	p.Subgraphs["root"] = Subgraph{Nodes: []Node{{ID: "work", Kind: KindExecute, Executor: "test"}}}
-	fake := workers.NewFake().ByNode("work", workers.ExecuteResult{Usage: &state.TokenUsage{Input: 2}})
+	fake := workers.NewFake().ByNode("work", workers.ExecuteResult{Accounting: budgetAccounting("tokens", "2", false)})
 	e := NewEngine(p, fake)
 	id, err := e.CreateRun(json.RawMessage(`{}`))
 	if err != nil {
@@ -199,9 +202,9 @@ type measuredReconciliationExecutor struct{}
 
 func (measuredReconciliationExecutor) Execute(req workers.ExecuteRequest) (workers.ExecuteResult, error) {
 	if req.Action == "reconcile" {
-		return workers.ExecuteResult{Usage: &state.TokenUsage{Input: 1}, Reconciliation: &contract.Reconciliation{Status: "completed"}}, nil
+		return workers.ExecuteResult{Accounting: testaccounting.Tokens(1, 0, 0), Reconciliation: &contract.Reconciliation{Status: "completed"}}, nil
 	}
-	return workers.ExecuteResult{Usage: &state.TokenUsage{Input: 100}}, workers.UncertainExecutionError{}
+	return workers.ExecuteResult{Accounting: testaccounting.Tokens(100, 0, 0)}, workers.UncertainExecutionError{}
 }
 
 func TestReconciliationUsageBelongsToItsOwnInvocation(t *testing.T) {
@@ -214,8 +217,8 @@ func TestReconciliationUsageBelongsToItsOwnInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary := state.SummarizeUsage(attempts)
-	if len(attempts) != 2 || summary.Tokens.Observed == nil || *summary.Tokens.Observed != 101 || summary.Tokens.Unknown != 0 {
+	summary, summaryErr := state.SummarizeAccounting(attempts)
+	if len(attempts) != 2 || summaryErr != nil || summary.Tokens.KnownSubtotal == nil || *summary.Tokens.KnownSubtotal != "101" || summary.Tokens.Attempts.Unknown != 0 {
 		t.Fatalf("attempts=%+v summary=%+v", attempts, summary)
 	}
 }
@@ -353,4 +356,43 @@ func TestInterruptedReconciliationRetainsActiveAttemptSlot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func selectorLimit(kind, maximum, onMissing, evidence string) *RunLimits {
+	l := accounting.Limit{Kind: kind, Maximum: maximum, OnMissing: onMissing, Evidence: evidence}
+	if kind == "cost" {
+		l.Currency = "USD"
+		l.Basis = "api-equivalent"
+	}
+	return &RunLimits{Accounting: []accounting.Limit{l}}
+}
+func budgetAccounting(kind, value string, estimated bool) *contract.Accounting {
+	key := contract.AccountingKey{Kind: kind}
+	entry := contract.AccountingEntry{ID: "call"}
+	if kind == "tokens" {
+		m := contract.Measure[contract.Count]{}
+		r := &contract.Reading[contract.Count]{Value: contract.Count(value), Source: "fixture", Fidelity: "metered"}
+		if estimated {
+			r.Method = "fixture"
+			r.Version = "1"
+			m.Estimated = r
+		} else {
+			m.Collected = r
+		}
+		entry.Tokens = &contract.TokenMeasures{Total: m}
+	} else {
+		key.Currency = "USD"
+		key.Basis = "api-equivalent"
+		m := contract.Measure[contract.Amount]{}
+		r := &contract.Reading[contract.Amount]{Value: contract.Amount(value), Source: "fixture", Fidelity: "metered"}
+		if estimated {
+			r.Method = "fixture"
+			r.Version = "1"
+			m.Estimated = r
+		} else {
+			m.Collected = r
+		}
+		entry.Costs = []contract.CostMeasure{{Currency: "USD", Basis: "api-equivalent", Amount: m}}
+	}
+	return &contract.Accounting{Revision: 1, Final: true, Entries: []contract.AccountingEntry{entry}, Coverage: []contract.MeterCoverage{{Key: key, State: "complete"}}}
 }

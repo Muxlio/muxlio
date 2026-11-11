@@ -2,9 +2,8 @@ package state
 
 import (
 	"encoding/json"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"testing"
-
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func TestCompareRunsScopesResultsAndKnownCosts(t *testing.T) {
@@ -30,10 +29,9 @@ func TestCompareRunsScopesResultsAndKnownCosts(t *testing.T) {
 		must(s.CreateActivation(a))
 		must(s.SetActivationOutputs(a.ID, map[string]any{"result": a.ID}))
 	}
-	cost := 0.25
-	zero := 0.0
-	must(s.RecordExecutionAttempt(ExecutionAttempt{ID: "b", RunID: "before", State: "succeeded", Measurements: &contract.Measurements{CostUSD: &cost}}))
-	must(s.RecordExecutionAttempt(ExecutionAttempt{ID: "a", RunID: "after", State: "succeeded", Usage: &TokenUsage{}, Measurements: &contract.Measurements{CostUSD: &zero}}))
+
+	must(s.RecordExecutionAttempt(ExecutionAttempt{ID: "b", RunID: "before", State: "succeeded", Accounting: testaccounting.WithCosts(nil, "0.25", "")}))
+	must(s.RecordExecutionAttempt(ExecutionAttempt{ID: "a", RunID: "after", State: "succeeded", Accounting: testaccounting.WithCosts(testaccounting.Tokens(0, 0, 0), "0", "")}))
 	must(s.RecordExecutionAttempt(ExecutionAttempt{ID: "unknown", RunID: "after", State: "succeeded"}))
 	must(s.AppendEvent("after", "activation.output_reused", "a1", map[string]any{"sourceActivationId": "b1", "fingerprint": "sha256:test"}))
 	comparison, err := CompareRuns(s, "before", "after")
@@ -44,8 +42,8 @@ func TestCompareRunsScopesResultsAndKnownCosts(t *testing.T) {
 	if len(comparison.Activations) != 2 || !comparison.Activations[0].Changed || !comparison.Activations[1].Changed || comparison.Activations[0].Before == nil || comparison.Activations[1].Before != nil {
 		t.Fatalf("scope alignment: %+v", comparison.Activations)
 	}
-	if comparison.BeforeUsage.CostUSD.Observed == nil || *comparison.BeforeUsage.CostUSD.Observed != cost || comparison.AfterUsage.CostUSD.Observed == nil || *comparison.AfterUsage.CostUSD.Observed != 0 || comparison.AfterUsage.CostUSD.Unknown != 1 || comparison.BeforeUsage.Tokens.Observed != nil || comparison.AfterUsage.Tokens.Observed == nil || *comparison.AfterUsage.Tokens.Observed != 0 {
-		t.Fatalf("usage: %+v %+v", comparison.BeforeUsage, comparison.AfterUsage)
+	if len(comparison.BeforeAccounting.Costs) != 1 || *comparison.BeforeAccounting.Costs[0].Value.KnownSubtotal != "0.25" || len(comparison.AfterAccounting.Costs) != 1 || *comparison.AfterAccounting.Costs[0].Value.KnownSubtotal != "0" || comparison.AfterAccounting.Costs[0].Value.EffectiveTotal != nil {
+		t.Fatalf("accounting comparison: %+v", comparison)
 	}
 	if len(comparison.ReusedOutputs) != 1 {
 		t.Fatal("reuse provenance missing")

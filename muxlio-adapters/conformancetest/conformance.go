@@ -30,10 +30,8 @@ type Fixture struct {
 	RawOutput        bool
 	// UsageUnavailable separates structured protocols without token usage from raw stdout.
 	UsageUnavailable bool
-	// ExpectedUsage overrides the default bundled success usage assertion when set.
-	ExpectedUsage *contract.TokenUsage
-	// ExpectedMeasurements, when set, is asserted on successful invocations.
-	ExpectedMeasurements *contract.Measurements
+	ExpectedTokens   *[3]string
+	ExpectedCost     string
 	// Script and CancelScript supply interactive provider fixtures when needed.
 	Script          func(stream, stderr string, code int, scratch string) string
 	CancelScript    string
@@ -123,25 +121,34 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 					}
 					if tc.name == "success_with_stderr" || tc.name == "nonzero_exit" {
 						if f.RawOutput || f.UsageUnavailable {
-							if resp.Usage != nil {
-								t.Fatal("usage must be unavailable")
+							if reportedTokens(resp.Accounting) != nil {
+								t.Fatal("tokens must be unavailable")
 							}
 						} else {
-							want := contract.TokenUsage{Input: 120, Output: 30, Cached: 40}
-							if f.ExpectedUsage != nil {
-								want = *f.ExpectedUsage
+							want := [3]string{"120", "30", "40"}
+							if f.ExpectedTokens != nil {
+								want = *f.ExpectedTokens
 							}
-							if resp.Usage == nil || !resp.Usage.Equal(want) {
-								t.Fatalf("usage = %+v", resp.Usage)
+							got := reportedTokens(resp.Accounting)
+							if got == nil || *got != want {
+								t.Fatalf("accounting tokens = %v, want %v", got, want)
 							}
-							if f.ExpectedMeasurements != nil {
-								if resp.Measurements == nil || !measurementsEqual(resp.Measurements, f.ExpectedMeasurements) {
-									t.Fatalf("measurements = %+v, want %+v", resp.Measurements, f.ExpectedMeasurements)
+							if f.ExpectedCost != "" {
+								found := false
+								for _, e := range resp.Accounting.Entries {
+									for _, c := range e.Costs {
+										if c.Currency == "USD" && c.Basis == "api-equivalent" && c.Amount.Collected != nil && string(c.Amount.Collected.Value) == f.ExpectedCost {
+											found = true
+										}
+									}
+								}
+								if !found {
+									t.Fatal("expected exact API-equivalent cost unavailable")
 								}
 							}
 						}
 					}
-					if tc.name == "crash" && resp.Usage != nil {
+					if tc.name == "crash" && reportedTokens(resp.Accounting) != nil {
 						t.Fatal("crash without reported usage must keep usage unavailable")
 					}
 					if tc.name == "success_with_stderr" {
@@ -205,14 +212,14 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 						lines = append(lines, string(b))
 					}
 					resp, _ := invoke(t, bin, f, strings.Join(lines, "\n"), "", 0, false, nil)
-					if resp.Error != "" || resp.Usage != nil {
+					if resp.Error != "" || reportedTokens(resp.Accounting) != nil {
 						t.Fatalf("missing usage: %+v", resp)
 					}
 				})
 				t.Run("reported_zero", func(t *testing.T) {
 					stream := strings.NewReplacer(":120", ":0", ":30", ":0", ":40", ":0").Replace(f.SuccessStream)
 					resp, _ := invoke(t, bin, f, stream, "", 0, false, nil)
-					if resp.Error != "" || resp.Usage == nil || !resp.Usage.Equal(contract.TokenUsage{}) {
+					if resp.Error != "" || reportedTokens(resp.Accounting) == nil || *reportedTokens(resp.Accounting) != [3]string{"0", "0", "0"} {
 						t.Fatalf("zero usage: %+v", resp)
 					}
 				})
@@ -380,8 +387,24 @@ func invoke(t *testing.T, bin string, f Fixture, stream, stderr string, code int
 			continue
 		}
 		var event contract.Progress
-		if err := json.Unmarshal(line, &event); err != nil || event.Stream == "" {
+		if err := json.Unmarshal(line, &event); err != nil {
 			t.Fatalf("invalid progress: %s", line)
+		}
+		variants := 0
+		if event.Stream != "" && event.Text != "" {
+			variants++
+		}
+		if event.OperationRef != nil {
+			variants++
+		}
+		if event.Accounting != nil {
+			variants++
+			if _, err := contract.CanonicalAccounting(*event.Accounting); err != nil {
+				t.Fatalf("invalid accounting progress: %v", err)
+			}
+		}
+		if variants != 1 {
+			t.Fatalf("invalid progress variant: %s", line)
 		}
 	}
 	return result, string(progress)
@@ -436,35 +459,19 @@ func secretStream(t *testing.T, f Fixture) string {
 	return strings.Join(lines, "\n")
 }
 
-func measurementsEqual(got, want *contract.Measurements) bool {
-	if got == nil || want == nil {
-		return got == nil && want == nil
+func reportedTokens(a *contract.Accounting) *[3]string {
+	if a == nil {
+		return nil
 	}
-	if !floatPtrEqual(got.CostUSD, want.CostUSD) || !floatPtrEqual(got.EstimatedCostUSD, want.EstimatedCostUSD) {
-		return false
+	for _, e := range a.Entries {
+		if e.Tokens == nil {
+			continue
+		}
+		v := e.Tokens
+		if v.Input.Collected == nil || v.Output.Collected == nil || v.CacheRead.Collected == nil {
+			return nil
+		}
+		return &[3]string{string(v.Input.Collected.Value), string(v.Output.Collected.Value), string(v.CacheRead.Collected.Value)}
 	}
-	if !int64PtrEqual(got.EstimatedTokens, want.EstimatedTokens) {
-		return false
-	}
-	if got.Credit == nil || want.Credit == nil {
-		return got.Credit == nil && want.Credit == nil
-	}
-	if got.Credit.Unit != want.Credit.Unit || got.Credit.Provenance != want.Credit.Provenance {
-		return false
-	}
-	return floatPtrEqual(got.Credit.Amount, want.Credit.Amount)
-}
-
-func floatPtrEqual(a, b *float64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func int64PtrEqual(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
+	return nil
 }

@@ -7,8 +7,8 @@ import (
 )
 
 // AnalyticsQuery bounds run and attempt reads for the analytics explorer.
-// Run outcomes use createdAt; attempt usage bucketing follows client-side
-// finishedAt → startedAt → run createdAt semantics on the returned attempts.
+// Run outcomes use createdAt. Accounting is reduced over the returned page;
+// daily consumption uses attempt completion dates in UTC.
 type AnalyticsQuery struct {
 	CreatedAfter  time.Time
 	CreatedBefore time.Time
@@ -185,7 +185,7 @@ func (s *Memory) QueryAnalytics(q AnalyticsQuery) (*AnalyticsSnapshot, error) {
 func DefaultAnalyticsPopulations() AnalyticsPopulations {
 	return AnalyticsPopulations{
 		RunOutcomes:   "Runs counted by createdAt within the selected time window.",
-		AttemptUsage:  "Usage and timing aggregate attempts; trend buckets use attempt finishedAt, then startedAt, then run createdAt.",
+		AttemptUsage:  "Accounting and timing cover attempts in the returned run page; daily consumption uses attempt finishedAt in UTC.",
 		BucketingNote: "Daily/hourly chart buckets use UTC calendar boundaries; labels use the selected viewer timezone.",
 	}
 }

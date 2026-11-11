@@ -82,15 +82,22 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		seconds := 30.0
 		queryReq.TimeoutSeconds, queryReq.QueueTimeoutSeconds = &seconds, &seconds
 		query := state.ExecutionAttempt{ID: queryReq.AttemptID, RunID: a.RunID, ActivationID: queryReq.ActivationID, Executor: req.Executor, RetryNumber: len(prior) + 1, State: "running", Effect: "pure", StartedAt: time.Now()}
+		query.OperationAttemptID, query.OperationAction, query.OperationRef = a.ID, "poll", a.OperationRef
 		if err := e.admitAttempt(query); err != nil {
 			return workers.ExecuteResult{}, err
 		}
+		queryReq.AccountingSink = attemptAccountingSink{record: func(snapshot contract.Accounting) error {
+			return e.store.RecordAccountingSnapshot(query.ID, snapshot)
+		}}
 		result, err := workers.ExecuteAttempt(e.executor, queryReq)
 		if e.context().Err() != nil {
 			return workers.ExecuteResult{}, e.context().Err()
 		}
 		query.State, query.FinishedAt = "succeeded", time.Now()
-		query.Usage, query.Measurements, query.ExecutionDurationMS = result.Usage, result.Measurements, result.ExecutionDurationMS
+		query.Accounting, query.ExecutionDurationMS = result.Accounting, result.ExecutionDurationMS
+		if result.RemoteTask != nil {
+			query.OperationRef = result.RemoteTask
+		}
 		if err != nil || (result.Error != "" && !remoteTerminalFailure(result)) {
 			query.State = "failed"
 			query.Failure = "remote poll failed; remote operation remains detached"
@@ -103,6 +110,15 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 		if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
 			return workers.ExecuteResult{}, recordErr
 		}
+		if query.State == "succeeded" && result.RemoteAccounting != nil {
+			if updateErr := e.store.RecordRemoteAccountingUpdate(query.ID, *result.RemoteAccounting); updateErr != nil {
+				_ = e.store.AppendEvent(a.RunID, "execution.accounting.anomaly", a.ID, map[string]any{"reason": "remote-accounting-attribution-rejected"})
+			}
+		}
+		// Lookup consumption has already been stored on query. Returning it as
+		// the operation result would overwrite the origin's remote accounting.
+		result.Accounting, result.RemoteAccounting = nil, nil
+		result.ExecutionDurationMS = a.ExecutionDurationMS
 		if query.State != "succeeded" {
 			// A failed lookup says nothing about the remote operation. Retry
 			// only the lookup, never the submission.
@@ -141,7 +157,7 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 			if err != nil {
 				return workers.ExecuteResult{}, err
 			}
-			if err := e.checkUsage(attempts, false); err != nil {
+			if err := e.checkAccounting(attempts, false); err != nil {
 				return workers.ExecuteResult{}, err
 			}
 		}

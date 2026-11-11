@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"testing"
 	"time"
 )
@@ -69,16 +70,16 @@ func TestMemoryExecutionAttemptUsage(t *testing.T) {
 	}
 
 	// Reported usage is persisted and round-trips.
-	reported := &TokenUsage{Input: 1200, Output: 800, Cached: 300}
-	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "au-1", RunID: "ru", ActivationID: "au", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Usage: reported}); err != nil {
+	reported := testaccounting.Tokens(1200, 800, 300)
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "au-1", RunID: "ru", ActivationID: "au", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Accounting: reported}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ListExecutionAttempts("ru", "au")
-	if err != nil || len(got) != 1 || got[0].Usage == nil {
+	if err != nil || len(got) != 1 || got[0].Accounting == nil {
 		t.Fatalf("expected non-nil usage, got=%+v err=%v", got, err)
 	}
-	if got[0].Usage.Input != 1200 || got[0].Usage.Output != 800 || got[0].Usage.Cached != 300 {
-		t.Fatalf("usage mismatch: %+v", got[0].Usage)
+	if testaccounting.TokenValue(got[0].Accounting, "input") != 1200 || testaccounting.TokenValue(got[0].Accounting, "output") != 800 || testaccounting.TokenValue(got[0].Accounting, "cached") != 300 {
+		t.Fatalf("usage mismatch: %+v", got[0].Accounting)
 	}
 
 	// Missing usage stays nil, not zero.
@@ -90,13 +91,13 @@ func TestMemoryExecutionAttemptUsage(t *testing.T) {
 		t.Fatalf("expected 2 attempts, got=%+v err=%v", got, err)
 	}
 	for _, a := range got {
-		if a.ID == "au-2" && a.Usage != nil {
-			t.Fatalf("missing usage should be nil, not zero: %+v", a.Usage)
+		if a.ID == "au-2" && a.Accounting != nil {
+			t.Fatalf("missing usage should be nil, not zero: %+v", a.Accounting)
 		}
 	}
 
 	// Reported zero is distinct from nil.
-	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "au-3", RunID: "ru", ActivationID: "au", RetryNumber: 3, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Usage: &TokenUsage{}}); err != nil {
+	if err := s.RecordExecutionAttempt(ExecutionAttempt{ID: "au-3", RunID: "ru", ActivationID: "au", RetryNumber: 3, Executor: "agent/x", State: "succeeded", StartedAt: time.Now(), FinishedAt: time.Now(), Accounting: testaccounting.Tokens(0, 0, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.ListExecutionAttempts("ru", "au")
@@ -109,11 +110,11 @@ func TestMemoryExecutionAttemptUsage(t *testing.T) {
 			zeroAttempt = &got[i]
 		}
 	}
-	if zeroAttempt == nil || zeroAttempt.Usage == nil {
+	if zeroAttempt == nil || zeroAttempt.Accounting == nil {
 		t.Fatalf("reported zero should be non-nil: %+v", zeroAttempt)
 	}
-	if zeroAttempt.Usage.Input != 0 || zeroAttempt.Usage.Output != 0 || zeroAttempt.Usage.Cached != 0 {
-		t.Fatalf("reported zero should have zero fields: %+v", zeroAttempt.Usage)
+	if testaccounting.TokenValue(zeroAttempt.Accounting, "input") != 0 || testaccounting.TokenValue(zeroAttempt.Accounting, "output") != 0 || testaccounting.TokenValue(zeroAttempt.Accounting, "cached") != 0 {
+		t.Fatalf("reported zero should have zero fields: %+v", zeroAttempt.Accounting)
 	}
 }
 
@@ -124,7 +125,7 @@ func TestRecordExecutionAttemptPreservesObservationsOnReplay(t *testing.T) {
 	}
 	if err := s.RecordExecutionAttempt(ExecutionAttempt{
 		ID: "a-1", RunID: "r", ActivationID: "act", State: "running",
-		StartedAt: time.Now(), Usage: &TokenUsage{Input: 10, Output: 5},
+		StartedAt: time.Now(), Accounting: testaccounting.Tokens(10, 5, 0),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +139,8 @@ func TestRecordExecutionAttemptPreservesObservationsOnReplay(t *testing.T) {
 	if err != nil || len(attempts) != 1 {
 		t.Fatalf("attempts=%v err=%v", attempts, err)
 	}
-	if attempts[0].Usage == nil || attempts[0].Usage.Input != 10 {
-		t.Fatalf("usage lost on replay: %+v", attempts[0].Usage)
+	if attempts[0].Accounting == nil || testaccounting.TokenValue(attempts[0].Accounting, "input") != 10 {
+		t.Fatalf("usage lost on replay: %+v", attempts[0].Accounting)
 	}
 }
 

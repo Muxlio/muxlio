@@ -326,8 +326,8 @@ func TestSQLiteExecutionAttemptUsage(t *testing.T) {
 	}
 
 	// Reported usage persists and round-trips.
-	reported := &state.TokenUsage{Input: 5000, Output: 3000, Cached: 1500}
-	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-1", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: reported}); err != nil {
+	reported := testAccounting("5000", "3000", "1500")
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-1", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Accounting: reported}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -337,7 +337,7 @@ func TestSQLiteExecutionAttemptUsage(t *testing.T) {
 	}
 
 	// Reported zero is distinct from nil.
-	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-3", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 3, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: &state.TokenUsage{}}); err != nil {
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "usage-act-3", RunID: "usage-run", ActivationID: "usage-act", RetryNumber: 3, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Accounting: testAccounting("0", "0", "0")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,22 +352,11 @@ func TestSQLiteExecutionAttemptUsage(t *testing.T) {
 	}
 
 	a1 := byID["usage-act-1"]
-	if a1.Usage == nil || a1.Usage.Input != 5000 || a1.Usage.Output != 3000 || a1.Usage.Cached != 1500 {
-		t.Fatalf("reported usage mismatch: %+v", a1.Usage)
+	assertAccountingCounts(t, a1.Accounting, "5000", "3000", "1500")
+	if byID["usage-act-2"].Accounting != nil {
+		t.Fatal("missing accounting became zero")
 	}
-
-	a2 := byID["usage-act-2"]
-	if a2.Usage != nil {
-		t.Fatalf("missing usage should be nil, not zero: %+v", a2.Usage)
-	}
-
-	a3 := byID["usage-act-3"]
-	if a3.Usage == nil {
-		t.Fatal("reported zero usage should be non-nil")
-	}
-	if a3.Usage.Input != 0 || a3.Usage.Output != 0 || a3.Usage.Cached != 0 {
-		t.Fatalf("reported zero should have zero fields: %+v", a3.Usage)
-	}
+	assertAccountingCounts(t, byID["usage-act-3"].Accounting, "0", "0", "0")
 }
 
 func TestSQLiteExecutionAttemptUsagePersistsAcrossReopen(t *testing.T) {
@@ -382,7 +371,7 @@ func TestSQLiteExecutionAttemptUsagePersistsAcrossReopen(t *testing.T) {
 	if err := st.CreateActivation(&state.Activation{ID: "persist-act", RunID: "persist-run", NodeID: "task", State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "persist-act-1", RunID: "persist-run", ActivationID: "persist-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Usage: &state.TokenUsage{Input: 42, Output: 17, Cached: 5}}); err != nil {
+	if err := st.RecordExecutionAttempt(state.ExecutionAttempt{ID: "persist-act-1", RunID: "persist-run", ActivationID: "persist-act", RetryNumber: 1, Executor: "agent/x", State: "succeeded", StartedAt: time.Now().Add(-time.Second), FinishedAt: time.Now(), Accounting: testAccounting("42", "17", "5")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {
@@ -395,12 +384,10 @@ func TestSQLiteExecutionAttemptUsagePersistsAcrossReopen(t *testing.T) {
 	}
 	defer st2.Close()
 	got, err := st2.ListExecutionAttempts("persist-run", "persist-act")
-	if err != nil || len(got) != 1 || got[0].Usage == nil {
+	if err != nil || len(got) != 1 || got[0].Accounting == nil {
 		t.Fatalf("usage not persisted across reopen: %+v err=%v", got, err)
 	}
-	if got[0].Usage.Input != 42 || got[0].Usage.Output != 17 || got[0].Usage.Cached != 5 {
-		t.Fatalf("usage mismatch after reopen: %+v", got[0].Usage)
-	}
+	assertAccountingCounts(t, got[0].Accounting, "42", "17", "5")
 }
 
 func TestClaimDispatchVersionMismatch(t *testing.T) {

@@ -22,6 +22,53 @@ import (
 
 type privateErrorExecutor struct{}
 
+type accountingMetricExecutor struct{ snapshot *contract.Accounting }
+
+func (e accountingMetricExecutor) Execute(ExecuteRequest) (ExecuteResult, error) {
+	return ExecuteResult{Accounting: e.snapshot}, nil
+}
+
+type accountingMetricQueue struct{ inner Executor }
+
+func (e accountingMetricQueue) Execute(req ExecuteRequest) (ExecuteResult, error) {
+	return e.ExecuteQueued(req)
+}
+func (e accountingMetricQueue) ExecuteQueued(req ExecuteRequest) (ExecuteResult, error) {
+	return ExecuteAttempt(e.inner, req)
+}
+
+func TestQueuedCoordinatorDoesNotCountWorkerUsageAgain(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	old := otel.GetMeterProvider()
+	otel.SetMeterProvider(provider)
+	defer otel.SetMeterProvider(old)
+	defer provider.Shutdown(context.Background())
+	m := func(n contract.Count) contract.Measure[contract.Count] {
+		return contract.Measure[contract.Count]{Collected: &contract.Reading[contract.Count]{Value: n, Source: "fixture", Fidelity: "metered"}}
+	}
+	a := &contract.Accounting{Revision: 1, Final: true, Entries: []contract.AccountingEntry{{ID: "call", Tokens: &contract.TokenMeasures{Input: m("100"), Output: m("20")}}}, Coverage: []contract.MeterCoverage{{Key: contract.AccountingKey{Kind: "tokens"}, State: "complete"}}}
+	if _, err := ExecuteAttempt(accountingMetricQueue{inner: accountingMetricExecutor{snapshot: a}}, ExecuteRequest{Context: context.Background(), Executor: "generic"}); err != nil {
+		t.Fatal(err)
+	}
+	var data metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range data.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			if metric.Name == "gen_ai.client.inference.usage.input_tokens" {
+				sum := metric.Data.(metricdata.Sum[int64])
+				if len(sum.DataPoints) != 1 || sum.DataPoints[0].Value != 100 {
+					t.Fatalf("queued boundary duplicated worker usage: %+v", sum)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("worker usage metric missing")
+}
+
 func (privateErrorExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 	return ExecuteResult{Logs: "transcript-body"}, errors.New(req.Task + " " + req.Secrets["token"])
 }
@@ -135,10 +182,10 @@ func TestScriptTelemetryReportsAdapterUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		output string
-		usage  *contract.TokenUsage
+		usage  *[3]int64
 	}{
-		{name: "reported", output: `{"usage":{"input":12,"output":3,"cached":4}}`, usage: &contract.TokenUsage{Input: 12, Output: 3, Cached: 4}},
-		{name: "zero", output: `{"usage":{"input":0,"output":0,"cached":0}}`, usage: &contract.TokenUsage{}},
+		{name: "reported", output: `{"accounting":{"revision":1,"final":true,"entries":[{"id":"call","tokens":{"input":{"collected":{"value":"12","source":"fixture","fidelity":"metered"}},"output":{"collected":{"value":"3","source":"fixture","fidelity":"metered"}},"cacheRead":{"collected":{"value":"4","source":"fixture","fidelity":"metered"}}}}],"coverage":[{"key":{"kind":"tokens"},"state":"complete"}]}}`, usage: &[3]int64{12, 3, 4}},
+		{name: "zero", output: `{"accounting":{"revision":1,"final":true,"entries":[{"id":"call","tokens":{"input":{"collected":{"value":"0","source":"fixture","fidelity":"metered"}},"output":{"collected":{"value":"0","source":"fixture","fidelity":"metered"}},"cacheRead":{"collected":{"value":"0","source":"fixture","fidelity":"metered"}}}}],"coverage":[{"key":{"kind":"tokens"},"state":"complete"}]}}`, usage: &[3]int64{}},
 		{name: "unavailable", output: `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,32 +199,35 @@ func TestScriptTelemetryReportsAdapterUsage(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(adapters, "generic"), []byte("#!/bin/sh\ncat >/dev/null\necho '"+tc.output+"'\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			// Call directly: usage must be on the adapter span even without an
-			// enclosing ExecuteAttempt or remote worker span.
-			result, err := NewScriptExecutor(adapters, t.TempDir()).Execute(ExecuteRequest{Executor: "generic"})
+			result, err := ExecuteAttempt(NewScriptExecutor(adapters, t.TempDir()), ExecuteRequest{Context: context.Background(), Executor: "generic"})
 			if err != nil || result.Error != "" {
 				t.Fatalf("execute: %v %s", err, result.Error)
 			}
+			if (result.Accounting == nil) != (tc.usage == nil) {
+				t.Fatalf("script accounting availability changed: %+v", result.Accounting)
+			}
 			spans := exporter.GetSpans()
-			if len(spans) != 1 || spans[0].Name != "execute_tool" {
+			if len(spans) != 2 {
 				t.Fatalf("adapter spans: %v", spans)
 			}
 			want := map[string]int64{}
 			if tc.usage != nil {
-				want[telemetry.GenAIUsageInputTokens] = tc.usage.Input
-				want[telemetry.GenAIUsageOutputTokens] = tc.usage.Output
-				want[telemetry.GenAIUsageCacheReadTokens] = tc.usage.Cached
+				want[telemetry.GenAIUsageInputTokens] = tc.usage[0]
+				want[telemetry.GenAIUsageOutputTokens] = tc.usage[1]
+				want[telemetry.GenAIUsageCacheReadTokens] = tc.usage[2]
 			}
-			for _, attr := range spans[0].Attributes {
-				key := string(attr.Key)
-				if !strings.HasPrefix(key, "gen_ai.usage.") {
-					continue
+			for _, span := range spans {
+				for _, attr := range span.Attributes {
+					key := string(attr.Key)
+					if !strings.HasPrefix(key, "gen_ai.usage.") {
+						continue
+					}
+					value, ok := want[key]
+					if !ok || attr.Value.AsInt64() != value {
+						t.Fatalf("unexpected usage attribute: %v", attr)
+					}
+					delete(want, key)
 				}
-				value, ok := want[key]
-				if !ok || attr.Value.AsInt64() != value {
-					t.Fatalf("unexpected usage attribute: %v", attr)
-				}
-				delete(want, key)
 			}
 			if len(want) != 0 {
 				t.Fatalf("missing reported usage: %v", want)

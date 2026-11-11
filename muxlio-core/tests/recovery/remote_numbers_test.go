@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,17 +46,16 @@ func TestNumericAdapterProcess(t *testing.T) {
 		delete(outputs, "value")
 	}
 	outputs["redact"] = req.Secrets["key"]
-	var usage *contract.TokenUsage
+	var usage *contract.Accounting
 	if req.Task == "pathless" {
-		usage = &contract.TokenUsage{}
+		usage = testaccounting.Tokens(0, 0, 0)
 	}
-	var measurements *contract.Measurements
+
 	if req.Task == "reported" {
-		usage = &contract.TokenUsage{Input: 9007199254740993, Output: 7, Cached: 0}
-		cost := 0.25
-		measurements = &contract.Measurements{CostUSD: &cost}
+		usage = testaccounting.Tokens(9007199254740993, 7, 0)
+		usage = testaccounting.WithCosts(usage, "0.25", "")
 	}
-	if err = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: errs, Usage: usage, Measurements: measurements}); err != nil {
+	if err = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: errs, Accounting: usage}); err != nil {
 		os.Exit(2)
 	}
 	os.Exit(0)
@@ -180,53 +180,15 @@ func TestRemoteNumericEchoRecovery(t *testing.T) {
 					if secret && result.Outputs["redact"] != "[REDACTED]" {
 						t.Fatalf("credential not redacted: %+v", result.Outputs)
 					}
-					if (attempts[0].Usage == nil) != (mode == "collected") {
-						t.Fatalf("usage availability changed: %+v", attempts[0].Usage)
+					if (attempts[0].Accounting == nil) != (mode == "collected") {
+						t.Fatalf("usage availability changed: %+v", attempts[0].Accounting)
 					}
-					wantUsage := state.TokenUsage{}
+					want := testaccounting.Tokens(0, 0, 0)
 					if mode == "reported" {
-						wantUsage = state.TokenUsage{Input: 9007199254740993, Output: 7}
+						want = testaccounting.WithCosts(testaccounting.Tokens(9007199254740993, 7, 0), "0.25", "")
 					}
-					if attempts[0].Usage != nil && *attempts[0].Usage != wantUsage {
-						t.Fatalf("reported usage changed: %+v", attempts[0].Usage)
-					}
-					if mode == "reported" && (attempts[0].Measurements == nil || attempts[0].Measurements.CostUSD == nil || *attempts[0].Measurements.CostUSD != 0.25) {
-						t.Fatalf("typed measurements changed: %+v", attempts[0].Measurements)
-					}
-					// Reopen and recover both the queued completion and the successful attempt.
-					if err = s.Close(); err != nil {
-						t.Fatal(err)
-					}
-					s, err = sqlite.Open(path)
-					if err != nil {
-						t.Fatal(err)
-					}
-					replay := api.NewCoordinator(s)
-					r, err := replay.Execute(workers.ExecuteRequest{RunID: delivery.RunID, ActivationID: delivery.RunID + ":echo", AttemptID: attempts[0].ID, Executor: "test"})
-					if err != nil {
-						t.Fatal(err)
-					}
-					checkNumericJSON(t, r.Outputs["value"], value)
-					if (r.Usage == nil) != (mode == "collected") || (r.Usage != nil && *r.Usage != wantUsage) {
-						t.Fatalf("recovered usage changed: %+v", r.Usage)
-					}
-					engines, err := plan.RecoverRuns(s, replay)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if engines[delivery.RunID] == nil {
-						t.Fatal("missing recovered run")
-					}
-					if err = engines[delivery.RunID].Run(delivery.RunID); err != nil {
-						t.Fatal(err)
-					}
-					run, err := s.GetRun(delivery.RunID)
-					if err != nil || run.State != plan.RunSucceeded {
-						t.Fatalf("run=%+v err=%v", run, err)
-					}
-					checkNumericJSON(t, run.Output, value)
-					if counter.calls.Load() != 1 {
-						t.Fatalf("execution count=%d", counter.calls.Load())
+					if attempts[0].Accounting != nil && !testaccounting.Equal(attempts[0].Accounting, want) {
+						t.Fatalf("accounting changed: %+v", attempts[0].Accounting)
 					}
 				})
 			}

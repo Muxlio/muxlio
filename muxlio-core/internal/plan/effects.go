@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -69,12 +70,20 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	seconds := 30.0
 	req.TimeoutSeconds, req.QueueTimeoutSeconds = &seconds, &seconds
 	query := state.ExecutionAttempt{ID: req.AttemptID, RunID: a.RunID, ActivationID: req.ActivationID, Executor: req.Executor, RetryNumber: len(priorQueries) + 1, State: "running", StartedAt: time.Now(), Effect: "pure"}
+	query.OperationAttemptID, query.OperationAction, query.OperationRef = a.ID, "reconcile", a.OperationRef
 	if err := e.admitAttempt(query); err != nil {
 		return workers.ExecuteResult{}, false, err
 	}
+	req.LogSink = nil
+	req.AccountingSink = attemptAccountingSink{record: func(snapshot contract.Accounting) error {
+		return e.store.RecordAccountingSnapshot(query.ID, snapshot)
+	}}
 	result, err := workers.ExecuteAttempt(e.executor, req)
 	query.State, query.FinishedAt = "succeeded", time.Now()
-	query.Usage, query.Measurements = result.Usage, result.Measurements
+	query.Accounting = result.Accounting
+	if result.RemoteTask != nil {
+		query.OperationRef = result.RemoteTask
+	}
 	query.ExecutionDurationMS = result.ExecutionDurationMS
 	if err != nil {
 		query.State, query.Failure = "failed", diagnostic.Redact(workers.RedactSecrets(err.Error(), req.Secrets))
@@ -85,12 +94,19 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 			query.State = "awaiting_reconciliation"
 			query.AwaitReconciliationReason = "reconciliation query completion unknown; explicit resolution required"
 		}
-	} else if result.Error != "" {
+	} else if result.Error != "" && !remoteTerminalFailure(result) {
 		query.State, query.Failure = "failed", diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets))
 	}
 	if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
 		return workers.ExecuteResult{}, false, recordErr
 	}
+	if query.State == "succeeded" && result.RemoteAccounting != nil {
+		if updateErr := e.store.RecordRemoteAccountingUpdate(query.ID, *result.RemoteAccounting); updateErr != nil {
+			_ = e.store.AppendEvent(a.RunID, "execution.accounting.anomaly", a.ID, map[string]any{"reason": "remote-accounting-attribution-rejected"})
+		}
+	}
+	result.Accounting, result.RemoteAccounting = nil, nil
+	result.ExecutionDurationMS = a.ExecutionDurationMS
 	if err == nil && remoteTerminalFailure(result) && result.Reconciliation != nil && result.Reconciliation.Status == "completed" {
 		a.State, a.FinishedAt = "failed", time.Now()
 		a.Failure = diagnostic.Redact(workers.RedactSecrets(result.Error, req.Secrets))
@@ -131,7 +147,7 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	}
 	if err != nil {
 		a.AwaitReconciliationReason += "; reconciliation failed: " + err.Error()
-	} else if result.Error != "" {
+	} else if result.Error != "" && !remoteTerminalFailure(result) {
 		a.AwaitReconciliationReason += "; reconciliation failed: " + result.Error
 	}
 	a.AwaitReconciliationReason = workers.RedactSecrets(a.AwaitReconciliationReason, req.Secrets)

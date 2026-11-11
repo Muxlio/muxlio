@@ -34,8 +34,13 @@ type Client struct {
 	session      string
 	Capabilities Capabilities
 	// Update receives validated session updates, including future variants.
-	Update     func(json.RawMessage) error
-	Negotiated func(Capabilities)
+	Update             func(json.RawMessage) error
+	Negotiated         func(Capabilities)
+	SessionReady       func(string)
+	ModelSelected      func(string)
+	PromptStarted      func(string)
+	pendingUpdates     []message
+	pendingUpdateBytes int
 }
 
 func New(reader io.Reader, writer io.Writer) *Client {
@@ -122,6 +127,17 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			return fmt.Errorf("ACP %s: %w", method, c.err)
 		case m := <-c.incoming:
 			if m.Method != "" {
+				// A new agent session may publish initial context/cost before
+				// its response. Bind these updates to the returned session ID
+				// before exposing them as a pre-prompt baseline.
+				if method == "session/new" && m.Method == "session/update" {
+					if len(c.pendingUpdates) >= 64 || c.pendingUpdateBytes+len(m.Params) > 64<<10 {
+						return fmt.Errorf("ACP initial session updates exceed bound")
+					}
+					c.pendingUpdates = append(c.pendingUpdates, m)
+					c.pendingUpdateBytes += len(m.Params)
+					continue
+				}
 				if err := c.handle(ctx, m); err != nil {
 					return err
 				}
@@ -245,7 +261,8 @@ func (c *Client) Execute(ctx context.Context, cwd, prompt string) error {
 		c.Negotiated(c.Capabilities)
 	}
 	var session struct {
-		ID string `json:"sessionId"`
+		ID            string          `json:"sessionId"`
+		ConfigOptions json.RawMessage `json:"configOptions"`
 	}
 	if err := c.call(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		return err
@@ -254,6 +271,25 @@ func (c *Client) Execute(ctx context.Context, cwd, prompt string) error {
 		return fmt.Errorf("ACP session/new missing sessionId")
 	}
 	c.session = session.ID
+	if c.ModelSelected != nil {
+		raw, _ := json.Marshal(map[string]json.RawMessage{"configOptions": session.ConfigOptions})
+		for _, model := range SelectedModels(raw) {
+			c.ModelSelected(model)
+		}
+	}
+	if c.SessionReady != nil {
+		c.SessionReady(c.session)
+	}
+	for _, m := range c.pendingUpdates {
+		if err := c.handle(ctx, m); err != nil {
+			return err
+		}
+	}
+	c.pendingUpdates = nil
+	c.pendingUpdateBytes = 0
+	if c.PromptStarted != nil {
+		c.PromptStarted(c.session)
+	}
 	var result struct {
 		Stop string `json:"stopReason"`
 	}

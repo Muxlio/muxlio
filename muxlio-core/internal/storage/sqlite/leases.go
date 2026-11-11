@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,85 @@ import (
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/state"
 )
+
+// RecordWorkerAccountingSnapshot replaces one attempt snapshot under the same
+// active lease fence used for worker log progress.
+func (s *Store) RecordWorkerAccountingSnapshot(a state.Assignment, snapshot contract.Accounting) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err := checkCoordinatorEpoch(tx, a.CoordinatorEpoch); err != nil {
+		return false, err
+	}
+	var valid bool
+	err = tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM assignments WHERE run_id=? AND activation_id=? AND worker_id=? AND assignment_id=? AND attempt_id=? AND generation=? AND coordinator_epoch=? AND state='active' AND lease_until>?)`, a.RunID, a.ActivationID, a.WorkerID, a.AssignmentID, a.AttemptID, a.Generation, a.CoordinatorEpoch, leaseTimestamp(time.Now())).Scan(&valid)
+	if err != nil || !valid {
+		return false, err
+	}
+	if err := recordWorkerAccountingTx(tx, a, snapshot); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// Both progress and terminal completion call this after fencing the assignment
+// in the same transaction. A completion receipt cannot commit ahead of its
+// canonical accounting snapshot, nor seal a conflicting accounting revision.
+func recordWorkerAccountingTx(tx *sql.Tx, a state.Assignment, snapshot contract.Accounting) error {
+	raw, err := contract.CanonicalAccounting(snapshot)
+	if err != nil {
+		return err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	var rev int64
+	var final int
+	var priorHash sql.NullString
+	err = tx.QueryRow(`SELECT accounting_revision,accounting_final,accounting_hash FROM execution_attempts WHERE id=? AND run_id=? AND activation_id=?`, a.AttemptID, a.RunID, a.ActivationID).Scan(&rev, &final, &priorHash)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("accounting attempt does not exist")
+	}
+	if err != nil {
+		return err
+	}
+	if int64(snapshot.Revision) < rev {
+		return fmt.Errorf("stale accounting revision")
+	}
+	if int64(snapshot.Revision) == rev {
+		if priorHash.Valid && priorHash.String == hash {
+			return nil
+		}
+		return fmt.Errorf("accounting revision conflict")
+	}
+	if final != 0 {
+		return fmt.Errorf("accounting snapshot is already final")
+	}
+	res, err := tx.Exec(`UPDATE execution_attempts SET accounting_json=?,accounting_revision=?,accounting_final=?,accounting_hash=?,accounting_assignment=?,accounting_generation=? WHERE id=? AND accounting_revision=? AND accounting_final=0`, string(raw), snapshot.Revision, boolInt(snapshot.Final), hash, a.AssignmentID, a.Generation, a.AttemptID, rev)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("accounting snapshot compare-and-swap failed")
+	}
+	if err := appendEvent(tx, a.RunID, state.EventAccountingUpdated, a.ActivationID, map[string]any{"attemptId": a.AttemptID, "revision": snapshot.Revision, "hash": hash}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
 
 // Epoch checks happen inside the mutation transaction so an old coordinator
 // cannot publish progress or claim work after its replacement has started.

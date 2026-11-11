@@ -92,22 +92,7 @@ function analyticsRetryOverheadForActivation(activationAttempts) {
   return { extraAttempts, workerMs: workerSum, coordinatorMs: coordinatorSum };
 }
 
-function analyticsFailedRetriedUsageRow(attempt) {
-  const pending = analyticsAttemptPending(attempt.state);
-  if (pending) return { kind: 'pending' };
-  const tokens = analyticsMeasureValueForAttempt(attempt, { id: 'tokens', kind: 'tokens' });
-  const costObserved = analyticsMeasureValueForAttempt(attempt, { id: 'cost-observed', kind: 'cost-observed' });
-  const costEstimated = analyticsMeasureValueForAttempt(attempt, { id: 'cost-estimated', kind: 'cost-estimated' });
-  const any = tokens != null || costObserved != null || costEstimated != null;
-  const usage = attempt.usage;
-  const partial = usage && analyticsUsageAnyReported(usage) && !analyticsUsageComplete(usage);
-  return {
-    kind: any ? 'reporting' : partial ? 'partial' : 'unknown',
-    tokens,
-    costObserved,
-    costEstimated,
-  };
-}
+function analyticsFailedRetriedUsageRow(attempt){if(analyticsAttemptPending(attempt.state))return {kind:'pending'};const row=attempt.accountingSummary?.tokens;return {kind:row?.knownSubtotal!=null?(row.completeness==='complete'?'reporting':'partial'):'unknown'}}
 
 function buildAnalyticsRetryLatency(flatAttempts, runs) {
   const byWorkflow = new Map();
@@ -182,9 +167,6 @@ function buildAnalyticsRetryLatency(flatAttempts, runs) {
           const row = analyticsFailedRetriedUsageRow(attempt);
           if (row.kind === 'reporting') {
             failedRetriedUsage.reporting++;
-            if (row.tokens != null) failedRetriedUsage.tokens = (failedRetriedUsage.tokens ?? 0) + row.tokens;
-            if (row.costObserved != null) failedRetriedUsage.costObserved = (failedRetriedUsage.costObserved ?? 0) + row.costObserved;
-            if (row.costEstimated != null) failedRetriedUsage.costEstimated = (failedRetriedUsage.costEstimated ?? 0) + row.costEstimated;
           } else if (row.kind === 'partial') failedRetriedUsage.partial++;
           else if (row.kind === 'unknown') failedRetriedUsage.unknown++;
         }

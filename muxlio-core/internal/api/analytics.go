@@ -33,12 +33,80 @@ func registerAnalytics(mux *http.ServeMux, store state.Store) {
 		attempts := map[string]any{}
 		for id, list := range snapshot.AttemptsByRun {
 			if list == nil {
-				attempts[id] = []state.ExecutionAttempt{}
-				continue
+				list = []state.ExecutionAttempt{}
 			}
 			attempts[id] = list
 		}
+		population := snapshot
+		accountingByRun := map[string]any{}
+		accountingByAttempt := map[string]any{}
+		byDay := map[string][]state.ExecutionAttempt{}
+		byExecutor := map[string][]state.ExecutionAttempt{}
+		byWorkflow := map[string][]state.ExecutionAttempt{}
+		workflows := map[string]string{}
+		for _, run := range population.Runs {
+			workflows[run.ID] = run.WorkflowName
+		}
+		var allAttempts []state.ExecutionAttempt
+		for id, list := range population.AttemptsByRun {
+			if list == nil {
+				continue
+			}
+			summary, err := state.SummarizeAccounting(list)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+				return
+			}
+			accountingByRun[id] = summary
+			allAttempts = append(allAttempts, list...)
+			for _, a := range list {
+				attemptSummary, err := state.SummarizeAccounting([]state.ExecutionAttempt{a})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+					return
+				}
+				accountingByAttempt[a.ID] = attemptSummary
+				byExecutor[a.Executor] = append(byExecutor[a.Executor], a)
+				byWorkflow[workflows[id]] = append(byWorkflow[workflows[id]], a)
+				if !a.FinishedAt.IsZero() {
+					day := a.FinishedAt.UTC().Format("2006-01-02")
+					byDay[day] = append(byDay[day], a)
+				}
+			}
+		}
+		summary, err := state.SummarizeAccounting(allAttempts)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+			return
+		}
+		groupSummaries := func(groups map[string][]state.ExecutionAttempt) (map[string]any, error) {
+			out := map[string]any{}
+			for key, attempts := range groups {
+				s, err := state.SummarizeAccounting(attempts)
+				if err != nil {
+					return nil, err
+				}
+				out[key] = s
+			}
+			return out, nil
+		}
+		days, err := groupSummaries(byDay)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+			return
+		}
+		executors, err := groupSummaries(byExecutor)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+			return
+		}
+		workflowSummaries, err := groupSummaries(byWorkflow)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
+			"accounting": summary, "accountingByRun": accountingByRun, "accountingByAttempt": accountingByAttempt, "accountingByDay": days, "accountingByExecutor": executors, "accountingByWorkflow": workflowSummaries, "accountingPopulation": "returned page of filtered runs; daily amounts use attempt completion date in UTC",
 			"runs":          snapshot.Runs,
 			"attemptsByRun": attempts,
 			"totalRuns":     snapshot.TotalRuns,

@@ -99,7 +99,7 @@ not reported (missing usage stays nil; reported zero is zero).
 | Interactive permissions | Provider-defined | Denied explicitly | N/A (remote agent) | N/A |
 | Remote task handoff | No | No | Yes (`remoteTask`) | No |
 | Reconcile / idempotency | No reconcile; no `idempotencyKey` | No | Reconcile yes; idempotency keys **not** advertised | No |
-| Token / credit / cost reporting | Yes when provider reports usage (`usage`) | Unavailable | Unavailable | Unavailable |
+| Token / credit / cost reporting | Canonical `accounting` when the provider reports consumption | Native ACP cost/credit delta only with a pre-prompt baseline | Unavailable | Unknown unless explicitly reported |
 | Host execution gate | No | Required | No | Required |
 
 !!! note "Do not expect full protocol coverage"

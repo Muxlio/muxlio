@@ -9,6 +9,10 @@ test('tokens share compact units and preserve zero versus unavailable',()=>{
  for(const [value,expected] of [[0,'0'],[999,'999'],[1000,'1.0K'],[1500000,'1.5M'],[1000000000,'1.0B'],[null,'Unavailable'],[undefined,'Unavailable'],[NaN,'Unavailable']])assert.equal(format.tokens(value),expected);
 });
 
+test('canonical token strings use compact units without float rounding',()=>{
+ for(const [value,expected] of [['9809008','9.8M'],['0','0'],['999950','1.0M'],['999950000','1.0B'],['1000','1.0K'],['9007199254740993','9007199.3B'],['9223372036854775807','9223372036.9B'],['01','Unavailable'],['-1','Unavailable'],['','Unavailable']])assert.equal(format.tokens(value),expected);
+});
+
 test('cost totals preserve zero versus unavailable',()=>{
  const ctx=vm.runInNewContext(`${readFileSync(new URL('./js/format.js',import.meta.url),'utf8')};({fmtCostUsd})`);
  for(const [value,expected] of [[0,'$0.0000'],[0.25,'$0.2500'],[null,'Unavailable'],[undefined,'Unavailable'],[NaN,'Unavailable'],[-1,'Unavailable']])assert.equal(ctx.fmtCostUsd(value),expected);

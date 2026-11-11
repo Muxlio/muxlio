@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"errors"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"strings"
 	"testing"
 
@@ -91,7 +92,7 @@ func TestNamedResultValidationPersistsFailureAndArtifacts(t *testing.T) {
 			}
 			artifact := map[string]any{"digest": "sha256:artifact", "mime": "text/markdown", "path": "notes.md"}
 			tc.outputs["notes"] = artifact
-			exec := workers.NewFake().ByNode("task", workers.ExecuteResult{Outputs: tc.outputs, Usage: &state.TokenUsage{}})
+			exec := workers.NewFake().ByNode("task", workers.ExecuteResult{Outputs: tc.outputs, Accounting: testaccounting.Tokens(0, 0, 0)})
 			engine := NewEngineWithStore(&Plan{}, exec, store)
 			// Native structured generation is a dispatch requirement, never a reason to
 			// bypass consumer validation of what was actually returned.
@@ -116,7 +117,7 @@ func TestNamedResultValidationPersistsFailureAndArtifacts(t *testing.T) {
 				if attempt.Result.Outputs["notes"].(map[string]any)["mime"] != "text/markdown" {
 					t.Fatalf("lost inspectable artifact: %+v", attempt.Result)
 				}
-				if attempt.Usage == nil || attempt.ExecutionDurationMS == nil {
+				if attempt.Accounting == nil || attempt.ExecutionDurationMS == nil {
 					t.Fatal("lost execution measurements")
 				}
 			}

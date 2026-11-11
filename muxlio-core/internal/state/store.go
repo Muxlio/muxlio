@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"time"
 )
 
@@ -98,6 +99,8 @@ type Store interface {
 	ListAssignments(runID string) ([]Assignment, error)
 	CancelRunWork(runID string) error
 	RecordExecutionAttempt(a ExecutionAttempt) error
+	RecordAccountingSnapshot(attemptID string, snapshot contract.Accounting) error
+	RecordRemoteAccountingUpdate(queryAttemptID string, update contract.RemoteAccountingUpdate) error
 	ListExecutionAttempts(runID, activationID string) ([]ExecutionAttempt, error)
 	ResolveExecutionAttempt(runID, attemptID string, resolution AttemptResolution) error
 

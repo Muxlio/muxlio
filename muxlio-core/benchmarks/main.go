@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
@@ -68,21 +69,21 @@ func (x *measuredExecutor) snapshot() []queueSample {
 }
 
 type observation struct {
-	SchemaVersion              int                `json:"schemaVersion"`
-	Case                       string             `json:"case"`
-	Repetition                 int                `json:"repetition"`
-	StartedAt                  time.Time          `json:"startedAt"`
-	WallTimeMS                 float64            `json:"wallTimeMs"`
-	Queue                      []queueSample      `json:"queue"`
-	RecoveryCorrect            *bool              `json:"recoveryCorrect"`
-	CancellationCorrect        *bool              `json:"cancellationCorrect"`
-	ManualInterventions        int                `json:"manualInterventions"`
-	ManualInterventionRequired bool               `json:"manualInterventionRequired"`
-	Fault                      string             `json:"fault,omitempty"`
-	Correct                    bool               `json:"correct"`
-	Error                      string             `json:"error,omitempty"`
-	Run                        *state.Run         `json:"run"`
-	Usage                      state.UsageSummary `json:"usage"`
+	SchemaVersion              int                          `json:"schemaVersion"`
+	Case                       string                       `json:"case"`
+	Repetition                 int                          `json:"repetition"`
+	StartedAt                  time.Time                    `json:"startedAt"`
+	WallTimeMS                 float64                      `json:"wallTimeMs"`
+	Queue                      []queueSample                `json:"queue"`
+	RecoveryCorrect            *bool                        `json:"recoveryCorrect"`
+	CancellationCorrect        *bool                        `json:"cancellationCorrect"`
+	ManualInterventions        int                          `json:"manualInterventions"`
+	ManualInterventionRequired bool                         `json:"manualInterventionRequired"`
+	Fault                      string                       `json:"fault,omitempty"`
+	Correct                    bool                         `json:"correct"`
+	Error                      string                       `json:"error,omitempty"`
+	Run                        *state.Run                   `json:"run"`
+	Accounting                 accounting.AccountingSummary `json:"accounting"`
 }
 
 func writeJSON(path string, v any) error {
@@ -285,7 +286,10 @@ func runCase(dir, name string, p *plan.Plan, executor workers.Executor, capacity
 		if readErr != nil {
 			err = errors.Join(err, readErr)
 		}
-		obs.Usage = state.SummarizeUsage(attempts)
+		obs.Accounting, readErr = state.SummarizeAccounting(attempts)
+		if readErr != nil {
+			err = errors.Join(err, readErr)
+		}
 		events, readErr := s.GetEvents(id, 0, 1000000)
 		if readErr != nil {
 			err = errors.Join(err, readErr)

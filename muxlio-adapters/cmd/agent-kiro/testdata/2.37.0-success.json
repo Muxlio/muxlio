@@ -1,0 +1,1 @@
+{"update": {"sessionUpdate": "session_info_update", "_meta": {"kiro": {"kind": "turn_completion", "executionId": "fixture-execution", "turnId": "fixture-turn", "promptTurnSummaries": [{"unit": "credit", "unitPlural": "credits", "usage": 0.06634344693200664}]}}}}

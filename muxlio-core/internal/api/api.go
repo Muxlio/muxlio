@@ -687,11 +687,16 @@ func handleGetRun(w http.ResponseWriter, r *http.Request, store state.Store, run
 	}
 	safe := *run
 	safe.Error = diagnostic.Redact(safe.Error)
+	accountingSummary, summaryErr := state.SummarizeAccounting(attempts)
+	if summaryErr != nil {
+		writeError(w, http.StatusInternalServerError, CodeStoreError, "accounting summary unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, struct {
 		*state.Run
 		Diagnostics []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
-		Usage       state.UsageSummary      `json:"usage"`
-	}{&safe, state.AttemptDiagnostics(attempts), state.SummarizeUsage(attempts)})
+		Accounting  any                     `json:"accounting"`
+	}{&safe, state.AttemptDiagnostics(attempts), accountingSummary})
 }
 
 func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, runID string) {

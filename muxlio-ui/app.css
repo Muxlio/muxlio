@@ -141,23 +141,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .stat-val.amber{color:var(--amber)}
 .stat-label{font-size:12px;color:var(--muted);white-space:nowrap}
 .stat.wb-usage{flex:0 0 auto;min-width:max-content;max-width:100%;border-right:1px solid var(--border);margin-right:22px;padding-right:22px}
-.wb-usage-details{border:none;margin:0;padding:0;position:relative}
-.wb-usage-head{display:flex;flex-direction:column;gap:2px;cursor:pointer;list-style:none;padding-right:14px}
-.wb-usage-head::-webkit-details-marker{display:none}
-.wb-usage-head::after{content:"";position:absolute;top:12px;right:0;width:6px;height:6px;border-right:1px solid var(--muted);border-bottom:1px solid var(--muted);transform:rotate(-45deg)}
-.wb-usage-details[open] .wb-usage-head::after{transform:rotate(45deg)}
-.wb-usage-head .stat-val,.wb-usage-head .stat-label{pointer-events:none}
-.wb-usage-drawer{padding:8px 0 4px;border-top:1px solid var(--border);margin-top:6px}
-.wb-usage-detail-list{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px 12px}
-.wb-usage-detail-row{margin:0}
-.wb-usage-detail-row dt{font-size:10px;color:var(--muted);margin-bottom:2px}
-.wb-usage-detail-row dd{margin:0;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.wb-usage-coverage,.wb-usage-more{margin:8px 0 0;font-size:11px}
-.wb-usage-link{margin-top:8px;font-size:12px}
-.wb-usage-overflow{margin-top:8px;font-size:11px}
-.wb-usage-overflow>summary{cursor:pointer;color:var(--teal);width:fit-content}
-.wb-usage-overflow>summary:focus-visible,.wb-usage-head:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:3px}
-.wb-usage-overflow .wb-usage-detail-list{margin-top:8px}
 .wb-usage--empty .stat-val,.wb-usage--pending .stat-val,.wb-usage--idle .stat-val{font-size:15px;font-weight:600}
 @media(max-width:680px){.stat.wb-usage{flex-basis:100%;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:4px;margin-right:0;border-right:none}}
 

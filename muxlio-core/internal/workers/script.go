@@ -95,7 +95,6 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (result ExecuteResult, exec
 	ctx, end := telemetry.Start(req.Context, "execute_tool", telemetry.AttemptAttributes(req.RunID, req.ActivationID, req.AttemptID, req.Executor)...)
 	req.Context = ctx
 	defer func() {
-		telemetry.Usage(ctx, result.Usage)
 		end(executionErr != nil || result.Error != "")
 	}()
 	started := time.Now()

@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"net/http"
@@ -92,23 +91,12 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	}
 	states := map[string]int{}
 	held := 0
-	var tokens *contract.TokenUsage
-	tokensSeen := false
 	var elapsed *int64
 	missingTiming := false
 	for _, a := range attempts {
 		states[a.State]++
 		if a.AwaitReconciliationReason != "" {
 			held++
-		}
-		if a.Usage != nil && a.Usage.AnyReported() {
-			tokensSeen = true
-			var addErr error
-			tokens, addErr = contract.AddTokenUsage(tokens, a.Usage)
-			if addErr != nil {
-				tokens = nil
-				break
-			}
 		}
 		ms := a.ExecutionDurationMS
 		if ms == nil && a.State != "running" && !a.StartedAt.IsZero() && !a.FinishedAt.IsZero() && !a.FinishedAt.Before(a.StartedAt) {
@@ -128,9 +116,6 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	if missingTiming {
 		elapsed = nil
 	}
-	if !tokensSeen {
-		tokens = nil
-	}
 	latest, err := views.LatestEventSeq(run.ID)
 	if err != nil {
 		writeError(w, 500, CodeStoreError, err.Error())
@@ -147,7 +132,15 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	writeJSON(w, 200, map[string]any{"id": safe.ID, "workflowName": safe.WorkflowName, "state": safe.State, "createdAt": safe.CreatedAt, "updatedAt": safe.UpdatedAt,
 		"planDigest": run.PlanDigest, "fork": run.Fork, "pinned": run.Pinned, "retainedUntil": run.RetainedUntil, "error": diagnostic.Redact(run.Error),
 		"limits": pinned.Limits, "deadlineSeconds": pinned.DeadlineSeconds,
-		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "tokens": tokens, "usage": state.SummarizeUsage(attempts), "executionDurationMs": elapsed}})
+		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": accountingSummary(attempts), "executionDurationMs": elapsed}})
+}
+
+func accountingSummary(attempts []state.ExecutionAttempt) any {
+	summary, err := state.SummarizeAccounting(attempts)
+	if err != nil {
+		return nil
+	}
+	return summary
 }
 
 func runHeader(s state.Store, id string) (*state.Run, error) {

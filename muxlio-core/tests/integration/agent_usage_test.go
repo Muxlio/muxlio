@@ -2,7 +2,6 @@ package integration_test
 
 import (
 	"encoding/json"
-	"math"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -35,19 +34,19 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reported := &state.TokenUsage{Input: 120, Output: 30, Cached: 40}
-	cursorReported := &state.TokenUsage{Input: 160, Output: 30, Cached: 40}
-	kiroCredit := 0.18065595854063016
+	reported := &[3]string{"120", "30", "40"}
+	cursorReported := &[3]string{"160", "30", "40"}
+	kiroCredit := "0.18065595854063016"
 	for _, tc := range []struct {
 		executor, cli, events string
-		wantUsage             *state.TokenUsage
-		wantCredit            *float64
-		wantEstimatedCostUSD  *float64
+		wantUsage             *[3]string
+		wantCredit            *string
+		wantEstimatedCostUSD  *string
 	}{
 		{"agent/antigravity", "agy", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
 		{"type":"result","status":"success"}`, reported, nil, nil},
-		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40},"total_cost_usd":0.0812}
-{"type":"result","usage":null}`, &state.TokenUsage{Input: 160, Output: 30, Cached: 40}, nil, f64ptr(0.0812)},
+		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812}
+{"type":"result","usage":null}`, &[3]string{"160", "30", "40"}, nil, amountPtr("0.0812")},
 		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
 		{"type":"turn.completed","usage":null}`, reported, nil, nil},
 		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
@@ -110,31 +109,42 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 				if fail {
 					wantState = "failed"
 				}
-				if attempt.State != wantState || (tc.wantUsage == nil && attempt.Usage != nil) ||
-					(tc.wantUsage != nil && (attempt.Usage == nil || *attempt.Usage != *tc.wantUsage)) {
-					t.Fatalf("stored attempt = %+v, usage = %+v", attempt, attempt.Usage)
+				if attempt.State != wantState || attempt.Accounting == nil || !attempt.Accounting.Final {
+					t.Fatalf("stored attempt missing final accounting: %+v", attempt)
 				}
-				if tc.wantCredit == nil {
-					if attempt.Measurements != nil && attempt.Measurements.Credit != nil {
-						t.Fatalf("unexpected credit measurements: %+v", attempt.Measurements)
+				var tokens *[3]string
+				var credit, cost *string
+				for _, entry := range attempt.Accounting.Entries {
+					if v := entry.Tokens; v != nil {
+						if v.Input.Collected != nil && v.Output.Collected != nil && v.CacheRead.Collected != nil {
+							tokens = &[3]string{string(v.Input.Collected.Value), string(v.Output.Collected.Value), string(v.CacheRead.Collected.Value)}
+						}
 					}
-				} else if attempt.Measurements == nil || attempt.Measurements.Credit == nil || attempt.Measurements.Credit.Amount == nil {
-					t.Fatalf("missing credit measurements: %+v", attempt.Measurements)
-				} else if math.Abs(*attempt.Measurements.Credit.Amount-*tc.wantCredit) > 1e-9 || attempt.Measurements.Credit.Unit != "credit" {
-					t.Fatalf("credit = %+v, want %v credit", attempt.Measurements.Credit, *tc.wantCredit)
+					for _, v := range entry.Credits {
+						if v.Provider == "kiro" && v.Unit == "credit" && v.Amount.Collected != nil {
+							value := string(v.Amount.Collected.Value)
+							credit = &value
+						}
+					}
+					for _, v := range entry.Costs {
+						if v.Currency == "USD" && v.Basis == "api-equivalent" && v.Amount.Collected != nil && v.Amount.Collected.Fidelity == "provider-estimate" {
+							value := string(v.Amount.Collected.Value)
+							cost = &value
+						}
+					}
 				}
-				if tc.wantEstimatedCostUSD == nil {
-					if attempt.Measurements != nil && attempt.Measurements.EstimatedCostUSD != nil {
-						t.Fatalf("unexpected estimated cost: %+v", attempt.Measurements)
-					}
-				} else if attempt.Measurements == nil || attempt.Measurements.EstimatedCostUSD == nil {
-					t.Fatalf("missing estimated cost: %+v", attempt.Measurements)
-				} else if math.Abs(*attempt.Measurements.EstimatedCostUSD-*tc.wantEstimatedCostUSD) > 1e-9 || attempt.Measurements.CostUSD != nil {
-					t.Fatalf("estimated cost = %+v, want %v (observed unset)", attempt.Measurements, *tc.wantEstimatedCostUSD)
+				if (tokens == nil) != (tc.wantUsage == nil) || tokens != nil && *tokens != *tc.wantUsage {
+					t.Fatalf("tokens=%v want=%v", tokens, tc.wantUsage)
+				}
+				if (credit == nil) != (tc.wantCredit == nil) || credit != nil && *credit != *tc.wantCredit {
+					t.Fatalf("credits=%v want=%v", credit, tc.wantCredit)
+				}
+				if (cost == nil) != (tc.wantEstimatedCostUSD == nil) || cost != nil && *cost != *tc.wantEstimatedCostUSD {
+					t.Fatalf("cost=%v want=%v", cost, tc.wantEstimatedCostUSD)
 				}
 			})
 		}
 	}
 }
 
-func f64ptr(v float64) *float64 { return &v }
+func amountPtr(v string) *string { return &v }

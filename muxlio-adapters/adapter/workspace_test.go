@@ -22,7 +22,11 @@ func TestWorkspaceRequiresExplicitAbsoluteDirectory(t *testing.T) {
 
 func TestResolveOutputAllowsMissingFileAndRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
-	if path, err := ResolveOutput(root, "pending.json"); err != nil || path != filepath.Join(root, "pending.json") {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := ResolveOutput(root, "pending.json"); err != nil || path != filepath.Join(canonicalRoot, "pending.json") {
 		t.Fatalf("missing output path %q err=%v", path, err)
 	}
 	if _, err := ResolveOutput(root, "../secret"); err == nil {

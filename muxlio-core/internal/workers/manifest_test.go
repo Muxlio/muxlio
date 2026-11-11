@@ -79,7 +79,7 @@ func TestScriptRejectsMalformedContractResult(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			s := testScript(t, "printf '%s' '"+raw+"'")
 			result, err := s.Execute(ExecuteRequest{Executor: "test"})
-			if err != nil || result.Error == "" || result.Usage != nil {
+			if err != nil || result.Error == "" || result.Accounting != nil {
 				t.Fatalf("malformed result accepted: %+v, %v", result, err)
 			}
 		})

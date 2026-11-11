@@ -6,14 +6,13 @@ import (
 	"math"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // parseClaudeTokenUsage maps Anthropic / Claude Code usage into the shared
 // contract. Provider input_tokens is uncached input only; cache_read_input_tokens
 // and cache_creation_input_tokens are folded into Input so attempt totals match
 // billed prompt tokens. Cached still carries cache read when reported.
-func parseClaudeTokenUsage(raw json.RawMessage) *adapter.TokenUsage {
+func parseClaudeTokenUsage(raw json.RawMessage) *adapter.TokenCounters {
 	base := adapter.ParseTokenUsage(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -85,7 +84,7 @@ func parseClaudeTokenUsage(raw json.RawMessage) *adapter.TokenUsage {
 	}
 
 	in := input
-	return contract.NewTokenUsage(&in, out, cached)
+	return adapter.NewTokenCounters(&in, out, cached)
 }
 
 func addTokenCount(total, add int64) (int64, error) {

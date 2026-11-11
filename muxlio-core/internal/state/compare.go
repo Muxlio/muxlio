@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"sort"
 )
 
@@ -15,17 +16,17 @@ type ActivationComparison struct {
 }
 
 type RunComparison struct {
-	Before         *Run                   `json:"before"`
-	After          *Run                   `json:"after"`
-	BeforePlan     json.RawMessage        `json:"beforePlan"`
-	AfterPlan      json.RawMessage        `json:"afterPlan"`
-	InputsChanged  bool                   `json:"inputsChanged"`
-	PlanChanged    bool                   `json:"planChanged"`
-	ResultsChanged bool                   `json:"resultsChanged"`
-	BeforeUsage    UsageSummary           `json:"beforeUsage"`
-	AfterUsage     UsageSummary           `json:"afterUsage"`
-	Activations    []ActivationComparison `json:"activations"`
-	ReusedOutputs  []Event                `json:"reusedOutputs"`
+	BeforeAccounting accounting.AccountingSummary `json:"beforeAccounting"`
+	AfterAccounting  accounting.AccountingSummary `json:"afterAccounting"`
+	Before           *Run                         `json:"before"`
+	After            *Run                         `json:"after"`
+	BeforePlan       json.RawMessage              `json:"beforePlan"`
+	AfterPlan        json.RawMessage              `json:"afterPlan"`
+	InputsChanged    bool                         `json:"inputsChanged"`
+	PlanChanged      bool                         `json:"planChanged"`
+	ResultsChanged   bool                         `json:"resultsChanged"`
+	Activations      []ActivationComparison       `json:"activations"`
+	ReusedOutputs    []Event                      `json:"reusedOutputs"`
 }
 
 func sameJSON(a, b any) bool {
@@ -68,7 +69,16 @@ func CompareRuns(s Store, beforeID, afterID string) (*RunComparison, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &RunComparison{Before: before, After: after, BeforePlan: before.PlanJSON, AfterPlan: after.PlanJSON, InputsChanged: !sameJSON(before.Input, after.Input), PlanChanged: before.PlanDigest != after.PlanDigest, ResultsChanged: !sameJSON(before.Output, after.Output) || before.State != after.State || before.Error != after.Error, BeforeUsage: SummarizeUsage(bt), AfterUsage: SummarizeUsage(at), Activations: []ActivationComparison{}, ReusedOutputs: []Event{}}
+	beforeAccounting, err := SummarizeAccounting(bt)
+	if err != nil {
+		return nil, err
+	}
+	afterAccounting, err := SummarizeAccounting(at)
+	if err != nil {
+		return nil, err
+	}
+	c := &RunComparison{Before: before, After: after, BeforePlan: before.PlanJSON, AfterPlan: after.PlanJSON, InputsChanged: !sameJSON(before.Input, after.Input), PlanChanged: before.PlanDigest != after.PlanDigest, ResultsChanged: !sameJSON(before.Output, after.Output) || before.State != after.State || before.Error != after.Error, Activations: []ActivationComparison{}, ReusedOutputs: []Event{}}
+	c.BeforeAccounting, c.AfterAccounting = beforeAccounting, afterAccounting
 	aligned := map[string]*ActivationComparison{}
 	for _, a := range ba {
 		key, _ := json.Marshal([]any{append([]string{}, a.ScopePath...), a.NodeID, a.Occurrence})

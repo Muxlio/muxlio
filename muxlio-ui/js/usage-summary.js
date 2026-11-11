@@ -1,169 +1,53 @@
-// Shared UsageSummary presentation for workbench header, operations, and comparisons.
-// Uses the coordinator contract only; never infers tokens from credits or context.
-
-function usageRunStatesActive(state){
-  return ['running','queued','waiting','paused'].includes(state);
+// Render server-computed canonical accounting. Decimal strings stay exact.
+function usageRunStatesActive(state){return ['running','queued','waiting','paused'].includes(state)}
+function accountingStatus(row){return row?.completeness||'unknown'}
+function accountingExact(value){return value==null?'Unavailable':String(value)}
+function accountingCollectedLabel(row){const f=row?.evidence?.collected||[];return f.includes('provider-estimate')?(f.length===1?'Collected (provider estimate)':'Collected (includes provider estimates)'):'Collected'}
+function buildAttemptAccountingMarkup(accounting){
+ const rows=[];
+ for(const model of accounting?.models||[])rows.push(`<div title="${esc(model.source)}"><dt>${esc(model.role)} model</dt><dd>${esc(model.id)}</dd></div>`);
+ const reading=(label,measure)=>{for(const origin of ['collected','estimated']){const value=measure?.[origin];if(!value)continue;const category=origin==='collected'?(value.fidelity==='provider-estimate'?'collected (provider estimate)':value.fidelity==='proxy'?'collected (proxy)':'collected'):'estimated (Muxlio)';const alternative=origin==='estimated'&&measure.collected?' · alternative calculation':'';const provenance=[value.source,value.fidelity,value.method,value.version,value.catalogId].filter(Boolean).join(' · ');rows.push(`<div title="${esc(provenance)}"><dt>${esc(label+' · '+category+alternative)}</dt><dd>${esc(value.value)}</dd></div>`)}};
+ for(const entry of accounting?.entries||[]){for(const [key,label] of [['total','Tokens'],['input','Input'],['output','Output'],['cacheRead','Cache read'],['cacheWrite','Cache write'],['reasoning','Reasoning']])reading(entry.model?`${entry.model} · ${label}`:label,entry.tokens?.[key]);for(const credit of entry.credits||[])reading(`${credit.provider} · ${credit.unit}`,credit.amount);for(const cost of entry.costs||[])reading(`${cost.currency} · ${cost.basis}`,cost.amount)}
+ return rows.join('')||'<div><dt>Accounting</dt><dd>Unavailable</dd></div>';
 }
-
-function tokenDimensionCoverageNote(dimensions,dimension,attempts,runState){
-  if(!dimensions)return '';
-  const row=dimensions[dimension]||{};
-  const reported=row.reporting??0;
-  const pending=dimensions.coverage?.pending??0;
-  const accountable=(dimensions.coverage?.attempts??attempts)-pending;
-  if(reported<=0){
-    if(pending>0&&usageRunStatesActive(runState))return ` · pending (${pending} ${pending===1?'attempt':'attempts'})`;
-    return '';
-  }
-  const coverage=accountable>0&&reported<accountable?` · ${reported}/${accountable} attempts`:'';
-  const pendingNote=pending>0&&usageRunStatesActive(runState)?` · ${pending} pending`:'';
-  return coverage+pendingNote;
+function accountingMeasures(summary){
+ const rows=[];
+ if(summary?.tokens)rows.push({key:'tokens',label:'Tokens',row:summary.tokens});
+ for(const c of summary?.credits||[])rows.push({key:`credit:${c.provider}:${c.unit}`,label:`Credits · ${c.provider} · ${c.unit}`,row:c.value});
+ for(const c of summary?.costs||[])rows.push({key:`cost:${c.currency}:${c.basis}`,label:`${c.currency} · ${c.basis==='api-equivalent'?'API-equivalent estimate':c.basis==='plan-debit'?'Plan debit':'Cost (unspecified basis)'}`,row:c.value});
+ return rows;
 }
-
-function tokenDimensionRows(dimensions,fallback){
-  const note=(row,dimension)=>{
-    if(!dimensions||!row||(row.reporting??0)<=0)return '';
-    const accountable=(dimensions.coverage?.attempts??0)-(dimensions.coverage?.pending??0);
-    return accountable>0&&row.reporting<accountable?` (${row.reporting}/${accountable} attempts)`:'';
-  };
-  const value=(dim)=>{
-    const fromApi=dimensions?.[dim]?.observed;
-    if(fromApi!=null)return fromApi;
-    return fallback?.[dim]??null;
-  };
-  return [
-    ['Input subtotal',value('input'),note(dimensions?.input,'input')],
-    ['Output subtotal',value('output'),note(dimensions?.output,'output')],
-    ['Cached subtotal',value('cached'),note(dimensions?.cached,'cached')],
-  ].map(([name,total,suffix])=>[`${name}${suffix}`,total]);
+function buildUsagePresentation(accounting,options={}){
+ const primary=[],details=[];
+ for(const item of accountingMeasures(accounting)){
+  const row=item.row,value=row.effectiveTotal??row.knownSubtotal;
+  if(value!=null)primary.push({key:item.key,label:item.label,value,format:accountingExact,coverage:row.effectiveTotal==null?' · incomplete':row.estimatedFallbackSubtotal!=null?' · includes estimates':''});
+  if(row.collectedSubtotal!=null)details.push({key:item.key+':collected',label:item.label+' · '+accountingCollectedLabel(row).toLowerCase(),value:row.collectedSubtotal,format:accountingExact});
+  if(row.estimatedFallbackSubtotal!=null)details.push({key:item.key+':estimated',label:item.label+' · estimated fallback',value:row.estimatedFallbackSubtotal,format:accountingExact});
+  details.push({key:item.key+':coverage',label:item.label+' coverage',value:accountingStatus(row),format:accountingExact});
+ }
+ for(const [key,label] of [['input','Input'],['output','Output'],['cacheRead','Cache read'],['cacheWrite','Cache write'],['reasoning','Reasoning']]){const row=accounting?.tokenDimensions?.[key];if(row?.knownSubtotal!=null)details.push({key:'dimension:'+key,label:label+' subtotal',value:row.knownSubtotal,format:accountingExact})}
+ for(const [key,label] of [['credits','Unknown credit unit'],['costs','Unknown cost identity']]){const row=accounting?.unattributed?.[key];if(row&&(row.unknownAttempts||row.pendingAttempts))details.push({key:'unknown:'+key,label,value:`${row.unknownAttempts||0} unknown · ${row.pendingAttempts||0} pending`,format:accountingExact})}
+ const attemptCount=options.attemptCount??0,runState=options.runState||'';
+ const status=primary.length?'ready':options.runError?'error':!attemptCount?'none':usageRunStatesActive(runState)?'pending':'empty';
+ return {status,primary,details,attemptCount,runState,hasAttempts:attemptCount>0,creditsOnly:primary.length>0&&primary.every(x=>x.key.startsWith('credit:')),usage:accounting};
 }
-
-function usageTotalCoverageNote(total,dimensions){
-  if(!total&&!dimensions)return '';
-  const pending=total?.pending??dimensions?.coverage?.pending??0;
-  const reporting=total?.reporting??dimensions?.coverage?.reporting??0;
-  const attempts=dimensions?.coverage?.attempts??0;
-  const accountable=attempts-pending;
-  const parts=[];
-  if(Number.isInteger(total?.unknown)&&total.unknown>0)parts.push(`${total.unknown} unreported`);
-  if(pending>0)parts.push(`${pending} pending`);
-  if(reporting>0&&accountable>0&&reporting<accountable)parts.push(`${reporting}/${accountable} reporting`);
-  return parts.length?` · ${parts.join(' · ')}`:'';
+function usageMeasureValue(measure){return measure.value==null?'Unavailable':measure.format(measure.value)}
+function usageCardMarkup(label,value,kind){
+ const row=value||{};
+ const rows=[['Known subtotal',row.knownSubtotal],[accountingCollectedLabel(row),row.collectedSubtotal],['Estimated fallback',row.estimatedFallbackSubtotal],['Complete total',row.effectiveTotal]];
+ return `<section class="usage-card"><h3>${esc(label)}</h3><dl>${rows.map(([name,total])=>{const display=total==null?'—':kind==='tokens'?fmtTokens(total):accountingExact(total);return `<div><dt>${esc(name)}</dt><dd${total==null?' title="Not reported"':display!==String(total)?` title="${esc(total)}"`:''}>${esc(display)}</dd></div>`}).join('')}<div><dt>Coverage</dt><dd>${esc(accountingStatus(row))}</dd></div></dl></section>`;
 }
-
-function creditCoverageNote(row,attemptCount){
-  if(!row)return '';
-  const unknown=row.unknown;
-  if(Number.isInteger(unknown)&&unknown>0&&attemptCount>0)return ` · ${unknown} unreported`;
-  return '';
+function buildUsageGridMarkup(accounting){
+ const measures=accountingMeasures(accounting);
+ if(!measures.some(x=>x.key==='tokens'))measures.unshift({key:'tokens',label:'Tokens'});
+ if(!accounting?.credits?.length)measures.push({key:'credit:unavailable',label:'Credits'});
+ if(!accounting?.costs?.length)measures.push({key:'cost:unavailable',label:'Cost'});
+ return ['tokens','credit:','cost:'].map(key=>`<div class="usage-column">${measures.filter(x=>key==='tokens'?x.key===key:x.key.startsWith(key)).map(x=>usageCardMarkup(x.label,x.row,x.key)).join('')}</div>`).join('');
 }
-
-function fallbackTokenSubtotal(fallback){
-  if(!fallback)return null;
-  const input=fallback.input,output=fallback.output;
-  if(input!=null&&output!=null)return input+output;
-  if(input!=null||output!=null)return null;
-  return null;
-}
-
-function dimensionHasAnyReported(dimensions,fallback){
-  const dims=['input','output','cached'];
-  if(dimensions&&dims.some(name=>dimensions[name]?.observed!=null))return true;
-  return !!fallback&&dims.some(name=>fallback[name]!=null);
-}
-
-function creditHasObserved(row){
-  return row&&row.observed!=null;
-}
-
-function costHasObserved(cost){return cost?.observed!=null}
-function costHasEstimated(cost){return cost?.estimated!=null}
-
-// buildUsagePresentation turns a UsageSummary (plus optional attempt fallback) into
-// primary headline measures and expandable detail rows.
-function buildUsagePresentation(usage,options={}){
-  const attemptCount=options.attemptCount??0;
-  const runState=options.runState??'';
-  const runError=options.runError??null;
-  const fallback=options.fallbackTokens??null;
-  const dimensions=usage?.tokenDimensions;
-  const credits=usage?.credits||[];
-  const primary=[];
-  const details=[];
-  const tokens=usage?.tokens;
-  const tokenObserved=tokens?.observed??fallbackTokenSubtotal(fallback);
-  const hasTokenMeasures=tokenObserved!=null||dimensionHasAnyReported(dimensions,fallback);
-  if(hasTokenMeasures){
-    primary.push({
-      key:'tokens',
-      label:'Token subtotal',
-      value:tokenObserved,
-      format:fmtTokens,
-      coverage:usageTotalCoverageNote(tokens,dimensions),
-    });
-    for(const [name,total] of tokenDimensionRows(dimensions,fallback)){
-      details.push({key:`token-${name}`,label:name,value:total,format:fmtTokens});
-    }
-  }else if(tokens?.estimated!=null){
-    primary.push({key:'tokens-estimated',label:'Tokens (estimated)',value:tokens.estimated,format:fmtTokens,coverage:usageTotalCoverageNote(tokens,dimensions)});
-  }
-  for(const row of credits){
-    if(creditHasObserved(row)){
-      primary.push({
-        key:`credit:${row.unit||'unknown'}`,
-        label:`Credits · ${row.unit||'unit unavailable'}`,
-        value:row.observed,
-        format:fmtCredits,
-        coverage:creditCoverageNote(row,attemptCount),
-      });
-    }
-  }
-  const cost=usage?.costUsd;
-  if(costHasObserved(cost)){
-    primary.push({key:'cost-observed',label:'Cost · observed',value:cost.observed,format:fmtCostUsd,coverage:usageTotalCoverageNote(cost,null)});
-  }
-  if(costHasEstimated(cost)){
-    primary.push({key:'cost-estimated',label:'Cost · estimated',value:cost.estimated,format:fmtCostUsd,coverage:''});
-  }
-  if(cost&&(cost.observed==null&&cost.estimated==null)&&Number.isInteger(cost.unknown)&&cost.unknown>0){
-    details.push({key:'cost-unknown',label:'Cost coverage',value:`${cost.unknown} attempts without cost`,format:x=>x});
-  }
-  let status='ready';
-  if(runError&&primary.length===0)status='error';
-  else if(primary.length===0){
-    if(!attemptCount)status='none';
-    else if(usageRunStatesActive(runState)&&(dimensions?.coverage?.pending??tokens?.pending??0)>0)status='pending';
-    else status='empty';
-  }
-  const creditsOnly=primary.length>0&&primary.every(item=>item.key.startsWith('credit:'));
-  return {status,primary,details,attemptCount,runState,creditsOnly,hasAttempts:attemptCount>0,usage,dimensions,fallback};
-}
-
-function usageMeasureValue(measure){
-  if(measure.value==null)return 'Unavailable';
-  return measure.format(measure.value);
-}
-
-function usageCardMarkup(label,value,format,extraRows=[]){
-  const rows=[['Observed',value?.observed],['Estimated',value?.estimated],...extraRows];
-  const pending=value?.pending>0?`<div class="usage-coverage"><dt>Pending attempts</dt><dd>${esc(value.pending)}</dd></div>`:'';
-  const reporting=Number.isInteger(value?.reporting)&&value.reporting>=0?`<div class="usage-coverage"><dt>Reporting attempts</dt><dd>${esc(value.reporting)}</dd></div>`:'';
-  return `<section class="usage-card"><h3>${esc(label)}</h3><dl>${rows.map(([name,total])=>`<div><dt>${name}</dt><dd>${esc(total==null?'Unavailable':format(total))}</dd></div>`).join('')}<div class="usage-coverage"><dt>Unreported attempts</dt><dd>${esc(Number.isInteger(value?.unknown)&&value.unknown>=0?value.unknown:'Unavailable')}</dd></div>${pending}${reporting}</dl></section>`;
-}
-
-function buildUsageGridMarkup(usage,attemptCount){
-  const creditCards=(usage?.credits||[]).map(row=>usageCardMarkup(`Credits (${row.unit||'unit unavailable'})`,row,fmtCredits)).join('');
-  const tokenExtras=tokenDimensionRows(usage?.tokenDimensions).map(([name,total])=>[name,total]);
-  return `${usageCardMarkup('Tokens',usage?.tokens,fmtTokens,tokenExtras)}${usageCardMarkup('Cost',usage?.costUsd,fmtCostUsd)}${creditCards}`;
-}
-
-function buildOperationsUsageSectionMarkup(usage,attemptCount,attemptStates){
-  const states=attemptStates||{};
-  return `<div class="operations-summary"><div class="operations-heading"><div><h2>Usage</h2><p class="subtle">Across ${esc(attemptCount??0)} attempts. Observed values were reported by executors; estimates were supplied by executors. Provider credits use executor-reported units and are not converted into tokens or cost. Unreported attempts have neither value. Pending attempts are excluded from coverage. Totals can be incomplete.</p></div><div class="operation-states">${Object.entries(states).map(([state,count])=>`<span class="state ${esc(stateClass(state))}">${esc(state)} · ${esc(count)}</span>`).join('')}</div></div><div class="usage-grid">${buildUsageGridMarkup(usage,attemptCount)}</div></div>`;
-}
+function buildOperationsUsageSectionMarkup(accounting,attemptCount,attemptStates){return `<div class="operations-summary"><div class="operations-heading"><h2>Accounting</h2><div class="operation-states">${Object.entries(attemptStates||{}).map(([state,count])=>`<span class="state ${esc(stateClass(state))}">${esc(state)} · ${esc(count)}</span>`).join('')}</div></div><div class="usage-grid">${buildUsageGridMarkup(accounting)}</div></div>`}
 
 const WB_USAGE_HEADLINE_KEYS=['tokens','tokens-estimated','cost-observed','cost-estimated'];
-const WB_USAGE_DRAWER_CAP=6;
 
 function workbenchUsageHeadlineMeasure(primary){
   if(!primary?.length)return null;
@@ -174,42 +58,21 @@ function workbenchUsageHeadlineMeasure(primary){
   return primary[0];
 }
 
-function workbenchUsageDetailLabel(measure){
-  if(!measure)return '';
-  return `${measure.label}${measure.coverage||''}`;
-}
-
-function buildWorkbenchUsageMarkup(presentation,options={}){
-  const {status,primary,details,attemptCount,hasAttempts,usage}=presentation;
-  const link=options.linkAttempts?`<button type="button" class="btn ghost wb-usage-link" data-open-operations>Attempt-level usage</button>`:'';
+function buildWorkbenchUsageMarkup(presentation){
+  const {status,primary,hasAttempts}=presentation;
   if(status==='none'&&!hasAttempts){
-    return `<div class="stat wb-usage wb-usage--idle" aria-label="Usage not available yet"><div class="stat-val">—</div><div class="stat-label">Usage</div></div>`;
+    return `<div class="stat wb-usage wb-usage--idle" aria-label="Usage not available yet"><div class="stat-val">—</div><div class="stat-label">Accounting</div></div>`;
   }
   if(status==='error'){
-    return `<div class="stat wb-usage wb-usage--error" role="status"><div class="stat-val subtle">Unavailable</div><div class="stat-label">Usage</div>${link}</div>`;
+    return `<div class="stat wb-usage wb-usage--error" role="status"><div class="stat-val subtle">Unavailable</div><div class="stat-label">Accounting</div></div>`;
   }
   if((status==='empty'||status==='pending')&&!primary.length){
-    const pendingNote=status==='pending'?'Usage pending':'No usage reported';
-    return `<div class="stat wb-usage wb-usage--${status==='pending'?'pending':'empty'}" role="status"><div class="stat-val subtle">${esc(pendingNote)}</div><div class="stat-label">Usage</div>${link}</div>`;
+    const pendingNote=status==='pending'?'Accounting pending':'Accounting unavailable';
+    return `<div class="stat wb-usage wb-usage--${status==='pending'?'pending':'empty'}" role="status"><div class="stat-val subtle">${esc(pendingNote)}</div><div class="stat-label">Accounting</div></div>`;
   }
   const headline=workbenchUsageHeadlineMeasure(primary);
-  const headlineVal=usageMeasureValue(headline);
-  const headlineTitle=workbenchUsageDetailLabel(headline);
-  const secondary=primary.filter(item=>item!==headline);
-  const detailRows=[...secondary,...details];
-  const detailCap=WB_USAGE_DRAWER_CAP;
-  const detailVisible=detailRows.slice(0,detailCap);
-  const detailOverflow=detailRows.slice(detailCap);
-  const usageDetailRow=row=>{
-    const val=row.value==null?'Unavailable':(typeof row.format==='function'?row.format(row.value):row.value);
-    return `<div class="wb-usage-detail-row"><dt>${esc(workbenchUsageDetailLabel(row))}</dt><dd>${esc(val)}</dd></div>`;
-  };
-  const detailHtml=detailVisible.map(usageDetailRow).join('');
-  const overflowHtml=detailOverflow.length?`<details class="wb-usage-overflow"><summary>Show ${detailOverflow.length} more usage details</summary><dl class="wb-usage-detail-list">${detailOverflow.map(usageDetailRow).join('')}</dl></details>`:'';
-  const coverage=usage?.tokenDimensions?.coverage;
-  const coverageHtml=coverage?`<p class="wb-usage-coverage subtle">${esc(attemptCount)} attempts · ${esc(coverage.reporting??0)} reporting · ${esc(coverage.pending??0)} pending</p>`:'';
-  const drawer=detailRows.length||link?`<div class="wb-usage-drawer"><dl class="wb-usage-detail-list">${detailHtml}</dl>${coverageHtml}${overflowHtml}${link}</div>`:'';
-  const titleAttr=headlineTitle?` title="${esc(headlineTitle)}"`:'';
-  const expandNote=detailRows.length||link?' expand for usage breakdown':'';
-  return `<div class="stat wb-usage" data-usage-state="${esc(status)}"${titleAttr}><details class="wb-usage-details"><summary class="wb-usage-head" aria-label="Usage${esc(expandNote)}"><div class="stat-val">${esc(headlineVal)}</div><div class="stat-label">Usage</div></summary>${drawer}</details></div>`;
+  const headlineVal=headline.key==='tokens'?`${fmtTokens(headline.value)} tokens`:usageMeasureValue(headline);
+  const label=headline.key==='tokens'?'Accounting':headline.label;
+  const accessibleLabel=`${headline.label}${headline.coverage||''}`;
+  return `<div class="stat wb-usage" data-usage-state="${esc(status)}" aria-label="${esc(accessibleLabel)}"><div class="stat-val">${esc(headlineVal)}</div><div class="stat-label">${esc(label)}</div></div>`;
 }

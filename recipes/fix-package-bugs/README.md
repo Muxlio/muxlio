@@ -40,8 +40,11 @@ unique `id`, a workspace-relative `path`, a `kind` (`go`, `npm`, or `ui`), and a
 Start with a clean checkout and run only one writer workflow in it. Check the
 run's reports and diff before resuming a paused run. Command checks include the
 package's tests (and Go vet or npm build), the repository build and tests, UI
-tests, and both Go test suites. Running those suites for every package can take
-time.
+tests and smoke checks, and both Go test suites. UI package tests run only once
+per verification. Checks share a nine-minute budget, leaving time to write
+`checks.json` before the task's ten-minute timeout. An exhausted budget fails
+verification and marks unrun checks as skipped in the report. Running these
+suites for every package can take time.
 
 Validate the recipe without starting agents:
 

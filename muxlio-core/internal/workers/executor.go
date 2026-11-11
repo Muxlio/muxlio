@@ -70,7 +70,14 @@ type ExecuteRequest struct {
 	ScopePath  []string              `json:"scopePath,omitempty"`
 	NodeID     string                `json:"nodeId,omitempty"`
 	// LogSink receives incremental output while the attempt is running.
-	LogSink LogSink `json:"-"`
+	LogSink        LogSink        `json:"-"`
+	AccountingSink AccountingSink `json:"-"`
+}
+
+// AccountingSink durably replaces the current attempt snapshot.
+type AccountingSink interface {
+	Append(contract.Accounting) error
+	Close() error
 }
 
 // ExecutionPolicy is the worker-side allowlist for data and capabilities.

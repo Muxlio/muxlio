@@ -15,7 +15,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 export * from './evaluation.js';
-import type { Plan, CompiledWorkflow } from '@muxlio/sdk';
+import type { Plan, CompiledWorkflow, AccountingSummary } from '@muxlio/sdk';
 
 // --- Fake executor configuration ---
 
@@ -59,27 +59,11 @@ export interface TestResult {
   plan: Plan;
   durationMs: number;
   error?: string;
-  /** Measurements reported by execution; absent means unavailable. */
-  usage?: UsageSummary;
+  /** Canonical executor accounting; absent means unavailable. */
+  accounting?: AccountingSummary;
 }
 
-export interface UsageTotal {
-  observed: number | null;
-  estimated: number | null;
-  unknown: number;
-}
-
-export interface CreditUsageTotal {
-  unit: string;
-  observed: number | null;
-  unknown: number;
-}
-
-export interface UsageSummary {
-  tokens: UsageTotal;
-  costUsd: UsageTotal;
-  credits?: CreditUsageTotal[];
-}
+export type { AccountingSummary } from '@muxlio/sdk';
 
 /**
  * Test a compiled workflow against the Go interpreter with fake executors.
@@ -148,7 +132,7 @@ export async function testWorkflow(
 
     return {
       error: result.error || undefined,
-      usage: result.usage,
+      accounting: result.accounting,
       runId: result.runId,
       state: result.state,
       output: result.output,

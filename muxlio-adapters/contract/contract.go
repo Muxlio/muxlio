@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"time"
 )
 
@@ -19,36 +18,6 @@ type OutputDecl struct {
 	Mime   string          `json:"mime,omitempty"`
 	Path   string          `json:"path,omitempty"`
 	Schema json.RawMessage `json:"schema,omitempty"`
-}
-
-// TokenUsage is defined in token_usage.go.
-
-// Measurements contains optional accounting supplied by an executor. Estimates
-// never replace observed token usage. Costs are USD; no prices are inferred.
-// Provider credits are reported separately with explicit unit identity.
-type Measurements struct {
-	EstimatedTokens  *int64          `json:"estimatedTokens,omitempty"`
-	CostUSD          *float64        `json:"costUsd,omitempty"`
-	EstimatedCostUSD *float64        `json:"estimatedCostUsd,omitempty"`
-	Credit           *ProviderCredit `json:"credit,omitempty"`
-}
-
-func (m *Measurements) Validate() error {
-	if m == nil {
-		return nil
-	}
-	if m.EstimatedTokens != nil && *m.EstimatedTokens < 0 {
-		return fmt.Errorf("estimated tokens must be non-negative")
-	}
-	for _, cost := range []*float64{m.CostUSD, m.EstimatedCostUSD} {
-		if cost != nil && (math.IsNaN(*cost) || math.IsInf(*cost, 0) || *cost < 0) {
-			return fmt.Errorf("cost must be finite and non-negative")
-		}
-	}
-	if err := validateProviderCredit(m.Credit); err != nil {
-		return fmt.Errorf("credit: %w", err)
-	}
-	return nil
 }
 
 // RemoteTaskReference is independent of provider task states. A non-pending
@@ -72,10 +41,11 @@ type Reconciliation struct {
 }
 
 type Result struct {
-	AcknowledgedInputs []string        `json:"acknowledgedInputs,omitempty"`
-	Session            *SessionHandle  `json:"session,omitempty"`
-	Measurements       *Measurements   `json:"measurements,omitempty"`
-	Reconciliation     *Reconciliation `json:"reconciliation,omitempty"`
+	RemoteAccounting   *RemoteAccountingUpdate `json:"remoteAccounting,omitempty"`
+	AcknowledgedInputs []string                `json:"acknowledgedInputs,omitempty"`
+	Session            *SessionHandle          `json:"session,omitempty"`
+	Accounting         *Accounting             `json:"accounting,omitempty"`
+	Reconciliation     *Reconciliation         `json:"reconciliation,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
 	// executor completion. Outputs may retain rejected text for diagnostics.
 	OutputErrors map[string]string `json:"outputErrors,omitempty"`
@@ -83,7 +53,6 @@ type Result struct {
 	Outputs   map[string]any `json:"outputs"`
 	Error     string         `json:"error"`
 	Logs      string         `json:"logs,omitempty"`
-	Usage     *TokenUsage    `json:"usage,omitempty"`
 	SessionID string         `json:"sessionId,omitempty"`
 	// A non-pending reference alongside Error confirms a terminal remote
 	// operation failure. Lookup errors must not claim a terminal reference.
@@ -96,21 +65,31 @@ type Result struct {
 // Empty objects remain valid for executors with no outputs or usage to report.
 func ParseResult(raw []byte) (Result, error) {
 	var result Result
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) == nil {
+		for _, legacy := range []string{"usage", "measurements"} {
+			if _, ok := fields[legacy]; ok {
+				return result, fmt.Errorf("executor result field %s was removed; emit accounting", legacy)
+			}
+		}
+	}
 	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
 		return result, fmt.Errorf("executor result must be a JSON object")
 	}
 	if err := DecodeJSON(raw, &result); err != nil {
 		return Result{}, fmt.Errorf("executor result: %w", err)
 	}
-	if err := validateTokenUsage(result.Usage); err != nil {
-		return Result{}, err
-	}
 	if result.Session != nil {
 		if err := result.Session.Validate(); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := result.Measurements.Validate(); err != nil {
+	if result.Accounting != nil {
+		if _, err := CanonicalAccounting(*result.Accounting); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := result.RemoteAccounting.Validate(); err != nil {
 		return Result{}, err
 	}
 	if result.ExecutionDurationMS != nil && *result.ExecutionDurationMS < 0 {
@@ -126,8 +105,9 @@ func ParseResult(raw []byte) (Result, error) {
 // into these records; consumers never parse provider protocols.
 type Progress struct {
 	OperationRef *RemoteTaskReference `json:"operationRef,omitempty"`
-	Stream       string               `json:"stream"`
-	Text         string               `json:"text"`
+	Stream       string               `json:"stream,omitempty"`
+	Text         string               `json:"text,omitempty"`
+	Accounting   *Accounting          `json:"accounting,omitempty"`
 }
 
 // Request starts one invocation. Optional feature requirements are exact

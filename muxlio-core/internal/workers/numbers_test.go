@@ -2,6 +2,7 @@ package workers
 
 import (
 	"encoding/json"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"strings"
 	"testing"
 
@@ -35,9 +36,9 @@ func TestGenericExactNumberBoundaries(t *testing.T) {
 				if err := d.Decode(&input); err != nil {
 					t.Fatal(err)
 				}
-				for _, usage := range []*contract.TokenUsage{nil, {}, {Input: 9007199254740993, Output: 7}} {
-					cost := 0.25
-					r, err := sanitizeExecution(ExecuteResult{Outputs: map[string]any{"value": input, "redact": "real-secret"}, Usage: usage, Measurements: &contract.Measurements{CostUSD: &cost}}, nil, secrets)
+				for _, usage := range []*contract.Accounting{nil, testaccounting.Tokens(0, 0, 0), testaccounting.Tokens(9007199254740993, 7, 0)} {
+
+					r, err := sanitizeExecution(ExecuteResult{Outputs: map[string]any{"value": input, "redact": "real-secret"}, Accounting: usage}, nil, secrets)
 					got, _ := json.Marshal(r.Outputs["value"])
 					if err != nil || string(got) != value {
 						t.Errorf("sanitize=%s err=%v", got, err)
@@ -46,15 +47,13 @@ func TestGenericExactNumberBoundaries(t *testing.T) {
 					if len(secrets) > 0 {
 						want = "[REDACTED]"
 					}
-					if r.Outputs["redact"] != want || (r.Usage == nil) != (usage == nil) {
+					if r.Outputs["redact"] != want || (r.Accounting == nil) != (usage == nil) {
 						t.Error("redaction or usage changed")
 					}
-					if usage != nil && (r.Usage == nil || *r.Usage != *usage) {
-						t.Fatalf("typed usage changed: got %+v want %+v", r.Usage, usage)
+					if usage != nil && (r.Accounting == nil || !testaccounting.Equal(r.Accounting, usage)) {
+						t.Fatalf("typed usage changed: got %+v want %+v", r.Accounting, usage)
 					}
-					if r.Measurements == nil || r.Measurements.CostUSD == nil || *r.Measurements.CostUSD != cost {
-						t.Fatalf("typed measurements changed: %+v", r.Measurements)
-					}
+
 				}
 			}
 			script := testScript(t, "printf '%s' '"+value+"' > value; printf '{}' ")

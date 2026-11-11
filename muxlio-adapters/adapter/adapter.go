@@ -25,10 +25,6 @@ type Request = contract.Request
 // Response is what the adapter writes to stdout.
 type Response = contract.Result
 
-// TokenUsage holds provider-reported token counts. A nil pointer on Response
-// means the provider did not supply usage; a non-nil zero value is reported zero.
-type TokenUsage = contract.TokenUsage
-
 // ParseTokenUsage parses common provider usage shapes while preserving absence.
 // Input keys: input_tokens, prompt_token_count, prompt_tokens, uncachedInputTokens, inputTokens,
 // promptTokenCount.
@@ -50,7 +46,7 @@ var parseTokenUsageKeys = []string{
 	"cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached",
 }
 
-func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
+func ParseTokenUsage(raw json.RawMessage) *TokenCounters {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
@@ -92,7 +88,7 @@ func ParseTokenUsage(raw json.RawMessage) *TokenUsage {
 	if cachedOK {
 		ca = &cached
 	}
-	return contract.NewTokenUsage(in, out, ca)
+	return NewTokenCounters(in, out, ca)
 }
 
 var responseSecrets map[string]string
@@ -118,6 +114,9 @@ func ReadRequest() (*Request, error) {
 
 // WriteResponse encodes the Response to stdout.
 func WriteResponse(resp Response) error {
+	if resp.Accounting != nil {
+		_ = AppendAccountingSnapshot(*resp.Accounting)
+	}
 	// Redact diagnostics before JSON encoding, so escaped secrets are covered.
 	resp.Error = redact(resp.Error)
 	resp.Logs = redact(resp.Logs)
@@ -141,22 +140,6 @@ func WriteResponse(resp Response) error {
 // surfaced via Response.Error, not the process exit code).
 func Fail(format string, args ...any) {
 	_ = WriteResponse(Response{Outputs: map[string]any{}, Error: fmt.Sprintf(format, args...)})
-	os.Exit(0)
-}
-
-// FailWithUsage writes an error Response that also carries provider-reported
-// usage, then exits 0. Use it when a terminal result event reported usage even
-// though the run failed, so a failed attempt keeps its real token counts
-// instead of being recorded as unavailable. A nil usage is reported as absent
-// (omitted via omitempty), matching Fail.
-func FailWithUsage(usage *TokenUsage, format string, args ...any) {
-	FailWithObserved(usage, nil, format, args...)
-}
-
-// FailWithObserved retains provider-reported usage and optional measurements on
-// failed attempts without inferring missing values.
-func FailWithObserved(usage *TokenUsage, measurements *contract.Measurements, format string, args ...any) {
-	_ = WriteResponse(Response{Outputs: map[string]any{}, Error: fmt.Sprintf(format, args...), Usage: usage, Measurements: measurements})
 	os.Exit(0)
 }
 

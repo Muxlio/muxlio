@@ -81,3 +81,5 @@ Follow a run in the UI at `http://localhost:7600` or ask your assistant for its 
   <a class="path-card" href="https://github.com/Muxlio/muxlio/tree/main/recipes/implement-features"><span class="path-number">07</span><span><strong>Implement-features recipe</strong><small>Read the workflow, tasks, and example inputs.</small></span><span class="path-arrow">↗</span></a>
 </div>
 <p class="home-readme">Build your own workflows with the <a href="architecture/developer-reference/">CLI and SDK reference ↗</a></p>
+
+- [Accounting contract and limits](accounting.md)

@@ -54,7 +54,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
 	if result.Error != "" || result.Outputs["valid"] != true || result.OutputErrors["invalid"] == "" || result.OutputErrors["absent"] == "" {
 		t.Fatalf("result ports: %+v", result)
 	}
-	if result.Session != nil || result.SessionID != "" || result.Usage != nil {
+	if result.Session != nil || result.SessionID != "" || result.Accounting != nil {
 		t.Fatalf("invented session/usage: %+v", result)
 	}
 	if result.Outputs["report"].(map[string]any)["data"] != "artifact" || result.Outputs["_text"].(map[string]any)["data"] != "completed" {

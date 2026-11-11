@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -134,7 +135,15 @@ func TestOperationalAPIsPersistEvidenceAndProtectScopes(t *testing.T) {
 	if len(revisions.Revisions) != 2 || !revisions.HasMore || revisions.Revisions[0].Seq <= revisions.Revisions[1].Seq {
 		t.Fatal("revision history is not bounded newest first")
 	}
-	doc := json.RawMessage(`{"manifest":{"datasetId":"cases","versions":[{"id":"v1","planDigest":"sha256:plan"}]},"results":[{"caseId":"zero","versionId":"v1","durationMs":0,"execution":{"state":"succeeded","success":true,"usage":{"tokens":{"observed":0,"estimated":null,"unknown":0},"costUsd":{"observed":null,"estimated":null,"unknown":1}}}}]}`)
+	summary, err := state.SummarizeAccounting([]state.ExecutionAttempt{{State: "succeeded", Accounting: testaccounting.Tokens(0, 0, 0)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(map[string]any{"manifest": map[string]any{"datasetId": "cases", "versions": []any{map[string]any{"id": "v1", "planDigest": "sha256:plan"}}}, "results": []any{map[string]any{"caseId": "zero", "versionId": "v1", "durationMs": 0, "execution": map[string]any{"state": "succeeded", "success": true, "accounting": summary}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := json.RawMessage(document)
 	body := map[string]any{"kind": "evaluation", "name": "Evidence", "document": doc}
 	var imported state.OperationalReport
 	_ = json.Unmarshal(request("POST", "/v1/reports", body, "admin", 201), &imported)
@@ -142,7 +151,7 @@ func TestOperationalAPIsPersistEvidenceAndProtectScopes(t *testing.T) {
 		t.Fatal("import response should contain immutable identity, not payload")
 	}
 	_ = json.Unmarshal(request("GET", "/v1/reports/"+imported.ID, nil, "admin", 200), &imported)
-	if !bytes.Contains(imported.Document, []byte(`"observed":0`)) || !bytes.Contains(imported.Document, []byte(`"observed":null`)) {
+	if !bytes.Contains(imported.Document, []byte(`"knownSubtotal":"0"`)) || !bytes.Contains(imported.Document, []byte(`"knownSubtotal":null`)) {
 		t.Fatal("availability was altered")
 	}
 	request("POST", "/v1/reports", map[string]any{"kind": "evaluation", "name": "bad", "document": map[string]any{"results": []any{}}}, "admin", 400)

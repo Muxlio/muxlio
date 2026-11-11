@@ -15,7 +15,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func main() {
@@ -32,6 +34,14 @@ func main() {
 	}
 
 	prompt := adapter.ComposePrompt(req)
+	var params struct {
+		Model string `json:"model"`
+	}
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			adapter.Fail("agent-codex: invalid params: %v", err)
+		}
+	}
 
 	// Run codex in the per-step workspace when one is supplied, otherwise the
 	// authorized workspace. Attempt snapshots deliberately omit Git metadata.
@@ -44,16 +54,19 @@ func main() {
 	// capture assistant text and provider-reported token usage. --ephemeral
 	// keeps each run on a fresh thread, so the turn.completed usage total is
 	// this run's usage rather than a resumed thread's running total.
-	cmd := exec.Command(
-		"codex", "exec",
+	args := []string{"exec",
 		"--json",
 		"--approve-for-me",
 		"--ephemeral",
 		"--skip-git-repo-check",
 		"--add-dir", req.WorkDir,
 		"-c", "shell_environment_policy.inherit=all",
-		prompt,
-	)
+	}
+	if params.Model != "" {
+		args = append(args, "--model", params.Model)
+	}
+	args = append(args, prompt)
+	cmd := exec.Command("codex", args...)
 	cmd.Dir = workDir
 	cmd.Env = adapter.CleanEnvForChild()
 
@@ -76,7 +89,12 @@ func main() {
 	var assistant codexAgentText
 	var runErr string
 	var completed bool
-	var usage *adapter.TokenUsage
+	recorder := accounting.NewRecorder()
+	if params.Model != "" {
+		_ = recorder.ReportModel(contract.AccountingModel{ID: params.Model, Role: "requested", Source: "adapter-params"})
+	}
+	publisher := adapter.NewAccountingPublisher()
+	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -120,13 +138,21 @@ func main() {
 			// --ephemeral the thread is fresh, so this is the run's usage.
 			// When multiple turns complete, the last holds the final total,
 			// so overwrite each time.
-			if reported := adapter.ParseTokenUsage(ev["usage"]); reported != nil {
-				usage = reported
+			if reported, decodeErr := codexTokenMeasures(ev["usage"]); decodeErr != nil {
+				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+			} else if reported != nil {
+				part := accounting.Part{Scope: "ephemeral-thread", Entry: contract.AccountingEntry{ID: "thread", Tokens: reported}}
+				if err := recorder.ObserveCumulative(part); err != nil {
+					adapter.AppendLogChunk("stderr", "accounting-observation-rejected: confirmed progress remains partial")
+				} else {
+					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
+					if snapshot, err := recorder.Snapshot(); err == nil {
+						_ = publisher.Publish(*snapshot, true)
+					}
+				}
 			}
 		case "turn.failed":
-			// A failed turn reports no usage (its tokens land in the next
-			// run's total), but an earlier turn.completed may have reported
-			// usage, which is preserved via FailWithUsage below.
+			// An earlier confirmed report remains a subtotal on failure.
 			var errObj struct {
 				Message string `json:"message"`
 			}
@@ -165,13 +191,17 @@ func main() {
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
+	finalAccounting, accountingErr := adapter.FinalizeAccounting(recorder, publisher)
+	if accountingErr != nil {
+		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
+	}
 	if runErr != "" {
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from turn.completed so failed
 		// attempts that still returned usage are recorded, not estimated
-		// as zero/unavailable. usage is nil when no turn.completed was
+		// as zero/unavailable. Accounting is empty when no turn.completed was
 		// parsed, which omitempty reports as absent (matching Fail).
-		adapter.FailWithUsage(usage, "agent-codex: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithAccounting(finalAccounting, "agent-codex: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
@@ -184,7 +214,7 @@ func main() {
 		errMsg = fmt.Sprintf("codex did not write expected output files: %s", strings.Join(missing, ", "))
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Accounting: finalAccounting})
 }
 
 // codexAgentText tracks assistant messages from the Codex JSONL stream.

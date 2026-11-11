@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -97,8 +99,8 @@ func TestCursorAdapterReportsUsageFromSuccessfulResult(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 112 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
-		t.Fatalf("usage = %+v, want input=112 output=40 cached=12", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 112 || fixtureTokens(t, got.Accounting).Output != 40 || fixtureTokens(t, got.Accounting).Cached != 12 {
+		t.Fatalf("usage = %+v, want input=112 output=40 cached=12", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -107,8 +109,8 @@ func TestCursorAdapterReportsUsageFromPinnedRunnerResultShape(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 9777 || got.Usage.Output != 222 || got.Usage.Cached != 9728 {
-		t.Fatalf("usage = %+v, want input=9777 output=222 cached=9728", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 9777 || fixtureTokens(t, got.Accounting).Output != 222 || fixtureTokens(t, got.Accounting).Cached != 9728 {
+		t.Fatalf("usage = %+v, want input=9777 output=222 cached=9728", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -119,8 +121,8 @@ echo '{"type":"result","result":"done","usage":{"inputTokens":110}}'`
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 110 || got.Usage.Output != 40 || got.Usage.Cached != 12 {
-		t.Fatalf("usage = %+v, want input=110 output=40 cached=12", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 110 || fixtureTokens(t, got.Accounting).Output != 40 || fixtureTokens(t, got.Accounting).Cached != 12 {
+		t.Fatalf("usage = %+v, want input=110 output=40 cached=12", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -129,8 +131,8 @@ func TestCursorAdapterPreservesUsageFromFailedResult(t *testing.T) {
 	if got.Error == "" {
 		t.Fatal("expected adapter error")
 	}
-	if got.Usage == nil || got.Usage.Input != 9 || got.Usage.Output != 3 || got.Usage.Cached != 2 {
-		t.Fatalf("usage = %+v, want input=9 output=3 cached=2", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 9 || fixtureTokens(t, got.Accounting).Output != 3 || fixtureTokens(t, got.Accounting).Cached != 2 {
+		t.Fatalf("usage = %+v, want input=9 output=3 cached=2", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -142,8 +144,8 @@ echo '{"type":"result","subtype":"success","result":"done"}'`
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 140 || got.Usage.Output != 49 || got.Usage.Cached != 15 {
-		t.Fatalf("usage = %+v, want aggregated input=140 output=49 cached=15", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 140 || fixtureTokens(t, got.Accounting).Output != 49 || fixtureTokens(t, got.Accounting).Cached != 15 {
+		t.Fatalf("usage = %+v, want aggregated input=140 output=49 cached=15", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -154,23 +156,26 @@ echo '{"type":"result","usage":{"inputTokens":110,"outputTokens":45,"cacheReadTo
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage == nil || got.Usage.Input != 124 || got.Usage.Output != 45 || got.Usage.Cached != 14 {
-		t.Fatalf("usage = %+v, want result totals input=124 output=45 cached=14", got.Usage)
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != 124 || fixtureTokens(t, got.Accounting).Output != 45 || fixtureTokens(t, got.Accounting).Cached != 14 {
+		t.Fatalf("usage = %+v, want result totals input=124 output=45 cached=14", fixtureTokens(t, got.Accounting))
 	}
 }
 
-func TestCursorAdapterFailsOnUsageAggregationOverflow(t *testing.T) {
+func TestCursorAccountingOverflowPreservesOutcomeAndConfirmedConsumption(t *testing.T) {
 	max := int64(9223372036854775807)
 	script := `echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":` + fmt.Sprint(max) + `,"outputTokens":1,"cacheReadTokens":0}}'
 echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":1,"outputTokens":0,"cacheReadTokens":0}}'
 echo '{"type":"usage","subtype":"model_call","usage":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0}}'
 echo '{"type":"result","subtype":"success","result":"done"}'`
 	got := runCursorFixture(t, script)
-	if got.Error == "" {
-		t.Fatal("expected adapter error on usage overflow")
+	if got.Error != "" {
+		t.Fatal("accounting anomaly changed successful execution outcome")
 	}
-	if got.Usage == nil || got.Usage.Input != max {
-		t.Fatalf("usage = %+v, want preserved input=%d on overflow failure", got.Usage, max)
+	if got.Accounting == nil || got.Accounting.Coverage[0].State == "complete" {
+		t.Fatal("overflow claimed complete consumption")
+	}
+	if fixtureTokens(t, got.Accounting) == nil || fixtureTokens(t, got.Accounting).Input != max {
+		t.Fatalf("usage = %+v, want preserved input=%d on overflow failure", fixtureTokens(t, got.Accounting), max)
 	}
 }
 
@@ -179,8 +184,8 @@ func TestCursorAdapterLeavesUsageAbsentWhenNotReported(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", got.Error)
 	}
-	if got.Usage != nil {
-		t.Fatalf("usage = %+v, want absent", got.Usage)
+	if fixtureTokens(t, got.Accounting) != nil {
+		t.Fatalf("usage = %+v, want absent", fixtureTokens(t, got.Accounting))
 	}
 }
 
@@ -244,4 +249,33 @@ func buildAgentCursor(t *testing.T) string {
 		t.Fatalf("go build agent-cursor: %v\n%s", err, out)
 	}
 	return bin
+}
+
+type fixtureTokenValues struct{ Input, Output, Cached int64 }
+
+func fixtureTokens(t *testing.T, a *contract.Accounting) *fixtureTokenValues {
+	t.Helper()
+	if a == nil {
+		t.Fatal("missing accounting snapshot")
+	}
+	if !a.Final {
+		t.Fatal("accounting snapshot is not final")
+	}
+	for _, e := range a.Entries {
+		if e.Tokens == nil {
+			continue
+		}
+		read := func(m contract.Measure[contract.Count]) int64 {
+			if m.Collected == nil {
+				return 0
+			}
+			n, err := strconv.ParseInt(string(m.Collected.Value), 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		return &fixtureTokenValues{Input: read(e.Tokens.Input), Output: read(e.Tokens.Output), Cached: read(e.Tokens.CacheRead)}
+	}
+	return nil
 }

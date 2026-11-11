@@ -13,14 +13,15 @@ function fixture(t) {
   return root;
 }
 
-function verify(t, { fail = '', kind = 'go' } = {}) {
+function verify(t, { fail = '', kind = 'go', budgetMs } = {}) {
   const root = fixture(t);
   mkdirSync(join(root, 'bin'));
-  for (const path of ['muxlio-core', 'muxlio-adapters', 'muxlio-sdk']) mkdirSync(join(root, path));
+  for (const path of ['muxlio-core', 'muxlio-adapters', 'muxlio-sdk', 'muxlio-ui']) mkdirSync(join(root, path));
   const stub = `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === process.env.FAIL_ARGS) process.exit(7);\n`;
   for (const program of ['npm', 'go']) writeFileSync(join(root, 'bin', program), stub, { mode: 0o755 });
-  const path = kind === 'npm' ? 'muxlio-sdk' : 'muxlio-core';
-  const result = spawnSync(process.execPath, ['-e', verifyScript, kind, path, kind === 'npm' ? '@muxlio/sdk' : './internal/plan'], {
+  const path = kind === 'npm' ? 'muxlio-sdk' : kind === 'ui' ? 'muxlio-ui' : 'muxlio-core';
+  const script = budgetMs == null ? verifyScript : verifyScript.replace('Date.now() + 540000', 'Date.now() + ' + budgetMs);
+  const result = spawnSync(process.execPath, ['-e', script, kind, path, kind === 'npm' ? '@muxlio/sdk' : './internal/plan'], {
     cwd: root, encoding: 'utf8',
     env: { ...process.env, PATH: join(root, 'bin'), FAIL_ARGS: fail, MUXLIO_OUTPUT_DIR: root },
   });
@@ -32,7 +33,7 @@ test('successful checks record exact commands and statuses', t => {
   const { result, report } = verify(t);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(report.passed, true);
-  assert.equal(report.checks.length, 7);
+  assert.equal(report.checks.length, 8);
   assert.deepEqual(report.checks[0].args, ['test', './internal/plan']);
   assert.deepEqual(report.checks[1].args, ['vet', './internal/plan']);
   assert.ok(report.checks.every(check => check.exitCode === 0 && check.passed));
@@ -52,6 +53,26 @@ test('npm workspaces use their declared workspace target', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(report.checks[0].args, ['run', 'build', '--workspace', '@muxlio/sdk']);
   assert.deepEqual(report.checks[1].args, ['test', '--workspace', '@muxlio/sdk']);
+});
+
+test('UI tests run once and smoke failures fail verification', t => {
+  const { result, report } = verify(t, { kind: 'ui', fail: '--prefix muxlio-ui run smoke' });
+  assert.equal(result.status, 1);
+  assert.equal(report.passed, false);
+  assert.equal(report.checks.filter(check => check.args.join(' ') === '--prefix muxlio-ui test').length, 1);
+  const smoke = report.checks.find(check => check.label === 'UI smoke tests');
+  assert.equal(smoke.exitCode, 7);
+  assert.equal(smoke.passed, false);
+  assert.equal(report.checks.at(-1).label, 'adapter regression tests');
+});
+
+test('exhausted overall budget writes a failing report without claiming skipped checks passed', t => {
+  const { result, report } = verify(t, { budgetMs: 0 });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(report.passed, false);
+  assert.equal(report.checks.length, 8);
+  assert.ok(report.checks.every(check => check.skipped && !check.passed && check.exitCode === null));
+  assert.ok(report.checks.every(check => /time budget exhausted/.test(check.error)));
 });
 
 test('verification task passes real command adapter validation and executes checks', {
@@ -77,7 +98,7 @@ test('verification task passes real command adapter validation and executes chec
   assert.equal(response.outputs.passed, true);
   const report = JSON.parse(readFileSync(join(root, 'scratch', 'checks.json'), 'utf8'));
   assert.equal(report.passed, true);
-  assert.equal(report.checks.length, 7);
+  assert.equal(report.checks.length, 8);
 });
 
 function git(root, args) {

@@ -3,6 +3,7 @@
 // Go coordinator.
 
 export { assertNoLiteralCredentials } from './security.js';
+export type { Count, Amount, AccountingFidelity, Reading, Measure, TokenMeasures, CostBasis, AccountingEntry, AccountingKey, AccountingLimit, MeterCoverage, AccountingModel, Accounting, RemoteAccountingUpdate, SummaryAmount, AccountingSummary } from './accounting.js';
 
 export type {
   Plan,

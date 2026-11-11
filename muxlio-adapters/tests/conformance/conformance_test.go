@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/conformancetest"
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 var bundledAdapters = []conformancetest.Fixture{
@@ -17,12 +16,9 @@ var bundledAdapters = []conformancetest.Fixture{
 		Binary:   "agent-claude",
 		CLIName:  "claude",
 		// stream-json: result event with usage + text; Claude needs a result event to complete.
-		SuccessStream:   `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40},"total_cost_usd":0.0812,"result":"All done."}`,
-		ExpectedUsage:   &contract.TokenUsage{Input: 160, Output: 30, Cached: 40},
-		ExpectedMeasurements: func() *contract.Measurements {
-			v := 0.0812
-			return &contract.Measurements{EstimatedCostUSD: &v}
-		}(),
+		SuccessStream:  `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812,"result":"All done."}`,
+		ExpectedTokens: &[3]string{"160", "30", "40"},
+		ExpectedCost:   "0.0812",
 	},
 	{
 		Executor: "agent/codex",
@@ -37,8 +33,8 @@ var bundledAdapters = []conformancetest.Fixture{
 		Binary:   "agent-cursor",
 		CLIName:  "agent",
 		// stream-json: result event with usage.
-		SuccessStream:   `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40},"result":"Cursor done."}`,
-		ExpectedUsage:   &contract.TokenUsage{Input: 160, Output: 30, Cached: 40},
+		SuccessStream:  `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40},"result":"Cursor done."}`,
+		ExpectedTokens: &[3]string{"160", "30", "40"},
 	},
 	{
 		Executor: "agent/antigravity",

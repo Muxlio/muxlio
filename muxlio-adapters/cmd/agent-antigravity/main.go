@@ -100,8 +100,12 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var runErr string
 	var completed bool
-	var usage *adapter.TokenUsage
-	var stepUsage stepUsageTracker
+	usageSequence := 0
+	usageSource := ""
+	accountingRecorder := adapter.NewTokenRecorder("antigravity-stream")
+	if model != "" {
+		_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
+	}
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -163,13 +167,15 @@ func main() {
 					}
 				}
 			}
-			var reported *adapter.TokenUsage
-			if u := adapter.ParseTokenUsage(ev["usage"]); u != nil {
+			var reported *adapter.TokenCounters
+			if u := antigravityTokenCounters(ev["usage"]); u != nil {
 				reported = u
-			} else if u := adapter.ParseTokenUsage(ev["stats"]); u != nil {
+			} else if u := antigravityTokenCounters(ev["stats"]); u != nil {
 				reported = u
 			}
-			usage = mergeTerminalUsage(usage, reported)
+			if err := accountingRecorder.Replace(reported); err != nil {
+				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "response", "text", "content"} {
 				var s string
@@ -222,29 +228,26 @@ func main() {
 				}
 			}
 		case "step_update":
-			var update struct {
-				ConversationID string          `json:"conversation_id"`
-				StepIndex      int             `json:"step_index"`
-				State          string          `json:"state"`
-				TextDelta      string          `json:"text_delta"`
-				Usage          json.RawMessage `json:"usage"`
-			}
+			var update stepUsageUpdate
 			if json.Unmarshal(ev["step_update"], &update) == nil {
 				if update.TextDelta != "" {
 					adapter.CaptureAgentText(&textChunks, update.TextDelta)
 				}
-				var err error
-				usage, err = accumulateStepUsage(usage, &stepUsage, update.ConversationID, update.StepIndex, update.State, update.Usage)
-				if err != nil {
-					runErr = appendFailure(runErr, formatUsageErr(err))
+				if strings.EqualFold(strings.TrimSpace(update.State), "DONE") && update.ConversationID != "" && (usageSource == "" || usageSource == "steps") {
+					usageSource = "steps"
+					if err := observeStepUsage(accountingRecorder, update); err != nil {
+						adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+					}
 				}
 			}
 		case "usage":
-			if u := adapter.ParseTokenUsage(json.RawMessage(line)); u != nil {
-				var err error
-				usage, err = addTokenUsage(usage, u)
-				if err != nil {
-					runErr = appendFailure(runErr, formatUsageErr(err))
+			if u := antigravityTokenCounters(json.RawMessage(line)); u != nil {
+				if usageSource == "" || usageSource == "usage" {
+					usageSource = "usage"
+					usageSequence++
+					if err := accountingRecorder.Delta(fmt.Sprintf("usage-%d", usageSequence), u); err != nil {
+						adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+					}
 				}
 			}
 		case "completion", "done":
@@ -263,8 +266,9 @@ func main() {
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
+	finalAccounting := accountingRecorder.Finish()
 	if runErr != "" {
-		adapter.FailWithUsage(usage, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithAccounting(finalAccounting, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
 	}
 
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
@@ -283,7 +287,7 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Accounting: finalAccounting})
 }
 
 // extractAssistantText pulls text from a "message" JSON blob.

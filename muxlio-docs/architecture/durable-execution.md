@@ -107,9 +107,11 @@ limits: {
   maxAttempts: 100,
   maxActivations: 500,
   maxActiveAttempts: 4,
-  maxTokens: 200000,
-  maxCostUsd: 5,
-  missingUsage: 'fail-closed',
+  accounting: [
+    { kind: 'tokens', maximum: '200000' },
+    { kind: 'cost', currency: 'USD', basis: 'api-equivalent', maximum: '5',
+      evidence: 'collected-or-estimated', onMissing: 'fail-closed' },
+  ],
 },
 deadlineSeconds: 600,
 ```
@@ -132,25 +134,23 @@ in its error. Already admitted work may finish. The wall-clock `deadlineSeconds`
 window starts at persisted run creation, includes queueing and pauses, and cancels
 with a `run.interrupted` event containing `run deadline exceeded`.
 
-Executor results retain optional observed `usage` token counts and may supply
-`measurements: { estimatedTokens, costUsd, estimatedCostUsd, credit }`. Costs are
-in USD. Provider credits use explicit unit identity and provenance
-(`per-turn` or `cumulative`) and are never converted into tokens or USD. These
-fields pass through the shared executor protocol, remote workers and attempt
-storage without provider-specific interpretation. No cost or token estimates are
-inferred by the coordinator. Token consumption is input plus output; cached tokens
-are an input subset. An observed measurement takes precedence over its estimate.
-`GET /v1/runs/:id` exposes `usage.tokens`, `usage.costUsd`, and optional
-`usage.credits` (per unit identity), each containing nullable observed subtotals
-and an `unknown` attempt count where applicable. Unavailable values remain null;
-a reported zero remains zero.
+Executor results and persisted attempts retain the same canonical `accounting`
+object. It contains revisioned full snapshots of disjoint entries, with nullable
+collected and estimated readings for tokens, credits, and costs. Amounts are exact
+decimal strings. Credits identify their provider and unit; costs identify currency
+and economic basis. Cache tokens are subsets of inclusive input; reasoning tokens
+are a subset of output. Alternative readings of one meter are never added.
 
-Token and cost thresholds check consumption before admission and after completion.
-They stop subsequent work and fail a run whose final attempt exceeded a threshold;
-they cannot guarantee a maximum external bill for an already admitted invocation.
-The default `missingUsage: 'fail-closed'` requires observed data for each configured
-measurement; missing or estimated-only data stops the run explicitly. In-flight
-attempts also lack observed data, so this policy conservatively blocks additional
-admissions while usage is unknown. Explicit `fail-open` permits unknown data and
-checks available observed and estimated consumption, keeping unknown counts visible.
-Choose hard invocation, activation and deadline limits as well when using fail-open.
+`GET /v1/runs/:id` returns a server-computed `accounting` summary. Its
+`knownSubtotal` may be available while coverage is incomplete; `effectiveTotal`
+is available only for complete closed coverage. Missing readings remain null and
+reported zero remains `"0"`. See [Accounting](../accounting.md) for the wire model.
+
+Accounting limits use that same reducer and explicit meter selectors. The default
+`evidence: 'collected-only'` requires collected readings. A limit may opt into
+`collected-or-estimated`; `fidelity: 'metered'` requires eligible collected meters.
+`onMissing: 'fail-closed'` blocks further admission on incomplete accounting;
+`fail-open` permits it while preserving the unknown coverage. Known consumption
+at or above the limit blocks new admission; consumption above it after completion
+exhausts the budget. Already running parallel operations can exceed a threshold.
+An estimated API-equivalent usage limit is not a hard spending cap.

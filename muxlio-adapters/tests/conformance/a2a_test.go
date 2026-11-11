@@ -98,7 +98,7 @@ func a2aFixture() conformancetest.Fixture {
 			return result, progress
 		}
 		pending, progress := invokeRemote(req)
-		if pending.Error != "" || pending.RemoteTask == nil || !pending.RemoteTask.Pending || pending.RemoteTask.ContextID != "context-1" || pending.Usage != nil {
+		if pending.Error != "" || pending.RemoteTask == nil || !pending.RemoteTask.Pending || pending.RemoteTask.ContextID != "context-1" || pending.Accounting != nil {
 			t.Fatalf("handoff: %+v", pending)
 		}
 		if len(progress) != 1 || progress[0].OperationRef == nil || progress[0].OperationRef.ID != "remote-1" {
@@ -108,7 +108,7 @@ func a2aFixture() conformancetest.Fixture {
 		req.Action = "poll"
 		completed.Store(true)
 		done, _ := invokeRemote(req)
-		if done.Error != "" || done.RemoteTask.Pending || done.Outputs["value"] != true || done.Usage != nil {
+		if done.Error != "" || done.RemoteTask.Pending || done.Outputs["value"] != true || done.Accounting != nil {
 			t.Fatalf("resumed completion: %+v", done)
 		}
 		data, err := os.ReadFile(done.Outputs["report"].(map[string]any)["path"].(string))

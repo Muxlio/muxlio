@@ -119,29 +119,12 @@ function resolveInspectorAgent(act){
   return actAttempts[0]?.executor||act.executorHint||act.executor||'—';
 }
 
-// buildAttemptUsageMarkup renders a compact token-usage section for each
-// attempt of an activation. Attempts without provider-reported usage are
-// labelled "Unavailable"; the section is suppressed entirely when the
-// activation has no attempts at all (older runs with no records).
+// Each attempt retains its own disjoint accounting scopes and provenance.
 function buildAttemptUsageMarkup(act){
-  const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
-  const actAttempts=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
-  if(!actAttempts.length)return '';
-  const tokenCell=value=>esc(value==null?'—':fmtTokens(value));
-  const rows=actAttempts.map((a,i)=>{
-    const label=String(attemptOffset+i+1);
-    if(a.usage==null){
-      return `<tr><td>${esc(label)}</td><td colspan="3" class="num" style="color:var(--muted)">—</td></tr>`;
-    }
-    return `<tr><td>${esc(label)}</td><td class="num">${tokenCell(a.usage.input)}</td><td class="num">${tokenCell(a.usage.output)}</td><td class="num">${tokenCell(a.usage.cached)}</td></tr>`;
-  });
-  return `<div class="insp-section">
-    <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Token usage</div>
-    <div class="tablebox" style="font-size:11px"><table>
-      <thead><tr><th>#</th><th>In</th><th>Out</th><th>Cached</th></tr></thead>
-      <tbody>${rows.join('')}</tbody>
-    </table></div>
-  </div>`;
+ const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
+ const rows=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
+ if(!rows.length)return '';
+ return `<div class="insp-section"><h3>Accounting</h3>${rows.map((a,i)=>`<section><h4>Attempt ${esc(attemptOffset+i+1)}</h4><dl>${buildAttemptAccountingMarkup(a.accounting)}</dl></section>`).join('')}</div>`;
 }
 
 function renderInspectorWb(act){

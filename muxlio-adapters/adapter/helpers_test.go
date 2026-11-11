@@ -30,12 +30,9 @@ func TestParseTokenUsagePreservesPartialFieldAvailability(t *testing.T) {
 	if _, cachedOK := got.ReportedCached(); cachedOK {
 		t.Fatalf("missing fields became reported zero: %+v", got)
 	}
-	raw, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != `{"cached":null,"input":9,"output":null}` && string(raw) != `{"input":9,"output":null,"cached":null}` {
-		t.Fatalf("partial JSON = %s", raw)
+	canonical := CollectedTokenMeasures(got, "fixture")
+	if canonical.Input.Collected == nil || canonical.Input.Collected.Value != "9" || canonical.Output.Collected != nil || canonical.CacheRead.Collected != nil || canonical.Total.Collected != nil {
+		t.Fatalf("partial canonical measures=%+v", canonical)
 	}
 }
 

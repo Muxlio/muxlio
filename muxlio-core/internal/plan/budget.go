@@ -2,7 +2,7 @@ package plan
 
 import (
 	"fmt"
-	"math"
+	"github.com/muxlio/muxlio-adapters/accounting"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -11,37 +11,38 @@ import (
 // admission. Work limits are hard pre-dispatch limits, including retries and
 // reconciliation queries. MaxActivations includes all structural nodes in every
 // nested scope. Active attempts include uncertain operations until resolved.
-// Token/cost limits stop further work after measured consumption; they cannot
+// Accounting limits stop further work after recorded consumption; they cannot
 // cap the bill of an already admitted external operation. Fail-closed (default)
-// stops after any attempt lacks observed data, including estimated-only data.
+// stops after any attempt lacks eligible accounting evidence.
 // Fail-open permits unknown usage, but never treats it as zero consumption.
 type RunLimits struct {
-	MaxAttempts       *int     `json:"maxAttempts,omitempty"`
-	MaxActivations    *int     `json:"maxActivations,omitempty"`
-	MaxActiveAttempts *int     `json:"maxActiveAttempts,omitempty"`
-	MaxTokens         *int64   `json:"maxTokens,omitempty"`
-	MaxCostUSD        *float64 `json:"maxCostUsd,omitempty"`
-	MissingUsage      string   `json:"missingUsage,omitempty"`
+	Accounting        []accounting.Limit `json:"accounting,omitempty"`
+	MaxAttempts       *int               `json:"maxAttempts,omitempty"`
+	MaxActivations    *int               `json:"maxActivations,omitempty"`
+	MaxActiveAttempts *int               `json:"maxActiveAttempts,omitempty"`
 }
 
 func (l *RunLimits) validate() error {
 	if l == nil {
 		return nil
 	}
+	keys := map[any]bool{}
+	for _, limit := range l.Accounting {
+		if err := limit.Validate(); err != nil {
+			return err
+		}
+		key := limit.Key()
+		if keys[key] {
+			return fmt.Errorf("duplicate accounting limit selector")
+		}
+		keys[key] = true
+	}
 	for _, n := range []*int{l.MaxAttempts, l.MaxActivations, l.MaxActiveAttempts} {
 		if n != nil && *n < 0 {
 			return fmt.Errorf("work limits must be non-negative")
 		}
 	}
-	if l.MaxTokens != nil && *l.MaxTokens < 0 {
-		return fmt.Errorf("maxTokens must be non-negative")
-	}
-	if l.MaxCostUSD != nil && (math.IsNaN(*l.MaxCostUSD) || math.IsInf(*l.MaxCostUSD, 0) || *l.MaxCostUSD < 0) {
-		return fmt.Errorf("maxCostUsd must be finite and non-negative")
-	}
-	if l.MissingUsage != "" && l.MissingUsage != "fail-open" && l.MissingUsage != "fail-closed" {
-		return fmt.Errorf("missingUsage must be fail-open or fail-closed")
-	}
+
 	return nil
 }
 
@@ -104,50 +105,25 @@ func (e *Engine) admitAttempt(a state.ExecutionAttempt) error {
 	if l.MaxActiveAttempts != nil && active >= *l.MaxActiveAttempts {
 		return budgetExceeded("maxActiveAttempts")
 	}
-	if err := e.checkUsage(attempts, true); err != nil {
+	if err := e.checkAccounting(attempts, true); err != nil {
 		return err
 	}
 	return e.store.RecordExecutionAttempt(a)
 }
 
-func (e *Engine) checkUsage(attempts []state.ExecutionAttempt, admission bool) error {
+func (e *Engine) checkAccounting(attempts []state.ExecutionAttempt, admission bool) error {
 	l := e.plan.Limits
 	if l == nil {
 		return nil
 	}
-	summary := state.SummarizeUsage(attempts)
-	for _, metric := range []struct {
-		name  string
-		limit *float64
-		usage state.UsageTotal
-	}{
-		{"maxTokens", tokenLimit(l.MaxTokens), summary.Tokens},
-		{"maxCostUsd", l.MaxCostUSD, summary.CostUSD},
-	} {
-		if metric.limit == nil {
-			continue
-		}
-		if l.MissingUsage != "fail-open" && (metric.usage.Unknown > 0 || metric.usage.Estimated != nil) {
-			return budgetExceeded(metric.name + ": observed usage unavailable (fail-closed)")
-		}
-		consumed := 0.0
-		if metric.usage.Observed != nil {
-			consumed += *metric.usage.Observed
-		}
-		if metric.usage.Estimated != nil {
-			consumed += *metric.usage.Estimated
-		}
-		if consumed > *metric.limit || (admission && consumed >= *metric.limit) {
-			return budgetExceeded(metric.name)
+	views := make([]accounting.AttemptView, 0, len(attempts))
+	for _, a := range attempts {
+		views = append(views, accounting.AttemptView{State: a.State, Accounting: a.Accounting})
+	}
+	for _, limit := range l.Accounting {
+		if err := accounting.CheckLimit(views, limit, admission); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func tokenLimit(n *int64) *float64 {
-	if n == nil {
-		return nil
-	}
-	f := float64(*n)
-	return &f
 }

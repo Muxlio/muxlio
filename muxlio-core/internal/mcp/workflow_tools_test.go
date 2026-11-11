@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/muxlio/muxlio-core/internal/testaccounting"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func TestRetryAndAttemptInspection(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/run_one/attempts" || r.URL.Query().Get("activationId") != "step:one & two" || r.Header.Get("Authorization") != "Bearer token" {
 			t.Errorf("unexpected attempts request: %s %s", r.Method, r.URL)
 		}
-		_, _ = w.Write([]byte(`{"attempts":[{"id":"missing","usage":null},{"id":"zero","usage":{"input":0,"output":0,"cached":0}},{"id":"reported","usage":{"input":12,"output":3,"cached":4}}]}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{"attempts": []state.ExecutionAttempt{{ID: "missing"}, {ID: "zero", Accounting: testaccounting.Tokens(0, 0, 0)}, {ID: "reported", Accounting: testaccounting.Tokens(12, 3, 4)}}})
 	}))
 	s := &server{api: newAPIClient(ts.URL, "token")}
 	result := s.dispatchTool("get_attempts", json.RawMessage(`{"runId":"run_one","activationId":"step:one & two"}`))
@@ -50,7 +51,7 @@ func TestRetryAndAttemptInspection(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Attempts) != 3 || got.Attempts[0].Usage != nil || got.Attempts[1].Usage == nil || *got.Attempts[1].Usage != (state.TokenUsage{}) || got.Attempts[2].Usage == nil || *got.Attempts[2].Usage != (state.TokenUsage{Input: 12, Output: 3, Cached: 4}) {
+	if len(got.Attempts) != 3 || got.Attempts[0].Accounting != nil || got.Attempts[1].Accounting == nil || !testaccounting.Equal(got.Attempts[1].Accounting, testaccounting.Tokens(0, 0, 0)) || got.Attempts[2].Accounting == nil || !testaccounting.Equal(got.Attempts[2].Accounting, testaccounting.Tokens(12, 3, 4)) {
 		t.Fatalf("usage availability changed: %s", result.Content[0].Text)
 	}
 	if !s.dispatchTool("get_attempts", json.RawMessage(`{}`)).IsError {

@@ -80,25 +80,25 @@ type remoteError struct {
 	Retryable  bool                   `json:"retryable,omitempty"`
 }
 type remoteCompletion struct {
-	OutputErrors        map[string]string             `json:"outputErrors,omitempty"`
-	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
-	AssignmentID        string                        `json:"assignmentId"`
-	RunID               string                        `json:"runId"`
-	ActivationID        string                        `json:"activationId"`
-	AttemptID           string                        `json:"attemptId"`
-	CoordinatorEpoch    int64                         `json:"coordinatorEpoch"`
-	Generation          int64                         `json:"generation"`
-	State               string                        `json:"state"`
-	Outputs             map[string]any                `json:"outputs,omitempty"`
-	Error               *remoteError                  `json:"error,omitempty"`
-	Logs                string                        `json:"logs,omitempty"`
-	Measurements        *contract.Measurements        `json:"measurements,omitempty"`
-	Usage               *state.TokenUsage             `json:"usage,omitempty"`
-	Session             *contract.SessionHandle       `json:"session,omitempty"`
-	SessionID           string                        `json:"sessionId,omitempty"`
-	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`
-	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
-	ExecutionDurationMS *int64                        `json:"executionDurationMs,omitempty"`
+	RemoteAccounting    *contract.RemoteAccountingUpdate `json:"remoteAccounting,omitempty"`
+	OutputErrors        map[string]string                `json:"outputErrors,omitempty"`
+	AcknowledgedInputs  []string                         `json:"acknowledgedInputs,omitempty"`
+	AssignmentID        string                           `json:"assignmentId"`
+	RunID               string                           `json:"runId"`
+	ActivationID        string                           `json:"activationId"`
+	AttemptID           string                           `json:"attemptId"`
+	CoordinatorEpoch    int64                            `json:"coordinatorEpoch"`
+	Generation          int64                            `json:"generation"`
+	State               string                           `json:"state"`
+	Outputs             map[string]any                   `json:"outputs,omitempty"`
+	Error               *remoteError                     `json:"error,omitempty"`
+	Logs                string                           `json:"logs,omitempty"`
+	Accounting          *contract.Accounting             `json:"accounting,omitempty"`
+	Session             *contract.SessionHandle          `json:"session,omitempty"`
+	SessionID           string                           `json:"sessionId,omitempty"`
+	Reconciliation      *contract.Reconciliation         `json:"reconciliation,omitempty"`
+	RemoteTask          *contract.RemoteTaskReference    `json:"remoteTask,omitempty"`
+	ExecutionDurationMS *int64                           `json:"executionDurationMs,omitempty"`
 }
 
 // RemoteWorkerConfig describes an outbound worker connection.
@@ -155,7 +155,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	if client == nil {
 		client = &http.Client{Timeout: 35 * time.Second}
 	}
-	call := func(method, path string, body any, target any) (int, error) {
+	callWithTimeout := func(method, path string, body any, target any, requestTimeout time.Duration) (int, error) {
 		var reader io.Reader
 		if body != nil {
 			raw, e := json.Marshal(body)
@@ -166,7 +166,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 
 		// Create a timeout context for this specific request
-		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
 
 		req, e := http.NewRequestWithContext(reqCtx, method, base.String()+path, reader)
@@ -213,6 +213,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	var registered remoteRegistrationResult
 
 	// Helper function with retry logic for coordinator calls
+	call := func(method, path string, body any, target any) (int, error) {
+		return callWithTimeout(method, path, body, target, 30*time.Second)
+	}
+
 	retryableCall := func(method, path string, body any, target any) (int, error) {
 		backoff := time.Second
 		maxBackoff := 30 * time.Second
@@ -386,6 +390,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			},
 		})
 		executeReq.LogSink = logSink
+		executeReq.AccountingSink = &RemoteAccountingSink{AppendSnapshot: func(snapshot contract.Accounting) error {
+			_, err := callWithTimeout(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/assignments/accounting", map[string]any{"assignmentId": assignment.AssignmentID, "runId": assignment.RunID, "activationId": assignment.ActivationID, "attemptId": assignment.AttemptID, "coordinatorEpoch": assignment.CoordinatorEpoch, "generation": assignment.Generation, "accounting": snapshot}, nil, 2*time.Second)
+			return err
+		}}
 		execCtx, execCancel := context.WithCancel(ctx)
 		if executeReq.ExecutionDeadline != nil {
 			deadlineCtx, deadlineCancel := context.WithDeadline(execCtx, *executeReq.ExecutionDeadline)
@@ -439,7 +447,6 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			defer execCancel()
 			started := time.Now()
 			r, e := runExecutor.Execute(executeReq)
-			telemetry.Usage(execCtx, r.Usage)
 			endAttempt(e != nil || r.Error != "" || execCtx.Err() != nil)
 			telemetry.Duration(execCtx, "muxlio.execution.duration", time.Since(started), executeReq.Executor)
 			if execCtx.Err() != nil {
@@ -693,7 +700,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
 				result.Reconciliation = &reconciliation
 			}
-			completion := remoteCompletion{OutputErrors: result.OutputErrors, AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Usage: result.Usage, Measurements: result.Measurements, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{OutputErrors: result.OutputErrors, AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Accounting: result.Accounting, RemoteAccounting: result.RemoteAccounting, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

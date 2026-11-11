@@ -1,5 +1,31 @@
 # Remote worker protocol v1
 
+## Accounting snapshots
+
+Worker protocol and executor contract identifiers remain `v1` and `1`.
+Accounting uses a single canonical `accounting` object in progress and completion
+results. Counts and amounts are decimal strings; missing readings remain
+unavailable. See [Accounting](../accounting.md) for the contract and reducer.
+
+`POST /v1/workers/{workerId}/assignments/accounting` carries `assignmentId`,
+`runId`, `activationId`, `attemptId`, `coordinatorEpoch`, `generation`, and the
+full `accounting` snapshot. The canonical snapshot is bounded to 64 KiB.
+Persistence transactionally checks the active lease, coordinator epoch,
+assignment generation and attempt identity, then compares revision and hash.
+Identical replays are idempotent; conflicting same-revision bytes, stale
+revisions and updates after finalization are rejected.
+
+Accounting has a dedicated sink and bypasses capped log storage. A failed
+delivery retains the latest full state for bounded retry and final flushing.
+Accepted changes emit `execution.accounting.updated` containing only attempt ID,
+revision and hash. Consumers refetch canonical state rather than adding events.
+Terminal completion can recover an undelivered final snapshot; absent terminal
+accounting preserves confirmed progress and cannot manufacture zero consumption.
+
+Read-only poll and reconciliation invocations own their separate consumption.
+Explicit canonical remote-operation updates require a matching persisted owner,
+task reference and source revision. The A2A adapter emits no such accounting.
+
 ## Trace correlation
 
 Durable execute envelopes carry optional `traceContext` (W3C `traceparent` and

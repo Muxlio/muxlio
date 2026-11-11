@@ -30,7 +30,7 @@ func TestTracePropagationAndReportedUsage(t *testing.T) {
 		t.Fatalf("trace-only carrier: %v", carrier)
 	}
 	child, finish := Start(Extract(context.Background(), carrier), "attempt")
-	Usage(child, &contract.TokenUsage{})
+	Usage(child, &contract.Accounting{Revision: 1, Final: true, Entries: []contract.AccountingEntry{{ID: "call", Tokens: &contract.TokenMeasures{Input: zeroToken(), Output: zeroToken(), CacheRead: zeroToken()}}}, Coverage: []contract.MeterCoverage{{Key: contract.AccountingKey{Kind: "tokens"}, State: "complete"}}})
 	finish(true)
 	_, absent := Start(ctx, "absent")
 	Usage(ctx, nil)
@@ -113,5 +113,42 @@ func TestSetupDisabledAndInvalidExporter(t *testing.T) {
 	t.Setenv("OTEL_SDK_DISABLED", "false")
 	if _, err := Setup(context.Background(), "test"); err == nil {
 		t.Fatal("unsupported exporter accepted")
+	}
+}
+
+func zeroToken() contract.Measure[contract.Count] {
+	return contract.Measure[contract.Count]{Collected: &contract.Reading[contract.Count]{Value: "0", Source: "fixture", Fidelity: "metered"}}
+}
+
+func TestIncompleteAndEstimatedAccountingDoesNotExportProviderTokens(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	defer otel.SetTracerProvider(old)
+	defer provider.Shutdown(context.Background())
+	for _, tc := range []struct {
+		final     bool
+		coverage  string
+		estimated bool
+	}{{false, "complete", false}, {true, "partial", false}, {true, "complete", true}} {
+		m := zeroToken()
+		if tc.estimated {
+			m.Estimated = m.Collected
+			m.Collected = nil
+			m.Estimated.Method = "fixture"
+			m.Estimated.Version = "1"
+		}
+		a := &contract.Accounting{Revision: 1, Final: tc.final, Entries: []contract.AccountingEntry{{ID: "call", Tokens: &contract.TokenMeasures{Input: m, Output: m}}}, Coverage: []contract.MeterCoverage{{Key: contract.AccountingKey{Kind: "tokens"}, State: tc.coverage}}}
+		ctx, end := Start(context.Background(), "attempt")
+		Usage(ctx, a)
+		end(true)
+	}
+	for _, span := range exporter.GetSpans() {
+		for _, attr := range span.Attributes {
+			if attr.Key == GenAIUsageInputTokens || attr.Key == GenAIUsageOutputTokens || attr.Key == GenAIUsageCacheReadTokens {
+				t.Fatalf("unqualified provider tokens exported: %v", attr)
+			}
+		}
 	}
 }

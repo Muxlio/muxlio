@@ -175,13 +175,10 @@ export interface Subgraph {
 
 /** The immutable compiled workflow plan. */
 export interface RunLimits {
+  accounting?: import('./accounting.js').AccountingLimit[];
   maxAttempts?: number;
   maxActivations?: number;
   maxActiveAttempts?: number;
-  maxTokens?: number;
-  maxCostUsd?: number;
-  /** Defaults to fail-closed, requiring observed data. */
-  missingUsage?: 'fail-open' | 'fail-closed';
 }
 
 export interface Plan {

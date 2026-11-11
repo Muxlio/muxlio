@@ -6,14 +6,38 @@ import (
 	"math"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
-	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 // parseCursorTokenUsage maps Cursor agent stream-json usage into the shared
 // contract. inputTokens is uncached prompt tokens; cacheReadTokens and
 // cacheWriteTokens are folded into Input so totals match billed prompt tokens.
 // Cached still carries cache read when reported.
-func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenUsage {
+func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenCounters {
+	result := parseCursorCounters(raw)
+	if result == nil {
+		result = adapter.UnavailableTokenCounters()
+	}
+	var values map[string]json.RawMessage
+	if json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	for _, key := range []string{"cache_creation_input_tokens", "cacheCreationInputTokens", "cacheWriteTokens"} {
+		if b, ok := values[key]; ok {
+			var n *int64
+			if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
+				return nil
+			}
+			result.CacheWrite = n
+			break
+		}
+	}
+	if !result.AnyReported() && result.CacheWrite == nil {
+		return nil
+	}
+	return result
+}
+
+func parseCursorCounters(raw json.RawMessage) *adapter.TokenCounters {
 	base := adapter.ParseTokenUsage(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -85,12 +109,12 @@ func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenUsage {
 	}
 
 	in := input
-	return contract.NewTokenUsage(&in, out, cached)
+	return adapter.NewTokenCounters(&in, out, cached)
 }
 
 // cursorUsageWithoutInput retains independently representable dimensions when
 // the uncached and cached input counts cannot be combined into an int64.
-func cursorUsageWithoutInput(base *adapter.TokenUsage) *adapter.TokenUsage {
+func cursorUsageWithoutInput(base *adapter.TokenCounters) *adapter.TokenCounters {
 	var out, cached *int64
 	if base != nil {
 		if v, ok := base.ReportedOutput(); ok {
@@ -100,7 +124,7 @@ func cursorUsageWithoutInput(base *adapter.TokenUsage) *adapter.TokenUsage {
 			cached = &v
 		}
 	}
-	return contract.NewTokenUsage(nil, out, cached)
+	return adapter.NewTokenCounters(nil, out, cached)
 }
 
 func addUsageCount(total, add int64) (int64, error) {
@@ -113,30 +137,4 @@ func addUsageCount(total, add int64) (int64, error) {
 	return total + add, nil
 }
 
-// mergeTerminalUsage applies result usage. Complete terminal totals replace any
-// prior aggregate; partial terminal usage overlays only the dimensions present.
-func mergeTerminalUsage(prior, terminal *adapter.TokenUsage) *adapter.TokenUsage {
-	if terminal == nil {
-		return prior
-	}
-	if prior == nil || terminal.Complete() {
-		return terminal
-	}
-	var in, out, ca *int64
-	if v, ok := terminal.ReportedInput(); ok {
-		in = &v
-	} else if v, ok := prior.ReportedInput(); ok {
-		in = &v
-	}
-	if v, ok := terminal.ReportedOutput(); ok {
-		out = &v
-	} else if v, ok := prior.ReportedOutput(); ok {
-		out = &v
-	}
-	if v, ok := terminal.ReportedCached(); ok {
-		ca = &v
-	} else if v, ok := prior.ReportedCached(); ok {
-		ca = &v
-	}
-	return contract.NewTokenUsage(in, out, ca)
-}
+var mergeTerminalUsage = adapter.OverlayTokenCounters

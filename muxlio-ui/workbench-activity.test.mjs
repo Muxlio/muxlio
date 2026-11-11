@@ -49,7 +49,7 @@ test('terminal succeeded run shows honest empty state',()=>{
 
 test('paused and waiting runs expose elapsed wait when timestamps exist',()=>{
   const paused=buildWbActivityMarkup({id:'run',state:'paused',createdAt:'2026-06-01T11:00:00Z',updatedAt:'2026-06-01T11:30:00Z',overview:{activations:0}},[],[],[]);
-  assert.match(paused.html,/Waiting 30m 0s/);
+  assert.match(paused.html,/Paused 30m 0s/);
   assert.match(paused.html,/Resume run/);
   const waiting=buildWbActivityMarkup({id:'run',state:'waiting',createdAt:'2026-06-01T11:00:00Z',updatedAt:'2026-06-01T11:55:00Z',overview:{activations:0}},[],[],[]);
   assert.match(waiting.html,/Waiting 5m 0s/);
@@ -151,5 +151,45 @@ test('collapsed strip summarizes actionable activity without succeeded totals',(
   assert.equal(wbActivityStripSummary([]),'No actionable activity');
 
   const waiting=buildWbActivityMarkup({id:'run',state:'running'},[{id:'queued',nodeId:'queued',state:'queued'},{id:'waiting',nodeId:'waiting',state:'waiting'}],[],[]);
-  assert.equal(waiting.announce,'2 waiting');
+  assert.equal(waiting.announce,'Current activity. 2 waiting.');
+});
+
+test('paused activations stay distinct from waiting and run status',()=>{
+  const pausedActs=[{id:'p1',nodeId:'one',state:'paused'},{id:'p2',nodeId:'two',state:'paused'}];
+  const paused=buildWbActivityMarkup({id:'run',state:'paused'},pausedActs,[],[]);
+  assert.match(paused.html,/Run paused · 2 paused/);
+  assert.doesNotMatch(paused.html,/3 paused|[23] waiting|<details[^>]*\bopen\b/);
+  assert.equal(paused.announce,'Current activity. Run paused. 2 paused.');
+  const mixed=buildWbActivityMarkup({id:'run',state:'running'},[
+    ...pausedActs,{id:'r',nodeId:'work',state:'running'},
+    {id:'w',nodeId:'wait',state:'waiting'},{id:'q',nodeId:'queue',state:'queued'},
+    {id:'f',nodeId:'broken',state:'failed'}
+  ],[],[]);
+  assert.match(mixed.html,/1 running · 2 waiting · 2 paused · 1 needs attention/);
+  assert.equal(mixed.announce,'Current activity. 1 running. 2 waiting. 2 paused. 1 needs attention.');
+  for(const state of ['created','waiting']){
+    const result=buildWbActivityMarkup({id:'run',state},[],[],[]);
+    assert.match(result.html,new RegExp(`wb-activity-strip-summary subtle">Run ${state}<`));
+    assert.equal(result.announce,`Current activity. Run ${state}.`);
+  }
+});
+
+test('live announcements give context without repeating unchanged activity',()=>{
+  const panel={dataset:{},innerHTML:''};
+  const announcements=[];
+  const announcer={set textContent(value){announcements.push(value)}};
+  const {renderWbActivity}=vm.runInNewContext(`${format}\n${usage}\n${wb};({renderWbActivity})`,{
+    Date:Clock,esc,document:{addEventListener(){},getElementById:id=>id==='wbActivity'?panel:id==='wbActivityAnnounce'?announcer:null},
+  });
+  const run={id:'run',state:'running'};
+  renderWbActivity(run,[{id:'a',nodeId:'work',state:'running'},{id:'b',nodeId:'queue',state:'queued'}]);
+  assert.deepEqual(announcements,['Current activity. 1 running. 1 waiting.']);
+  renderWbActivity(run,[{id:'a',nodeId:'work',state:'running'},{id:'b',nodeId:'queue',state:'queued',queueReason:'Capacity changed'}]);
+  assert.equal(announcements.length,1,'detail changes must not repeat an unchanged status');
+  renderWbActivity({...run,state:'paused'},[{id:'a',nodeId:'work',state:'paused'},{id:'b',nodeId:'queue',state:'paused'}]);
+  assert.equal(announcements.at(-1),'Current activity. Run paused. 2 paused.');
+  renderWbActivity({...run,state:'succeeded'},[{id:'a',nodeId:'work',state:'succeeded'}]);
+  assert.equal(announcements.at(-1),'Run succeeded. No actionable activity.');
+  renderWbActivity({id:'other',state:'running'},[{id:'a',nodeId:'work',state:'running'}]);
+  assert.equal(announcements.at(-1),'Current activity. 1 running.');
 });

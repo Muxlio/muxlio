@@ -15,7 +15,7 @@ const dataset = () => defineDataset({
 });
 const versions = () => [{ id: 'v1', workflow: compiled() }, { id: 'v2', workflow: compiled() }];
 
-test('bounded runs preserve ordering, execution status, zero and unavailable usage independently of scores', async () => {
+test('bounded runs preserve ordering, execution status, zero and unavailable accounting independently of scores', async () => {
   let active = 0, peak = 0;
   const { manifest, results } = await evaluateWorkflow({
     dataset: dataset(), versions: versions(), concurrency: 2,
@@ -25,7 +25,7 @@ test('bounded runs preserve ordering, execution status, zero and unavailable usa
       active--;
       if (input.question === 'c') throw new Error('unavailable');
       return { state: input.question === 'b' ? 'failed' : 'succeeded', error: input.question === 'b' ? 'execution failed' : undefined,
-        output: { answer: 0 }, usage: input.question === 'a' ? { tokens: { observed: 0, estimated: null, unknown: 0 }, costUsd: { observed: null, estimated: null, unknown: 1 } } : undefined };
+        output: { answer: 0 }, accounting: input.question === 'a' ? { tokens: { collectedSubtotal: "0", estimatedFallbackSubtotal: null, knownSubtotal: "0", effectiveTotal: "0", completeness: "complete", attempts: {complete:1,partial:0,unknown:0,pending:0,inapplicable:0} }, tokenDimensions: {}, credits: [], costs: [], unattributed: {credits:{unknownAttempts:0,pendingAttempts:0},costs:{unknownAttempts:1,pendingAttempts:0}} } : undefined };
     } },
     scorers: [
       { id: 'match/v1', score: ({ output, expected }) => Number(output.answer === expected?.answer) },
@@ -39,10 +39,10 @@ test('bounded runs preserve ordering, execution status, zero and unavailable usa
   assert.equal(results[0].scores['match/v1'].value, 0);
   assert.equal(results[0].scores['broken/v1'].error, 'scorer failed');
   assert.equal(results[0].scores['nan/v1'].value, null);
-  assert.equal(results[0].execution.usage.tokens.observed, 0);
+  assert.equal(results[0].execution.accounting.tokens.knownSubtotal, "0");
   assert.equal(results[1].execution.success, false);
   assert.equal(results[1].execution.error, 'execution failed');
-  assert.equal(results[1].execution.usage, null);
+  assert.equal(results[1].execution.accounting, null);
   assert.deepEqual(Object.keys(results[1].scores), []);
   assert.equal(results[2].execution.error, 'unavailable');
   assert.ok(results.every(r => r.durationMs >= 0));
@@ -119,8 +119,8 @@ test('real CLI harness evaluates pinned plans and retains structured execution f
   const failed = await testWorkflow(failing, { input: {}, cliPath, executors: { byNode: { fail: { outputs: {}, error: 'fixture failure' } } } });
   assert.equal(failed.state, 'failed');
   assert.ok(failed.error);
-  assert.equal(failed.usage.tokens.observed, null);
-  assert.ok(failed.usage.tokens.unknown > 0);
+  assert.equal(failed.accounting.tokens.knownSubtotal, null);
+  assert.ok(failed.accounting.tokens.attempts.unknown > 0);
 });
 
 test('normalizes transforming case parsers once and revalidates caller changes', async () => {
@@ -162,7 +162,7 @@ test('rejects lossy JSON inputs and configuration before launching any runs', as
 
 test('isolates returned execution values from runner reuse and output parser mutations', async () => {
   const shared = { state: 'succeeded', output: { answer: 0 },
-    usage: { tokens: { observed: 0, estimated: null, unknown: 0 }, costUsd: { observed: null, estimated: null, unknown: 1 } },
+    accounting: { tokens: { collectedSubtotal: "0", estimatedFallbackSubtotal: null, knownSubtotal: "0", effectiveTotal: "0", completeness: "complete", attempts: {complete:1,partial:0,unknown:0,pending:0,inapplicable:0} }, tokenDimensions: {}, credits: [], costs: [], unattributed: {credits:{unknownAttempts:0,pendingAttempts:0},costs:{unknownAttempts:1,pendingAttempts:0}} },
   };
   let n = 0;
   const report = await evaluateWorkflow({ dataset: { ...dataset(), output: { parse(value) {
@@ -172,13 +172,13 @@ test('isolates returned execution values from runner reuse and output parser mut
   } } }, versions: versions(),
     runner: { id: 'reuse/v1', async run() {
       shared.output.answer = ++n;
-      shared.usage.tokens.observed = n;
+      shared.accounting.tokens.knownSubtotal = String(n);
       return shared;
     } },
     scorers: [{ id: 'answer/v1', score: ({ output }) => output.answer }],
   });
   assert.deepEqual(report.results.map(r => r.execution.output.answer), [1, 2, 3, 4, 5, 6]);
-  assert.deepEqual(report.results.map(r => r.execution.usage.tokens.observed), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(report.results.map(r => r.execution.accounting.tokens.knownSubtotal), ["1", "2", "3", "4", "5", "6"]);
   assert.deepEqual(report.results.map(r => r.scores['answer/v1'].value), [1, 2, 3, 4, 5, 6]);
 });
 
@@ -223,7 +223,7 @@ test('runner results expose only execution fields in evaluation reports', async 
     } },
   });
   assert.ok(report.results.every(r => {
-    assert.deepEqual(Object.keys(r.execution).sort(), ['output', 'runId', 'state', 'success', 'usage']);
+    assert.deepEqual(Object.keys(r.execution).sort(), ['accounting', 'output', 'runId', 'state', 'success']);
     return true;
   }));
 });

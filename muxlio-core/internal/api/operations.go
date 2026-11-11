@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-core/internal/artifacts"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/state"
@@ -317,7 +317,7 @@ func validateOperationalReport(kind string, raw json.RawMessage) error {
 	if json.Unmarshal(raw, &evidence) != nil {
 		return fmt.Errorf("invalid report JSON")
 	}
-	if err := validateEvidenceMeasurements(evidence); err != nil {
+	if err := validateEvidenceAccounting(evidence); err != nil {
 		return err
 	}
 	var doc map[string]json.RawMessage
@@ -430,68 +430,38 @@ func validateOperationalReport(kind string, raw json.RawMessage) error {
 }
 
 // Unknown is a count of unavailable measurements. Zero measurements stay zero.
-func validateEvidenceMeasurements(value any) error {
+func validateEvidenceAccounting(value any) error {
 	switch v := value.(type) {
 	case []any:
 		for _, item := range v {
-			if err := validateEvidenceMeasurements(item); err != nil {
+			if err := validateEvidenceAccounting(item); err != nil {
 				return err
 			}
 		}
 	case map[string]any:
 		for key, item := range v {
-			if key == "usage" && item != nil {
-				usage, ok := item.(map[string]any)
-				if !ok {
-					return fmt.Errorf("usage must be structured accounting")
+			if key == "usage" || key == "measurements" {
+				return fmt.Errorf("legacy accounting field %s was removed", key)
+			}
+			if key == "accounting" && item != nil {
+				raw, err := json.Marshal(item)
+				if err != nil {
+					return err
 				}
-				for _, field := range []string{"tokens", "costUsd"} {
-					if total, exists := usage[field]; exists && total != nil {
-						row, ok := total.(map[string]any)
-						if !ok {
-							return fmt.Errorf("invalid usage total")
-						}
-						for _, metric := range []string{"observed", "estimated", "unknown"} {
-							number, exists := row[metric]
-							if !exists || number == nil {
-								continue
-							}
-							n, ok := number.(float64)
-							if !ok || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) || (metric == "unknown" && math.Trunc(n) != n) {
-								return fmt.Errorf("invalid usage measurement")
-							}
-						}
-					}
+				var summary accounting.AccountingSummary
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.DisallowUnknownFields()
+				if err = decoder.Decode(&summary); err != nil {
+					return fmt.Errorf("invalid accounting summary: %w", err)
 				}
-				if credits, exists := usage["credits"]; exists && credits != nil {
-					rows, ok := credits.([]any)
-					if !ok {
-						return fmt.Errorf("invalid credit usage totals")
-					}
-					for _, item := range rows {
-						row, ok := item.(map[string]any)
-						if !ok {
-							return fmt.Errorf("invalid credit usage total")
-						}
-						if unit, ok := row["unit"].(string); !ok || strings.TrimSpace(unit) == "" {
-							return fmt.Errorf("invalid credit unit")
-						}
-						for _, metric := range []string{"observed", "unknown"} {
-							number, exists := row[metric]
-							if !exists || number == nil {
-								continue
-							}
-							n, ok := number.(float64)
-							if !ok || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) || (metric == "unknown" && math.Trunc(n) != n) {
-								return fmt.Errorf("invalid credit usage measurement")
-							}
-						}
-					}
+				if err = accounting.ValidateSummary(summary); err != nil {
+					return err
 				}
+				continue
 			}
 			// Input/output JSON belongs to the experiment, not its measurement schema.
 			if key != "input" && key != "output" && key != "outputs" && key != "configuration" && key != "plan" {
-				if err := validateEvidenceMeasurements(item); err != nil {
+				if err := validateEvidenceAccounting(item); err != nil {
 					return err
 				}
 			}

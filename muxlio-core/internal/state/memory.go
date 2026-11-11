@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -724,11 +725,60 @@ func (s *Memory) CancelRunWork(runID string) error {
 }
 
 func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
+	if a.OperationRef != nil {
+		ref := *a.OperationRef
+		a.OperationRef = &ref
+	}
+	if a.Accounting != nil {
+		snapshot, err := AccountingForAttempt(a)
+		if err != nil {
+			return err
+		}
+		a.Accounting = snapshot
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	found := false
 	for i := range s.attempts {
 		if s.attempts[i].ID == a.ID {
+			if err := ValidateAttemptOwnership(s.attempts[i], a); err != nil {
+				return err
+			}
+			if a.RunID == "" {
+				a.RunID = s.attempts[i].RunID
+			}
+			if a.ActivationID == "" {
+				a.ActivationID = s.attempts[i].ActivationID
+			}
+			if a.Executor == "" {
+				a.Executor = s.attempts[i].Executor
+			}
+			a.AccountingRemoteRevision = s.attempts[i].AccountingRemoteRevision
+			a.AccountingRemoteHash = s.attempts[i].AccountingRemoteHash
+			if a.OperationAttemptID == "" {
+				a.OperationAttemptID = s.attempts[i].OperationAttemptID
+			}
+			if a.OperationAction == "" {
+				a.OperationAction = s.attempts[i].OperationAction
+			}
+			priorAccounting := s.attempts[i].Accounting
+			if a.Accounting != nil && priorAccounting != nil {
+				if err := a.Accounting.Validate(); err != nil {
+					return err
+				}
+				if a.Accounting.Revision == priorAccounting.Revision {
+					oldBytes, _ := contract.CanonicalAccounting(*priorAccounting)
+					newBytes, _ := contract.CanonicalAccounting(*a.Accounting)
+					if !bytes.Equal(oldBytes, newBytes) {
+						return fmt.Errorf("accounting revision conflict")
+					}
+					a.Accounting = priorAccounting
+				} else if priorAccounting.Final && a.Accounting.Revision > priorAccounting.Revision {
+					return fmt.Errorf("accounting snapshot is already final")
+				} else if a.Accounting.Revision < priorAccounting.Revision {
+					a.Accounting = priorAccounting
+				}
+			}
 			if s.attempts[i].IdempotencyKey != "" {
 				a.IdempotencyKey = s.attempts[i].IdempotencyKey
 			}
@@ -741,11 +791,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 			if a.ExecutionDurationMS == nil {
 				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
 			}
-			if a.Usage == nil {
-				a.Usage = s.attempts[i].Usage
-			}
-			if a.Measurements == nil {
-				a.Measurements = s.attempts[i].Measurements
+
+			if a.Accounting == nil {
+				a.Accounting = s.attempts[i].Accounting
 			}
 			if a.Result == nil {
 				a.Result = s.attempts[i].Result
@@ -762,12 +810,7 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	if a.Result != nil {
 		payload["result"] = a.Result
 	}
-	if a.Measurements != nil {
-		payload["measurements"] = a.Measurements
-	}
-	if a.Usage != nil {
-		payload["usage"] = a.Usage
-	}
+
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
 	}
@@ -779,12 +822,63 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	return nil
 }
 
+func (s *Memory) RecordAccountingSnapshot(attemptID string, snapshot contract.Accounting) error {
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.attempts {
+		a := &s.attempts[i]
+		if a.ID != attemptID {
+			continue
+		}
+		if a.Accounting != nil {
+			if snapshot.Revision < a.Accounting.Revision {
+				return fmt.Errorf("stale accounting revision")
+			}
+			if snapshot.Revision == a.Accounting.Revision {
+				old, _ := contract.CanonicalAccounting(*a.Accounting)
+				next, _ := contract.CanonicalAccounting(snapshot)
+				if !bytes.Equal(old, next) {
+					return fmt.Errorf("accounting revision conflict")
+				}
+				return nil
+			}
+			if a.Accounting.Final {
+				return fmt.Errorf("accounting snapshot is already final")
+			}
+		}
+		raw, err := contract.CanonicalAccounting(snapshot)
+		if err != nil {
+			return err
+		}
+		var cloned contract.Accounting
+		if err := json.Unmarshal(raw, &cloned); err != nil {
+			return err
+		}
+		a.Accounting = &cloned
+		s.appendEventLocked(a.RunID, EventAccountingUpdated, a.ActivationID, map[string]any{"attemptId": a.ID, "revision": snapshot.Revision, "hash": fmt.Sprintf("%x", sha256.Sum256(raw))})
+		return nil
+	}
+	return fmt.Errorf("accounting attempt does not exist")
+}
+
 func (s *Memory) ListExecutionAttempts(runID, activationID string) ([]ExecutionAttempt, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var result []ExecutionAttempt
 	for _, a := range s.attempts {
 		if a.RunID == runID && (activationID == "" || a.ActivationID == activationID) {
+			if a.OperationRef != nil {
+				ref := *a.OperationRef
+				a.OperationRef = &ref
+			}
+			var err error
+			a.Accounting, err = AccountingForAttempt(a)
+			if err != nil {
+				return nil, err
+			}
 			result = append(result, a)
 		}
 	}

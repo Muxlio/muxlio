@@ -18,9 +18,10 @@ import (
 )
 
 type params struct {
-	Program string   `json:"program"`
-	Args    []string `json:"args"`
-	Timeout string   `json:"timeout"`
+	MeteringAuthority string   `json:"meteringAuthority,omitempty"`
+	Program           string   `json:"program"`
+	Args              []string `json:"args"`
+	Timeout           string   `json:"timeout"`
 }
 
 func defaultProgram() string {
@@ -110,11 +111,18 @@ func execute(req *adapter.Request) adapter.Response {
 		return fail(err)
 	}
 	client := acp.New(stdout, stdin)
+	meter := newACPAccounting(p.MeteringAuthority)
+	client.SessionReady = func(id string) { meter.session = id }
+	client.ModelSelected = func(id string) {
+		_ = meter.recorder.ReportModel(contract.AccountingModel{ID: id, Role: "selected", Source: "acp-session-config"})
+	}
+	client.PromptStarted = func(id string) { meter.started = true }
 	client.Negotiated = func(caps acp.Capabilities) {
 		raw, _ := json.Marshal(caps)
 		adapter.AppendLogChunk("acp", "ACP protocol 1; agent capabilities: "+string(raw)+"; permission requests, durable sessions and session loading unsupported")
 	}
 	client.Update = func(raw json.RawMessage) error {
+		meter.observe(raw)
 		var update struct {
 			Kind    string          `json:"sessionUpdate"`
 			Content json.RawMessage `json:"content"`
@@ -160,14 +168,16 @@ func execute(req *adapter.Request) adapter.Response {
 	if runErr == nil {
 		runErr = waitErr
 	}
+	finalAccounting := meter.finish()
 	if runErr != nil {
 		result := fail(runErr)
 		result.Logs = stderr.String()
+		result.Accounting = finalAccounting
 		return result
 	}
 	outputs, missing, outputErrors := adapter.CollectOutputs(req)
 	outputs["_text"] = map[string]any{"mime": "text/plain", "data": text.String()}
-	result := adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Logs: stderr.String()}
+	result := adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Logs: stderr.String(), Accounting: finalAccounting}
 	if len(missing) > 0 {
 		result.Error = "agent-acp: missing expected output files: " + strings.Join(missing, ", ")
 	}

@@ -28,7 +28,10 @@ func ExecuteAttempt(executor Executor, req ExecuteRequest) (result ExecuteResult
 	ctx, end := telemetry.Start(req.Context, "muxlio.attempt", telemetry.AttemptAttributes(req.RunID, req.ActivationID, req.AttemptID, req.Executor)...)
 	req.Context = ctx
 	defer func() {
-		telemetry.Usage(ctx, result.Usage)
+		telemetry.Usage(ctx, result.Accounting)
+		if _, queued := executor.(QueuedExecutor); !queued {
+			telemetry.UsageMetrics(ctx, result.Accounting)
+		}
 		end(executionErr != nil || result.Error != "")
 	}()
 	if queued, ok := executor.(QueuedExecutor); ok {

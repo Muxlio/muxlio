@@ -7,7 +7,7 @@ import (
 
 func TestResultExactNumbers(t *testing.T) {
 	for _, value := range []string{`9007199254740993`, `1e400`, `7`, `0`, `7.0`, `70e-1`, `"9007199254740993"`, `{"values":[9007199254740993,1e400,7,0,"0"]}`} {
-		raw := `{"outputs":{"value":` + value + `},"usage":{"input":0,"output":0,"cached":0},"measurements":{"costUsd":0.25}}`
+		raw := `{"outputs":{"value":` + value + `},"accounting":{"revision":1,"final":true,"entries":[{"id":"call","tokens":{"total":{"collected":{"value":"0","source":"fixture","fidelity":"metered"}}}}]}}`
 		r, err := ParseResult([]byte(raw))
 		if err != nil {
 			t.Error(err)
@@ -17,7 +17,7 @@ func TestResultExactNumbers(t *testing.T) {
 		if string(got) != value {
 			t.Errorf("got %s want %s", got, value)
 		}
-		if r.Usage == nil || r.Usage.Input != 0 || r.Measurements == nil || *r.Measurements.CostUSD != 0.25 {
+		if r.Accounting == nil || r.Accounting.Entries[0].Tokens.Total.Collected.Value != "0" {
 			t.Fatal("typed accounting lost")
 		}
 		for _, suffix := range []string{` {}`, ` trailing`} {

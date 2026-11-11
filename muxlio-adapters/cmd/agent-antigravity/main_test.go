@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -310,8 +312,8 @@ func TestAgentAntigravityAdapterAggregatesInterruptedStepUsage(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter response: %v\n%s", err, out)
@@ -319,8 +321,8 @@ func TestAgentAntigravityAdapterAggregatesInterruptedStepUsage(t *testing.T) {
 	if resp.Error == "" || !strings.Contains(resp.Error, "stream ended without a completion event") {
 		t.Fatalf("expected interrupted stream error, got %q", resp.Error)
 	}
-	if resp.Usage == nil || resp.Usage.Input != 10418 || resp.Usage.Output != 589 || resp.Usage.Cached != 8113 {
-		t.Fatalf("usage = %+v, want input=10418 output=589 cached=8113", resp.Usage)
+	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 10418 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
+		t.Fatalf("usage = %+v, want input=10418 output=589 cached=8113", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -344,8 +346,8 @@ func TestAgentAntigravityAdapterStepUsageUsesTerminalResultTotals(t *testing.T) 
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter response: %v\n%s", err, out)
@@ -353,8 +355,8 @@ func TestAgentAntigravityAdapterStepUsageUsesTerminalResultTotals(t *testing.T) 
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil || resp.Usage.Input != 10418 || resp.Usage.Output != 589 || resp.Usage.Cached != 8113 {
-		t.Fatalf("usage = %+v, want terminal cumulative totals", resp.Usage)
+	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 10418 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
+		t.Fatalf("usage = %+v, want terminal cumulative totals", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -378,9 +380,9 @@ func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 		t.Fatalf("adapter process failed: %v", err)
 	}
 	var resp struct {
-		Outputs map[string]any      `json:"outputs"`
-		Error   string              `json:"error"`
-		Usage   *adapter.TokenUsage `json:"usage"`
+		Outputs    map[string]any       `json:"outputs"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter response: %v\n%s", err, out)
@@ -392,8 +394,8 @@ func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 	if !ok || text["data"] != "hello from agy" {
 		t.Fatalf("text output = %v", resp.Outputs["_text"])
 	}
-	if resp.Usage == nil || resp.Usage.Input != 12 || resp.Usage.Output != 3 {
-		t.Fatalf("usage = %+v", resp.Usage)
+	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 12 || fixtureTokens(t, resp.Accounting).Output != 3 {
+		t.Fatalf("usage = %+v", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -425,8 +427,8 @@ func TestAgentAntigravityAdapterReportsUsageFromResultStats(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -434,11 +436,11 @@ func TestAgentAntigravityAdapterReportsUsageFromResultStats(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil {
+	if fixtureTokens(t, resp.Accounting) == nil {
 		t.Fatal("expected non-nil usage from successful result stats")
 	}
-	if resp.Usage.Input != 100 || resp.Usage.Output != 50 || resp.Usage.Cached != 30 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
+	if fixtureTokens(t, resp.Accounting).Input != 100 || fixtureTokens(t, resp.Accounting).Output != 50 || fixtureTokens(t, resp.Accounting).Cached != 30 {
+		t.Fatalf("usage mismatch: %+v", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -471,8 +473,8 @@ func TestAgentAntigravityAdapterReportsUsageFromUsageEvent(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -480,11 +482,11 @@ func TestAgentAntigravityAdapterReportsUsageFromUsageEvent(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if resp.Usage == nil {
+	if fixtureTokens(t, resp.Accounting) == nil {
 		t.Fatal("expected non-nil usage from usage event")
 	}
-	if resp.Usage.Input != 200 || resp.Usage.Output != 80 || resp.Usage.Cached != 15 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
+	if fixtureTokens(t, resp.Accounting).Input != 200 || fixtureTokens(t, resp.Accounting).Output != 80 || fixtureTokens(t, resp.Accounting).Cached != 15 {
+		t.Fatalf("usage mismatch: %+v", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -521,8 +523,8 @@ func TestAgentAntigravityAdapterPreservesUsageOnFailure(t *testing.T) {
 		t.Fatalf("adapter should exit 0 on adapter error, got %d", cmd.ProcessState.ExitCode())
 	}
 	var resp struct {
-		Error string              `json:"error"`
-		Usage *adapter.TokenUsage `json:"usage"`
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
@@ -530,11 +532,11 @@ func TestAgentAntigravityAdapterPreservesUsageOnFailure(t *testing.T) {
 	if resp.Error == "" || !strings.Contains(resp.Error, "agent-antigravity:") {
 		t.Fatalf("expected adapter error in response, got %q", resp.Error)
 	}
-	if resp.Usage == nil {
+	if fixtureTokens(t, resp.Accounting) == nil {
 		t.Fatal("expected non-nil usage from failed result event that reported usage")
 	}
-	if resp.Usage.Input != 7 || resp.Usage.Output != 3 || resp.Usage.Cached != 2 {
-		t.Fatalf("usage mismatch: %+v", resp.Usage)
+	if fixtureTokens(t, resp.Accounting).Input != 7 || fixtureTokens(t, resp.Accounting).Output != 3 || fixtureTokens(t, resp.Accounting).Cached != 2 {
+		t.Fatalf("usage mismatch: %+v", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -665,4 +667,33 @@ func buildAgentAntigravity(t *testing.T) string {
 		t.Fatalf("go build agent-antigravity: %v\n%s", err, out)
 	}
 	return bin
+}
+
+type fixtureTokenValues struct{ Input, Output, Cached int64 }
+
+func fixtureTokens(t *testing.T, a *contract.Accounting) *fixtureTokenValues {
+	t.Helper()
+	if a == nil {
+		t.Fatal("missing accounting snapshot")
+	}
+	if !a.Final {
+		t.Fatal("accounting snapshot is not final")
+	}
+	for _, e := range a.Entries {
+		if e.Tokens == nil {
+			continue
+		}
+		read := func(m contract.Measure[contract.Count]) int64 {
+			if m.Collected == nil {
+				return 0
+			}
+			n, err := strconv.ParseInt(string(m.Collected.Value), 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		return &fixtureTokenValues{Input: read(e.Tokens.Input), Output: read(e.Tokens.Output), Cached: read(e.Tokens.CacheRead)}
+	}
+	return nil
 }

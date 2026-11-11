@@ -202,16 +202,8 @@ function analyticsFiltersEqual(a, b) {
 
 const ANALYTICS_RUN_STATE_KEYS = ['created', 'running', 'waiting', 'paused', 'succeeded', 'failed', 'cancelled'];
 
-function analyticsStateCountsFromContext(ctx, runs) {
+function analyticsStateCounts(runs) {
   const counts = Object.fromEntries(ANALYTICS_RUN_STATE_KEYS.map(s => [s, 0]));
-  const total = ctx.totalRuns ?? runs.length;
-  const raw = ctx.stateCounts;
-  if (raw && typeof raw === 'object' && runs.length < total) {
-    for (const s of ANALYTICS_RUN_STATE_KEYS) {
-      if (typeof raw[s] === 'number' && Number.isFinite(raw[s])) counts[s] = raw[s];
-    }
-    return counts;
-  }
   for (const r of runs) {
     if (counts[r.state] !== undefined) counts[r.state]++;
   }

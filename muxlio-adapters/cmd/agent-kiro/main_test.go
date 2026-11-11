@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"math"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,15 +132,17 @@ func TestKiroStreamMergesPartialSessionUsage(t *testing.T) {
 		t.Fatalf("adapter process failed: %v", err)
 	}
 	var resp struct {
-		Usage *struct {
-			Input, Output, Cached int64
-		} `json:"usage"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
 	}
-	if resp.Usage == nil || resp.Usage.Input != 99 || resp.Usage.Output != 30 || resp.Usage.Cached != 40 {
-		t.Fatalf("usage = %+v, want input=99 output=30 cached=40", resp.Usage)
+	if resp.Accounting == nil || len(resp.Accounting.Entries) != 1 {
+		t.Fatalf("missing accounting: %s", raw)
+	}
+	tokens := resp.Accounting.Entries[0].Tokens
+	if tokens == nil || tokens.Input.Collected.Value != "99" || tokens.Output.Collected.Value != "30" || tokens.CacheRead.Collected.Value != "40" {
+		t.Fatalf("unexpected token accounting: %s", raw)
 	}
 }
 
@@ -178,23 +180,17 @@ func TestKiroStreamReportsCreditsWithoutTokens(t *testing.T) {
 		t.Fatalf("adapter process failed: %v", err)
 	}
 	var resp struct {
-		Usage         json.RawMessage `json:"usage"`
-		Measurements  struct {
-			Credit *struct {
-				Unit   string   `json:"unit"`
-				Amount *float64 `json:"amount"`
-			} `json:"credit"`
-		} `json:"measurements"`
+		Accounting *contract.Accounting `json:"accounting"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
 	}
-	if len(resp.Usage) > 0 && string(resp.Usage) != "null" {
-		t.Fatalf("usage = %s, want unavailable", resp.Usage)
+	if resp.Accounting == nil || !resp.Accounting.Final || len(resp.Accounting.Entries) != 1 {
+		t.Fatalf("missing accounting: %s", raw)
 	}
-	want := 0.18065595854063016
-	if resp.Measurements.Credit == nil || resp.Measurements.Credit.Amount == nil || math.Abs(*resp.Measurements.Credit.Amount-want) > 1e-9 {
-		t.Fatalf("measurements = %+v", resp.Measurements)
+	entry := resp.Accounting.Entries[0]
+	if entry.Tokens != nil || len(entry.Credits) != 1 || entry.Credits[0].Provider != "kiro" || entry.Credits[0].Amount.Collected.Value != "0.18065595854063016" {
+		t.Fatalf("unexpected exact credit accounting: %s", raw)
 	}
 }
 
@@ -263,11 +259,11 @@ func TestKiroAdapterTreatsRunErrorAsTerminalEvent(t *testing.T) {
 	}
 	req, err := json.Marshal(map[string]any{
 		"contractVersion":      "1",
-		"workspace":              workDir,
-		"workDir":                workDir,
-		"executor":               "agent/kiro",
-		"task":                   "run-error",
-		"hostExecutionAllowed":   true,
+		"workspace":            workDir,
+		"workDir":              workDir,
+		"executor":             "agent/kiro",
+		"task":                 "run-error",
+		"hostExecutionAllowed": true,
 	})
 	if err != nil {
 		t.Fatal(err)

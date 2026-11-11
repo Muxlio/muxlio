@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/muxlio/muxlio-adapters/accounting"
+	"github.com/muxlio/muxlio-adapters/acp"
 	"github.com/muxlio/muxlio-adapters/adapter"
 	"github.com/muxlio/muxlio-adapters/contract"
 )
@@ -94,8 +96,11 @@ func main() {
 	var textChunks adapter.BoundedBuffer
 	var runErr string
 	var completed bool
-	var usage *adapter.TokenUsage
-	var measurements *contract.Measurements
+	var usage *adapter.TokenCounters
+	recorder := accounting.NewRecorder()
+	_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	publisher := adapter.NewAccountingPublisher()
+	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -119,14 +124,23 @@ func main() {
 		// ACP reports turn metadata on sessionUpdate before runFinished. The
 		// final event may carry no usage; do not discard already reported counts.
 		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
+			var config struct {
+				Update json.RawMessage `json:"update"`
+			}
+			_ = json.Unmarshal(ev["data"], &config)
+			for _, id := range acp.SelectedModels(config.Update) {
+				_ = recorder.ReportModel(contract.AccountingModel{ID: id, Role: "selected", Source: "kiro-session-config"})
+			}
 			if reported := parseKiroUsage(ev["data"]); reported != nil {
 				usage = mergeTerminalUsage(usage, reported)
+				_ = recorder.ReplaceScope("tokens", []accounting.Part{{Scope: "tokens", Entry: contract.AccountingEntry{ID: "tokens", Tokens: adapter.CollectedTokenMeasures(usage, "kiro-cli")}}})
+				_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
 			}
-			if reportedCredit := parseKiroCredits(ev["data"]); reportedCredit != nil {
-				merged, err := mergeTerminalCredits(creditMeasurement(measurements), reportedCredit)
-				if err == nil && merged != nil {
-					measurements = withCreditMeasurement(measurements, merged)
-				}
+			if err := recordKiroCredits(recorder, ev["data"]); err != nil {
+				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+			}
+			if snapshot, err := recorder.Snapshot(); err == nil {
+				_ = publisher.Publish(*snapshot, true)
 			}
 		}
 
@@ -216,11 +230,15 @@ func main() {
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
+	finalAccounting, accountingErr := adapter.FinalizeAccounting(recorder, publisher)
+	if accountingErr != nil {
+		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
+	}
 	if runErr != "" {
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(stdoutTail.String()), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
-		adapter.FailWithObserved(usage, measurements, "agent-kiro: %s", withStderr(runErr, stderr.String()))
+		adapter.FailWithAccounting(finalAccounting, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 	}
 
 	// Collect declared outputs. Scalar ports (no file path) are returned as
@@ -242,29 +260,10 @@ func main() {
 		)
 	}
 
-	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Usage: usage, Measurements: measurements})
+	_ = adapter.WriteResponse(adapter.Response{Outputs: outputs, OutputErrors: outputErrors, Error: errMsg, Accounting: finalAccounting})
 }
 
-func creditMeasurement(m *contract.Measurements) *contract.ProviderCredit {
-	if m == nil {
-		return nil
-	}
-	return m.Credit
-}
-
-func withCreditMeasurement(m *contract.Measurements, credit *contract.ProviderCredit) *contract.Measurements {
-	if credit == nil {
-		return m
-	}
-	if m == nil {
-		return &contract.Measurements{Credit: credit}
-	}
-	next := *m
-	next.Credit = credit
-	return &next
-}
-
-func parseKiroUsage(result json.RawMessage) *adapter.TokenUsage {
+func parseKiroUsage(result json.RawMessage) *adapter.TokenCounters {
 	var payload map[string]json.RawMessage
 	if json.Unmarshal(result, &payload) != nil {
 		return nil

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { computeDigest, type CompiledWorkflow, type Plan } from '@muxlio/sdk';
-import { testWorkflow, type TestWorkflowOptions, type UsageSummary } from './index.js';
+import { testWorkflow, type TestWorkflowOptions, type AccountingSummary } from './index.js';
 
 /** A Zod schema or another parser with the same typed contract. */
 export interface CaseSchema<T> { parse(value: unknown): T }
@@ -57,7 +57,7 @@ export interface EvaluationExecution {
   state: string;
   output?: unknown;
   error?: string;
-  usage?: UsageSummary;
+  accounting?: AccountingSummary;
 }
 
 export interface EvaluationScorer<I, O> {
@@ -97,7 +97,7 @@ export interface EvaluationResult {
   versionId: string;
   inputDigest: string;
   durationMs: number;
-  execution: Omit<EvaluationExecution, 'usage'> & { success: boolean; usage: UsageSummary | null };
+  execution: Omit<EvaluationExecution, 'accounting'> & { success: boolean; accounting: AccountingSummary | null };
   /** A scorer failure never changes execution success. Failed executions are not scored. */
   scores: Record<string, { value: number | null; error?: string }>;
   outputError?: string;
@@ -158,7 +158,7 @@ export async function evaluateWorkflow<I, O>(options: EvaluationOptions<I, O>): 
         versionId: version.id,
         inputDigest: digest(c.input),
         durationMs: performance.now() - start,
-        execution: { ...execution, success: execution.state === 'succeeded', usage: execution.usage ?? null },
+        execution: { ...execution, success: execution.state === 'succeeded', accounting: execution.accounting ?? null },
         scores: Object.create(null),
       };
       if (result.execution.success) {
@@ -204,7 +204,7 @@ function coerceExecution(raw: unknown): EvaluationExecution {
     state: value.state,
     ...(value.output !== undefined ? { output: value.output } : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
-    ...(value.usage ? { usage: value.usage } : {}),
+    ...(value.accounting ? { accounting: value.accounting } : {}),
   };
 }
 

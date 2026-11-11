@@ -24,6 +24,7 @@ type WorkerProtocolBackend interface {
 	NextAssignment(workerID string) (*WorkerAssignment, error)
 	Complete(workerID string, req WorkerCompletion) error
 	AppendWorkerLog(workerID string, req WorkerLogAppend) error
+	RecordWorkerAccounting(workerID string, req WorkerAccountingAppend) error
 }
 
 // WorkerRegistration describes the runtime and capabilities of a worker.
@@ -77,26 +78,26 @@ type WorkerAssignment struct {
 }
 
 type WorkerCompletion struct {
-	OutputErrors        map[string]string             `json:"outputErrors,omitempty"`
-	AcknowledgedInputs  []string                      `json:"acknowledgedInputs,omitempty"`
-	AssignmentID        string                        `json:"assignmentId"`
-	RunID               string                        `json:"runId"`
-	ActivationID        string                        `json:"activationId"`
-	AttemptID           string                        `json:"attemptId"`
-	CoordinatorEpoch    int64                         `json:"coordinatorEpoch"`
-	Generation          int64                         `json:"generation"`
-	State               string                        `json:"state"`
-	Outputs             map[string]any                `json:"outputs,omitempty"`
-	Error               *WorkerError                  `json:"error,omitempty"`
-	LogCursor           string                        `json:"logCursor,omitempty"`
-	Logs                string                        `json:"logs,omitempty"`
-	Measurements        *contract.Measurements        `json:"measurements,omitempty"`
-	Usage               *state.TokenUsage             `json:"usage,omitempty"`
-	Session             *contract.SessionHandle       `json:"session,omitempty"`
-	SessionID           string                        `json:"sessionId,omitempty"`
-	Reconciliation      *contract.Reconciliation      `json:"reconciliation,omitempty"`
-	RemoteTask          *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
-	ExecutionDurationMS *int64                        `json:"executionDurationMs,omitempty"`
+	RemoteAccounting    *contract.RemoteAccountingUpdate `json:"remoteAccounting,omitempty"`
+	OutputErrors        map[string]string                `json:"outputErrors,omitempty"`
+	AcknowledgedInputs  []string                         `json:"acknowledgedInputs,omitempty"`
+	AssignmentID        string                           `json:"assignmentId"`
+	RunID               string                           `json:"runId"`
+	ActivationID        string                           `json:"activationId"`
+	AttemptID           string                           `json:"attemptId"`
+	CoordinatorEpoch    int64                            `json:"coordinatorEpoch"`
+	Generation          int64                            `json:"generation"`
+	State               string                           `json:"state"`
+	Outputs             map[string]any                   `json:"outputs,omitempty"`
+	Error               *WorkerError                     `json:"error,omitempty"`
+	LogCursor           string                           `json:"logCursor,omitempty"`
+	Logs                string                           `json:"logs,omitempty"`
+	Accounting          *contract.Accounting             `json:"accounting,omitempty"`
+	Session             *contract.SessionHandle          `json:"session,omitempty"`
+	SessionID           string                           `json:"sessionId,omitempty"`
+	Reconciliation      *contract.Reconciliation         `json:"reconciliation,omitempty"`
+	RemoteTask          *contract.RemoteTaskReference    `json:"remoteTask,omitempty"`
+	ExecutionDurationMS *int64                           `json:"executionDurationMs,omitempty"`
 }
 
 // WorkerLogAppend carries one incremental log chunk for an active assignment.
@@ -111,6 +112,16 @@ type WorkerLogAppend struct {
 	Stream           string                  `json:"stream"`
 	Seq              int                     `json:"seq"`
 	Data             []byte                  `json:"data"`
+}
+
+type WorkerAccountingAppend struct {
+	AssignmentID     string              `json:"assignmentId"`
+	RunID            string              `json:"runId"`
+	ActivationID     string              `json:"activationId"`
+	AttemptID        string              `json:"attemptId"`
+	CoordinatorEpoch int64               `json:"coordinatorEpoch"`
+	Generation       int64               `json:"generation"`
+	Accounting       contract.Accounting `json:"accounting"`
 }
 
 type WorkerError struct {
@@ -260,6 +271,36 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 				return
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+			return
+		}
+		if len(parts) == 3 && parts[1] == "assignments" && parts[2] == "accounting" {
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", http.MethodPost)
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use POST")
+				return
+			}
+			var req WorkerAccountingAppend
+			if !decodeWorkerJSON(w, r, &req) {
+				return
+			}
+			if req.AssignmentID == "" || req.Generation < 1 || req.CoordinatorEpoch < 1 || req.RunID == "" || req.ActivationID == "" || req.AttemptID == "" {
+				writeError(w, http.StatusBadRequest, CodeBadRequest, "assignment identity, positive epoch and generation are required")
+				return
+			}
+			if err := req.Accounting.Validate(); err != nil {
+				writeError(w, http.StatusBadRequest, CodeBadRequest, "invalid accounting snapshot")
+				return
+			}
+			raw, err := contract.CanonicalAccounting(req.Accounting)
+			if err != nil || len(raw) > 64<<10 {
+				writeError(w, http.StatusRequestEntityTooLarge, CodeBadRequest, "accounting snapshot exceeds 64 KiB")
+				return
+			}
+			if err := h.backend.RecordWorkerAccounting(workerID, req); err != nil {
+				writeWorkerBackendError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "revision": req.Accounting.Revision})
 			return
 		}
 		if len(parts) == 3 && parts[1] == "assignments" && parts[2] == "complete" {

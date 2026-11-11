@@ -1,0 +1,152 @@
+# Accounting
+
+Adapters, persisted attempts, worker completions, API responses, CLI output, and
+TypeScript clients share canonical accounting. Protocol identifiers remain v1.
+
+Snapshots have a positive monotonic `revision`, `final`, disjoint `entries`, and
+per-meter `coverage`. Each snapshot replaces the preceding one. Replaying an
+identical revision is idempotent; conflicting bytes at that revision are rejected.
+Distributed writes check assignment, epoch, generation, and lease transactionally.
+Confirmed accounting survives an absent terminal snapshot and coordinator restart.
+Accepted progress emits `execution.accounting.updated` with only `attemptId`,
+`revision` and a canonical SHA-256 `hash`. Subscribers refetch the snapshot;
+they do not reconstruct an additive ledger from events. Identical replays do
+not emit another update.
+
+Worker completion commits its canonical accounting snapshot and receipt in one
+fenced transaction before acknowledgment. A conflicting or stale revision rejects
+the completion without sealing its receipt; a failed receipt write rolls back the
+accounting update too. Retrying an identical accepted completion is idempotent.
+
+```json
+{
+  "revision": 2,
+  "final": true,
+  "entries": [{
+    "id": "call-1",
+    "tokens": {
+      "input": {"collected":{"value":"1200","source":"cli-turn","fidelity":"metered"}},
+      "output": {"collected":{"value":"400","source":"cli-turn","fidelity":"metered"}},
+      "cacheRead": {"collected":{"value":"500","source":"cli-turn","fidelity":"metered"}}
+    },
+    "credits": [{"provider":"service","unit":"credit","amount":{
+      "collected":{"value":"0.18065595854063016","source":"provider-turn","fidelity":"metered"}
+    }}]
+  }],
+  "coverage": [{"key":{"kind":"tokens"},"state":"partial"}]
+}
+```
+
+Input includes cache read and cache write. Output includes reasoning. Subsets are
+never added again to input plus output. Total-only reports do not invent an
+input/output split. Counts and amounts are decimal strings throughout storage and
+the API. A reported zero is `"0"`; missing readings remain unavailable.
+
+Measures can carry `collected` and `estimated` evidence. Collected means acquired
+from a source and does not certify an invoice. Fidelity distinguishes `metered`,
+`derived-exact`, `provider-estimate`, and `proxy`. Local estimates require a method
+and version. Proxy readings cannot establish full token consumption.
+
+Costs are keyed by currency and basis: `api-equivalent`, `plan-debit`, or
+`unspecified`. API-equivalent estimates and plan debit remain separate. Credits
+retain their provider and unit. Credits and context occupancy are not converted
+into spent tokens or USD.
+
+Run summaries select collected readings first, then eligible estimated fallback
+for disjoint scopes. They expose `collectedSubtotal`, `estimatedFallbackSubtotal`,
+`knownSubtotal`, and `effectiveTotal`, with coverage and attempt counts. Subtotals
+can describe incomplete consumption. Complete totals require all relevant scopes
+to be closed and covered. Failed attempts retain consumption; pending and uncertain
+attempts prevent final totals. Undeclared applicability remains unknown.
+
+Limits select explicit meters under `limits.accounting`, with decimal maxima.
+Defaults require collected evidence, any fidelity, and fail closed on missing
+accounting. Credit limits require provider and unit; cost limits require currency
+and basis. Metered policies reject local estimates. Limits stop later admission;
+already running concurrent work can overshoot a threshold.
+
+Analytics reduces persisted disjoint attempts on the server. Completed amounts
+belong to their UTC completion date. Chart geometry can be approximate; labels and
+evidence retain exact decimal strings. OpenTelemetry provider-token attributes
+are emitted once from finalized, complete collected dimensions. Incomplete and
+locally estimated counts are omitted from provider-token signals.
+
+Finalized complete collected dimensions also emit the OpenTelemetry
+`gen_ai.client.inference.usage.*` counters for inclusive input/output and reported
+cache/reasoning subsets. A queued coordinator does not emit its worker's usage
+again. Final owned remote-task snapshots emit once when accepted; repeated polls
+do not add another measurement. Zero remains explicit in snapshots and span
+attributes; the usage counters record positive contributions only. Modality is
+`unknown` when the source does not identify it. These instruments follow the
+[OpenTelemetry token conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-token-metrics.md).
+
+Selected local estimate fallbacks use separate `muxlio.accounting.estimated.*`
+diagnostics. Economic metric projections use approximate floating-point values;
+the persisted decimal strings remain exact. Metric dimensions contain only meter
+identity, fixed token categories and coverage, without run, task or account IDs.
+
+Provider fixtures validate parsing without credentials. Complete coverage claims
+also require controlled live probes with recorded binary versions and source
+semantics. Unverified bundled CLI readings retain partial or unknown coverage.
+The shared recorder compacts disjoint events by provider, actual model, meter
+presence and provenance after pricing. It retains event identities after terminal
+replacement, so old deltas cannot reappear. Limits are 100,000 identified events,
+256 compact buckets and 64 KiB per snapshot. Overflow retains confirmed readings
+and degrades coverage with `accounting_capacity_exceeded`. Progress writes are
+serialized and bounded; remote delivery retries identical canonical snapshots
+and advances its acknowledgment only after persistence succeeds.
+
+Analytics accounting covers the returned run page, including its per-attempt,
+daily, workflow and executor summaries. Charts show the same page; previous/next
+navigation retrieves another page without an automatic scan of all matching
+runs. Daily consumption is attributed to attempt completion dates in UTC.
+
+Per-call API-equivalent pricing uses `accounting.RecordPriced` before compaction.
+`accounting.LoadCatalog(raw, digest)` loads a reviewed JSON catalog;
+`accounting.PinCatalog` validates and generates its immutable SHA-256 ID. Catalogs
+are at most 1 MiB and never fetched during execution. Each rule selects an actual
+provider/model, service tier, mode, cache-write TTL, context interval and effective
+date interval. Rates distinguish uncached input, cache reads/writes, visible
+output, reasoning and additional tool/multimodal charges. Missing applicable
+rates, quantities, identity or charge applicability make the call unpriceable.
+Explicit zero rates remain valid. Arithmetic is exact, rounded half-even once
+to 18 decimal places. Stored estimates retain their rule and catalog IDs.
+
+Provider estimates retain their fidelity in server summary evidence. The UI
+labels collected provider estimates explicitly and shows overlapping local
+calculations as alternatives in attempt details, never as an additional charge.
+
+Bundled CLI fixtures do not prove all per-request model, tier and extra-charge
+categories. Local pricing therefore stays unavailable for those streams rather
+than pricing aggregate tokens or a requested `auto` model. Their collected
+provider costs remain available independently. A catalog alone cannot establish
+complete coverage. Enabling a provider price estimate requires a decoder fixture
+and controlled live evidence of the actual request categories. No calibrated
+credit/context-to-token estimator is enabled.
+
+Snapshots preserve bounded `models` reports with an ID, source and role:
+`requested`, `selected`, or `served`. A configured default, display label or
+`auto` selection does not establish the actual served model. Claude terminal
+`modelUsage` keys report served models; Cursor init and ACP model configuration
+report selections. Kiro retains its selected configuration and requested model.
+Codex and Antigravity retain an explicitly requested model, when supplied; their
+tested streams omit served-model identity. A2A has no accounting or invented
+model extension. Model metadata alone never creates consumption or a price.
+
+When a lost worker is replayed, its last accounting snapshot is preserved in a
+separate failed execution record before the replacement starts a fresh revision
+sequence. Non-final usage remains incomplete. Replay checks pinned work and
+accounting limits; a blocked replay returns a durable failure to the waiting
+coordinator. Old worker generations cannot update the replacement's readings.
+
+A2A has no supported accounting source. Task metadata and artifacts are never
+interpreted as consumption; its accounting remains unavailable. Executors that
+explicitly emit canonical accounting can use the generic remote-task ownership
+checks without changing A2A behavior.
+
+ACP's `usage_update.used` and `size` describe context occupancy, not consumed
+tokens. Session-cumulative cost requires a same-session baseline received before
+prompting; a first sample during execution remains unattributed, and a counter
+reset invalidates the baseline. Monetary units retain cost basis `unspecified`.
+Nonmonetary units require the adapter parameter `meteringAuthority` to identify
+the backend's meter; the reported unit is preserved.
