@@ -140,6 +140,46 @@ func TestAgentClaudeAdapterCLIError(t *testing.T) {
 	}
 }
 
+func TestAgentClaudeAdapterAcceptsDoneTerminalEvent(t *testing.T) {
+	bin := buildAgentClaude(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
+		`echo '{"type":"done"}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"workspace": workDir,
+		"executor":  "agent/claude",
+		"task":      "do nothing",
+		"workDir":   workDir,
+		"nodeId":    "n1",
+	})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error   string         `json:"error"`
+		Outputs map[string]any `json:"outputs"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	text, ok := resp.Outputs["_text"].(map[string]any)
+	if !ok || text["data"] != "done" {
+		t.Fatalf("_text output = %v", resp.Outputs["_text"])
+	}
+}
+
 func TestAgentClaudeAdapterRejectsStreamWithoutResult(t *testing.T) {
 	bin := buildAgentClaude(t)
 	workDir := t.TempDir()
@@ -168,7 +208,7 @@ func TestAgentClaudeAdapterRejectsStreamWithoutResult(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
-	if !strings.Contains(resp.Error, "without a result event") {
+	if !strings.Contains(resp.Error, "without a terminal event") {
 		t.Fatalf("expected incomplete stream adapter error, got %q", resp.Error)
 	}
 }

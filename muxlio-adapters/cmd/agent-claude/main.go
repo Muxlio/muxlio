@@ -151,6 +151,8 @@ func main() {
 			if payload.Content != "" {
 				adapter.CaptureAgentText(&textChunks, payload.Content)
 			}
+		case "completion", "done":
+			completed = true
 		case "result":
 			var models map[string]json.RawMessage
 			if json.Unmarshal(ev["modelUsage"], &models) == nil {
@@ -230,7 +232,7 @@ func main() {
 	}
 	adapter.AppendLogChunk("stderr", stderr.String())
 	if !completed {
-		runErr = appendFailure(runErr, "claude stream ended without a result event")
+		runErr = appendFailure(runErr, "claude stream ended without a terminal event")
 	}
 	finalAccounting, accountingErr := adapter.FinalizeAccounting(recorder, publisher)
 	if accountingErr != nil {
