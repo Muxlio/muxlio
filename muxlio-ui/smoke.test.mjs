@@ -174,6 +174,12 @@ try {
   assert.equal(derived.completed, 1);
   assert.equal(derived.groups[0].id, 'feature-a');
   assert.equal(derived.groups[0].stages[1].state, 'queued');
+  const attemptsNewestFirst = [...attempts].reverse();
+  assert.equal(
+    progress.deriveProgress(acts, attemptsNewestFirst).groups[0].stages[1].state,
+    'queued',
+    'deriveProgress must follow highest retryNumber regardless of API ordering',
+  );
   assert.equal(progress.deriveProgress([acts[0]]).completed,0,'implementation alone must not imply a completed feature pipeline');
   const markup = progress.progressMarkup(acts, attempts);
   for (const label of ['1 completed / 2 known', 'codex', 'diagnostic', 'Root workflow', 'data-stage="b"']) assert.ok(markup.includes(label));

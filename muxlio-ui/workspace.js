@@ -590,12 +590,14 @@ function deriveProgress(acts, attempts){
       state: act.state || 'pending',
     };
     // Attach latest attempt info if available.
-    const stageAttempts = (attempts || []).filter(a => a.activationId === act.id);
+    const stageAttempts = (attempts || [])
+      .filter(a => a.activationId === act.id)
+      .sort((a, b) => (b.retryNumber ?? 0) - (a.retryNumber ?? 0) || String(a.id ?? '').localeCompare(String(b.id ?? '')));
     if (stageAttempts.length) {
-      const latest = stageAttempts[stageAttempts.length - 1];
+      const latest = stageAttempts[0];
       stage.executor = latest.executor;
-      // Use the most recent failure across all attempts, not just the latest.
-      const failedAttempt = [...stageAttempts].reverse().find(a => a.failure);
+      // Use the newest attempt that recorded a failure, not merely the last array slot.
+      const failedAttempt = stageAttempts.find(a => a.failure);
       stage.failure = failedAttempt ? failedAttempt.failure : undefined;
       if (latest.state) stage.state = latest.state;
     }
