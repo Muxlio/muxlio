@@ -73,7 +73,7 @@ func TestFailures(t *testing.T) {
 		"missing stop":              initialized + "\n" + sessionCreated + "\n" + `{"jsonrpc":"2.0","id":3,"result":{}}`,
 		"wrong id":                  `{"jsonrpc":"2.0","id":20,"result":{}}`,
 		"invalid envelope":          `{"jsonrpc":"2.0","id":1,"result":{},"error":{}}`,
-		"string id type mismatch":   `{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"agentCapabilities":{}}}`,
+		"string ID differs from numeric request ID": `{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"agentCapabilities":{}}}`,
 		"malformed":                 `{broken}`,
 		"empty":                     "",
 		"oversized":                 strings.Repeat("x", (4<<20)+1),
