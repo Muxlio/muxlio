@@ -104,7 +104,45 @@ func main() {
 		before = nil
 	}
 	for i := 0; i < len(before); i++ {
-		switch before[i] {
+		arg := before[i]
+		if val, ok := longFlagOptionalValue(arg); ok {
+			switch longFlagName(arg) {
+			case "json":
+				jsonOut = true
+			case "fake-config":
+				fakeConfig = val
+			case "data-dir":
+				dataDir = val
+			case "adapters":
+				adaptersDir = val
+			case "workspace":
+				workspace = val
+			case "addr":
+				addr = val
+			case "coordinator":
+				workerCoordinator = val
+			case "worker-id":
+				workerID = val
+			case "capabilities":
+				workerCapabilities = val
+			case "capacity":
+				workerCapacity = val
+			case "state":
+				stateFilters = append(stateFilters, parseStateFlag(val)...)
+			case "server":
+				serverFlag = val
+			case "token":
+				tokenFlag = val
+			case "token-file":
+				tokenFileFlag = val
+			case "worker-token":
+				workerTokenFlag = val
+			case "worker-token-file":
+				workerTokenFileFlag = val
+			}
+			continue
+		}
+		switch arg {
 		case "--json":
 			jsonOut = true
 		case "--fake-config":

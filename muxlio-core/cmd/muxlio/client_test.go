@@ -110,4 +110,12 @@ func TestCLIStatusAcceptsGlobalFlagsBeforeCommand(t *testing.T) {
 	if !strings.Contains(out, "run-1") && !strings.Contains(out, "succeeded") {
 		t.Fatalf("unexpected output: %s", out)
 	}
+
+	out, code = run("--server="+s.URL, "status", "run-1")
+	if code != 0 {
+		t.Fatalf("global --server=URL before status: exit %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "run-1") && !strings.Contains(out, "succeeded") {
+		t.Fatalf("unexpected output: %s", out)
+	}
 }

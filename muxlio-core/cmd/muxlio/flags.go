@@ -5,11 +5,27 @@ import "strings"
 // partitionArgs splits argv into global-option prefix and command invocation.
 // Only flags that appear before the subcommand name are treated as globals, so
 // "muxlio init --workspace DIR" keeps --workspace for the init FlagSet.
+func longFlagName(arg string) string {
+	name := strings.TrimLeft(arg, "-")
+	if idx := strings.IndexByte(name, '='); idx >= 0 {
+		return name[:idx]
+	}
+	return name
+}
+
+func longFlagOptionalValue(arg string) (value string, hasValue bool) {
+	name := strings.TrimLeft(arg, "-")
+	if idx := strings.IndexByte(name, '='); idx >= 0 {
+		return name[idx+1:], true
+	}
+	return "", false
+}
+
 func partitionArgs(args []string) (before, cmdAndRest []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
-			if globalFlagTakesValue(arg) && i+1 < len(args) {
+			if _, embedded := longFlagOptionalValue(arg); !embedded && globalFlagTakesValue(arg) && i+1 < len(args) {
 				i++
 			}
 			continue
@@ -23,8 +39,7 @@ func partitionArgs(args []string) (before, cmdAndRest []string) {
 }
 
 func globalFlagTakesValue(flag string) bool {
-	name := strings.TrimLeft(flag, "-")
-	switch name {
+	switch longFlagName(flag) {
 	case "fake-config", "data-dir", "adapters", "workspace", "addr", "coordinator", "worker-id", "capabilities", "capacity", "state", "server", "token", "token-file", "worker-token", "worker-token-file":
 		return true
 	default:
@@ -62,6 +77,10 @@ func absorbFlagValue(name string, args []string, current string) ([]string, stri
 	out := make([]string, 0, len(args))
 	val := current
 	for i := 0; i < len(args); i++ {
+		if embedded, ok := longFlagOptionalValue(args[i]); ok && longFlagName(args[i]) == name {
+			val = embedded
+			continue
+		}
 		if args[i] == prefix && i+1 < len(args) {
 			val = args[i+1]
 			i++
