@@ -84,3 +84,56 @@ func TestAccountingPublisherMaterialChangesBypassThrottleAndRejectConflicts(t *t
 		t.Fatal("stale revision accepted")
 	}
 }
+
+func TestAccountingPublisherMaterialRepublicationBypassesThrottle(t *testing.T) {
+	writes := make(chan uint64, 4)
+	p := newAccountingPublisher(time.Hour, func(a contract.Accounting) error { writes <- a.Revision; return nil })
+	defer p.Close()
+	if err := p.Publish(contract.Accounting{Revision: 1}, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writes:
+	case <-time.After(time.Second):
+		t.Fatal("first revision was not prompt")
+	}
+	if err := p.Publish(contract.Accounting{Revision: 2}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(contract.Accounting{Revision: 2}, true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-writes:
+		if n != 2 {
+			t.Fatalf("revision %d", n)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("material republication was throttled")
+	}
+}
+
+func TestDeliveredMaterialRepublicationDoesNotExpediteFutureRevision(t *testing.T) {
+	writes := make(chan uint64, 4)
+	p := newAccountingPublisher(time.Hour, func(a contract.Accounting) error { writes <- a.Revision; return nil })
+	defer p.Close()
+	if err := p.Publish(contract.Accounting{Revision: 1}, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writes:
+	case <-time.After(time.Second):
+		t.Fatal("first usage was not prompt")
+	}
+	if err := p.Publish(contract.Accounting{Revision: 1}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(contract.Accounting{Revision: 2}, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-writes:
+		t.Fatalf("non-material revision %d was expedited", n)
+	case <-time.After(30 * time.Millisecond):
+	}
+}

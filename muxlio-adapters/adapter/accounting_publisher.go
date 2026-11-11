@@ -61,6 +61,13 @@ func (p *AccountingPublisher) Publish(a contract.Accounting, material bool) erro
 		if !bytes.Equal(raw, prior) {
 			return fmt.Errorf("conflicting accounting publication")
 		}
+		if material && p.pending != nil {
+			p.material = true
+			select {
+			case p.wake <- struct{}{}:
+			default:
+			}
+		}
 		return nil
 	}
 	p.pending, p.pendingRevision = raw, a.Revision
@@ -93,6 +100,7 @@ func (p *AccountingPublisher) flush() error {
 		p.delivered, p.deliveredRevision = raw, revision
 		if p.pendingRevision == revision {
 			p.pending = nil
+			p.material = false
 		}
 	}
 	return err
