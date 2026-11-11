@@ -31,6 +31,21 @@ func TestStepAccountingDeduplicatesIdentityAndRetainsDistinctEqualSteps(t *testi
 	}
 }
 
+func TestAntigravityKeepsUsageWhenOptionalSubsetNull(t *testing.T) {
+	for _, raw := range []string{
+		`{"input_tokens":100,"output_tokens":20,"thinking_tokens":null,"cache_write_tokens":null,"total_tokens":120}`,
+		`{"input_tokens":100,"output_tokens":20,"thinking_tokens":"invalid","cache_write_tokens":-1,"total_tokens":120}`,
+	} {
+		u := antigravityTokenCounters(json.RawMessage(raw))
+		if u == nil || u.Input != 100 || u.Output != 20 || u.Total == nil || *u.Total != 120 {
+			t.Fatalf("invalid optional subset fields should not discard core usage for %s: %+v", raw, u)
+		}
+		if u.Reasoning != nil || u.CacheWrite != nil {
+			t.Fatalf("expected unavailable optional fields to stay nil for %s: %+v", raw, u)
+		}
+	}
+}
+
 func TestAntigravityKeepsTotalOnlyAndReasoningSubset(t *testing.T) {
 	for _, tc := range []struct{ raw, total, reason string }{{`{"total_tokens":100}`, "100", ""}, {`{"input_tokens":100,"output_tokens":20,"thinking_tokens":5,"total_tokens":120}`, "120", "5"}} {
 		r := adapter.NewTokenRecorder("fixture")

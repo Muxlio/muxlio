@@ -43,7 +43,7 @@ func antigravityTokenCounters(raw json.RawMessage) *adapter.TokenCounters {
 		if b, ok := values[field.key]; ok {
 			var n *int64
 			if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
-				return nil
+				continue
 			}
 			*field.dst = n
 		}

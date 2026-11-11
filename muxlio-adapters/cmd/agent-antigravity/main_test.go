@@ -399,6 +399,41 @@ func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 	}
 }
 
+func TestAgentAntigravityAdapterReportsUsageWhenThinkingTokensNull(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	script := "#!/bin/sh\n" +
+		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"thinking_tokens":null,"cached":30}}'` + "\n"
+	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		Error      string               `json:"error"`
+		Accounting *contract.Accounting `json:"accounting"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected adapter error: %q", resp.Error)
+	}
+	if fixtureTokens(t, resp.Accounting) == nil {
+		t.Fatal("expected usage when optional thinking_tokens is null")
+	}
+	if fixtureTokens(t, resp.Accounting).Input != 100 || fixtureTokens(t, resp.Accounting).Output != 50 || fixtureTokens(t, resp.Accounting).Cached != 30 {
+		t.Fatalf("usage mismatch: %+v", fixtureTokens(t, resp.Accounting))
+	}
+}
+
 // TestAgentAntigravityAdapterReportsUsageFromResultStats verifies the adapter
 // maps provider-reported token counts from the terminal result event's
 // "stats" object into the shared attempt-level usage record on a successful run.
