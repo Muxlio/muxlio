@@ -88,6 +88,16 @@ func (r *Recorder) ObserveCumulative(part Part) error {
 	return r.ReplaceScope(part.Scope, []Part{part})
 }
 
+func measureValue[T ~string](m contract.Measure[T]) (string, bool) {
+	if m.Collected != nil {
+		return string(m.Collected.Value), true
+	}
+	if m.Estimated != nil {
+		return string(m.Estimated.Value), true
+	}
+	return "", false
+}
+
 func readingRegressed[T ~string](next, prior contract.Measure[T]) bool {
 	for _, pair := range [][2]*contract.Reading[T]{{next.Collected, prior.Collected}, {next.Estimated, prior.Estimated}} {
 		if pair[0] == nil || pair[1] == nil {
@@ -95,6 +105,15 @@ func readingRegressed[T ~string](next, prior contract.Measure[T]) bool {
 		}
 		n, okN := new(big.Rat).SetString(string(pair[0].Value))
 		p, okP := new(big.Rat).SetString(string(pair[1].Value))
+		if okN && okP && n.Cmp(p) < 0 {
+			return true
+		}
+	}
+	nextValue, nextOK := measureValue(next)
+	priorValue, priorOK := measureValue(prior)
+	if nextOK && priorOK && (next.Collected == nil || next.Estimated == nil || prior.Collected == nil || prior.Estimated == nil) {
+		n, okN := new(big.Rat).SetString(nextValue)
+		p, okP := new(big.Rat).SetString(priorValue)
 		if okN && okP && n.Cmp(p) < 0 {
 			return true
 		}

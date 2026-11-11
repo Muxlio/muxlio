@@ -42,6 +42,26 @@ func TestCumulativeReplacementPreservesOmittedDimensionsAndRejectsRegression(t *
 	}
 }
 
+func TestCumulativeRejectsEstimateOnlyRegressionOfCollectedUsage(t *testing.T) {
+	r := NewRecorder()
+	collected := func(v string) contract.Measure[contract.Count] {
+		return contract.Measure[contract.Count]{Collected: &contract.Reading[contract.Count]{Value: contract.Count(v), Source: "fixture", Fidelity: "metered"}}
+	}
+	estimated := func(v string) contract.Measure[contract.Count] {
+		return contract.Measure[contract.Count]{Estimated: &contract.Reading[contract.Count]{Value: contract.Count(v), Source: "fixture", Fidelity: "derived-exact", Method: "fixture", Version: "1"}}
+	}
+	if err := r.ObserveCumulative(Part{Scope: "turn", Entry: contract.AccountingEntry{ID: "turn", Tokens: &contract.TokenMeasures{Input: collected("100")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ObserveCumulative(Part{Scope: "turn", Entry: contract.AccountingEntry{ID: "turn", Tokens: &contract.TokenMeasures{Input: estimated("50")}}}); err == nil {
+		t.Fatal("estimate-only report regressed confirmed metered usage")
+	}
+	a, err := r.Snapshot()
+	if err != nil || a.Entries[0].Tokens.Input.Collected.Value != "100" {
+		t.Fatal("confirmed metered usage lost after rejected regression")
+	}
+}
+
 func TestAmbiguousCumulativeScopeCannotEraseDisjointCalls(t *testing.T) {
 	r := NewRecorder()
 	p := recordedPart("first", "model-a")
