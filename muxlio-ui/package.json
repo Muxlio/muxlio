@@ -6,6 +6,7 @@
     "start": "npm run build && node dist/server.mjs",
     "build": "node --experimental-strip-types scripts/build.ts",
     "test": "npm run build && node --experimental-strip-types --test test/*.test.ts",
+    "smoke": "npm run build && node --experimental-strip-types --test test/smoke.test.ts",
     "test:browser": "npm run build && node --experimental-strip-types --test test/browser/*.test.ts",
     "check": "npm run build && prettier --check test scripts src/server.ts src/interactions.ts src/components src/styles/theme.css index.html",
     "format": "prettier --write test scripts src/server.ts src/interactions.ts src/components src/styles/theme.css index.html"
