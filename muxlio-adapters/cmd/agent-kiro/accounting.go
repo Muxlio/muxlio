@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -102,6 +103,10 @@ func parseKiroCreditAmount(raw json.RawMessage) *contract.Amount {
 }
 
 func recordKiroCredits(recorder *accounting.Recorder, raw json.RawMessage) error {
+	return recordKiroCreditsAt(recorder, raw, "", time.Time{})
+}
+
+func recordKiroCreditsAt(recorder *accounting.Recorder, raw json.RawMessage, pricingContext string, at time.Time) error {
 	amount := parseKiroCreditAmount(raw)
 	if amount == nil {
 		return nil
@@ -110,7 +115,29 @@ func recordKiroCredits(recorder *accounting.Recorder, raw json.RawMessage) error
 	if id == "" {
 		return fmt.Errorf("kiro credit event identity unavailable")
 	}
-	if err := recorder.Record(accounting.Part{Scope: id, Entry: contract.AccountingEntry{ID: id, Credits: []contract.CreditMeasure{{Provider: "kiro", Unit: "credit", Amount: contract.Measure[contract.Amount]{Collected: &contract.Reading[contract.Amount]{Value: *amount, Source: "kiro-turn", Fidelity: "metered"}}}}}}); err != nil {
+	reading := &contract.Reading[contract.Amount]{Value: *amount, Source: "kiro-turn", Fidelity: "metered"}
+	entry := contract.AccountingEntry{ID: id, Credits: []contract.CreditMeasure{{Provider: "kiro", Unit: "credit", Amount: contract.Measure[contract.Amount]{Collected: reading}}}}
+	if pricingContext != "" {
+		key := contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "credit-replacement"}
+		reason := "turn-identity-unavailable"
+		if strings.HasPrefix(id, "credit-turn-") {
+			tariff, _ := accounting.PinCreditTariff(kiroCommercialCreditTariff)
+			estimate, err := accounting.EstimateCreditReplacement(tariff, "kiro", "credit", pricingContext, at, reading)
+			reason = "credit-valuation-unavailable"
+			if err == nil {
+				entry.Costs = []contract.CostMeasure{{Currency: "USD", Basis: "credit-replacement", Amount: contract.Measure[contract.Amount]{Estimated: estimate}}}
+				reason = "source-coverage-unverified"
+			}
+		}
+		state := "unknown"
+		if len(entry.Costs) > 0 {
+			state = "partial"
+		}
+		if err := recorder.SetCoverage(key, state, reason); err != nil {
+			return err
+		}
+	}
+	if err := recorder.Record(accounting.Part{Scope: id, Entry: entry}); err != nil {
 		return err
 	}
 	reason := "source-coverage-unverified"
@@ -118,4 +145,14 @@ func recordKiroCredits(recorder *accounting.Recorder, raw json.RawMessage) error
 		reason = "turn-identity-unavailable"
 	}
 	return recorder.SetCoverage(contract.AccountingKey{Kind: "credits", Provider: "kiro", Unit: "credit"}, "partial", reason)
+}
+
+// Reviewed official commercial USD add-on price. The review establishes
+// applicability from this date only; it does not backdate historical tariffs.
+// Keep this revision intact when publishing a successor.
+var kiroCommercialCreditTariff = accounting.CreditTariff{
+	Provider: "kiro", Unit: "credit", Context: "commercial-paid-usd",
+	SourceURL: "https://kiro.dev/pricing/", USDPerUnit: "0.04",
+	ReviewedAt:    time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC),
+	EffectiveFrom: time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC),
 }

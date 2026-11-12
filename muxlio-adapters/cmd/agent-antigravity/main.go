@@ -26,6 +26,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +83,7 @@ func main() {
 		args = append(args, "--model", model)
 	}
 
+	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, antigravityCLI, "--version").Version
 	cmd := exec.Command(antigravityCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
@@ -102,6 +104,8 @@ func main() {
 	var completed bool
 	usageSequence := 0
 	usageSource := ""
+	conversationID := ""
+	conversationConflict := false
 	accountingRecorder := adapter.NewTokenRecorder("antigravity-stream")
 	if model != "" {
 		_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
@@ -128,6 +132,16 @@ func main() {
 		var evType string
 		_ = json.Unmarshal(typeRaw, &evType)
 
+		if evType == "init" {
+			var id string
+			_ = json.Unmarshal(ev["conversation_id"], &id)
+			if id != "" {
+				if conversationID != "" && conversationID != id {
+					conversationConflict = true
+				}
+				conversationID = id
+			}
+		}
 		switch evType {
 		case "message":
 			var role string
@@ -266,6 +280,17 @@ func main() {
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
 	}
+	if conversationID != "" && !conversationConflict {
+		_ = accountingRecorder.ReportSession(contract.AccountingSession{ID: conversationID, Provider: "google", Source: "antigravity-init", Version: runnerVersion, Isolated: true})
+	}
+	reason := "headless-monetary-source-unverified"
+	if runnerVersion == "1.5.6" {
+		reason = "headless-monetary-source-unavailable"
+	}
+	if conversationConflict {
+		reason = "conversation-identity-conflict"
+	}
+	_ = accountingRecorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "unspecified"}, "unknown", reason)
 	finalAccounting := accountingRecorder.Finish()
 	if runErr != "" {
 		adapter.FailWithAccounting(finalAccounting, "agent-antigravity: %s", withStderr(runErr, stderr.String()))

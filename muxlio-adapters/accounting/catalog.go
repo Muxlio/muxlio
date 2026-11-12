@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"sort"
 	"time"
@@ -16,6 +17,11 @@ import (
 // ModelPrice is one reviewed model rule. A nil rate means unknown; a pointer to
 // "0" is an explicit zero rate.
 type ModelPrice struct {
+	SourceURL            string           `json:"sourceUrl"`
+	ReviewedAt           time.Time        `json:"reviewedAt"`
+	PricingContext       string           `json:"pricingContext"`
+	Region               string           `json:"region"`
+	Modality             string           `json:"modality"`
 	ServiceTier          string           `json:"serviceTier,omitempty"`
 	Mode                 string           `json:"mode,omitempty"`
 	CacheWriteTTL        string           `json:"cacheWriteTtl,omitempty"`
@@ -76,6 +82,10 @@ func PinCatalog(c Catalog) (Catalog, error) {
 	seen := map[string]bool{}
 	for i := range c.Prices {
 		p := &c.Prices[i]
+		source, sourceErr := url.Parse(p.SourceURL)
+		if sourceErr != nil || source.Scheme != "https" || source.Host == "" || p.ReviewedAt.IsZero() || p.EffectiveFrom.IsZero() || p.PricingContext == "" || p.Region == "" || p.Modality == "" {
+			return Catalog{}, fmt.Errorf("price rule provenance and applicability required")
+		}
 		if p.Provider == "" || p.Model == "" || p.RuleID == "" || p.Currency == "" {
 			return Catalog{}, fmt.Errorf("price rule identity is incomplete")
 		}

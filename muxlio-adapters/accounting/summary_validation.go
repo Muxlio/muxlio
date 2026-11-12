@@ -87,6 +87,18 @@ func ValidateSummary(s AccountingSummary) error {
 			return err
 		}
 	}
+	if s.ReferenceValue != nil {
+		if err := validate(s.ReferenceValue.SummaryAmount, false); err != nil {
+			return err
+		}
+		seenMethods := map[string]bool{}
+		for _, method := range s.ReferenceValue.Methods {
+			if (method != "provider-quote" && method != "provider-metered" && method != "published-token-rates" && method != "credit-replacement") || seenMethods[method] {
+				return fmt.Errorf("invalid reference method")
+			}
+			seenMethods[method] = true
+		}
+	}
 	seen := map[contract.AccountingKey]bool{}
 	for _, v := range s.Credits {
 		key := contract.AccountingKey{Kind: "credits", Provider: v.Provider, Unit: v.Unit}

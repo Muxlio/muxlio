@@ -30,6 +30,7 @@ type Recorder struct {
 	limits   RecorderLimits
 	anomaly  string
 	models   []contract.AccountingModel
+	sessions []contract.AccountingSession
 }
 
 func NewRecorder() *Recorder {
@@ -248,7 +249,7 @@ func (r *Recorder) snapshot(buckets map[string]contract.AccountingEntry) contrac
 	if revision == 0 {
 		revision = 1
 	}
-	a := contract.Accounting{Revision: revision, Final: r.final, Models: r.models}
+	a := contract.Accounting{Revision: revision, Final: r.final, Models: r.models, Sessions: r.sessions}
 	for _, e := range buckets {
 		a.Entries = append(a.Entries, e)
 	}
@@ -302,4 +303,28 @@ func (r *Recorder) Finish() (*contract.Accounting, error) {
 		r.revision++
 	}
 	return r.Snapshot()
+}
+
+func (r *Recorder) ReportSession(session contract.AccountingSession) error {
+	if r.final {
+		return fmt.Errorf("accounting recorder is final")
+	}
+	for _, prior := range r.sessions {
+		if prior == session {
+			return nil
+		}
+	}
+	if err := (&contract.Accounting{Revision: 1, Sessions: []contract.AccountingSession{session}}).Validate(); err != nil {
+		return err
+	}
+	if len(r.sessions) >= 32 {
+		return r.reject("accounting_capacity_exceeded")
+	}
+	r.sessions = append(r.sessions, session)
+	if err := r.check(r.buckets); err != nil {
+		r.sessions = r.sessions[:len(r.sessions)-1]
+		return r.reject("accounting_capacity_exceeded")
+	}
+	r.revision++
+	return nil
 }

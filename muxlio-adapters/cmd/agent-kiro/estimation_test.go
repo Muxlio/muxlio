@@ -141,7 +141,7 @@ func TestKiroEstimatesKeepCollectedZeroAndPartialCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	x := a.Entries[0].Tokens
-	if x.Output.Collected == nil || x.Output.Collected.Value != "0" || x.Output.Estimated == nil || x.Output.Estimated.Value != "1" || x.Output.Estimated.Method == "" || x.Output.Estimated.Version == "" || x.Output.Estimated.Fidelity != "proxy" {
+	if x.Output.Collected == nil || x.Output.Collected.Value != "0" || x.Output.Estimated != nil {
 		t.Fatalf("output evidence = %+v", x.Output)
 	}
 	if x.Input.Estimated != nil || x.Total.Estimated != nil || x.CacheRead.Estimated != nil || x.CacheWrite.Estimated != nil {
@@ -152,7 +152,7 @@ func TestKiroEstimatesKeepCollectedZeroAndPartialCoverage(t *testing.T) {
 	}
 }
 
-func TestKiroBadCaptureDoesNotLoseCollectedOrOutputEvidence(t *testing.T) {
+func TestKiroSkipsCaptureWhenInputIsDirectlyReported(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte(`{"request":`), 0600); err != nil {
 		t.Fatal(err)
@@ -161,8 +161,8 @@ func TestKiroBadCaptureDoesNotLoseCollectedOrOutputEvidence(t *testing.T) {
 	var e kiroOutputEstimator
 	e.observe("text", json.RawMessage(`{"content":"hello"}`))
 	in := int64(7)
-	if err := recordKiroEstimates(r, adapter.NewTokenCounters(&in, nil, nil), &e, dir); err == nil {
-		t.Fatal("expected malformed capture diagnostic")
+	if err := recordKiroEstimates(r, adapter.NewTokenCounters(&in, nil, nil), &e, dir); err != nil {
+		t.Fatal("collected input should not require request capture", err)
 	}
 	a, err := r.Finish()
 	if err != nil {

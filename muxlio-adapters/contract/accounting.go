@@ -3,10 +3,12 @@ package contract
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/big"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Count and Amount are decimal strings on the wire, preserving exact values in
@@ -15,12 +17,13 @@ type Count string
 type Amount string
 
 type Reading[T any] struct {
-	Value     T      `json:"value"`
-	Source    string `json:"source"`
-	Fidelity  string `json:"fidelity"`
-	Method    string `json:"method,omitempty"`
-	Version   string `json:"version,omitempty"`
-	CatalogID string `json:"catalogId,omitempty"`
+	Value      T                 `json:"value"`
+	Source     string            `json:"source"`
+	Fidelity   string            `json:"fidelity"`
+	Method     string            `json:"method,omitempty"`
+	Version    string            `json:"version,omitempty"`
+	CatalogID  string            `json:"catalogId,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 type Measure[T any] struct {
@@ -73,11 +76,25 @@ type MeterCoverage struct {
 }
 
 type Accounting struct {
-	Revision uint64            `json:"revision"`
-	Final    bool              `json:"final"`
-	Entries  []AccountingEntry `json:"entries,omitempty"`
-	Coverage []MeterCoverage   `json:"coverage,omitempty"`
-	Models   []AccountingModel `json:"models,omitempty"`
+	Revision uint64              `json:"revision"`
+	Final    bool                `json:"final"`
+	Entries  []AccountingEntry   `json:"entries,omitempty"`
+	Coverage []MeterCoverage     `json:"coverage,omitempty"`
+	Models   []AccountingModel   `json:"models,omitempty"`
+	Sessions []AccountingSession `json:"sessions,omitempty"`
+}
+
+// AccountingSession identifies a provider-owned execution without persisting
+// transcripts or provider credentials. It does not by itself prove cost scope.
+type AccountingSession struct {
+	ID         string `json:"id"`
+	Provider   string `json:"provider"`
+	Source     string `json:"source"`
+	Version    string `json:"version,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	Principal  string `json:"principal,omitempty"`
+	Isolated   bool   `json:"isolated,omitempty"`
 }
 
 // AccountingModel distinguishes configuration from evidence of a model that
@@ -167,6 +184,14 @@ func validateReading[T any](r *Reading[T], validate func(T) error, collected boo
 	if r.CatalogID != "" && (len(r.CatalogID) > 120 || !accountingMeta.MatchString(strings.ToLower(r.CatalogID))) {
 		return fmt.Errorf("invalid accounting catalog id")
 	}
+	if len(r.Attributes) > 16 {
+		return fmt.Errorf("too many accounting attributes")
+	}
+	for k, v := range r.Attributes {
+		if !accountingMethod.MatchString(k) || len(v) > 256 || strings.ContainsAny(v, "\r\n\x00") {
+			return fmt.Errorf("invalid accounting attribute")
+		}
+	}
 	return validate(r.Value)
 }
 
@@ -187,8 +212,32 @@ func (a *Accounting) Validate() error {
 	if a.Revision > 9007199254740991 {
 		return fmt.Errorf("accounting revision exceeds exact JSON integer range")
 	}
-	if len(a.Entries) > 256 || len(a.Coverage) > 64 || len(a.Models) > 32 {
+	if len(a.Entries) > 256 || len(a.Coverage) > 64 || len(a.Models) > 32 || len(a.Sessions) > 32 {
 		return fmt.Errorf("accounting snapshot exceeds limits")
+	}
+	sessions := map[AccountingSession]bool{}
+	for _, session := range a.Sessions {
+		if session.ID == "" || len(session.ID) > 512 || strings.ContainsAny(session.ID, "\r\n\x00") || !accountingMeta.MatchString(session.Provider) || !accountingMeta.MatchString(session.Source) || session.Version != "" && !accountingMeta.MatchString(session.Version) || sessions[session] {
+			return fmt.Errorf("invalid or duplicate accounting session")
+		}
+		if len(session.Principal) > 256 || strings.ContainsAny(session.Principal, "\r\n\x00") {
+			return fmt.Errorf("invalid accounting session principal")
+		}
+		if session.StartedAt != "" {
+			start, err := time.Parse(time.RFC3339Nano, session.StartedAt)
+			if err != nil {
+				return fmt.Errorf("invalid accounting session start")
+			}
+			if session.FinishedAt != "" {
+				end, err := time.Parse(time.RFC3339Nano, session.FinishedAt)
+				if err != nil || end.Before(start) {
+					return fmt.Errorf("invalid accounting session interval")
+				}
+			}
+		} else if session.FinishedAt != "" {
+			return fmt.Errorf("accounting session end without start")
+		}
+		sessions[session] = true
 	}
 	models := map[AccountingModel]bool{}
 	for _, m := range a.Models {
@@ -232,7 +281,7 @@ func (a *Accounting) Validate() error {
 		}
 		costs := map[string]bool{}
 		for _, c := range e.Costs {
-			if !currencyCode.MatchString(c.Currency) || (c.Basis != "api-equivalent" && c.Basis != "plan-debit" && c.Basis != "unspecified") {
+			if !currencyCode.MatchString(c.Currency) || (c.Basis != "api-equivalent" && c.Basis != "plan-debit" && c.Basis != "unspecified" && c.Basis != "credit-replacement" && c.Basis != "provider-metered" && c.Basis != "model-reference") {
 				return fmt.Errorf("invalid cost identity")
 			}
 			k := c.Currency + "\x00" + c.Basis
@@ -281,7 +330,7 @@ func (a *Accounting) Validate() error {
 			if k.Currency != "" && !currencyCode.MatchString(k.Currency) {
 				return fmt.Errorf("invalid accounting coverage currency")
 			}
-			if k.Basis != "" && k.Basis != "api-equivalent" && k.Basis != "plan-debit" && k.Basis != "unspecified" {
+			if k.Basis != "" && k.Basis != "api-equivalent" && k.Basis != "plan-debit" && k.Basis != "unspecified" && k.Basis != "credit-replacement" && k.Basis != "provider-metered" && k.Basis != "model-reference" {
 				return fmt.Errorf("invalid accounting coverage basis")
 			}
 		}
@@ -331,7 +380,7 @@ func comparableCountReadings(readings ...*Reading[Count]) bool {
 	}
 	first := readings[0]
 	for _, r := range readings[1:] {
-		if r == nil || r.Source != first.Source || r.Fidelity != first.Fidelity || r.Version != first.Version || r.Method != first.Method {
+		if r == nil || r.Source != first.Source || r.Fidelity != first.Fidelity || r.Version != first.Version || r.Method != first.Method || !maps.Equal(r.Attributes, first.Attributes) {
 			return false
 		}
 	}
@@ -345,6 +394,20 @@ func CanonicalAccounting(a Accounting) ([]byte, error) {
 		return nil, err
 	}
 	copyA := a
+	copyA.Sessions = append([]AccountingSession(nil), a.Sessions...)
+	sort.Slice(copyA.Sessions, func(i, j int) bool {
+		x, y := copyA.Sessions[i], copyA.Sessions[j]
+		if x.Provider != y.Provider {
+			return x.Provider < y.Provider
+		}
+		if x.Source != y.Source {
+			return x.Source < y.Source
+		}
+		if x.ID != y.ID {
+			return x.ID < y.ID
+		}
+		return x.Version < y.Version
+	})
 	copyA.Models = append([]AccountingModel(nil), a.Models...)
 	sort.Slice(copyA.Models, func(i, j int) bool {
 		a, b := copyA.Models[i], copyA.Models[j]

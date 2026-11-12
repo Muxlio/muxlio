@@ -1,0 +1,4 @@
+{"source":"thread/start response","thread":{"id":"fixture-ephemeral-thread","ephemeral":true},"model":"gpt-6.1-sol","modelProvider":"openai","serviceTier":"default"}
+{"method":"turn/started","params":{"threadId":"fixture-ephemeral-thread","turn":{"id":"fixture-turn","status":"inProgress","error":null}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"fixture-ephemeral-thread","turnId":"fixture-turn","tokenUsage":{"total":{"totalTokens":17453,"inputTokens":17442,"cachedInputTokens":13440,"cacheWriteInputTokens":0,"outputTokens":11,"reasoningOutputTokens":0},"last":{"totalTokens":17453,"inputTokens":17442,"cachedInputTokens":13440,"cacheWriteInputTokens":0,"outputTokens":11,"reasoningOutputTokens":0},"modelContextWindow":475000}}}
+{"method":"turn/completed","params":{"threadId":"fixture-ephemeral-thread","turn":{"id":"fixture-turn","status":"completed","error":null}}}

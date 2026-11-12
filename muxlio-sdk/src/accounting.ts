@@ -9,6 +9,7 @@ export interface Reading<T> {
   method?: string;
   version?: string;
   catalogId?: string;
+  attributes?: Record<string,string>;
 }
 export interface Measure<T> { collected?: Reading<T>; estimated?: Reading<T> }
 export interface TokenMeasures {
@@ -19,7 +20,7 @@ export interface TokenMeasures {
   cacheWrite?: Measure<Count>;
   reasoning?: Measure<Count>;
 }
-export type CostBasis = 'api-equivalent' | 'plan-debit' | 'unspecified';
+export type CostBasis = 'api-equivalent' | 'plan-debit' | 'unspecified' | 'credit-replacement' | 'provider-metered' | 'model-reference';
 export interface AccountingEntry {
   id: string;
   provider?: string;
@@ -52,7 +53,9 @@ export interface Accounting {
   entries?: AccountingEntry[];
   coverage?: MeterCoverage[];
   models?: AccountingModel[];
+  sessions?: AccountingSession[];
 }
+export interface AccountingSession { id: string; provider: string; source: string; version?: string; startedAt?: string; finishedAt?: string; principal?: string; isolated?: boolean }
 export interface AccountingModel {
   id: string;
   role: 'requested' | 'selected' | 'served';
@@ -74,6 +77,7 @@ export interface SummaryAmount {
   attempts: {complete: number; partial: number; unknown: number; pending: number; inapplicable: number};
 }
 export interface AccountingSummary {
+  referenceValue?: SummaryAmount & { methods?: string[] };
   tokens: SummaryAmount;
   tokenDimensions: Record<'input' | 'output' | 'cacheRead' | 'cacheWrite' | 'reasoning', SummaryAmount>;
   credits: Array<{provider: string; unit: string; value: SummaryAmount}>;

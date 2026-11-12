@@ -29,9 +29,10 @@ type Fixture struct {
 	MalformedStreams []string
 	RawOutput        bool
 	// UsageUnavailable separates structured protocols without token usage from raw stdout.
-	UsageUnavailable bool
-	ExpectedTokens   *[3]string
-	ExpectedCost     string
+	UsageUnavailable  bool
+	ExpectedTokens    *[3]string
+	ExpectedCost      string
+	ExpectedCostBasis string
 	// Script and CancelScript supply interactive provider fixtures when needed.
 	Script          func(stream, stderr string, code int, scratch string) string
 	CancelScript    string
@@ -137,13 +138,13 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 								found := false
 								for _, e := range resp.Accounting.Entries {
 									for _, c := range e.Costs {
-										if c.Currency == "USD" && c.Basis == "api-equivalent" && c.Amount.Collected != nil && string(c.Amount.Collected.Value) == f.ExpectedCost {
+										if c.Currency == "USD" && c.Basis == f.ExpectedCostBasis && c.Amount.Collected != nil && string(c.Amount.Collected.Value) == f.ExpectedCost {
 											found = true
 										}
 									}
 								}
 								if !found {
-									t.Fatal("expected exact API-equivalent cost unavailable")
+									t.Fatal("expected exact provider cost unavailable")
 								}
 							}
 						}

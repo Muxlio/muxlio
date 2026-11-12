@@ -8,6 +8,13 @@ import (
 // RecordPriced evaluates each disjoint model call before compaction. Catalog
 // estimates and collected API-equivalent evidence occupy the same measure.
 func (r *Recorder) RecordPriced(part Part, catalog Catalog, request PriceRequest) (PriceResult, error) {
+	// A directly reported attributable USD quote needs no local estimate.
+	if cost, method := referenceCost(part.Entry); cost != nil && (method == "provider-quote" || method == "provider-metered") {
+		if err := r.Record(part); err != nil {
+			return PriceResult{}, err
+		}
+		return PriceResult{Amount: cost.Amount.Collected.Value}, nil
+	}
 	price, err := EstimateAPIEquivalent(catalog, request)
 	if err != nil {
 		if recordErr := r.Record(part); recordErr != nil {

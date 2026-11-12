@@ -283,7 +283,7 @@ regression("run pages regression", async () => {
     },
   });
   assert.match(panel("runContract").innerHTML, /<h3>Tokens<\/h3>/);
-  assert.match(panel("runContract").innerHTML, /Credits and cost unavailable/);
+  assert.doesNotMatch(panel("runContract").innerHTML, /Credits and cost unavailable/);
   assert.match(panel("runContract").innerHTML, />Unavailable<\/dd>/);
   assert.doesNotMatch(panel("runContract").innerHTML, /\$NaN|\$-1/);
 

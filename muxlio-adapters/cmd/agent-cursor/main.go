@@ -9,14 +9,23 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--reconcile-accounting" {
+		if err := runCursorReconciliation(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Probes and pinned-version checks must use the same credential store as
 	// execution. This environment belongs only to the adapter subprocess.
 	if err := os.Setenv("AGENT_CLI_CREDENTIAL_STORE", "file"); err != nil {
@@ -33,12 +42,17 @@ func main() {
 	}
 
 	model := "composer-2.5"
+	var billing cursorBillingConfig
 	if req.Params != nil {
 		var params struct {
-			Model string `json:"model"`
+			Model   string              `json:"model"`
+			Billing cursorBillingConfig `json:"billing"`
 		}
-		if json.Unmarshal(req.Params, &params) == nil && params.Model != "" {
-			model = params.Model
+		if json.Unmarshal(req.Params, &params) == nil {
+			if params.Model != "" {
+				model = params.Model
+			}
+			billing = params.Billing
 		}
 	}
 
@@ -63,6 +77,8 @@ func main() {
 	if err != nil {
 		adapter.Fail("agent-cursor: stdout pipe: %v", err)
 	}
+	startedAt := time.Now().UTC()
+	version := cursorVersion(cli)
 	if err := cmd.Start(); err != nil {
 		adapter.Fail("agent-cursor: starting agent: %v", err)
 	}
@@ -71,6 +87,8 @@ func main() {
 	var streamErr string
 	completed := false
 	usageSequence := 0
+	conversationID := ""
+	conversationConflict := false
 	accountingRecorder := adapter.NewTokenRecorder("cursor-stream")
 	_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
 	scanner := bufio.NewScanner(stdout)
@@ -90,6 +108,12 @@ func main() {
 		}
 		switch eventType {
 		case "system":
+			if id := cursorConversation(event); id != "" {
+				if conversationID != "" && conversationID != id {
+					conversationConflict = true
+				}
+				conversationID = id
+			}
 			var selected string
 			if json.Unmarshal(event["model"], &selected) == nil && selected != "" {
 				_ = accountingRecorder.ReportModel(selected, "selected", "cursor-init")
@@ -132,12 +156,24 @@ func main() {
 			completed = true
 		}
 	}
-	finalAccounting := accountingRecorder.Finish()
 	readErr := scanner.Err()
 	if readErr != nil {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
+	finishedAt := time.Now().UTC()
+	session := contract.AccountingSession{ID: conversationID, Provider: "cursor", Source: "cursor-init", Version: version, StartedAt: startedAt.Format(time.RFC3339Nano), FinishedAt: finishedAt.Format(time.RFC3339Nano), Principal: billing.principal(), Isolated: !conversationConflict}
+	costKey := contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "provider-metered"}
+	if conversationID != "" && !conversationConflict {
+		if err := accountingRecorder.ReportSession(session); err != nil {
+			_ = accountingRecorder.SetCoverage(costKey, "unknown", "conversation-identity-invalid")
+		} else {
+			recoverCursorCosts(accountingRecorder, billing, session)
+		}
+	} else {
+		_ = accountingRecorder.SetCoverage(costKey, "unknown", "conversation-identity-unavailable")
+	}
+	finalAccounting := accountingRecorder.Finish()
 	adapter.AppendLogChunk("stderr", diagnostics.String())
 	fail := func(format string, args ...any) {
 		_ = adapter.WriteResponse(adapter.Response{Error: fmt.Sprintf(format, args...), Logs: diagnostics.String(), Accounting: finalAccounting})
@@ -251,6 +287,14 @@ func resultError(event map[string]json.RawMessage) string {
 
 func cursorAgentEnv() []string {
 	env := adapter.CleanEnvForChild()
+	// Billing lookup credentials belong only to this adapter, never the agent.
+	filtered := env[:0]
+	for _, value := range env {
+		if !strings.HasPrefix(value, "CURSOR_ADMIN_API_KEY=") {
+			filtered = append(filtered, value)
+		}
+	}
+	env = filtered
 	// Force on-disk credential storage so the Cursor agent CLI does not attempt
 	// to unlock the macOS keychain in headless environments (SSH, launchd).
 	return upsertEnvVar(env, "AGENT_CLI_CREDENTIAL_STORE", "file")

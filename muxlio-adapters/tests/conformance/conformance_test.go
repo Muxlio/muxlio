@@ -16,9 +16,10 @@ var bundledAdapters = []conformancetest.Fixture{
 		Binary:   "agent-claude",
 		CLIName:  "claude",
 		// stream-json: result event with usage + text; Claude needs a result event to complete.
-		SuccessStream:  `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812,"result":"All done."}`,
-		ExpectedTokens: &[3]string{"160", "30", "40"},
-		ExpectedCost:   "0.0812",
+		SuccessStream:     `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812,"result":"All done."}`,
+		ExpectedTokens:    &[3]string{"160", "30", "40"},
+		ExpectedCost:      "0.0812",
+		ExpectedCostBasis: "unspecified",
 	},
 	{
 		Executor: "agent/codex",

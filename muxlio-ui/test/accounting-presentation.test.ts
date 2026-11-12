@@ -77,7 +77,7 @@ regression("accounting presentation regression", async () => {
   });
   assert.match(unavailableGrid, /<h3>Tokens<\/h3>/);
   assert.match(unavailableGrid, /title="9809008">9\.8M<\/dd>/);
-  assert.match(unavailableGrid, /Credits and cost unavailable/);
+  assert.doesNotMatch(unavailableGrid, /Credits and cost unavailable/);
   assert.doesNotMatch(
     unavailableGrid,
     /<h3>Credits|<h3>Cost|Known subtotal|Complete total|<dt>Coverage/,
@@ -97,6 +97,18 @@ regression("accounting presentation regression", async () => {
     api.buildUsagePresentation({}, { attemptCount: 1 }).primary.length,
     0,
   );
+  const reference = { ...amount("3.42", false), methods: ["provider-quote", "credit-replacement"], attempts: {complete: 8, partial: 0, unknown: 2, pending: 0, inapplicable: 0} };
+  const referenceGrid = api.buildUsageGridMarkup({ referenceValue: reference });
+  assert.match(referenceGrid, /Estimated reference value \(USD\)/);
+  assert.match(referenceGrid, /<dt>Subtotal<\/dt>/);
+  assert.match(referenceGrid, /8 of 10 attempts priced · incomplete/);
+  assert.match(referenceGrid, /Provider quote · Credit replacement rate/);
+  assert.doesNotMatch(referenceGrid, /Actual account spend|Valued attempts|unpriced/);
+  const referencePresentation = api.buildUsagePresentation({referenceValue: reference, tokens: amount("1000")}, {attemptCount:10});
+  assert.match(api.buildWorkbenchUsageMarkup(referencePresentation), /3\.42/);
+  const absentReference = api.buildUsageGridMarkup({referenceValue: {...reference, knownSubtotal: null, effectiveTotal: null}});
+  assert.doesNotMatch(absentReference, /Estimated reference value|Known subtotal|Valued attempts|Actual account spend|Credits and cost unavailable/);
+  assert.match(api.buildUsageGridMarkup({referenceValue: {...amount("0"), methods: ["provider-quote"]}}), /<dt>Value<\/dt><dd>0<\/dd>/);
   const unsafe = api.buildAttemptAccountingMarkup({
     entries: [
       {
@@ -166,6 +178,14 @@ regression("accounting presentation regression", async () => {
       { id: "model-1", role: "served", source: "provider-usage" },
     ],
   });
+  const providerEvidence = api.buildAttemptAccountingMarkup({
+    sessions: [{id:'session<script>', provider:'fixture', source:'provider-init', version:'1.2.3'}],
+    entries: [{id:'event',costs:[{currency:'USD',basis:'provider-metered',amount:{collected:{value:'0',source:'ledger',fidelity:'metered',attributes:{state:'provisional<script>'}}}}]}]
+  });
+  assert.match(providerEvidence,/session&lt;script&gt;/);
+  assert.match(providerEvidence,/state=provisional&lt;script&gt;/);
+  assert.doesNotMatch(providerEvidence,/<script>/);
+  assert.match(api.buildUsageGridMarkup({referenceValue:{...amount('0',false),methods:['provider-metered']}}),/Provider-metered usage/);
   assert.match(models, /selected model/);
   assert.match(models, /served model/);
   assert.match(models, /auto&lt;script&gt;/);

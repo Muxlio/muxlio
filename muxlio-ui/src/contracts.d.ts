@@ -10,9 +10,10 @@ interface AccountingMeasureSummary {
   evidence?: { collected?: string[] };
   unknownAttempts?: number;
   pendingAttempts?: number;
-  attempts?: { complete?: number; partial?: number };
+  attempts?: { complete?: number; partial?: number; unknown?: number; pending?: number; inapplicable?: number };
 }
 interface AccountingSummary {
+  referenceValue?: AccountingMeasureSummary & { methods?: string[] };
   tokens?: AccountingMeasureSummary;
   tokenDimensions?: Record<string, AccountingMeasureSummary>;
   credits?: { provider: string; unit: string; value: AccountingMeasureSummary }[];

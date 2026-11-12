@@ -124,3 +124,18 @@ func (r *TokenRecorder) Finish() *contract.Accounting {
 	}
 	return a
 }
+
+// These operations accept only canonical evidence. Protocol interpretation and
+// ownership validation remain in each adapter.
+func (r *TokenRecorder) ReportSession(s contract.AccountingSession) error {
+	return r.recorder.ReportSession(s)
+}
+func (r *TokenRecorder) SetCoverage(k contract.AccountingKey, state, reason string) error {
+	return r.recorder.SetCoverage(k, state, reason)
+}
+func (r *TokenRecorder) ReplaceAccountingScope(scope string, parts []accounting.Part) error {
+	if err := r.recorder.ReplaceScope(scope, parts); err != nil {
+		return err
+	}
+	return r.publish(true)
+}

@@ -6,6 +6,7 @@
 // Params (via node.params JSON):
 //
 //	model   string   kiro model name, e.g. "claude-sonnet-4.5", "auto" (default)
+//	creditPricingContext string  verified "commercial-paid-usd" tariff; omitted by default
 //
 // Special input port:
 //
@@ -29,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/acp"
@@ -50,12 +52,18 @@ func main() {
 	}
 
 	model := "auto"
+	pricingContext := ""
+	usageAt := time.Now().UTC()
 	if req.Params != nil {
 		var p struct {
-			Model string `json:"model"`
+			Model                string `json:"model"`
+			CreditPricingContext string `json:"creditPricingContext"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err == nil && p.Model != "" {
-			model = p.Model
+		if err := json.Unmarshal(req.Params, &p); err == nil {
+			if p.Model != "" {
+				model = p.Model
+			}
+			pricingContext = p.CreditPricingContext
 		}
 	}
 
@@ -153,7 +161,7 @@ func main() {
 				_ = recorder.ReplaceScope("tokens", []accounting.Part{{Scope: "tokens", Entry: contract.AccountingEntry{ID: "tokens", Tokens: adapter.CollectedTokenMeasures(usage, "kiro-cli")}}})
 				_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
 			}
-			if err := recordKiroCredits(recorder, ev["data"]); err != nil {
+			if err := recordKiroCreditsAt(recorder, ev["data"], pricingContext, usageAt); err != nil {
 				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
 			}
 			if snapshot, err := recorder.Snapshot(); err == nil {

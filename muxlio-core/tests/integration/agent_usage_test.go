@@ -127,7 +127,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 						}
 					}
 					for _, v := range entry.Costs {
-						if v.Currency == "USD" && v.Basis == "api-equivalent" && v.Amount.Collected != nil && v.Amount.Collected.Fidelity == "provider-estimate" {
+						if v.Currency == "USD" && v.Basis == "unspecified" && v.Amount.Collected != nil && v.Amount.Collected.Fidelity == "provider-estimate" {
 							value := string(v.Amount.Collected.Value)
 							cost = &value
 						}

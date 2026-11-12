@@ -175,3 +175,75 @@ prompting; a first sample during execution remains unattributed, and a counter
 reset invalidates the baseline. Monetary units retain cost basis `unspecified`.
 Nonmonetary units require the adapter parameter `meteringAuthority` to identify
 the backend's meter; the reported unit is preserved.
+
+## USD reference valuation
+
+The default USD metric is **Estimated reference value (USD)**. The shared
+`referenceValue` summary selects one eligible amount per canonical disjoint
+entry, in this order: directly collected attributable USD quote, published model
+rate calculation, credit replacement calculation. Direct quotes, including zero,
+prevent redundant local pricing. Original cost partitions and reading provenance
+remain available. Equally ranked overlapping alternatives within an entry are
+ambiguous and contribute no value. Adapters must collapse overlapping invocation,
+per-turn and per-model observations before publishing canonical entries.
+
+Reference dollars describe consumed services, not actual account spend or an
+invoice. `plan-debit` is retained separately and is not promoted to reference
+value. Non-USD quotes retain their original currency; there is no implicit FX.
+A mixed-method summary discloses its methods. Missing attempts remain unknown;
+`effectiveTotal` is available only with complete final coverage. Otherwise the
+UI shows a known subtotal, valued attempts and unpriced attempts. No valued
+scopes means unavailable, never zero. The current tool sources do not establish
+invoice-backed actual account spend.
+
+Model pricing requires an explicitly **served** model, usage time, matching
+pricing context, region, modality, service tier and applicable cache/fee rules.
+Every catalog rule retains its official source URL, review time and effective
+interval in the immutable content digest. Old unversioned catalogs without
+these fields are rejected and must be reviewed again. No provider model tariff
+is enabled merely from a requested or selected model. Existing Codex, Cursor
+and Antigravity evidence therefore remains unpriced when it lacks these facts.
+A2A has no accounting extension, metadata fallback or dollar valuation.
+
+### Kiro credit replacement
+
+The adapter accepts `params.creditPricingContext: "commercial-paid-usd"` only
+when the operator has verified that the standard commercial paid-plan USD
+add-on tariff applies. Omit this parameter for unknown account/region terms,
+free/trial eligibility, contracts or GovCloud. Unknown contexts retain collected
+credits without a USD estimate. This is an applicability assertion, not a way
+to choose a cheaper tariff. The adapter does not inspect private billing stores.
+
+The reviewed 2026-11-12 snapshot in
+`muxlio-adapters/cmd/agent-kiro/accounting.go` pins the published **$0.04/credit**
+replacement rate and source URL to a SHA-256 catalog identity. Its applicability
+starts at the review date; it does not reprice earlier usage. The source is
+[Kiro pricing](https://kiro.dev/pricing/); see also
+[add-on billing](https://kiro.dev/docs/billing/add-on-credits/).
+Retain this tariff revision when introducing a successor. There are no runtime
+price fetches. Use a new reviewed effective interval when pricing changes.
+
+Only explicitly identified Kiro turns are priceable. Replayed completion echoes
+are counted once, credits are never converted to tokens, and the reported model
+multiplier is never reapplied. The calculation uses exact decimal arithmetic and
+rounds once per turn, half to even, at 18 fractional USD digits. For example,
+`0.18065595854063016 × 0.04` persists as `0.007226238341625206`.
+A positive result below representable precision or an overflow leaves valuation
+unavailable while preserving collected credits. Replacement amounts use cost
+basis `credit-replacement` and an estimated reading with method, version and
+catalog ID. They are never recorded as collected dollars or incremental spend.
+
+Source coverage remains partial pending controlled validation of all supported
+CLI versions and billing modes. A terminal event or successful process exit does
+not prove complete economic coverage. Claude terminal quotes and owned ACP USD
+session deltas retain an unspecified price basis as collected evidence; no local estimate replaces them.
+Missing ACP baselines, interrupted quotes and unresolved routing remain
+unavailable or partial. Kiro tokenizer proxies now fill only missing dimensions;
+a directly reported token counter, including zero, has no redundant proxy.
+
+Optional bounded scenarios, account ledger reconciliation and subscription
+allocation are not enabled. They cannot contribute guessed values to canonical
+reference subtotals.
+
+For provider-specific source gates, live validation outcomes and the Cursor
+ledger refresh command, see [USD cost recovery](usd-cost-recovery.md).

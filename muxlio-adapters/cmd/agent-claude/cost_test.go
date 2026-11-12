@@ -29,7 +29,7 @@ func TestClaudeCostIsExactCollectedProviderEstimate(t *testing.T) {
 			t.Fatalf("missing cost from %s", tc.raw)
 		}
 		cost := entry.Costs[0]
-		if cost.Amount.Collected == nil || string(cost.Amount.Collected.Value) != tc.want || cost.Amount.Collected.Fidelity != "provider-estimate" || cost.Amount.Estimated != nil || cost.Currency != "USD" || cost.Basis != "api-equivalent" {
+		if cost.Amount.Collected == nil || string(cost.Amount.Collected.Value) != tc.want || cost.Amount.Collected.Fidelity != "provider-estimate" || cost.Amount.Estimated != nil || cost.Currency != "USD" || cost.Basis != "unspecified" {
 			t.Fatalf("unexpected cost: %+v", cost)
 		}
 	}

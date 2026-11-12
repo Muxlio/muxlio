@@ -540,7 +540,7 @@ func assertClaudeCost(t *testing.T, a *contract.Accounting, want string) {
 		t.Fatalf("missing cost accounting: %+v", a)
 	}
 	c := a.Entries[0].Costs[0]
-	if c.Currency != "USD" || c.Basis != "api-equivalent" || c.Amount.Collected == nil || string(c.Amount.Collected.Value) != want || c.Amount.Collected.Fidelity != "provider-estimate" || c.Amount.Estimated != nil {
+	if c.Currency != "USD" || c.Basis != "unspecified" || c.Amount.Collected == nil || string(c.Amount.Collected.Value) != want || c.Amount.Collected.Fidelity != "provider-estimate" || c.Amount.Estimated != nil {
 		t.Fatalf("unexpected cost: %+v", c)
 	}
 }

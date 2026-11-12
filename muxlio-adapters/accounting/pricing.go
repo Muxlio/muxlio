@@ -10,6 +10,10 @@ import (
 )
 
 type PriceRequest struct {
+	ModelRole                                       string
+	PricingContext                                  string
+	Region                                          string
+	Modality                                        string
 	ServiceTier                                     string
 	Mode                                            string
 	CacheWriteTTL                                   string
@@ -49,7 +53,7 @@ func EstimateAPIEquivalent(c Catalog, q PriceRequest) (PriceResult, error) {
 	if q.ContextSize != nil && *q.ContextSize < 0 {
 		return PriceResult{}, fmt.Errorf("unpriceable: negative context size")
 	}
-	if q.Provider == "" || q.Model == "" || q.Model == "auto" {
+	if q.Provider == "" || q.Model == "" || q.Model == "auto" || q.ModelRole != "served" {
 		return PriceResult{}, fmt.Errorf("unpriceable: actual provider/model unavailable")
 	}
 	if q.Input == nil || q.Output == nil || q.CacheRead == nil || q.CacheWrite == nil || q.Reasoning == nil || !q.ChargesComplete {
@@ -74,7 +78,7 @@ func EstimateAPIEquivalent(c Catalog, q PriceRequest) (PriceResult, error) {
 				return PriceResult{}, fmt.Errorf("unpriceable: request time required")
 			}
 		}
-		if p.Provider == q.Provider && p.Model == q.Model && p.ServiceTier == q.ServiceTier && p.Mode == q.Mode && p.CacheWriteTTL == q.CacheWriteTTL && (p.ContextMin == nil || q.ContextSize != nil && *q.ContextSize >= *p.ContextMin) && (p.ContextMax == nil || q.ContextSize != nil && *q.ContextSize < *p.ContextMax) && (q.Currency == "" || q.Currency == p.Currency) && (q.At.IsZero() || ((p.EffectiveFrom.IsZero() || !q.At.Before(p.EffectiveFrom)) && (p.EffectiveUntil.IsZero() || q.At.Before(p.EffectiveUntil)))) {
+		if p.Provider == q.Provider && p.Model == q.Model && p.PricingContext == q.PricingContext && p.Region == q.Region && p.Modality == q.Modality && p.ServiceTier == q.ServiceTier && p.Mode == q.Mode && p.CacheWriteTTL == q.CacheWriteTTL && (p.ContextMin == nil || q.ContextSize != nil && *q.ContextSize >= *p.ContextMin) && (p.ContextMax == nil || q.ContextSize != nil && *q.ContextSize < *p.ContextMax) && (q.Currency == "" || q.Currency == p.Currency) && (q.At.IsZero() || ((p.EffectiveFrom.IsZero() || !q.At.Before(p.EffectiveFrom)) && (p.EffectiveUntil.IsZero() || q.At.Before(p.EffectiveUntil)))) {
 			if rule != nil {
 				return PriceResult{}, fmt.Errorf("unpriceable: ambiguous catalog rules")
 			}
@@ -156,6 +160,9 @@ func EstimateAPIEquivalent(c Catalog, q PriceRequest) (PriceResult, error) {
 		return PriceResult{}, fmt.Errorf("unpriceable: extra charge has no catalog rate")
 	}
 	amount := roundHalfEven18(sum)
+	if sum.Sign() > 0 && amount == "0" {
+		return PriceResult{}, fmt.Errorf("unpriceable: positive value below supported precision")
+	}
 	if err := amount.Validate(); err != nil {
 		return PriceResult{}, fmt.Errorf("unpriceable: calculated amount exceeds supported precision")
 	}

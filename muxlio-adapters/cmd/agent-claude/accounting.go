@@ -42,7 +42,7 @@ func claudeAccountingEntry(ev map[string]json.RawMessage) (contract.AccountingEn
 		if err != nil {
 			return entry, errors.Join(tokenErr, fmt.Errorf("claude result.total_cost_usd: %w", err))
 		}
-		entry.Costs = []contract.CostMeasure{{Currency: "USD", Basis: "api-equivalent", Amount: contract.Measure[contract.Amount]{Collected: &contract.Reading[contract.Amount]{Value: amount, Source: "claude-result", Fidelity: "provider-estimate"}}}}
+		entry.Costs = []contract.CostMeasure{{Currency: "USD", Basis: "unspecified", Amount: contract.Measure[contract.Amount]{Collected: &contract.Reading[contract.Amount]{Value: amount, Source: "claude-result", Fidelity: "provider-estimate"}}}}
 	}
 	return entry, tokenErr
 }

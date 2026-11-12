@@ -1,0 +1,10 @@
+{
+  "reviewedAt": "2026-11-12",
+  "cliVersion": "1.5.6",
+  "flags": ["--prompt", "<fixed no-tools prompt>", "--output-format", "stream-json", "--dangerously-skip-permissions", "--add-dir", "<isolated scratch>", "--settings", "<session-only statusLine command>"],
+  "parallelRuns": [
+    {"conversationId": "fixture-conversation-a", "exitCode": 0, "statusLineInvocations": 0, "terminalCostPresent": false, "usage": {"input_tokens": 8284, "output_tokens": 64, "thinking_tokens": 54, "cache_read_tokens": 0, "total_tokens": 8348}},
+    {"conversationId": "fixture-conversation-b", "exitCode": 0, "statusLineInvocations": 0, "terminalCostPresent": false, "usage": {"input_tokens": 8293, "output_tokens": 69, "thinking_tokens": 59, "cache_read_tokens": 0, "total_tokens": 8362}}
+  ],
+  "conclusion": "No status-line hook or direct monetary quote observed under these headless flags. This is a negative result for this version and account, not a universal claim about interactive mode or other plans."
+}

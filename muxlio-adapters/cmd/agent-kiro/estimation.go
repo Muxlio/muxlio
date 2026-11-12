@@ -336,30 +336,42 @@ func kiroCapturedInput(dir string, enc tokenizer.Codec) (*int64, error) {
 }
 
 func recordKiroEstimates(r *accounting.Recorder, usage *adapter.TokenCounters, e *kiroOutputEstimator, dir string) error {
-	enc, err := tokenizer.Get(tokenizer.Cl100kBase)
-	if err != nil {
-		return err
-	}
-	input, inputErr := kiroCapturedInput(dir, enc)
-	output, err := e.count(enc)
-	if err != nil {
-		return err
-	}
 	tokens := adapter.CollectedTokenMeasures(usage, "kiro-cli")
 	if tokens == nil {
 		tokens = &contract.TokenMeasures{}
 	}
-	if input != nil {
+	var input, output *int64
+	var inputErr error
+	if tokens.Input.Collected == nil || tokens.Output.Collected == nil {
+		enc, err := tokenizer.Get(tokenizer.Cl100kBase)
+		if err != nil {
+			return err
+		}
+		if tokens.Input.Collected == nil {
+			input, inputErr = kiroCapturedInput(dir, enc)
+		}
+		if tokens.Output.Collected == nil {
+			output, err = e.count(enc)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if input != nil && tokens.Input.Collected == nil {
 		tokens.Input.Estimated = kiroEstimatedCount(*input, "kiro-request-capture")
 	}
-	if output != nil {
+	if output != nil && tokens.Output.Collected == nil {
 		tokens.Output.Estimated = kiroEstimatedCount(*output, "kiro-stream-content")
 	}
-	if input != nil || output != nil {
+	if input != nil || output != nil || usage != nil {
 		if err := r.ReplaceScope("tokens", []accounting.Part{{Scope: "tokens", Entry: contract.AccountingEntry{ID: "tokens", Tokens: tokens}}}); err != nil {
 			return err
 		}
-		if err := r.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "tokenizer-proxy-incomplete"); err != nil {
+		reason := "source-coverage-unverified"
+		if input != nil || output != nil {
+			reason = "tokenizer-proxy-incomplete"
+		}
+		if err := r.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", reason); err != nil {
 			return err
 		}
 	}

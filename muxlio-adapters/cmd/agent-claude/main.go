@@ -180,7 +180,7 @@ func main() {
 					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
 				}
 				if len(entry.Costs) > 0 {
-					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "api-equivalent"}, "partial", "source-coverage-unverified")
+					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "unspecified"}, "partial", "source-coverage-unverified")
 				}
 				if snapshot, err := recorder.Snapshot(); err == nil {
 					_ = publisher.Publish(*snapshot, true)

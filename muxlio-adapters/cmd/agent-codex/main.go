@@ -66,6 +66,7 @@ func main() {
 		args = append(args, "--model", params.Model)
 	}
 	args = append(args, prompt)
+	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, "codex", "--version").Version
 	cmd := exec.Command("codex", args...)
 	cmd.Dir = workDir
 	cmd.Env = adapter.CleanEnvForChild()
@@ -95,6 +96,7 @@ func main() {
 	}
 	publisher := adapter.NewAccountingPublisher()
 	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
+	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "api-equivalent"}, "unknown", "served-model-and-tariff-unverified")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -117,6 +119,12 @@ func main() {
 		_ = json.Unmarshal(typeRaw, &evType)
 
 		switch evType {
+		case "thread.started":
+			var threadID string
+			_ = json.Unmarshal(ev["thread_id"], &threadID)
+			if threadID != "" {
+				_ = recorder.ReportSession(contract.AccountingSession{ID: threadID, Provider: "openai", Source: "codex-exec-thread", Version: runnerVersion, Isolated: true})
+			}
 		case "item.completed":
 			// A turn may emit several agent_message items (commentary,
 			// final_answer, or phase-less). Concatenating them misstates the

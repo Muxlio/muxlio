@@ -1,6 +1,7 @@
 package accounting
 
 import (
+	"maps"
 	"sort"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -58,6 +59,7 @@ type UnknownPending struct {
 	PendingAttempts int `json:"pendingAttempts"`
 }
 type AccountingSummary struct {
+	ReferenceValue  *ReferenceSummary     `json:"referenceValue,omitempty"`
 	Tokens          SummaryAmount         `json:"tokens"`
 	TokenDimensions TokenDimensionSummary `json:"tokenDimensions"`
 	Credits         []CreditSummary       `json:"credits"`
@@ -234,7 +236,7 @@ func tokenTotalConflict(t *contract.TokenMeasures) bool {
 	} else {
 		return false
 	}
-	if total.Fidelity == "proxy" || input.Fidelity == "proxy" || output.Fidelity == "proxy" || total.Source != input.Source || total.Source != output.Source || total.Version != input.Version || total.Version != output.Version || total.Method != input.Method || total.Method != output.Method {
+	if total.Fidelity == "proxy" || input.Fidelity == "proxy" || output.Fidelity == "proxy" || total.Source != input.Source || total.Source != output.Source || total.Version != input.Version || total.Version != output.Version || total.Method != input.Method || total.Method != output.Method || !maps.Equal(total.Attributes, input.Attributes) || !maps.Equal(total.Attributes, output.Attributes) {
 		return false
 	}
 	sum, err := AddCount(input.Value, output.Value)
@@ -427,7 +429,7 @@ func pendingAccounting(state string) bool {
 
 // SummarizeAccounting folds persisted latest attempt snapshots. Entries are
 // disjoint scopes; collected and estimated readings on one measure never add.
-func SummarizeAccounting(views []AttemptView) (AccountingSummary, error) {
+func summarizeAccounting(views []AttemptView) (AccountingSummary, error) {
 	out := AccountingSummary{Credits: []CreditSummary{}, Costs: []CostSummary{}}
 	token := &meterAcc{}
 	dims := map[string]*meterAcc{}
