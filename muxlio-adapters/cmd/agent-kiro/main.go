@@ -82,12 +82,31 @@ func main() {
 	stderr := &tailBuffer{limit: 8 * 1024}
 	cmd.Stderr = stderr
 	cmd.Env = adapter.CleanEnvForChild()
+	// Kiro's per-invocation request capture preserves actual repeated history,
+	// tool schemas and tool results. Never mix another run's captures into this
+	// invocation, and remove prompt-bearing files before returning a response.
+	captureDir, captureErr := os.MkdirTemp("", "muxlio-kiro-accounting-")
+	if captureErr == nil {
+		filtered := cmd.Env[:0]
+		for _, env := range cmd.Env {
+			if !strings.HasPrefix(env, "KIRO_DUMP_REQUESTS=") && !strings.HasPrefix(env, "KIRO_DUMP_REQUESTS_DIR=") {
+				filtered = append(filtered, env)
+			}
+		}
+		cmd.Env = append(filtered, "KIRO_DUMP_REQUESTS=1", "KIRO_DUMP_REQUESTS_DIR="+captureDir)
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		if captureDir != "" {
+			_ = os.RemoveAll(captureDir)
+		}
 		adapter.Fail("agent-kiro: stdout pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
+		if captureDir != "" {
+			_ = os.RemoveAll(captureDir)
+		}
 		adapter.Fail("agent-kiro: starting kiro-cli: %v", err)
 	}
 
@@ -97,6 +116,7 @@ func main() {
 	var runErr string
 	var completed bool
 	var usage *adapter.TokenCounters
+	var estimate kiroOutputEstimator
 	recorder := accounting.NewRecorder()
 	_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
 	publisher := adapter.NewAccountingPublisher()
@@ -121,6 +141,7 @@ func main() {
 		}
 		var evType string
 		_ = json.Unmarshal(typeRaw, &evType)
+		estimate.observe(evType, ev["data"])
 		// ACP reports turn metadata on sessionUpdate before runFinished. The
 		// final event may carry no usage; do not discard already reported counts.
 		if evType == "sessionUpdate" || evType == "runFinished" || evType == "runError" {
@@ -223,6 +244,14 @@ func main() {
 	adapter.AppendLogChunk("stderr", stderr.String())
 	if !completed {
 		runErr = appendFailure(runErr, "stream ended without a completion event")
+	}
+	if err := recordKiroEstimates(recorder, usage, &estimate, captureDir); err != nil || captureErr != nil {
+		adapter.AppendLogChunk("stderr", "accounting-estimate-incomplete")
+	}
+	if captureDir != "" {
+		if err := os.RemoveAll(captureDir); err != nil {
+			adapter.AppendLogChunk("stderr", "accounting-capture-cleanup-failed")
+		}
 	}
 	finalAccounting, accountingErr := adapter.FinalizeAccounting(recorder, publisher)
 	if accountingErr != nil {

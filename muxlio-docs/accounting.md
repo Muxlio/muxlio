@@ -124,6 +124,31 @@ complete coverage. Enabling a provider price estimate requires a decoder fixture
 and controlled live evidence of the actual request categories. No calibrated
 credit/context-to-token estimator is enabled.
 
+Kiro supplements collected token readings with local `cl100k_base` BPE proxies.
+The adapter enables `KIRO_DUMP_REQUESTS` in a private temporary directory for
+each invocation. It counts text, tool definitions, tool-call arguments and tool
+results from every captured request, including the history actually retained
+after compaction. Repeated history counts on each request; background requests
+captured during the invocation contribute input too. It does not scan shared
+session history or infer consumption from context percentages or credits.
+
+Output estimates tokenize streamed assistant text, exposed reasoning and the
+latest arguments for each tool call. Chunks are joined before tokenization;
+legacy text and terminal echoes are fallback sources rather than extra output.
+These estimates use `fidelity: proxy`, method `cl100k_base-bpe`, and version
+`tokenizer-0.7.0-kiro-content-v1`. The bundled vocabulary needs no runtime download.
+Collected readings retain precedence, including explicit zeros. Input remains
+unavailable when request capture is absent or invalid. Neither cache usage nor
+a complete token total is invented. Capture files are removed before returning
+success or failure; only numeric evidence enters accounting.
+
+Kiro CLI 3.2.0 with agent engine 2.37.0 was probed with a tools-disabled prompt
+to verify the capture shape and background title request. The proxy tokenizer
+is not Kiro's served-model tokenizer, and capture does not establish coverage
+of server-added context, hidden reasoning, transport retries, multimodal tokens
+or background output. Estimates therefore retain partial coverage, with reason
+`tokenizer-proxy-incomplete`; they are not calibrated billing measurements.
+
 Snapshots preserve bounded `models` reports with an ID, source and role:
 `requested`, `selected`, or `served`. A configured default, display label or
 `auto` selection does not establish the actual served model. Claude terminal

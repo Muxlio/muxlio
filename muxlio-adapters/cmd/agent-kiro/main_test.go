@@ -146,7 +146,7 @@ func TestKiroStreamMergesPartialSessionUsage(t *testing.T) {
 	}
 }
 
-func TestKiroStreamReportsCreditsWithoutTokens(t *testing.T) {
+func TestKiroStreamReportsCreditsWithEstimatedOutput(t *testing.T) {
 	bin := buildAgentKiro(t)
 	workDir := t.TempDir()
 	binDir := t.TempDir()
@@ -185,12 +185,21 @@ func TestKiroStreamReportsCreditsWithoutTokens(t *testing.T) {
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
 	}
-	if resp.Accounting == nil || !resp.Accounting.Final || len(resp.Accounting.Entries) != 1 {
+	if resp.Accounting == nil || !resp.Accounting.Final || len(resp.Accounting.Entries) != 2 {
 		t.Fatalf("missing accounting: %s", raw)
 	}
-	entry := resp.Accounting.Entries[0]
-	if entry.Tokens != nil || len(entry.Credits) != 1 || entry.Credits[0].Provider != "kiro" || entry.Credits[0].Amount.Collected.Value != "0.18065595854063016" {
-		t.Fatalf("unexpected exact credit accounting: %s", raw)
+	var credits, estimates bool
+	for _, entry := range resp.Accounting.Entries {
+		if len(entry.Credits) == 1 {
+			credits = entry.Credits[0].Provider == "kiro" && entry.Credits[0].Amount.Collected.Value == "0.18065595854063016"
+		}
+		if entry.Tokens != nil {
+			x := entry.Tokens
+			estimates = x.Output.Collected == nil && x.Output.Estimated != nil && x.Output.Estimated.Value == "1" && x.Output.Estimated.Fidelity == "proxy" && x.Input.Estimated == nil && x.Total.Estimated == nil
+		}
+	}
+	if !credits || !estimates {
+		t.Fatalf("unexpected credit/output accounting: %s", raw)
 	}
 }
 
