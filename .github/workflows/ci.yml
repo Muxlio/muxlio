@@ -41,7 +41,7 @@ jobs:
 
       - name: Test UI (standalone)
         working-directory: muxlio-ui
-        run: npm test && npm run smoke
+        run: npm test
 
   # ── Go – adapters ─────────────────────────────────────────────────────────
   go-adapters:

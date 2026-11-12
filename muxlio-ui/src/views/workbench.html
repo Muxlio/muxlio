@@ -1,0 +1,199 @@
+<template data-view="check-icon-node-card-check">
+<span class="node-card-check succeeded">✓</span>
+</template>
+
+<template data-view="check-icon-node-card-check-2">
+<span class="node-card-check failed">✕</span>
+</template>
+
+<template data-view="check-icon-node-card-check-3">
+<span class="node-card-check running">⟳</span>
+</template>
+
+<template data-view="wb-activity-button-btn">
+<button type="button" class="btn ghost wb-activity-action" {{value0}}>{{value1}}</button>
+</template>
+
+<template data-view="item-html-wb-activity-timing">
+<span class="wb-activity-timing">{{value0}}</span>
+</template>
+
+<template data-view="item-html-wb-activity-item">
+<li class="wb-activity-item wb-activity-item--{{value0}}"><div class="wb-activity-item-main"><span class="state {{value1}}">{{value2}}</span><strong>{{value3}}</strong><p>{{value4}}</p>{{value5}}</div><div class="wb-activity-item-actions">{{value6}}</div></li>
+</template>
+
+<template data-view="item-html-wb-activity-list">
+<ul class="wb-activity-list" role="list">{{value0}}</ul>
+</template>
+
+<template data-view="item-html-small">
+<small>Completed count reflects materialized nodes only.</small>
+</template>
+
+<template data-view="item-html-wb-activity-empty">
+<div class="wb-activity-empty{{value0}}"><span class="wb-activity-empty-mark" aria-hidden="true">{{value1}}</span><span><strong>{{value2}}</strong>{{value3}}</span></div>
+</template>
+
+<template data-view="html-wb-activity-details">
+<details class="wb-activity-details" data-preserve-key="wb-activity"><summary><span class="wb-activity-heading"><strong>Current activity</strong><span class="wb-activity-strip-summary subtle">{{value0}}</span></span></summary>{{value1}}</details>
+</template>
+
+<template data-view="progress-stat">
+<div class="stat"{{value0}}><div class="stat-val {{value1}}">{{value2}}</div><div class="stat-label">{{value3}}</div></div>
+</template>
+
+<template data-view="edge-graph-connector">
+<div class="graph-connector{{value0}}" aria-hidden="true"><div class="connector-line"></div></div>
+</template>
+
+<template data-view="frame-graph-graph-col">
+<div class="graph-col"><div class="node-start-gate{{value0}}">Start</div></div>{{value1}}{{value2}}{{value3}}<div class="graph-col"><div class="node-done-gate{{value4}}" aria-label="Done{{value5}}">Done</div></div>
+</template>
+
+<template data-view="graph-markup-graph-scope-empty">
+<div class="graph-scope-empty">No activations materialized yet.</div>
+</template>
+
+<template data-view="status-badge-graph-status">
+<span class="graph-status {{value0}}">{{value1}}</span>
+</template>
+
+<template data-view="status-summary-graph-status-summary">
+<span class="graph-status-summary">{{value0}}</span>
+</template>
+
+<template data-view="render-branch-graph-route-skip">
+<div class="graph-route-skip">Bypass</div>
+</template>
+
+<template data-view="render-branch-graph-branch-route">
+<div class="graph-branch-route {{value0}}"><div class="graph-branch-path"><div class="graph-route-heading"><span class="graph-route-condition">{{value1}}</span><span>{{value2}}</span></div>{{value3}}</div></div>
+</template>
+
+<template data-view="render-branch-graph-branch-set">
+<details class="graph-branch-set" data-preserve-key="branch:{{value0}}:{{value1}}"><summary class="graph-control-heading"><strong>Branch · {{value2}}</strong>{{value3}}<span class="graph-disclosure-hint">Paths</span></summary><div class="graph-branch-routes">{{value4}}</div><div class="graph-control-footer">Paths rejoin before continuing</div></details>
+</template>
+
+<template data-view="render-nested-scopes-graph-iteration-outcome">
+<span class="graph-iteration-outcome {{value0}}">{{value1}}</span>
+</template>
+
+<template data-view="render-nested-scopes-graph-iteration-transition">
+<div class="graph-iteration-transition {{value0}}">{{value1}}</div>
+</template>
+
+<template data-view="render-nested-scopes-graph-map-item">
+<details class="graph-map-item" data-preserve-key="{{value0}}:{{value1}}"><summary><span class="graph-item-label">{{value2}}</span>{{value3}}{{value4}}</summary><div class="graph-map-item-content">{{value5}}</div>{{value6}}</details>
+</template>
+
+<template data-view="render-nested-scopes-graph-control-footer">
+<div class="graph-control-footer">Repeat while condition is unmet <span>Condition met: continue</span></div>
+</template>
+
+<template data-view="render-nested-scopes-graph-map-set">
+<details class="graph-map-set {{value0}}" data-preserve-key="control:{{value1}}:{{value2}}:{{value3}}"><summary class="graph-control-heading"><strong>{{value4}}</strong><span class="graph-control-count">{{value5}} {{value6}}</span>{{value7}}</summary><div class="graph-map-grid">{{value8}}</div>{{value9}}</details>
+</template>
+
+<template data-view="render-nested-scopes-graph-nested-scopes">
+<div class="graph-nested-scopes">{{value0}}</div>
+</template>
+
+<template data-view="render-scope-span-2">
+<span>skill: {{value0}}</span>
+</template>
+
+<template data-view="render-scope-graph-col">
+<div class="graph-col{{value0}}">
+        <button class="node-card {{value1}} {{value2}}" data-act="{{value3}}" aria-pressed="{{value4}}">
+          {{value5}}
+          <div class="node-type"><span class="node-type-num">{{value6}}{{value7}}</span></div>
+          <div class="node-name">{{value8}}</div>
+          <div class="node-execution-state">{{value9}}</div>
+          <div class="node-meta">{{value10}} {{value11}}</div>
+        </button>
+
+</template>
+
+<template data-view="render-scope-connector-label">
+<span class="connector-label pass">PASS</span>
+</template>
+
+<template data-view="render-scope-connector-label-2">
+<span class="connector-label fail">FAIL →</span>
+</template>
+
+<template data-view="render-scope-graph-connector">
+<div class="graph-connector"><div class="connector-line"></div>{{value0}}{{value1}}</div>
+</template>
+
+<template data-view="html-graph-scope-empty">
+<div class="graph-scope-empty">No activations in this scope.</div>
+</template>
+
+<template data-view="render-scope-graph-scope-flow">
+<div class="graph-scope-flow">{{value0}}</div>
+</template>
+
+<template data-view="render-scope-graph-scope">
+<details class="graph-scope" data-preserve-key="scope:{{value0}}"><summary class="graph-scope-heading">{{value1}}{{value2}}</summary><div class="graph-scope-flow">{{value3}}</div></details>
+</template>
+
+<template data-view="build-wb-events-div">
+<div style="color:var(--muted);font-size:11px;padding:4px 0">No events recorded.</div>
+</template>
+
+<template data-view="build-wb-events-subtle">
+ <span class="subtle">{{value0}}</span>
+</template>
+
+<template data-view="build-wb-events-event-row">
+<div class="event-row"><span class="event-time">{{value0}}</span><span class="event-text"><strong>{{value1}}</strong>{{value2}}</span></div>
+</template>
+
+<template data-view="build-wb-artifacts-div">
+<div style="color:var(--muted);font-size:11px;padding:4px 0">No artifacts recorded.</div>
+</template>
+
+<template data-view="build-wb-artifacts-artifact-row">
+<div class="artifact-row">
+        <div class="artifact-icon">{{value0}}</div>
+        <div><div class="artifact-name">{{value1}}</div><div class="artifact-meta">{{value2}} · {{value3}}</div></div>
+        <button class="artifact-view" data-act="{{value4}}" data-artname="{{value5}}">View</button>
+      </div>
+</template>
+
+<template data-view="render-workbench-subtle">
+<li class="subtle" style="font-size:11px;color:var(--muted)">No events.</li>
+</template>
+
+<template data-view="run-detail-inner-html-loading">
+<div class="loading">Loading run…</div>
+</template>
+
+<template data-view="run-detail-inner-html-page">
+<div class="page"><div class="notice error" role="alert">Unable to load run: {{value0}} <a href="/runs" style="color:var(--teal)">← Back to runs</a></div></div>
+</template>
+
+<template data-view="build-wb-activity-markup-fragment">
+data-run-action="resume"
+</template>
+
+<template data-view="build-wb-activity-markup-fragment-2">
+data-wb-focus-act="{{value0}}"
+</template>
+
+<template data-view="build-wb-activity-markup-fragment-3">
+data-ops-action="resolve" data-run="{{value0}}" data-attempt="{{value1}}"
+</template>
+
+<template data-view="build-wb-activity-markup-fragment-4">
+data-wb-focus-input="{{value0}}"
+</template>
+
+<template data-view="build-wb-activity-markup-fragment-5">
+data-wb-transcript="{{value0}}"
+</template>
+
+<template data-view="progress-fragment">
+ title="{{value0}}"
+</template>

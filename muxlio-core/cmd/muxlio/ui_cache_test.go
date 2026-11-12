@@ -14,10 +14,10 @@ import (
 
 func TestServiceUIFreshAssets(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "js"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	assets := map[string]string{"/": "index.html", "/app.css": "app.css", "/js/workbench.js": "js/workbench.js"}
+	assets := map[string]string{"/": "index.html", "/dist/app.css": "dist/app.css", "/dist/chunk-a1b2.js": "dist/chunk-a1b2.js"}
 	for _, name := range assets {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("current asset"), 0600); err != nil {
 			t.Fatal(err)
@@ -92,7 +92,7 @@ func TestServiceUIDirectRoutes(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"/unknown", "/js/unknown.js", "/v1/unknown", "/runs/a/extra"} {
+	for _, path := range []string{"/unknown", "/dist/unknown.js", "/js/core.js", "/workspace.js", "/src/core.ts", "/v1/unknown", "/runs/a/extra"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
 		if response.Code != 404 {

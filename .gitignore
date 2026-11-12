@@ -6,7 +6,7 @@
 *.out
 
 # ---- TypeScript / Node ----
-node_modules/
+**/node_modules/
 muxlio-sdk/dist/
 muxlio-compiler/dist/
 muxlio-testing/dist/
@@ -24,10 +24,7 @@ muxlio-testing/dist/
 *.db-shm
 
 # ---- Compiled plan artifacts (generated, not source) ----
-recipes/**/plan.json
-recipes/**/input.json
-recipes/**/*.input.json
-recipes/**/fake.json
+recipes/**/*.json
 
 # ---- Adapter binaries (built outputs) ----
 adapters
@@ -41,7 +38,7 @@ Thumbs.db
 *.swo
 
 # ---- Build outputs ----
-dist/
+**/dist/
 build/
 out/
 site/
@@ -53,3 +50,9 @@ site/
 !.env.sample
 
 semantic-review
+
+# Generated UI regression fixtures
+/muxlio-ui/test/.generated/
+
+# Compiled UI component templates
+/muxlio-ui/.generated/

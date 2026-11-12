@@ -23,11 +23,11 @@ for adapter in agent-a2a agent-acp agent-antigravity agent-claude agent-codex ag
 done
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"
-cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/server.mjs" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favicon.ico" \
-  "$repo/muxlio-ui/app.css" "$repo/muxlio-ui/workspace.css" "$repo/muxlio-ui/operations.css" "$repo/muxlio-ui/workspace.js" \
+(cd "$repo" && npm run build --workspace muxlio-ui)
+cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favicon.ico" \
   "$destination/share/muxlio/ui/"
-mkdir -p "$destination/share/muxlio/ui/js"
-cp "$repo/muxlio-ui/js/"*.js "$destination/share/muxlio/ui/js/"
+mkdir -p "$destination/share/muxlio/ui/dist"
+cp "$repo/muxlio-ui/dist/server.mjs" "$repo/muxlio-ui/dist/app.js" "$repo/muxlio-ui/dist/app.js.map" "$repo/muxlio-ui/dist/app.css" "$destination/share/muxlio/ui/dist/"
 cp "$repo/LICENSE" "$destination/share/muxlio/LICENSE"
 if [ -f "$repo/muxlio-skills/SKILL.md" ]; then
   cp "$repo/muxlio-skills/SKILL.md" "$destination/share/muxlio/skills/SKILL.md"

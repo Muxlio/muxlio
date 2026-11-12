@@ -1,0 +1,142 @@
+<template data-view="list-inner-html-artifact-row">
+<div class="artifact-row"><div class="artifact-icon">📄</div><div><div class="artifact-name">{{value0}}</div><div class="artifact-meta">{{value1}}</div></div><button class="artifact-view" data-open-output="{{value2}}" data-output-name="{{value3}}">View</button></div>
+</template>
+
+<template data-view="event-html-ev-sub">
+<span class="ev-sub">{{value0}}</span>
+</template>
+
+<template data-view="event-html-ev-data">
+<details class="ev-data" data-preserve-key="event:{{value0}}"><summary>data</summary><pre>{{value1}}</pre></details>
+</template>
+
+<template data-view="event-html-ev">
+<li class="ev{{value0}}"><span class="ev-time">{{value1}}</span><span class="ev-dot" aria-hidden="true"></span><span class="ev-body"><strong class="ev-label">{{value2}}</strong>{{value3}}</span><span class="ev-seq">#{{value4}}</span>{{value5}}</li>
+</template>
+
+<template data-view="render-live-events-subtle">
+<li class="subtle">No events recorded.</li>
+</template>
+
+<template data-view="controls-inner-html-btn">
+<button class="btn primary" data-run-action="start">Start run</button>
+</template>
+
+<template data-view="controls-inner-html-btn-2">
+<button class="btn ghost" data-run-action="pause">Pause run</button>
+</template>
+
+<template data-view="controls-inner-html-btn-3">
+<button class="btn primary" data-run-action="resume">Resume run</button>
+</template>
+
+<template data-view="controls-inner-html-btn-4">
+<button class="btn primary" data-run-action="retry">Retry run</button>
+</template>
+
+<template data-view="controls-inner-html-btn-5">
+<button class="btn ghost" data-run-action="cancel" style="color:var(--red)">Cancel run</button>
+</template>
+
+<template data-view="rd-inner-html-page">
+<div class="page"><div class="notice error" role="alert">Unable to load run: {{value0}}. <a href="/runs" style="color:var(--teal)">← Back to runs</a></div></div>
+</template>
+
+<template data-view="pause-btn-inner-html-live-dot">
+<span class="live-dot" aria-hidden="true"></span><span>Live</span>
+</template>
+
+<template data-view="pause-btn-inner-html-span">
+<span>Hold</span>
+</template>
+
+<template data-view="el-inner-html-primary-cell">
+
+      <tr>
+        <td class="primary-cell"><strong>{{value0}}</strong></td>
+        <td class="mono">{{value1}}</td>
+        <td style="color:var(--muted)">{{value2}}</td>
+        <td style="color:var(--muted)">{{value3}}</td>
+        <td><button class="btn ghost" data-wf-digest="{{value4}}" data-wf-name="{{value5}}">View plan</button></td>
+      </tr>
+</template>
+
+<template data-view="el-inner-html-tablebox-2">
+<div class="tablebox"><table>
+    <thead><tr><th>Name</th><th>Digest</th><th>IR Version</th><th>Registered</th><th style="width:80px"></th></tr></thead>
+    <tbody>{{value0}}
+    </tbody></table></div>
+</template>
+
+<template data-view="meta-el-inner-html-mono">
+<span class="mono">Loading…</span>
+</template>
+
+<template data-view="meta-el-inner-html-span">
+<span><em>{{value0}}</em> <strong>{{value1}}</strong></span>
+</template>
+
+<template data-view="el-inner-html-btn">
+<button class="btn ghost" data-art-download="{{value0}}" data-art-name="{{value1}}">Download</button>
+</template>
+
+<template data-view="el-inner-html-btn-2">
+<button class="btn ghost" data-art-copy="{{value0}}">Copy digest</button>
+</template>
+
+<template data-view="el-inner-html-primary-cell-2">
+
+      <tr>
+        <td class="primary-cell"><strong>{{value0}}</strong>{{value1}}</td>
+        <td><a href="/runs/{{value2}}" style="color:var(--teal)">{{value3}}</a><small style="display:block;color:var(--muted)">{{value4}}</small></td>
+        <td class="mono">{{value5}}</td>
+        <td class="mono">{{value6}}</td>
+        <td class="row-actions">
+          {{value7}}
+          {{value8}}
+        </td>
+      </tr>
+</template>
+
+<template data-view="el-inner-html-tablebox-4">
+<div class="tablebox"><table>
+    <thead><tr><th>Name</th><th>Run / node</th><th>MIME / path</th><th>Digest</th><th style="width:90px"></th></tr></thead>
+    <tbody>{{value0}}
+    </tbody></table></div>
+</template>
+
+<template data-view="progress-markup-div">
+<div style="font-size:11px;font-weight:640;color:var(--ink);margin-bottom:10px">{{value0}} completed / {{value1}} known</div>
+</template>
+
+<template data-view="progress-markup-div-2">
+<div style="margin-bottom:12px">
+</template>
+
+<template data-view="progress-markup-div-3">
+<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:6px">Root workflow</div>
+</template>
+
+<template data-view="progress-markup-state">
+<div data-stage="{{value0}}" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px"><span class="state {{value1}}" style="font-size:10px"></span><span>{{value2}}</span></div>
+</template>
+
+<template data-view="progress-markup-div-5">
+<div style="margin-bottom:12px;padding:10px;border:1px solid var(--border2);border-radius:6px;background:var(--surface2)">
+</template>
+
+<template data-view="progress-markup-div-6">
+<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:8px">Feature · {{value0}}</div>
+</template>
+
+<template data-view="progress-markup-state-2">
+<div data-stage="{{value0}}" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px"><span class="state {{value1}}" style="font-size:10px"></span><span>{{value2}}</span>
+</template>
+
+<template data-view="progress-markup-span">
+<span style="color:var(--muted);font-size:10px">· {{value0}}</span>
+</template>
+
+<template data-view="progress-markup-span-2">
+<span style="color:var(--red);font-size:10px;display:block;padding:2px 0 0 10px">{{value0}}</span>
+</template>

@@ -1,0 +1,207 @@
+<template data-view="bar-chart-markup-p">
+<p style="color:var(--muted);font-size:12px">No data.</p>
+</template>
+
+<template data-view="bar-chart-markup-abc-row">
+<{{value0}} class="abc-row{{value1}}"{{value2}}{{value3}} role="listitem">
+      <div class="abc-label" title="{{value4}}">{{value5}}</div>
+      <div class="abc-track">
+        <div class="abc-bar" style="width:{{value6}}%;background:var({{value7}})"></div>
+      </div>
+      <div class="abc-val">{{value8}}</div>
+    </{{value9}}>
+</template>
+
+<template data-view="bar-chart-markup-analytics-bar-chart">
+<div class="analytics-bar-chart" role="list">{{value0}}</div>
+</template>
+
+<template data-view="sparkline-markup-p">
+<p style="color:var(--muted);font-size:12px">{{value0}}</p>
+</template>
+
+<template data-view="bars-spark-seg">
+<div class="spark-seg failed" style="height:{{value0}}px"></div>
+</template>
+
+<template data-view="bars-spark-seg-2">
+<div class="spark-seg succeeded" style="height:{{value0}}px"></div>
+</template>
+
+<template data-view="bars-spark-seg-3">
+<div class="spark-seg pending" style="height:{{value0}}px"></div>
+</template>
+
+<template data-view="bars-spark-col">
+<{{value0}} class="spark-col{{value1}}"{{value2}}{{value3}} title="{{value4}}" aria-label="{{value5}}">
+      <div class="spark-bar-wrap" style="height:{{value6}}px">
+        {{value7}}
+        {{value8}}
+        {{value9}}
+      </div>
+    </{{value10}}>
+</template>
+
+<template data-view="sparkline-markup-sparkline">
+<div class="sparkline" role="img" aria-label="{{value0}}">
+    <div class="spark-bars">{{value1}}</div>
+    <div class="spark-axis">{{value2}}</div>
+  </div>
+</template>
+
+<template data-view="bars-spark-seg-4">
+<div class="spark-seg tok-in" style="height:{{value0}}px"></div>
+</template>
+
+<template data-view="bars-spark-col-2">
+<{{value0}} class="spark-col{{value1}}"{{value2}}{{value3}} title="{{value4}}" aria-label="{{value5}}">
+      <div class="spark-bar-wrap" style="height:{{value6}}px">
+        {{value7}}
+      </div>
+    </{{value8}}>
+</template>
+
+<template data-view="usage-measure-sparkline-markup-sparkline">
+<div class="sparkline" role="img" aria-label="{{value0}} trend">
+    <div class="spark-bars">{{value1}}</div>
+    <div class="spark-axis">{{value2}}</div>
+  </div>
+</template>
+
+<template data-view="analytics-attempt-link-analytics-run-link">
+<a class="analytics-run-link" href="/transcripts/{{value0}}/{{value1}}">{{value2}}</a>
+</template>
+
+<template data-view="analytics-attempt-link-analytics-run-link-2">
+<a class="analytics-run-link" href="/runs/{{value0}}">{{value1}}</a>
+</template>
+
+<template data-view="state-options-option">
+<option value="{{value0}}"{{value1}}>{{value2}}</option>
+</template>
+
+<template data-view="chips-analytics-filter-chip">
+<span class="analytics-filter-chip">{{value0}}</span>
+</template>
+
+<template data-view="previous-btn">
+<button type="button" class="btn ghost" data-analytics-page="{{value0}}">Previous</button>
+</template>
+
+<template data-view="next-btn">
+<button type="button" class="btn ghost" data-analytics-page="{{value0}}">Next</button>
+</template>
+
+<template data-view="paging-analytics-pager">
+<div class="analytics-pager"><p class="subtle" role="status">{{value0}}</p>{{value1}}{{value2}}</div>
+</template>
+
+<template data-view="analytics-filter-bar-markup-analytics-panel">
+<section class="analytics-panel analytics-filters" aria-label="Analytics filters">
+    <form id="analyticsFiltersForm" class="analytics-filter-form">
+      <div class="analytics-filter-row">
+        <label>Range <select name="preset" aria-label="Time range preset">{{value0}}</select></label>
+        <label class="analytics-custom-range"{{value1}}>From <input name="from" type="datetime-local" value="{{value2}}"></label>
+        <label class="analytics-custom-range"{{value3}}>To <input name="to" type="datetime-local" value="{{value4}}"></label>
+        <details class="analytics-advanced"><summary>More filters</summary><div class="analytics-advanced-fields"><label>State <select name="state" multiple size="3" aria-label="Run states">{{value5}}</select></label>
+
+        <label>Executor <input name="executor" value="{{value6}}" placeholder="executor filter"></label>
+        <label>Label timezone <select name="tz" aria-label="Chart label timezone"><option value="UTC"{{value7}}>UTC</option><option value="{{value8}}"{{value9}}>Local</option></select></label>
+        </div></details><label>Workflow <input name="workflow" value="{{value10}}" placeholder="All workflows"></label><button type="submit" class="btn">Apply filters</button>
+        <button type="button" class="btn ghost" id="analyticsResetFilters">Reset</button>
+      </div>
+    </form>
+    <div class="analytics-filter-chips" aria-live="polite">{{value11}}</div>
+    {{value12}}
+    {{value13}}
+  </section>
+</template>
+
+<template data-view="rows-analytics-run-link">
+<tr><td>Run</td><td>{{value0}}</td><td><a class="analytics-run-link" href="/runs/{{value1}}">Open run ↗</a></td><td>—</td><td>{{value2}}</td><td class="subtle">createdAt</td></tr>
+</template>
+
+<template data-view="rows-analytics-run-link-2">
+<tr><td>Attempt</td><td>{{value0}}</td><td><a class="analytics-run-link" href="/runs/{{value1}}">Open run ↗</a></td><td>{{value2}}</td><td>{{value3}} · {{value4}}</td><td class="num">{{value5}}</td></tr>
+</template>
+
+<template data-view="analytics-drilldown-markup-tr">
+<tr><td colspan="6">No matching records for this selection.</td></tr>
+</template>
+
+<template data-view="analytics-drilldown-markup-analytics-panel">
+<dialog class="analytics-panel analytics-drilldown" id="analyticsDrilldown" aria-labelledby="analyticsDrillTitle">
+    <div class="analytics-drill-head"><div><p class="analytics-eyebrow">Selected chart records</p><h2 id="analyticsDrillTitle">{{value0}}</h2></div><button type="button" class="btn ghost" id="analyticsCloseDrill">Close</button></div>
+    <p class="subtle">{{value1}} {{value2}} in the current filters{{value3}}</p>
+    <div class="tablebox"><table><thead><tr><th>Type</th><th>Workflow</th><th>Run</th><th>Attempt</th><th>Executor / state</th><th>{{value4}}</th></tr></thead><tbody>{{value5}}</tbody></table></div>
+  </dialog>
+</template>
+
+<template data-view="analytics-measure-toolbar-markup-analytics-panel">
+<div class="analytics-panel subtle" role="status">No usage measures reported across loaded attempts.</div>
+</template>
+
+<template data-view="analytics-measure-toolbar-markup-analytics-toolbar">
+<div class="analytics-toolbar">
+      <label class="analytics-measure-label">Measure
+        <select id="analyticsMeasureSelect" class="analytics-measure-select" aria-label="Select usage measure">{{value0}}</select>
+      </label>
+    </div>
+</template>
+
+<template data-view="card-analytics-chart-card">
+<section class="analytics-chart-card"><h2>{{value0}}</h2>{{value1}}</section>
+</template>
+
+<template data-view="analytics-details-markup-analytics-chart-grid">
+<div class="analytics-chart-grid analytics-executor-charts">
+    {{value0}}
+    {{value1}}
+    {{value2}}
+  </div>
+</template>
+
+<template data-view="card-analytics-chart-card-2">
+<section class="analytics-chart-card{{value0}}"><h2>{{value1}}</h2>{{value2}}</section>
+</template>
+
+<template data-view="legend-spark-legend-item">
+<span class="spark-legend-item"><span class="spark-swatch {{value0}}"></span>{{value1}}</span>
+</template>
+
+<template data-view="legend-spark-legend">
+<div class="spark-legend">{{value0}}</div>
+</template>
+
+<template data-view="warning-li">
+<li>Statistics are partial · <a href="/runs/{{value0}}">{{value1}}</a> · {{value2}}</li>
+</template>
+
+<template data-view="warning-analytics-data-status">
+<details class="analytics-data-status" role="status"><summary>Partial data · {{value0}} runs</summary><ul>{{value1}}</ul></details>
+</template>
+
+<template data-view="container-inner-html-analytics-chart-card">
+<section class="analytics-chart-card analytics-chart-wide analytics-usage-trends"><div class="analytics-usage-head"><h2>Usage</h2>{{value0}}</div>
+      {{value1}}{{value2}}
+      <div class="analytics-breakdown-grid">
+        <div><h3 class="analytics-breakdown-title">By executor</h3>{{value3}}</div>
+        <div><h3 class="analytics-breakdown-title">By workflow</h3>{{value4}}</div>
+      </div></section>
+</template>
+
+<template data-view="container-inner-html-analytics-chart-grid">
+<div class="analytics-chart-grid analytics-primary-charts">
+</template>
+
+<template data-view="container-inner-html-loading">
+<div class="loading" role="status" aria-live="polite">Loading analytics…</div>
+</template>
+
+<template data-view="drill-fragment">
+ data-analytics-drill="{{value0}}"
+</template>
+
+<template data-view="btn-type-fragment">
+ type="button"
+</template>

@@ -1,0 +1,48 @@
+<template data-view="analytics-distrib-cell-subtle">
+<span class="subtle">Unavailable</span>
+</template>
+
+<template data-view="note-subtle">
+<span class="subtle"> {{value0}}</span>
+</template>
+
+<template data-view="analytics-distrib-cell-subtle-2">
+{{value0}} / {{value1}}<span class="subtle"> (n={{value2}})</span>{{value3}}
+</template>
+
+<template data-view="contrib-rows-analytics-run-link">
+<tr>
+      <td>{{value0}}</td>
+      <td>{{value1}}</td>
+      <td><a class="analytics-run-link" href="/runs/{{value2}}">{{value3}}</a></td>
+      <td class="subtle">retry {{value4}} · {{value5}}</td>
+      <td class="num">{{value6}}</td>
+    </tr>
+</template>
+
+<template data-view="analytics-retry-latency-markup-tr">
+<tr><td colspan="5">None</td></tr>
+</template>
+
+<template data-view="analytics-retry-latency-markup-analytics-panel">
+<section class="analytics-panel analytics-retry-latency analytics-chart-wide" aria-labelledby="analyticsRetryLatencyTitle">
+    <h2 id="analyticsRetryLatencyTitle">Failure, retry, and latency</h2>
+    <div class="analytics-retry-grid">
+      <section class="analytics-chart-card">
+        <h3 class="analytics-breakdown-title">Run outcomes</h3>
+        {{value0}}
+      </section>
+      <section class="analytics-chart-card">
+        <h3 class="analytics-breakdown-title">Attempt outcomes</h3>
+        {{value1}}
+      </section>
+    </div>
+    <div class="analytics-retry-grid">
+      <section class="analytics-chart-card"><h3 class="analytics-breakdown-title">Median worker time · workflow</h3>{{value2}}</section>
+      <section class="analytics-chart-card"><h3 class="analytics-breakdown-title">Median worker time · executor</h3>{{value3}}</section>
+    </div>
+    <section class="analytics-slow-attempts"><h3 class="analytics-breakdown-title">Slow or failing attempts</h3>
+      <div class="tablebox"><table><thead><tr><th scope="col">Workflow</th><th scope="col">Executor</th><th scope="col">Run</th><th scope="col">Attempt</th><th scope="col">Duration</th></tr></thead><tbody>{{value4}}</tbody></table></div>
+    </section>
+  </section>
+</template>

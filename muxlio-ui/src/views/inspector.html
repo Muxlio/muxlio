@@ -1,0 +1,279 @@
+<template data-view="transcript-section-markup-insp-section">
+<div class="insp-section" id="inspTranscriptSection"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="font-size:10px;font-weight:650;color:var(--muted)">Live transcript{{value0}}</span><a href="{{value1}}" class="insp-transcript-link" aria-label="Open transcript page">Open ↗</a></div><div class="insp-transcript markdown-body{{value2}}" id="inspTranscriptBody">{{value3}}</div></div>
+</template>
+
+<template data-view="build-attempt-usage-markup-section">
+<section><h4>Attempt {{value0}}</h4><dl>{{value1}}</dl></section>
+</template>
+
+<template data-view="build-attempt-usage-markup-insp-section">
+<div class="insp-section"><h3>Accounting</h3>{{value0}}</div>
+</template>
+
+<template data-view="render-inspector-wb-insp-section">
+
+    <div class="insp-section">
+      <dl class="insp-kv">
+        <dt>Status</dt><dd class="{{value0}}">{{value1}} {{value2}}
+</template>
+
+<template data-view="render-inspector-wb-dd">
+</dd>
+</template>
+
+<template data-view="render-inspector-wb-dt">
+<dt>Queue reason</dt><dd>{{value0}}</dd>
+</template>
+
+<template data-view="render-inspector-wb-dt-2">
+<dt>Skill</dt><dd>{{value0}}</dd>
+</template>
+
+<template data-view="render-inspector-wb-insp-detail-actions">
+<div class="insp-detail-actions"><a href="{{value0}}" class="btn ghost"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h7l3 3v11H5zM12 3v4h3M8 10h4M8 13h4"/></svg>View transcript<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg></a></div>
+</template>
+
+<template data-view="render-inspector-wb-evidence-item">
+<div class="evidence-item">{{value0}}</div>
+</template>
+
+<template data-view="render-inspector-wb-evidence-route">
+<div class="evidence-route">route: <code title="{{value0}}">{{value1}}</code></div>
+</template>
+
+<template data-view="render-inspector-wb-insp-section-2">
+
+    <div class="insp-section">
+      <div style="font-size:10px;font-weight:650;color:var(--muted);margin-bottom:6px">Evidence and decision</div>
+      <div class="evidence-list">{{value0}}</div>
+      {{value1}}
+    </div>
+</template>
+
+<template data-view="render-inspector-wb-insp-section-3">
+
+    <div class="insp-section">
+      <h3 class="insp-output-title">Outputs</h3>
+      {{value0}}
+    </div>
+</template>
+
+<template data-view="render-inspector-wb-insp-section-4">
+<div class="insp-section"><div class="insp-error">{{value0}}</div></div>
+</template>
+
+<template data-view="render-inspector-wb-insp-section-5">
+<section class="insp-section" id="sessionControls"></section>
+</template>
+
+<template data-view="render-inspector-wb-insp-value-id">
+{{value0}}<dt>Executor</dt><dd>{{value1}}</dd>
+        {{value2}}
+        <dt>Inputs</dt><dd class="insp-value-id" title="{{value3}}">{{value4}}</dd>
+        <dt>Output</dt><dd class="insp-value-id" title="{{value5}}">{{value6}}</dd>
+      </dl>
+      {{value7}}
+    </div>
+    {{value8}}
+    {{value9}}
+    {{value10}}
+    {{value11}}
+    {{value12}}
+    {{value13}}
+    <nav class="pager" aria-label="Attempt pages"><span>Attempts · page {{value14}}</span><button class="btn ghost" data-attempt-page="-1"{{value15}}>Previous</button><button class="btn ghost" data-attempt-page="1"{{value16}}>Next</button></nav>
+    <div class="insp-section" id="inspSnapshots"><h3 class="insp-output-title">Intermediate snapshots</h3><div class="subtle">Loading snapshots…</div></div>
+    {{value17}}
+
+</template>
+
+<template data-view="markup-insp-output-title">
+<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>
+</template>
+
+<template data-view="markup-artifact">
+<section class="artifact snapshot-artifact"><div class="snapshot-title"><strong>{{value0}}</strong><span class="subtle">seq {{value1}}</span></div><div class="snapshot-subject" title="{{value2}}">{{value3}}</div><time class="snapshot-time">{{value4}}</time><details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">{{value5}}</code><button class="btn ghost" data-copy-value="{{value6}}">Copy digest</button></details><button class="btn ghost" data-snapshot-seq="{{value7}}">View snapshot</button></section>
+</template>
+
+<template data-view="markup-subtle">
+<div class="subtle">No snapshots recorded.</div>
+</template>
+
+<template data-view="markup-pager">
+<nav class="pager" aria-label="Snapshot pages"><span>Page {{value0}}</span><button class="btn ghost" data-snapshot-page="-1"{{value1}}>Previous</button><button class="btn ghost" data-snapshot-page="1"{{value2}}>Next</button></nav>
+</template>
+
+<template data-view="input-markup-data-empty">
+<div class="data-empty">{{value0}}</div>
+</template>
+
+<template data-view="output-markup-markdown-body">
+<div class="markdown-body">{{value0}}</div>
+</template>
+
+<template data-view="output-markup-artifact">
+<section class="artifact"><div class="artifact-head"><strong>{{value0}}</strong><span class="data-type">{{value1}}</span></div>{{value2}}</section>
+</template>
+
+<template data-view="output-markup-digest-details">
+<details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">{{value0}}</code><button class="btn ghost" data-copy-value="{{value1}}">Copy digest</button></details>
+</template>
+
+<template data-view="output-markup-dt">
+<dt>{{value0}}</dt><dd title="{{value1}}">{{value2}}</dd>
+</template>
+
+<template data-view="output-markup-artifact-meta">
+<dl class="artifact-meta">{{value0}}</dl>
+</template>
+
+<template data-view="output-markup-artifact-2">
+<section class="artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>{{value0}}</strong><div class="artifact-subtitle">{{value1}}</div></div></div></div>{{value2}}{{value3}}<div class="artifact-actions"><button class="btn ghost" data-view-artifact="{{value4}}">View</button><button class="btn ghost" data-download="artifact" data-name="{{value5}}" data-copy="run-output">Download</button></div></section>
+</template>
+
+<template data-view="body-inner-html-markdown-body">
+<article class="markdown-body">{{value0}}</article>
+</template>
+
+<template data-view="body-inner-html-output-raw">
+<pre class="output-raw">{{value0}}</pre>
+</template>
+
+<template data-view="event-html-span">
+<span style="color:var(--muted);font-size:10px">{{value0}}</span>
+</template>
+
+<template data-view="event-html-details">
+<details data-preserve-key="event:{{value0}}"><summary style="color:var(--muted);font-size:10px;cursor:pointer">Event data</summary><pre style="font-size:10px">{{value1}}</pre></details>
+</template>
+
+<template data-view="event-html-li">
+<li><time style="font-size:9px;color:var(--muted)">{{value0}} <span style="color:var(--muted2)">· seq {{value1}}</span></time><strong style="display:block;font-size:11px;color:var(--ink)">{{value2}}</strong>{{value3}}{{value4}}</li>
+</template>
+
+<template data-view="out-inner-html-kv">
+<dl class="kv"><dt>Scope</dt><dd>{{value0}}</dd><dt>Occurrence</dt><dd>{{value1}}</dd><dt>State</dt><dd>{{value2}}</dd>{{value3}}</dl><h3 class="insp-output-title">Outputs</h3>{{value4}}
+</template>
+
+<template data-view="out-inner-html-data-tools">
+<div class="data-tools"><button class="btn ghost" data-copylogs>Copy logs</button></div>
+</template>
+
+<template data-view="out-inner-html-h3">
+<h3>{{value0}} · {{value1}}</h3><pre>{{value2}}</pre>
+</template>
+
+<template data-view="out-inner-html-tablebox">
+<div class="tablebox"><table><thead><tr><th>Retry</th><th>Executor</th><th>State</th><th>Started</th><th>Finished</th></tr></thead><tbody>{{value0}}</tbody></table></div>
+</template>
+
+<template data-view="out-inner-html-p">
+<p style="color:var(--red)">{{value0}}</p>
+</template>
+
+<template data-view="request-fields-fieldset">
+<fieldset><legend>{{value0}}</legend>{{value1}}</fieldset>
+</template>
+
+<template data-view="control-select">
+<select {{value0}} data-json-value><option value="">Choose…</option>{{value1}}</select>
+</template>
+
+<template data-view="control-select-2">
+<select {{value0}} data-json-value><option value="">Choose…</option><option value="true">True</option><option value="false">False</option></select>
+</template>
+
+<template data-view="control-input">
+<input {{value0}} type="text" {{value1}} {{value2}}>
+</template>
+
+<template data-view="control-input-2">
+<input {{value0}} data-json-value type="number" step="{{value1}}" {{value2}} {{value3}}>
+</template>
+
+<template data-view="control-textarea">
+<textarea {{value0}} data-json-value aria-label="JSON response" placeholder="JSON value"></textarea>
+</template>
+
+<template data-view="request-fields-input-request-field">
+<label class="input-request-field">{{value0}}{{value1}}{{value2}}{{value3}}</label>
+</template>
+
+<template data-view="container-inner-html-btn">
+<form data-input-request="{{value0}}">{{value1}}<details><summary>Response schema</summary><pre>{{value2}}</pre></details><button class="btn" type="submit">Submit response</button><span role="status"></span></form>
+</template>
+
+<template data-view="container-inner-html-subtle">
+<article><strong>{{value0}}</strong> · {{value1}}<div class="subtle">Request {{value2}} · Activation {{value3}}{{value4}}{{value5}}</div>{{value6}}</article>
+</template>
+
+<template data-view="worker-capability-markup-worker-capability-chip">
+<a href="/worker-capabilities/{{value0}}/{{value1}}/{{value2}}" class="worker-capability-chip worker-capability-chip--{{value3}}" title="{{value4}} · {{value5}}" aria-label="Inspect {{value6}}: {{value7}}"><span class="worker-capability-dot" aria-hidden="true"></span><span>{{value8}}</span></a>
+</template>
+
+<template data-view="features-worker-feature">
+<span class="worker-feature">{{value0}}</span>
+</template>
+
+<template data-view="worker-capability-detail-markup-subtle">
+<span class="subtle">Optional features unavailable</span>
+</template>
+
+<template data-view="worker-capability-detail-markup-div">
+<div><dt>Environment</dt><dd><code title="{{value0}}">{{value1}}</code></dd></div>
+</template>
+
+<template data-view="worker-capability-detail-markup-worker-readiness-check">
+<div class="worker-readiness-check worker-readiness-check--{{value0}}"><span class="worker-check-icon" aria-label="{{value1}}">{{value2}}</span><div><strong>{{value3}}</strong><p>{{value4}}</p></div></div>
+</template>
+
+<template data-view="worker-capability-detail-markup-worker-readiness-checks">
+<div class="worker-readiness-checks">{{value0}}</div>
+</template>
+
+<template data-view="worker-capability-detail-markup-worker-capability">
+<details class="worker-capability" data-preserve-key="capability:{{value0}}:{{value1}}:{{value2}}"><summary><span class="worker-capability-identity"><strong>{{value3}}</strong><span>{{value4}}{{value5}}</span></span><span class="worker-readiness worker-readiness--{{value6}}"><span aria-hidden="true"></span>{{value7}}</span><svg class="worker-capability-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></summary><div class="worker-capability-body"><div class="worker-features">{{value8}}</div><dl class="worker-capability-meta"><div><dt>Contract</dt><dd>{{value9}}</dd></div>{{value10}}</dl>{{value11}}</div></details>
+</template>
+
+<template data-view="roster-el-inner-html-details">
+<details><summary>Placement &amp; isolation labels</summary><pre>{{value0}}</pre></details>
+</template>
+
+<template data-view="roster-el-inner-html-primary-cell">
+<tr id="worker-roster-{{value0}}"><td class="primary-cell"><strong>{{value1}}</strong>{{value2}}</td><td><span class="state {{value3}}">{{value4}}</span></td><td class="num">{{value5}}</td><td class="mono">{{value6}}</td><td class="num">{{value7}}</td></tr>
+</template>
+
+<template data-view="roster-el-inner-html-tablebox">
+<div class="tablebox"><table><thead><tr><th>Worker</th><th>Status</th><th>Capacity</th><th>Capabilities</th><th>Last seen</th></tr></thead><tbody>{{value0}}</tbody></table></div>
+</template>
+
+<template data-view="worker-link-a">
+<a href="#worker-roster-{{value0}}" style="color:var(--teal)"><strong>{{value1}}</strong></a>
+</template>
+
+<template data-view="worker-list-inner-html-primary-cell">
+<tr><td class="primary-cell">{{value0}}</td><td><a href="/runs/{{value1}}" style="color:var(--teal)">{{value2}}</a></td><td class="mono">{{value3}}</td><td>{{value4}}</td><td style="color:var(--muted)">{{value5}}</td><td><span class="state {{value6}}">{{value7}}</span></td></tr>
+</template>
+
+<template data-view="worker-list-inner-html-tablebox">
+<div class="tablebox"><table><thead><tr><th>Worker</th><th>Run</th><th>Activation</th><th>Generation</th><th>Lease until</th><th>State</th></tr></thead><tbody>{{value0}}</tbody></table></div>
+</template>
+
+<template data-view="attrs-fragment">
+data-response-path="{{value0}}" data-response-required="{{value1}}" {{value2}}
+</template>
+
+<template data-view="control-fragment">
+minlength="{{value0}}"
+</template>
+
+<template data-view="control-fragment-2">
+maxlength="{{value0}}"
+</template>
+
+<template data-view="control-fragment-3">
+min="{{value0}}"
+</template>
+
+<template data-view="control-fragment-4">
+max="{{value0}}"
+</template>

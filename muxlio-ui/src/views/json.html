@@ -1,0 +1,55 @@
+<template data-view="json-tree-markup-json-row">
+<div class="json-row json-truncated"><span class="json-key">{{value0}}</span><span class="json-muted" role="note">Depth limit ({{value1}})</span></div>
+</template>
+
+<template data-view="json-tree-markup-json-row-2">
+<div class="json-row json-empty"><span class="json-key">{{value0}}</span><span class="json-type json-muted">{{value1}} · empty</span></div>
+</template>
+
+<template data-view="more-json-more">
+<details class="json-more"><summary class="json-muted">Show {{value0}} more {{value1}}</summary><div class="json-children json-tree">{{value2}}</div></details>
+</template>
+
+<template data-view="json-tree-markup-json-row-3">
+<div class="json-row"><details class="json-branch" data-preserve-key="{{value0}}"{{value1}}><summary class="json-summary"><span class="json-key">{{value2}}</span><span class="json-type json-muted">{{value3}} · {{value4}}</span></summary><div class="json-children json-tree">{{value5}}{{value6}}</div></details></div>
+</template>
+
+<template data-view="json-tree-markup-json-row-4">
+<div class="json-row json-scalar"><span class="json-key">{{value0}}</span><span class="json-value json-null">null</span><span class="json-type json-muted">null</span></div>
+</template>
+
+<template data-view="json-tree-markup-json-row-5">
+<div class="json-row json-scalar"><span class="json-key">{{value0}}</span><span class="json-value {{value1}}">{{value2}}</span><span class="json-type json-muted">{{value3}}</span></div>
+</template>
+
+<template data-view="json-tools-markup-json-tools">
+<div class="json-tools"><button type="button" class="btn ghost" data-copy-json="{{value0}}"{{value1}}>{{value2}}</button></div>
+</template>
+
+<template data-view="json-status-markup-json-status">
+<p class="json-status" role="{{value0}}">{{value1}}</p>
+</template>
+
+<template data-view="json-raw-markup-pre">
+{{value0}}<pre class="{{value1}}">{{value2}}</pre>
+</template>
+
+<template data-view="json-panel-from-document-json-tree">
+{{value0}}<div class="json-tree" data-json-root="{{value1}}">{{value2}}</div>
+</template>
+
+<template data-view="json-artifact-preview-artifact-no-preview">
+<div class="artifact-no-preview" role="status"><span aria-hidden="true">◇</span><div><strong>Preview unavailable</strong><small>No inline data recorded for this artifact.</small></div></div>
+</template>
+
+<template data-view="body-json-tree">
+<div class="json-tree">{{value0}}</div>
+</template>
+
+<template data-view="json-artifact-preview-artifact-preview">
+<details class="artifact-preview"><summary>{{value0}}</summary>{{value1}}{{value2}}{{value3}}</details>
+</template>
+
+<template data-view="json-tools-markup-fragment">
+ data-copy-target="{{value0}}"
+</template>

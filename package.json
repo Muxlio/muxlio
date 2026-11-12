@@ -5,7 +5,8 @@
     "muxlio-sdk",
     "muxlio-compiler",
     "muxlio-testing",
-    "recipes"
+    "recipes",
+    "muxlio-ui"
   ],
   "scripts": {
     "build": "npm run build --workspaces",

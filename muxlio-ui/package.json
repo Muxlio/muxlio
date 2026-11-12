@@ -3,13 +3,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "smoke": "node smoke.test.mjs",
-    "test:operations-browser": "node operations-browser.test.mjs",
-    "test:scroll-layout": "node scroll-layout.test.mjs",
-    "test:live-output": "node live-output.test.mjs",
-    "test:inspector-transcript": "node inspector-transcript.test.mjs",
-    "test:cancel-run-modal": "node cancel-run-modal.test.mjs",
-    "test": "node --test routing.test.mjs format.test.mjs operations-hub.test.mjs worker-capabilities.test.mjs security.test.mjs input-requests.test.mjs json-output.test.mjs workbench-activity.test.mjs && node snapshots.test.mjs && node run-pages.test.mjs && node inspector-transcript.test.mjs && node live-output.test.mjs && node graph.test.mjs && node scroll-layout.test.mjs && node token-usage.test.mjs && node analytics.test.mjs && node timing.test.mjs && node cancel-run-modal.test.mjs"
+    "start": "npm run build && node dist/server.mjs",
+    "build": "node --experimental-strip-types scripts/build.ts",
+    "test": "npm run build && node --experimental-strip-types --test test/*.test.ts",
+    "test:browser": "npm run build && node --experimental-strip-types --test test/browser/*.test.ts",
+    "check": "npm run build && prettier --check test scripts src/server.ts src/interactions.ts src/components src/styles/theme.css index.html",
+    "format": "prettier --write test scripts src/server.ts src/interactions.ts src/components src/styles/theme.css index.html"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0",
+    "prettier": "^3.10.1",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

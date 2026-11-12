@@ -1,0 +1,279 @@
+<template data-view="hub-run-a">
+<a href="/runs/{{value0}}">{{value1}}</a>
+</template>
+
+<template data-view="hub-button-btn">
+<button type="button" class="btn ghost" data-ops-action="{{value0}}" {{value1}}>{{value2}}</button>
+</template>
+
+<template data-view="hub-client-page-div">
+<div data-hub-container="{{value0}}">{{value1}}</div>
+</template>
+
+<template data-view="load-ops-dashboard-ops-id">
+<small class="ops-id">{{value0}}</small>
+</template>
+
+<template data-view="load-ops-dashboard-tr">
+<tr><td>{{value0}}{{value1}}</td><td>{{value2}}</td><td>{{value3}}</td><td>{{value4}}</td><td>{{value5}}{{value6}}</td></tr>
+</template>
+
+<template data-view="form-ops-check">
+<p>{{value0}}</p><label>Verified outcome<select name="outcome"><option value="not-applied">Not applied — the old operation cannot commit later</option><option value="completed">Completed — record the verified result</option></select></label>{{value1}}{{value2}}<label class="ops-check"><input name="verified" type="checkbox" required>I verified the external outcome and understand this records an operational decision.</label>
+</template>
+
+<template data-view="load-workers-ops-id">
+<tr><td><a href="/workers" data-worker-focus="{{value0}}">{{value1}}</a></td><td>{{value2}}</td><td class="ops-id">{{value3}}</td><td>{{value4}}<small>{{value5}}</small></td><td>{{value6}}</td><td>{{value7}}</td></tr>
+</template>
+
+<template data-view="load-workers-meter">
+<meter min="0" max="{{value0}}" value="{{value1}}" aria-label="Occupied worker slots"></meter>
+</template>
+
+<template data-view="load-workers-small">
+<small>Availability unavailable</small>
+</template>
+
+<template data-view="load-workers-worker-capabilities-cell">
+<tr id="worker-roster-{{value0}}"><td><strong>{{value1}}</strong></td><td>{{value2}}</td><td>{{value3}} / {{value4}}{{value5}}</td><td class="worker-capabilities-cell"><div class="worker-capability-list">{{value6}}</div></td><td>{{value7}}<small>{{value8}} ago</small></td></tr>
+</template>
+
+<template data-view="load-worker-capability-page-subtle-2">
+<p class="subtle">Worker <strong>{{value0}}</strong></p>
+</template>
+
+<template data-view="load-worker-capability-page-details">
+<details{{value0}}
+</template>
+
+<template data-view="load-worker-capability-page-details-2">
+<details open{{value0}}
+</template>
+
+<template data-view="render-tr">
+<tr><td>{{value0}}</td><td>{{value1}}</td><td>{{value2}} / {{value3}}</td><td>{{value4}}</td><td>{{value5}}</td></tr>
+</template>
+
+<template data-view="render-ops-id">
+<small class="ops-id" title="{{value0}}">{{value1}}</small>
+</template>
+
+<template data-view="render-code">
+<code>/webhooks/{{value0}}</code>
+</template>
+
+<template data-view="render-tr-2">
+<tr><td><strong>{{value0}}</strong>{{value1}}</td><td>{{value2}}</td><td>{{value3}}</td><td>{{value4}}</td><td>{{value5}}{{value6}}</td></tr>
+</template>
+
+<template data-view="show-automation-history-section-head">
+<div class="section-head"><h2>{{value0}} · history</h2></div>
+</template>
+
+<template data-view="show-automation-history-small">
+<small>{{value0}} attempts</small>
+</template>
+
+<template data-view="show-automation-history-small-2">
+<small>Next attempt {{value0}}</small>
+</template>
+
+<template data-view="show-automation-history-tr">
+<tr><td>{{value0}}</td><td>{{value1}}</td><td>{{value2}}</td><td>{{value3}}{{value4}}</td><td>{{value5}}{{value6}}</td></tr>
+</template>
+
+<template data-view="choices-option">
+<option value="{{value0}}">{{value1}} · {{value2}}</option>
+</template>
+
+<template data-view="workflow-label">
+<label>Pinned workflow version<select name="workflowDigest" required>{{value0}}</select></label>
+</template>
+
+<template data-view="create-operational-automation-label">
+<label>Schedule<select name="kind"><option value="once">One time</option><option value="interval">Recurring interval</option><option value="cron">Cron</option></select></label>
+</template>
+
+<template data-view="create-operational-automation-div">
+<div data-interval-fields>{{value0}}<label>Unit<select name="unit"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option><option value="seconds">Seconds</option></select></label></div><div data-cron-fields>{{value1}}{{value2}}</div><label>When executions overlap<select name="overlap"><option value="skip">Skip overlapping execution</option><option value="queue">Queue it</option><option value="allow">Allow overlap</option></select></label>
+</template>
+
+<template data-view="comparison-markup-ops-comparison-side">
+<section class="ops-comparison-side"><h2>{{value0}} · {{value1}}</h2><p>{{value2}} · {{value3}} elapsed</p><div class="usage-grid">{{value4}}</div></section>
+</template>
+
+<template data-view="comparison-markup-ops-comparison-summary">
+<div class="ops-comparison-summary">{{value0}}{{value1}}{{value2}}{{value3}}</div><div class="ops-toolbar">{{value4}}{{value5}}<label class="ops-check"><input id="compareChangedOnly" type="checkbox"{{value6}}>Changed nodes only</label></div><div class="ops-comparison-columns">{{value7}}</div><div class="section-head"><h2>Node outcomes · {{value8}} matching</h2></div>
+</template>
+
+<template data-view="comparison-markup-tr">
+<tr><td><strong>{{value0}}</strong><small>{{value1}}</small></td><td>{{value2}}</td><td>{{value3}}</td><td>{{value4}}</td><td>{{value5}}</td></tr>
+</template>
+
+<template data-view="fields-ops-check">
+<label class="ops-check"><input type="checkbox" name="reuse" value="{{value0}}">{{value1}} · {{value2}}</label>
+</template>
+
+<template data-view="fields-p">
+<p>No completed nodes.</p>
+</template>
+
+<template data-view="fields-subtle">
+<p>Create a separate run from {{value0}}. The original history remains intact.</p><label>Pinned workflow<select name="planDigest"><option value="">Original pinned plan</option>{{value1}}</select></label>{{value2}}<details><summary>Reuse outputs (optional)</summary><p class="subtle">The coordinator validates that selected outputs are pure, compatible, and reusable.</p><div class="ops-reuse-list">{{value3}}</div></details><label class="ops-check"><input type="checkbox" name="start">Start the fork after creating it</label>
+</template>
+
+<template data-view="load-retention-ops-id">
+<tr><td>{{value0}}</td><td class="ops-id">{{value1}}</td><td>{{value2}}</td></tr>
+</template>
+
+<template data-view="add-retention-pin-option">
+<option{{value0}}>{{value1}}</option>
+</template>
+
+<template data-view="add-retention-pin-subtle">
+<label>Data kind<select name="kind">{{value0}}</select></label>{{value1}}<p class="subtle">Pins protect the selected data and reachable references from cleanup.</p>
+</template>
+
+<template data-view="form-subtle">
+{{value0}}{{value1}}<p class="subtle">Leave the deadline empty to use the default retention policy. A pinned run remains protected.</p><div data-retention-current></div>
+</template>
+
+<template data-view="load-evidence-ops-id">
+<tr><td><strong>{{value0}}</strong><small class="ops-id">{{value1}}</small></td><td>{{value2}}</td><td>{{value3}}</td><td>{{value4}}{{value5}}</td></tr>
+</template>
+
+<template data-view="benchmark-facts-contract-fields">
+<details><summary>Recorded checks &amp; timing</summary><dl class="contract-fields">{{value0}}</dl></details>
+</template>
+
+<template data-view="report-provenance-li">
+<li>{{value0}} · <code>{{value1}}</code></li>
+</template>
+
+<template data-view="report-provenance-ul">
+<ul>{{value0}}</ul>
+</template>
+
+<template data-view="report-provenance-execution-contract">
+<details class="execution-contract"><summary>{{value0}}Provenance</summary><dl class="contract-fields">{{value1}}</dl>{{value2}}</details>
+</template>
+
+<template data-view="summary-ops-evidence-group">
+<section class="ops-evidence-group"><h3>{{value0}}</h3><div class="ops-metrics">{{value1}}{{value2}}{{value3}}</div></section>
+</template>
+
+<template data-view="render-tr-3">
+<tr><td>{{value0}}</td><td>{{value1}}</td><td>{{value2}}{{value3}}{{value4}}</td><td>{{value5}}{{value6}}</td><td>{{value7}}{{value8}}</td><td>{{value9}}</td></tr>
+</template>
+
+<template data-view="evidence-markup-section-head">
+<div class="section-head"><h2>{{value0}}</h2>{{value1}}</div><p class="subtle">Recorded evidence only. Different datasets, machines, models, or configurations do not establish a speedup. Failed and missing measurements remain visible.</p>{{value2}}{{value3}}<div id="evidenceRows">{{value4}}</div>
+</template>
+
+<template data-view="hub-accounting-small">
+<small>{{value0}}: {{value1}} · {{value2}}</small>
+</template>
+
+<template data-view="form-option">
+<option>{{value0}}</option>
+</template>
+
+<template data-view="form-subtle-2">
+<p>{{value0}} → {{value1}}</p><p class="subtle">Choose recorded versions or configurations. Cases align by identity; missing counterparts stay unavailable. Dataset and environment differences remain part of the evidence.</p><div class="ops-comparison-columns"><label>Baseline version<select name="baseline">{{value2}}</select></label><label>Comparison version<select name="candidate">{{value3}}</select></label></div><details><summary>Both provenance records</summary><h3>Baseline</h3>{{value4}}<h3>Comparison</h3>{{value5}}</details><div data-evidence-comparison></div>
+</template>
+
+<template data-view="host-inner-html-ops-metrics">
+<div class="ops-metrics">{{value0}}{{value1}}{{value2}}{{value3}}</div><div class="ops-toolbar">{{value4}}{{value5}}</div>
+</template>
+
+<template data-view="load-artifact-revisions-ops-id">
+<tr><td><strong>{{value0}}</strong><small class="ops-id">{{value1}}</small></td><td>{{value2}}<small>{{value3}}</small></td><td>{{value4}}</td><td><span data-artifact-availability>{{value5}}</span></td><td>{{value6}}{{value7}}</td></tr>
+</template>
+
+<template data-view="attempt-row-markup-article">
+</article>
+</template>
+
+<template data-view="attempt-row-markup-attempt-outcome">
+<div class="attempt-outcome">{{value0}}</div></article>
+</template>
+
+<template data-view="operations-hub-ops-check">
+<p>This will attempt delivery again to the subscription’s configured destination.</p><label class="ops-check"><input type="checkbox" required>I want this delivery sent again.</label>
+</template>
+
+<template data-view="operations-hub-p">
+<p>Remove the pin on <code>{{value0}}</code>? The data becomes eligible for the existing retention policy; this action does not delete it immediately.</p>
+</template>
+
+<template data-view="load-ops-dashboard-fragment">
+data-run="{{value0}}" data-attempt="{{value1}}"
+</template>
+
+<template data-view="load-ops-dashboard-fragment-2">
+data-run="{{value0}}"
+</template>
+
+<template data-view="render-fragment">
+data-delivery="{{value0}}"
+</template>
+
+<template data-view="render-fragment-2">
+data-kind="{{value0}}" data-id="{{value1}}"
+</template>
+
+<template data-view="render-fragment-3">
+data-kind="{{value0}}" data-id="{{value1}}" data-enabled="{{value2}}"
+</template>
+
+<template data-view="fields-fragment">
+required maxlength="128" pattern="[A-Za-z0-9_-]+"
+</template>
+
+<template data-view="create-operational-automation-fragment">
+min="1" step="1"
+</template>
+
+<template data-view="create-operational-automation-fragment-2">
+required min="1" max="1000"
+</template>
+
+<template data-view="create-operational-automation-fragment-3">
+required minlength="16" autocomplete="new-password"
+</template>
+
+<template data-view="create-operational-automation-fragment-4">
+required min="1" max="2592000"
+</template>
+
+<template data-view="create-operational-automation-fragment-5">
+required placeholder="https://example.com/events"
+</template>
+
+<template data-view="create-operational-automation-fragment-6">
+required min="0" max="50"
+</template>
+
+<template data-view="comparison-markup-fragment">
+data-node-index="{{value0}}"
+</template>
+
+<template data-view="load-evidence-fragment">
+data-report="{{value0}}"
+</template>
+
+<template data-view="render-fragment-4">
+data-evidence-row="{{value0}}"
+</template>
+
+<template data-view="host-inner-html-fragment">
+data-run="{{value0}}" data-pinned="{{value1}}"
+</template>
+
+<template data-view="load-artifact-revisions-fragment">
+data-target="{{value0}}" data-seq="{{value1}}"
+</template>
+
+<template data-view="load-artifact-revisions-fragment-2">
+data-digest="{{value0}}"
+</template>

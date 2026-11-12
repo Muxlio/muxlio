@@ -1,0 +1,63 @@
+<template data-view="attempt-row-markup-attempt-validation">
+<span class="attempt-validation">Output validation failed</span>
+</template>
+
+<template data-view="attempt-row-markup-subtle">
+<span class="subtle">Remote task <code>{{value0}}</code>{{value1}}</span>
+</template>
+
+<template data-view="attempt-row-markup-attempt-outcome">
+<div class="attempt-outcome">{{value0}}{{value1}}{{value2}}</div>
+</template>
+
+<template data-view="attempt-row-markup-attempt-card">
+<article class="attempt-card"><div class="attempt-identity"><strong>{{value0}}</strong><span class="subtle">{{value1}} · attempt {{value2}}</span><span class="subtle">{{value3}}</span><span class="attempt-id" title="{{value4}}">{{value5}}</span></div><div class="attempt-status">{{value6}}<span class="state {{value7}}">{{value8}}</span><span class="subtle">{{value9}}</span></div><dl class="attempt-metrics">{{value10}}<div><dt>Duration</dt><dd>{{value11}}</dd></div></dl><div class="attempt-actions"><button class="btn ghost" data-inspect-operation="{{value12}}">View node</button><button class="btn ghost" data-attempt-details="{{value13}}">Details</button></div>{{value14}}</article>
+</template>
+
+<template data-view="html-p">
+<p>Forked from <a href="/runs/{{value0}}">{{value1}}</a> · {{value2}} selected reuse candidates</p>
+</template>
+
+<template data-view="html-execution-contract">
+<details class="execution-contract" data-preserve-key="execution-contract"><summary>Execution settings <span>Limits, retention and pinned plan</span></summary><dl class="contract-fields">{{value0}}</dl>{{value1}}</details>
+</template>
+
+<template data-view="panel-inner-html-attempt-list">
+<div class="attempt-list">{{value0}}</div>
+</template>
+
+<template data-view="panel-inner-html-tablebox">
+<div class="tablebox empty"><strong>No execution attempts</strong><p>Attempts will appear here when execution starts.</p></div>
+</template>
+
+<template data-view="attempt-metadata-markup-insp-value-id">
+<dt>Remote task</dt><dd class="insp-value-id" title="{{value0}}">{{value1}}</dd>
+</template>
+
+<template data-view="attempt-metadata-markup-dt">
+<dt>Reconciliation</dt><dd title="{{value0}}">{{value1}}</dd>
+</template>
+
+<template data-view="attempt-metadata-markup-p">
+<p>{{value0}} · {{value1}}</p><p>{{value2}}</p>
+</template>
+
+<template data-view="attempt-metadata-markup-attempt-contract">
+<details class="attempt-contract"><summary>{{value0}} · {{value1}}</summary><dl class="insp-kv"><dt>Attempt</dt><dd class="insp-value-id" title="{{value2}}">{{value3}}</dd><dt>Effect policy</dt><dd title="{{value4}}">{{value5}}</dd>{{value6}}{{value7}}</dl>{{value8}}{{value9}}<button class="btn ghost" data-attempt-details="{{value10}}">View full attempt details</button></details>
+</template>
+
+<template data-view="panel-inner-html-btn">
+<form data-session-input><label>Message<textarea name="message" required maxlength="65536"></textarea></label><label>Delivery<select name="policy">{{value0}}</select></label><button class="btn" type="submit">Queue input</button><p role="status"></p></form>
+</template>
+
+<template data-view="panel-inner-html-p">
+<p>Input delivery is unavailable for this session.</p>
+</template>
+
+<template data-view="panel-inner-html-p-2">
+<p><code>{{value0}}</code> · {{value1}} · {{value2}}</p>
+</template>
+
+<template data-view="panel-inner-html-insp-kv">
+<h3>Persistent session</h3><dl class="insp-kv"><dt>Session</dt><dd class="insp-value-id" title="{{value0}}">{{value1}}</dd><dt>Owner worker</dt><dd class="insp-value-id" title="{{value2}}">{{value3}}</dd><dt>Expires</dt><dd title="{{value4}}">{{value5}}</dd></dl><p class="subtle">Accepted input remains queued until the executor acknowledges delivery.</p>{{value6}}<details><summary>Recent input receipts ({{value7}})</summary>{{value8}}</details>
+</template>

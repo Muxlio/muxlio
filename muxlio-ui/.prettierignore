@@ -1,0 +1,6 @@
+test/.generated/
+dist/
+.generated/
+
+# View fragments preserve exact whitespace for preformatted output.
+src/views/

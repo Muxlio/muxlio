@@ -1,0 +1,19 @@
+<form class="ops-form">
+  <div class="ops-dialog-head">
+    <h2>{{title}}</h2>
+    <button
+      type="button"
+      class="btn ghost"
+      data-close-dialog
+      aria-label="Close dialog"
+    >
+      Close
+    </button>
+  </div>
+  {{fields}}
+  <p role="status" aria-live="polite"></p>
+  <div class="ops-dialog-actions">
+    <button type="button" class="btn ghost" data-close-dialog>Cancel</button>
+    <button type="submit" class="btn primary">{{submit}}</button>
+  </div>
+</form>

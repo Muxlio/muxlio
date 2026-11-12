@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "none",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": false,
+    "noEmitOnError": true,
+    "skipLibCheck": true,
+    "moduleDetection": "legacy",
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    ".generated/*.ts"
+  ],
+  "exclude": [
+    "src/server.ts"
+  ]
+}

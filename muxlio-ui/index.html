@@ -1,360 +1,883 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark">
-<title>Muxlio · Execution Workbench</title><link rel="icon" href="/favicon.ico?v=2">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Muxlio · Execution Workbench</title>
+    <link rel="icon" href="/favicon.ico?v=2" />
 
-<link rel="stylesheet" href="/app.css?v=control-flow-20261103">
-<link rel="stylesheet" href="/workspace.css">
-<link rel="stylesheet" href="/operations.css">
-</head>
-<body>
-<div class="shell">
-
-<!-- ─── RAIL ──────────────────────────────────── -->
-<aside class="rail">
-  <div class="brand">
-    <span class="brand-mark"><img src="/logo.png" alt="Muxlio logo" width="16" height="16"></span>
-    <span>muxlio<small>Durable agent workflows</small></span>
-  </div>
-  <div class="nav-label">Workspace</div>
-  <nav class="nav" aria-label="Main navigation">
-    <a href="/" id="overviewNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg></span>Workflow</a>
-    <a href="/live" id="liveNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg></span>Live</a>
-    <a href="/runs" id="runsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg></span>Run history</a>
-    <a href="/operations" id="operationsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M1.5 8h3l2-5 3 10 2-5h3"/></svg></span>Operations</a>
-    <a href="/automation" id="automationNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m9.5 1.5-6 7H8l-1.5 6 6-8H8z"/></svg></span>Automation</a>
-    <a href="/workers" id="workersNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 14h4M8 11v3"/></svg></span>Workers</a>
-    <a href="/analytics" id="analyticsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 12l3-4 3 2 3-5 3 3"/><path d="M2 14h12"/></svg></span>Analytics</a>
-  </nav>
-  <div class="nav-label" style="margin-top:18px">Library</div>
-  <nav class="nav" aria-label="Library navigation">
-    <a href="/retention" id="retentionNav"><span class="nav-icon" aria-hidden="true">◇</span>Retention</a>
-    <a href="/workflows" id="workflowsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 3.5h4.2L9 5.5H13v7H3z"/></svg></span>Workflows</a>
-    <a href="/artifacts" id="artifactsNav"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3V13.5H4z"/><path d="M9 2.5V6h3"/></svg></span>Artifacts</a>
-  </nav>
-  <div class="rail-bottom">Coordinator-backed operational data</div>
-</aside>
-
-<!-- ─── TOPBAR ─────────────────────────────────── -->
-<header class="top">
-  <div class="crumb">
-    <span>workspace</span>
-    <span class="crumb-sep" aria-hidden="true">/</span>
-    <strong id="topContext">Overview</strong>
-  </div>
-  <div class="top-actions">
-    <button class="btn ghost" id="forkRunBtn" hidden>
-      <svg viewBox="0 0 20 20"><path d="M7 3 3 7l4 4M3 7h10a4 4 0 0 1 4 4v3"/></svg>
-      Fork run
-    </button>
-    <button class="btn primary" id="resumeRunBtn" hidden>
-      <svg viewBox="0 0 20 20"><polygon points="5,3 17,10 5,17" fill="currentColor" stroke="none"/></svg>
-      Resume run
-    </button>
-  </div>
-</header>
-
-<!-- ─── MAIN ───────────────────────────────────── -->
-<main class="content">
-  <div id="message" role="status" aria-live="polite"></div>
-
-  <section id="operationsView" class="page" hidden>
-    <div class="page-head"><div><div class="eyebrow">Coordinator</div><h1>Operations</h1><p>Recorded queue, attention, detached work, and recovery state.</p></div><button class="btn" data-ops-action="refresh-operations">Refresh</button></div>
-    <div id="operationsSummary" class="ops-metrics"></div>
-    <div class="ops-toolbar"><label>Show<select id="operationKind"><option value="attention">Needs reconciliation</option><option value="queue">Queued work</option><option value="detached">Detached operations</option><option value="recovery">Recovery history</option><option value="runs">Active and failed runs</option></select></label></div>
-    <div id="operationsList" aria-live="polite"></div>
-  </section>
-
-  <section id="automationView" class="page" hidden>
-    <div class="page-head"><div><div class="eyebrow">Durable automation</div><h1>Automation</h1><p>Scheduled runs, inbound webhooks, and signed lifecycle deliveries.</p></div><button class="btn" data-ops-action="refresh-automation">Refresh</button></div>
-    <div class="ops-toolbar" role="group" aria-label="Automation category"><button class="btn" data-automation-tab="schedules">Schedules</button><button class="btn" data-automation-tab="triggers">Webhooks</button><button class="btn" data-automation-tab="subscriptions">Subscriptions</button><button class="btn" data-automation-tab="deadletters">Dead letters</button></div>
-    <div class="section-head"><h2 id="automationTitle">Schedules</h2><button class="btn primary" id="createAutomation" data-ops-action="create-automation">Create schedule</button></div>
-    <div id="automationList" aria-live="polite"></div><div id="automationHistory"></div>
-  </section>
-
-  <section id="retentionView" class="page" hidden>
-    <div class="page-head"><div><div class="eyebrow">Data lifecycle</div><h1>Retention</h1><p>Pins protect data from cleanup. Expiry describes eligibility, not proof of deletion.</p></div><button class="btn" data-ops-action="refresh-retention">Refresh</button></div>
-    <div id="retentionPolicy" class="ops-metrics"></div>
-    <div class="ops-toolbar"><button class="btn" data-ops-action="add-pin">Pin data</button><button class="btn" data-ops-action="set-retention">Set run retention deadline</button></div>
-    <div id="retentionPins"></div>
-  </section>
-
-  <!-- ═══ OVERVIEW ═══════════════════════════════ -->
-  <section id="overviewView" class="page">
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Workspace</div>
-        <h1>Workflow overview</h1>
-        <p>Current run activity from the coordinator.</p>
-      </div>
-      <button class="btn" id="refreshOverview">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
-    </div>
-    <div class="summary-grid" id="summaryGrid" aria-live="polite"></div>
-    <div class="section-head">
-      <div><h2>Recent runs</h2><p>Latest activity across workflows</p></div>
-      <a class="btn ghost" href="/runs">View all runs →</a>
-    </div>
-    <div id="recentRuns"></div>
-  </section>
-
-  <!-- ═══ RUNS ════════════════════════════════════ -->
-  <section id="runsView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Execution history</div>
-        <h1>Runs</h1>
-        <p>Search and inspect workflow executions.</p>
-      </div>
-      <button class="btn" id="refreshRuns">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
-    </div>
-    <div class="section-head">
-      <div><h2>Run records</h2><p id="runCount">Loading…</p></div>
-      <div class="controls">
-        <input class="control search" id="search" type="search" placeholder="Search workflow or run ID" aria-label="Search">
-        <select class="control" id="stateFilter" aria-label="Filter by state">
-          <option value="">All states</option>
-          <option>paused</option>
-          <option>running</option><option>waiting</option><option>succeeded</option>
-          <option>failed</option><option>cancelled</option>
-        </select>
-        <select class="control" id="sortOrder" aria-label="Sort">
-          <option value="updated">Recently updated</option>
-          <option value="created">Recently created</option>
-          <option value="workflow">Workflow name</option>
-        </select>
-      </div>
-    </div>
-    <div id="runList"></div>
-  </section>
-
-  <!-- ═══ LIVE OUTPUT ═════════════════════════════ -->
-  <section id="liveView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Monitoring</div>
-        <h1>Live output</h1>
-        <p>Watch agent transcripts for running activations without opening the workbench.</p>
-      </div>
-      <button class="btn" id="refreshLive">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
-    </div>
-    <div class="section-head">
-      <div><h2>Running activations</h2><p id="liveActiveCount">Loading…</p></div>
-    </div>
-    <div id="liveActiveList"></div>
-    <div class="section-head" style="margin-top:28px">
-      <div><h2>Stream</h2><p>Output grows until the activation finishes; final text stays on screen.</p></div>
-    </div>
-    <div class="live-monitor">
-      <div id="liveStreamMeta" class="live-monitor-meta"></div>
-      <div class="live-monitor-body markdown-body" id="liveTranscriptBody"></div>
-    </div>
-  </section>
-
-  <!-- ═══ DETAIL ══════════════════════════════════ -->
-  <section id="detailView" hidden>
-    <!-- Workbench layout for active run detail -->
-    <div id="workbenchView" class="workbench" hidden>
-      <div class="wb-head">
-        <div class="wb-eyebrow">Execution workbench</div>
-        <div class="wb-title-row">
-          <div>
-            <div class="wb-title" id="wbTitle">—</div>
-            <div class="wb-subtitle" id="wbSubtitle"></div>
-          </div>
-          <span id="wbStatusBadge" class="status-badge"></span>
+    <meta
+      name="description"
+      content="Monitor workflow executions, workers, and operational data in the Muxlio workspace."
+    />
+    <script defer src="/dist/app.js"></script>
+    <link rel="stylesheet" href="/dist/app.css" />
+  </head>
+  <body>
+    <noscript>
+      <p class="notice error">
+        Enable JavaScript to use the execution workbench.
+      </p>
+    </noscript>
+    <a class="skip-link" href="#mainContent">Skip to content</a>
+    <div class="shell">
+      <!-- ─── RAIL ──────────────────────────────────── -->
+      <aside class="rail" id="workspaceNavigation">
+        <div class="brand">
+          <span class="brand-mark">
+            <img src="/logo.png" alt="" width="16" height="16" />
+          </span>
+          <span>
+            muxlio
+            <small>Durable agent workflows</small>
+          </span>
         </div>
-      </div>
-      <div class="stat-row" id="wbStats"></div>
-      <div id="wbActivityAnnounce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
-      <section class="wb-activity" id="wbActivity" hidden aria-label="Current activity and attention"></section>
-      <section class="notice run-attention" id="runAttention" hidden aria-hidden="true"></section>
-      <section class="panel" id="inputRequestsPanel" hidden aria-label="Input requests">
-        <div class="panel-head"><h2>Input requests</h2></div>
-        <div class="panel-body" id="inputRequests"></div>
-      </section>
-      <div class="tab-bar" role="tablist" aria-label="Workbench tabs">
-        <button class="tab-btn" role="tab" aria-selected="true" data-wb-tab="graph">Executions</button>
-        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="events">Execution journal</button>
-        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="artifacts">Artifacts</button>
-        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="operations">Operations &amp; usage</button>
-        <button class="tab-btn" role="tab" aria-selected="false" data-wb-tab="data">Run data</button>
-      </div>
-      <div class="wb-body">
-        <!-- Graph tab -->
-        <div id="wbTabGraph" class="graph-panel">
-          <div class="graph-toolbar">
-            <div class="graph-toolbar-left">
-              <span>Workflow graph</span>
-              <span class="subtle">Click a node to inspect it</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <div class="graph-legend">
-                <span class="legend-item"><span class="legend-dot passed"></span>Passed</span>
-                <span class="legend-item"><span class="legend-dot failed"></span>Failed</span>
-                <span class="legend-item"><span class="legend-dot pending"></span>Pending</span>
-              </div>
-              <button class="btn ghost" id="focusCurrent" style="font-size:10px;padding:4px 9px">Focus current</button>
-            </div>
-          </div>
-          <div class="graph-canvas" id="graphCanvas">
-            <div id="graphFlow" class="graph-flow"></div>
-          </div>
-        </div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav" aria-label="Main navigation">
+          <a href="/" id="overviewNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <rect x="2" y="2" width="5" height="5" rx="1" />
+                <rect x="9" y="2" width="5" height="5" rx="1" />
+                <rect x="2" y="9" width="5" height="5" rx="1" />
+                <rect x="9" y="9" width="5" height="5" rx="1" />
+              </svg>
+            </span>
+            Workflow
+          </a>
+          <a href="/live" id="liveNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <circle cx="8" cy="8" r="3" />
+                <path d="M8 2v2M8 12v2M2 8h2M12 8h2" />
+              </svg>
+            </span>
+            Live
+          </a>
+          <a href="/runs" id="runsNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="M3 4h10M3 8h10M3 12h6" />
+              </svg>
+            </span>
+            Run history
+          </a>
+          <a href="/operations" id="operationsNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="M1.5 8h3l2-5 3 10 2-5h3" />
+              </svg>
+            </span>
+            Operations
+          </a>
+          <a href="/automation" id="automationNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="m9.5 1.5-6 7H8l-1.5 6 6-8H8z" />
+              </svg>
+            </span>
+            Automation
+          </a>
+          <a href="/workers" id="workersNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <rect x="2" y="3" width="12" height="8" rx="1.5" />
+                <path d="M6 14h4M8 11v3" />
+              </svg>
+            </span>
+            Workers
+          </a>
+          <a href="/analytics" id="analyticsNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="M2 12l3-4 3 2 3-5 3 3" />
+                <path d="M2 14h12" />
+              </svg>
+            </span>
+            Analytics
+          </a>
+        </nav>
+        <div class="nav-library-label nav-label">Library</div>
+        <nav class="nav" aria-label="Library navigation">
+          <a href="/retention" id="retentionNav">
+            <span class="nav-icon" aria-hidden="true">◇</span>
+            Retention
+          </a>
+          <a href="/workflows" id="workflowsNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="M3 3.5h4.2L9 5.5H13v7H3z" />
+              </svg>
+            </span>
+            Workflows
+          </a>
+          <a href="/artifacts" id="artifactsNav">
+            <span class="nav-icon" aria-hidden="true">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+                <path d="M4 2.5h5l3 3V13.5H4z" />
+                <path d="M9 2.5V6h3" />
+              </svg>
+            </span>
+            Artifacts
+          </a>
+        </nav>
+        <div class="rail-bottom">Coordinator-backed operational data</div>
+      </aside>
 
-        <!-- Events tab -->
-        <div id="wbTabEvents" class="graph-panel" hidden>
-          <div class="wb-tab-body">
-            <div class="panel-head" style="border-bottom:1px solid var(--border);margin-bottom:12px;padding:0 0 10px">
-              <h2 style="font-size:12px;font-weight:650;color:#e4eeee">Execution journal · newest first</h2>
-              <div id="eventsPager"></div>
-            </div>
-            <ol id="wbTimeline" class="timeline" style="list-style:none;padding:2px 0 0 5px"></ol>
-          </div>
-        </div>
-
-        <div id="wbTabArtifacts" class="graph-panel" hidden>
-          <div class="wb-tab-body">
-            <div class="panel-head"><h2>Immutable revisions · newest first</h2><div id="outputsPager"></div></div>
-            <div id="wbArtifactList"></div>
-            <div class="section-head"><h2>Intermediate revisions · newest first</h2></div><div id="runRevisionsPanel"></div>
-          </div>
-        </div>
-
-        <div id="wbTabOperations" class="graph-panel" hidden><div class="wb-tab-body"><div id="runContract"></div><h3>Execution attempts</h3><p class="subtle">Attempts needing reconciliation appear first.</p><div id="runAttemptsPanel"></div><div id="runSettings"></div><div id="runOperationalControls"></div></div></div>
-        <!-- Data tab -->
-        <div id="wbTabData" class="graph-panel" hidden>
-          <div class="wb-tab-body wb-tab-body--grid">
-            <section class="panel">
-              <div class="panel-head"><h2>Run input</h2></div>
-              <div class="panel-body" id="runInputInspector"></div>
-            </section>
-            <section class="panel">
-              <div class="panel-head"><h2>Run output</h2></div>
-              <div class="panel-body" id="runOutputInspector"></div>
-            </section>
-          </div>
-        </div>
-
-        <!-- Node Inspector -->
-        <aside class="inspector-panel" id="nodeInspector">
-          <div class="insp-head">
-            <span class="insp-label">Node inspector</span>
-            <span class="insp-count" id="inspActivationCount"></span>
-          </div>
-          <div class="insp-identity" id="inspIdentity" hidden>
-            <div id="inspNodeLabel" class="insp-node-label"></div>
-            <div id="inspNodeName" class="insp-node-name"></div>
-            <div id="inspNodeDesc" class="insp-node-desc" hidden></div>
-          </div>
-          <div class="insp-body" id="inspBody">
-            <p class="inspector-placeholder">Select a node in the graph to inspect its execution data.</p>
-          </div>
-          <div class="insp-actions" id="inspActions" hidden>
-            <button class="btn primary" id="inspRerun">
-              <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6"/></svg>
-              Retry run
-            </button>
-            <button class="btn" id="inspViewOutput">View output</button>
-          </div>
-
-        </aside>
-      </div>
-    </div>
-
-    <!-- Fallback non-workbench detail (for older runs) -->
-    <div id="runDetail" class="loading page">Loading run…</div>
-  </section>
-
-  <!-- ═══ TRANSCRIPT ═════════════════════════════ -->
-  <section id="transcriptView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Agent output</div>
-        <h1>Transcript</h1>
-        <p id="transcriptDesc">Live agent output for this activation.</p>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <a class="btn ghost" id="transcriptBackLink" href="/">← Back to run</a>
-        <button class="btn" id="refreshTranscript">
-          <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-          Refresh
+      <!-- ─── TOPBAR ─────────────────────────────────── -->
+      <header class="top">
+        <button
+          type="button"
+          class="btn ghost menu-toggle"
+          id="menuToggle"
+          aria-controls="workspaceNavigation"
+          aria-expanded="false"
+          aria-label="Toggle navigation"
+        >
+          ☰
+          <span>Menu</span>
         </button>
-      </div>
-    </div>
-    <div id="transcriptMeta" class="transcript-meta-block"></div>
-    <div id="transcriptPager"></div><div class="transcript-body-wrap">
-      <div class="transcript-page-body markdown-body" id="transcriptPageBody"></div>
-    </div>
-  </section>
+        <div class="crumb">
+          <span>workspace</span>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <strong id="topContext">Overview</strong>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="btn ghost" id="forkRunBtn" hidden>
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+              <path d="M7 3 3 7l4 4M3 7h10a4 4 0 0 1 4 4v3" />
+            </svg>
+            Fork run
+          </button>
+          <button type="button" class="btn primary" id="resumeRunBtn" hidden>
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+              <polygon
+                points="5,3 17,10 5,17"
+                fill="currentColor"
+                stroke="none"
+              />
+            </svg>
+            Resume run
+          </button>
+        </div>
+      </header>
 
-  <!-- ═══ WORKERS ══════════════════════════════════ -->
-  <section id="workersView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Compute</div>
-        <h1>Workers</h1>
-        <p>Worker capacity, readiness, heartbeat health, and independently leased assignments.</p>
-      </div>
-      <button class="btn" id="refreshWorkers">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
-    </div>
-    <div class="section-head">
-      <div><h2>Registered workers</h2><p>Live and stale workers, including draining workers.</p></div>
-    </div>
-    <div id="workerCapacitySummary" class="ops-metrics"></div><div id="workerRoster"></div>
-    <div class="section-head">
-      <div><h2>Active assignments</h2><p class="workers-caption">Each row links the worker lease to the run and activation being processed.</p></div>
-    </div>
-    <div id="workerList"></div>
-  </section>
+      <!-- ─── MAIN ───────────────────────────────────── -->
+      <main class="content" id="mainContent" tabindex="-1">
+        <div id="message" role="status" aria-live="polite"></div>
 
-  <section id="workerCapabilityView" class="page" hidden>
-    <div class="page-head">
-      <div><div class="eyebrow">Compute · Workers</div><h1>Capability details</h1><p>Readiness, supported features, and execution environment reported by the worker.</p></div>
-      <a class="btn ghost" href="/workers">← Back to workers</a>
-    </div>
-    <div id="workerCapabilityContent" aria-live="polite"></div>
-  </section>
+        <section id="operationsView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Coordinator</div>
+              <h1>Operations</h1>
+              <p>
+                Recorded queue, attention, detached work, and recovery state.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn"
+              data-ops-action="refresh-operations"
+            >
+              Refresh
+            </button>
+          </div>
+          <div id="operationsSummary" class="ops-metrics"></div>
+          <div class="ops-toolbar">
+            <label>
+              Show
+              <select id="operationKind">
+                <option value="attention">Needs reconciliation</option>
+                <option value="queue">Queued work</option>
+                <option value="detached">Detached operations</option>
+                <option value="recovery">Recovery history</option>
+                <option value="runs">Active and failed runs</option>
+              </select>
+            </label>
+          </div>
+          <div id="operationsList" aria-live="polite"></div>
+        </section>
 
-  <!-- ═══ WORKFLOWS ════════════════════════════════ -->
-  <section id="workflowsView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Library</div>
-        <h1>Workflows</h1>
-        <p>Registered Plan IR versions. Each entry is an immutable, content-addressed workflow definition.</p>
-      </div>
-      <button class="btn" id="refreshWorkflows">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
+        <section id="automationView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Durable automation</div>
+              <h1>Automation</h1>
+              <p>
+                Scheduled runs, inbound webhooks, and signed lifecycle
+                deliveries.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn"
+              data-ops-action="refresh-automation"
+            >
+              Refresh
+            </button>
+          </div>
+          <div
+            class="ops-toolbar"
+            role="group"
+            aria-label="Automation category"
+          >
+            <button type="button" class="btn" data-automation-tab="schedules">
+              Schedules
+            </button>
+            <button type="button" class="btn" data-automation-tab="triggers">
+              Webhooks
+            </button>
+            <button
+              type="button"
+              class="btn"
+              data-automation-tab="subscriptions"
+            >
+              Subscriptions
+            </button>
+            <button type="button" class="btn" data-automation-tab="deadletters">
+              Dead letters
+            </button>
+          </div>
+          <div class="section-head">
+            <h2 id="automationTitle">Schedules</h2>
+            <button
+              type="button"
+              class="btn primary"
+              id="createAutomation"
+              data-ops-action="create-automation"
+            >
+              Create schedule
+            </button>
+          </div>
+          <div id="automationList" aria-live="polite"></div>
+          <div id="automationHistory"></div>
+        </section>
+
+        <section id="retentionView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Data lifecycle</div>
+              <h1>Retention</h1>
+              <p>
+                Pins protect data from cleanup. Expiry describes eligibility,
+                not proof of deletion.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn"
+              data-ops-action="refresh-retention"
+            >
+              Refresh
+            </button>
+          </div>
+          <div id="retentionPolicy" class="ops-metrics"></div>
+          <div class="ops-toolbar">
+            <button type="button" class="btn" data-ops-action="add-pin">
+              Pin data
+            </button>
+            <button type="button" class="btn" data-ops-action="set-retention">
+              Set run retention deadline
+            </button>
+          </div>
+          <div id="retentionPins"></div>
+        </section>
+
+        <!-- ═══ OVERVIEW ═══════════════════════════════ -->
+        <section id="overviewView" class="page">
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Workspace</div>
+              <h1>Workflow overview</h1>
+              <p>Current run activity from the coordinator.</p>
+            </div>
+            <button type="button" class="btn" id="refreshOverview">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="summary-grid" id="summaryGrid" aria-live="polite"></div>
+          <div class="section-head">
+            <div>
+              <h2>Recent runs</h2>
+              <p>Latest activity across workflows</p>
+            </div>
+            <a class="btn ghost" href="/runs">View all runs →</a>
+          </div>
+          <div id="recentRuns"></div>
+        </section>
+
+        <!-- ═══ RUNS ════════════════════════════════════ -->
+        <section id="runsView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Execution history</div>
+              <h1>Runs</h1>
+              <p>Search and inspect workflow executions.</p>
+            </div>
+            <button type="button" class="btn" id="refreshRuns">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="section-head">
+            <div>
+              <h2>Run records</h2>
+              <p id="runCount">Loading…</p>
+            </div>
+            <div class="controls">
+              <input
+                class="control search"
+                id="search"
+                type="search"
+                placeholder="Search workflow or run ID"
+                aria-label="Search"
+              />
+              <select
+                class="control"
+                id="stateFilter"
+                aria-label="Filter by state"
+              >
+                <option value="">All states</option>
+                <option>paused</option>
+                <option>running</option>
+                <option>waiting</option>
+                <option>succeeded</option>
+                <option>failed</option>
+                <option>cancelled</option>
+              </select>
+              <select class="control" id="sortOrder" aria-label="Sort">
+                <option value="updated">Recently updated</option>
+                <option value="created">Recently created</option>
+                <option value="workflow">Workflow name</option>
+              </select>
+            </div>
+          </div>
+          <div id="runList"></div>
+        </section>
+
+        <!-- ═══ LIVE OUTPUT ═════════════════════════════ -->
+        <section id="liveView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Monitoring</div>
+              <h1>Live output</h1>
+              <p>
+                Watch agent transcripts for running activations without opening
+                the workbench.
+              </p>
+            </div>
+            <button type="button" class="btn" id="refreshLive">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="section-head">
+            <div>
+              <h2>Running activations</h2>
+              <p id="liveActiveCount">Loading…</p>
+            </div>
+          </div>
+          <div id="liveActiveList"></div>
+          <div class="stream-heading section-head">
+            <div>
+              <h2>Stream</h2>
+              <p>
+                Output grows until the activation finishes; final text stays on
+                screen.
+              </p>
+            </div>
+          </div>
+          <div class="live-monitor">
+            <div id="liveStreamMeta" class="live-monitor-meta"></div>
+            <div
+              class="live-monitor-body markdown-body"
+              id="liveTranscriptBody"
+            ></div>
+          </div>
+        </section>
+
+        <!-- ═══ DETAIL ══════════════════════════════════ -->
+        <section id="detailView" hidden>
+          <!-- Workbench layout for active run detail -->
+          <div id="workbenchView" class="workbench" hidden>
+            <div class="wb-head">
+              <div class="wb-eyebrow">Execution workbench</div>
+              <div class="wb-title-row">
+                <div>
+                  <h1 class="wb-title" id="wbTitle">Run details</h1>
+                  <div class="wb-subtitle" id="wbSubtitle"></div>
+                </div>
+                <span id="wbStatusBadge" class="status-badge"></span>
+              </div>
+            </div>
+            <div class="stat-row" id="wbStats"></div>
+            <div
+              id="wbActivityAnnounce"
+              class="visually-hidden"
+              aria-live="polite"
+              aria-atomic="true"
+            ></div>
+            <section
+              class="wb-activity"
+              id="wbActivity"
+              hidden
+              aria-label="Current activity and attention"
+            ></section>
+            <section
+              class="notice run-attention"
+              id="runAttention"
+              hidden
+              aria-hidden="true"
+            ></section>
+            <section
+              class="panel"
+              id="inputRequestsPanel"
+              hidden
+              aria-label="Input requests"
+            >
+              <div class="panel-head"><h2>Input requests</h2></div>
+              <div class="panel-body" id="inputRequests"></div>
+            </section>
+            <div class="tab-bar" role="tablist" aria-label="Workbench tabs">
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="true"
+                id="tab-graph"
+                aria-controls="wbTabGraph"
+                tabindex="0"
+                data-wb-tab="graph"
+              >
+                Executions
+              </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                id="tab-events"
+                aria-controls="wbTabEvents"
+                tabindex="-1"
+                data-wb-tab="events"
+              >
+                Execution journal
+              </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                id="tab-artifacts"
+                aria-controls="wbTabArtifacts"
+                tabindex="-1"
+                data-wb-tab="artifacts"
+              >
+                Artifacts
+              </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                id="tab-operations"
+                aria-controls="wbTabOperations"
+                tabindex="-1"
+                data-wb-tab="operations"
+              >
+                Operations &amp; usage
+              </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                id="tab-data"
+                aria-controls="wbTabData"
+                tabindex="-1"
+                data-wb-tab="data"
+              >
+                Run data
+              </button>
+            </div>
+            <div class="wb-body">
+              <!-- Graph tab -->
+              <div
+                id="wbTabGraph"
+                role="tabpanel"
+                aria-labelledby="tab-graph"
+                tabindex="0"
+                class="graph-panel"
+              >
+                <div class="graph-toolbar">
+                  <div class="graph-toolbar-left">
+                    <span>Workflow graph</span>
+                    <span class="subtle">Click a node to inspect it</span>
+                  </div>
+                  <div class="graph-toolbar-actions">
+                    <div class="graph-legend">
+                      <span class="legend-item">
+                        <span class="legend-dot passed"></span>
+                        Passed
+                      </span>
+                      <span class="legend-item">
+                        <span class="legend-dot failed"></span>
+                        Failed
+                      </span>
+                      <span class="legend-item">
+                        <span class="legend-dot pending"></span>
+                        Pending
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="focus-current-button btn ghost"
+                      id="focusCurrent"
+                    >
+                      Focus current
+                    </button>
+                  </div>
+                </div>
+                <div class="graph-canvas" id="graphCanvas">
+                  <div id="graphFlow" class="graph-flow"></div>
+                </div>
+              </div>
+
+              <!-- Events tab -->
+              <div
+                id="wbTabEvents"
+                role="tabpanel"
+                aria-labelledby="tab-events"
+                tabindex="0"
+                class="graph-panel"
+                hidden
+              >
+                <div class="wb-tab-body">
+                  <div class="journal-heading panel-head">
+                    <h2 class="journal-title">
+                      Execution journal · newest first
+                    </h2>
+                    <div id="eventsPager"></div>
+                  </div>
+                  <ol id="wbTimeline" class="journal-list timeline"></ol>
+                </div>
+              </div>
+
+              <div
+                id="wbTabArtifacts"
+                role="tabpanel"
+                aria-labelledby="tab-artifacts"
+                tabindex="0"
+                class="graph-panel"
+                hidden
+              >
+                <div class="wb-tab-body">
+                  <div class="panel-head">
+                    <h2>Immutable revisions · newest first</h2>
+                    <div id="outputsPager"></div>
+                  </div>
+                  <div id="wbArtifactList"></div>
+                  <div class="section-head">
+                    <h2>Intermediate revisions · newest first</h2>
+                  </div>
+                  <div id="runRevisionsPanel"></div>
+                </div>
+              </div>
+
+              <div
+                id="wbTabOperations"
+                role="tabpanel"
+                aria-labelledby="tab-operations"
+                tabindex="0"
+                class="graph-panel"
+                hidden
+              >
+                <div class="wb-tab-body">
+                  <div id="runContract"></div>
+                  <h3>Execution attempts</h3>
+                  <p class="subtle">
+                    Attempts needing reconciliation appear first.
+                  </p>
+                  <div id="runAttemptsPanel"></div>
+                  <div id="runSettings"></div>
+                  <div id="runOperationalControls"></div>
+                </div>
+              </div>
+              <!-- Data tab -->
+              <div
+                id="wbTabData"
+                role="tabpanel"
+                aria-labelledby="tab-data"
+                tabindex="0"
+                class="graph-panel"
+                hidden
+              >
+                <div class="wb-tab-body wb-tab-body--grid">
+                  <section class="panel">
+                    <div class="panel-head"><h2>Run input</h2></div>
+                    <div class="panel-body" id="runInputInspector"></div>
+                  </section>
+                  <section class="panel">
+                    <div class="panel-head"><h2>Run output</h2></div>
+                    <div class="panel-body" id="runOutputInspector"></div>
+                  </section>
+                </div>
+              </div>
+
+              <!-- Node Inspector -->
+              <aside
+                class="inspector-panel"
+                id="nodeInspector"
+                aria-label="Node inspector"
+              >
+                <div class="insp-head">
+                  <span class="insp-label">Node inspector</span>
+                  <span class="insp-count" id="inspActivationCount"></span>
+                </div>
+                <div class="insp-identity" id="inspIdentity" hidden>
+                  <div id="inspNodeLabel" class="insp-node-label"></div>
+                  <div id="inspNodeName" class="insp-node-name"></div>
+                  <div id="inspNodeDesc" class="insp-node-desc" hidden></div>
+                </div>
+                <div class="insp-body" id="inspBody">
+                  <p class="inspector-placeholder">
+                    Select a node in the graph to inspect its execution data.
+                  </p>
+                </div>
+                <div class="insp-actions" id="inspActions" hidden>
+                  <button type="button" class="btn primary" id="inspRerun">
+                    <svg
+                      aria-hidden="true"
+                      focusable="false"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6"
+                      />
+                    </svg>
+                    Retry run
+                  </button>
+                  <button type="button" class="btn" id="inspViewOutput">
+                    View output
+                  </button>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <!-- Fallback non-workbench detail (for older runs) -->
+          <div id="runDetail" class="loading page">Loading run…</div>
+        </section>
+
+        <!-- ═══ TRANSCRIPT ═════════════════════════════ -->
+        <section id="transcriptView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Agent output</div>
+              <h1>Transcript</h1>
+              <p id="transcriptDesc">Live agent output for this activation.</p>
+            </div>
+            <div class="transcript-actions">
+              <a class="btn ghost" id="transcriptBackLink" href="/">
+                ← Back to run
+              </a>
+              <button type="button" class="btn" id="refreshTranscript">
+                <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                  <path
+                    d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                  />
+                </svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div id="transcriptMeta" class="transcript-meta-block"></div>
+          <div id="transcriptPager"></div>
+          <div class="transcript-body-wrap">
+            <div
+              class="transcript-page-body markdown-body"
+              id="transcriptPageBody"
+            ></div>
+          </div>
+        </section>
+
+        <!-- ═══ WORKERS ══════════════════════════════════ -->
+        <section id="workersView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Compute</div>
+              <h1>Workers</h1>
+              <p>
+                Worker capacity, readiness, heartbeat health, and independently
+                leased assignments.
+              </p>
+            </div>
+            <button type="button" class="btn" id="refreshWorkers">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="section-head">
+            <div>
+              <h2>Registered workers</h2>
+              <p>Live and stale workers, including draining workers.</p>
+            </div>
+          </div>
+          <div id="workerCapacitySummary" class="ops-metrics"></div>
+          <div id="workerRoster"></div>
+          <div class="section-head">
+            <div>
+              <h2>Active assignments</h2>
+              <p class="workers-caption">
+                Each row links the worker lease to the run and activation being
+                processed.
+              </p>
+            </div>
+          </div>
+          <div id="workerList"></div>
+        </section>
+
+        <section id="workerCapabilityView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Compute · Workers</div>
+              <h1>Capability details</h1>
+              <p>
+                Readiness, supported features, and execution environment
+                reported by the worker.
+              </p>
+            </div>
+            <a class="btn ghost" href="/workers">← Back to workers</a>
+          </div>
+          <div id="workerCapabilityContent" aria-live="polite"></div>
+        </section>
+
+        <!-- ═══ WORKFLOWS ════════════════════════════════ -->
+        <section id="workflowsView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Library</div>
+              <h1>Workflows</h1>
+              <p>
+                Registered Plan IR versions. Each entry is an immutable,
+                content-addressed workflow definition.
+              </p>
+            </div>
+            <button type="button" class="btn" id="refreshWorkflows">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div id="workflowList"></div>
+        </section>
+
+        <!-- ═══ ARTIFACTS ════════════════════════════════ -->
+        <section id="artifactsView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Library</div>
+              <h1>Artifacts</h1>
+              <p>
+                Immutable, SHA-256 content-addressed files generated by workflow
+                runs.
+              </p>
+            </div>
+            <button type="button" class="btn" id="refreshArtifacts">
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path
+                  d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="section-head">
+            <div>
+              <h2>All artifact references</h2>
+              <p id="artifactCount">Loading…</p>
+            </div>
+            <div class="controls">
+              <input
+                class="artifact-search-field control search"
+                id="artifactSearch"
+                type="search"
+                placeholder="Search run, node, or digest"
+                aria-label="Search artifacts"
+              />
+            </div>
+          </div>
+          <div id="artifactList"></div>
+          <div class="section-head"><h2>Run revision history</h2></div>
+          <form id="artifactRevisionsForm" class="ops-form ops-compare-form">
+            <label>
+              Run ID
+              <input
+                name="run"
+                required
+                placeholder="Inspect immutable intermediate revisions"
+              />
+            </label>
+            <button class="btn" type="submit">Load revisions</button>
+          </form>
+          <div id="globalRevisions"></div>
+        </section>
+
+        <!-- ═══ ANALYTICS ════════════════════════════════ -->
+        <section id="analyticsView" class="page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Insights</div>
+              <h1>Analytics</h1>
+            </div>
+          </div>
+          <div id="analyticsContent"></div>
+        </section>
+      </main>
     </div>
-    <div id="workflowList"></div>
+
     <!-- Plan viewer modal -->
     <div id="planModal" class="modal" hidden>
-      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="planModalTitle">
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="planModalTitle"
+      >
         <div class="modal-head">
           <div>
             <div class="modal-kicker" id="planModalEyebrow">Plan IR</div>
-            <div class="modal-title" id="planModalTitle"></div>
+            <h2 class="modal-title" id="planModalTitle"></h2>
           </div>
-          <button class="btn ghost" id="closePlanModal">Close</button>
+          <button type="button" class="btn ghost" id="closePlanModal">
+            Close
+          </button>
         </div>
         <div class="modal-body">
           <div class="meta-chips" id="planModalMeta"></div>
-          <div style="margin-bottom:14px">
+          <div class="schema-block">
             <div class="block-label">Input schema</div>
             <pre id="planModalSchema" class="codeblock"></pre>
           </div>
@@ -365,104 +888,92 @@
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- ═══ ARTIFACTS ════════════════════════════════ -->
-  <section id="artifactsView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Library</div>
-        <h1>Artifacts</h1>
-        <p>Immutable, SHA-256 content-addressed files generated by workflow runs.</p>
-      </div>
-      <button class="btn" id="refreshArtifacts">
-        <svg viewBox="0 0 20 20"><path d="M16 6V3m0 3h-3M4.5 8a5.5 5.5 0 0 1 9.2-3.2L16 6M4 14v3m0-3h3m-1.2 2.2A5.5 5.5 0 0 1 4.5 8"/></svg>
-        Refresh
-      </button>
-    </div>
-    <div class="section-head">
-      <div><h2>All artifact references</h2><p id="artifactCount">Loading…</p></div>
-      <div class="controls">
-        <input class="control search" id="artifactSearch" type="search" placeholder="Search run, node, or digest" aria-label="Search artifacts" style="width:min(300px,40vw)">
-      </div>
-    </div>
-    <div id="artifactList"></div>
-    <div class="section-head"><h2>Run revision history</h2></div><form id="artifactRevisionsForm" class="ops-form ops-compare-form"><label>Run ID<input name="run" required placeholder="Inspect immutable intermediate revisions"></label><button class="btn" type="submit">Load revisions</button></form><div id="globalRevisions"></div>
-  </section>
-
-
-  <!-- ═══ ANALYTICS ════════════════════════════════ -->
-  <section id="analyticsView" class="page" hidden>
-    <div class="page-head">
-      <div>
-        <div class="eyebrow">Insights</div>
-        <h1>Analytics</h1>
+    <div id="retryRunModal" class="modal" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="retryRunModalTitle"
+      >
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">Run</div>
+            <h2 class="modal-title" id="retryRunModalTitle">Retry run?</h2>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p>
+            Already-succeeded steps will be kept. Only failed or incomplete
+            steps will run again.
+          </p>
+          <div class="modal-actions">
+            <button class="btn ghost" type="button" id="retryRunModalCancel">
+              Cancel
+            </button>
+            <button class="btn primary" type="button" id="retryRunModalConfirm">
+              Confirm
+            </button>
+          </div>
+        </div>
       </div>
     </div>
-    <div id="analyticsContent"></div>
-  </section>
 
-</main>
-</div>
-
-<div id="retryRunModal" class="modal" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="retryRunModalTitle">
-    <div class="modal-head">
-      <div>
-        <div class="modal-kicker">Run</div>
-        <div class="modal-title" id="retryRunModalTitle">Retry run?</div>
+    <div id="cancelRunModal" class="modal" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancelRunModalTitle"
+      >
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">Run</div>
+            <h2 class="modal-title" id="cancelRunModalTitle">
+              Cancel this run?
+            </h2>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p>An operation already in progress may have external effects.</p>
+          <div class="modal-actions">
+            <button class="btn ghost" type="button" id="cancelRunModalCancel">
+              Keep running
+            </button>
+            <button
+              class="cancel-action btn ghost"
+              type="button"
+              id="cancelRunModalConfirm"
+            >
+              Cancel run
+            </button>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="modal-body">
-      <p>Already-succeeded steps will be kept. Only failed or incomplete steps will run again.</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn ghost" type="button" id="retryRunModalCancel">Cancel</button>
-        <button class="btn primary" type="button" id="retryRunModalConfirm">Confirm</button>
+    <div id="outputModal" class="modal" hidden>
+      <div
+        class="modal-card output-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="outputModalTitle"
+      >
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">Task output</div>
+            <h2 class="modal-title" id="outputModalTitle"></h2>
+          </div>
+          <button
+            type="button"
+            class="btn ghost"
+            id="closeOutputModal"
+            aria-label="Close output"
+          >
+            Close
+          </button>
+        </div>
+        <div class="modal-body" id="outputModalBody"></div>
       </div>
     </div>
-  </div>
-</div>
-
-<div id="cancelRunModal" class="modal" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cancelRunModalTitle">
-    <div class="modal-head">
-      <div>
-        <div class="modal-kicker">Run</div>
-        <div class="modal-title" id="cancelRunModalTitle">Cancel this run?</div>
-      </div>
-    </div>
-    <div class="modal-body">
-      <p>An operation already in progress may have external effects.</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn ghost" type="button" id="cancelRunModalCancel">Keep running</button>
-        <button class="btn ghost" type="button" id="cancelRunModalConfirm" style="color:var(--red)">Cancel run</button>
-      </div>
-    </div>
-  </div>
-</div>
-<div id="outputModal" class="modal" hidden>
-  <div class="modal-card output-modal-card" role="dialog" aria-modal="true" aria-labelledby="outputModalTitle">
-    <div class="modal-head"><div><div class="modal-kicker">Task output</div><div class="modal-title" id="outputModalTitle"></div></div><button class="btn ghost" id="closeOutputModal" aria-label="Close output">Close</button></div>
-    <div class="modal-body" id="outputModalBody"></div>
-  </div>
-</div>
-
-<script src="/js/format.js"></script>
-<script src="/js/markdown.js"></script>
-<script src="/js/json.js"></script>
-<script src="/js/core.js"></script>
-<script src="/js/usage-summary.js"></script>
-<script src="/js/workbench.js?v=control-flow-20261103"></script>
-<script src="/js/inspector.js"></script>
-<script src="/js/live.js"></script>
-<script src="/js/transcript.js"></script>
-<script src="/js/analytics-accounting.js"></script>
-<script src="/js/analytics-filters.js"></script>
-<script src="/js/analytics-retry-latency.js"></script>
-<script src="/js/analytics.js"></script>
-<script src="/js/operations.js"></script>
-<script src="/js/operations-hub.js"></script>
-<script src="/js/boot.js"></script>
-<script src="/workspace.js"></script>
-</body>
+  </body>
 </html>

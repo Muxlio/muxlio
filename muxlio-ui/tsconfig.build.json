@@ -1,0 +1,43 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outFile": "./dist/app.js",
+    "sourceMap": true
+  },
+  "files": [
+    "src/format.ts",
+    ".generated/templates.ts",
+    "src/components/template.ts",
+    "src/components/view-template.ts",
+    "src/components/feedback.ts",
+    "src/components/execution-metadata.ts",
+    "src/components/data-display.ts",
+    "src/components/pagination.ts",
+    "src/components/run-table.ts",
+    "src/components/accounting-card.ts",
+    "src/components/fields.ts",
+    "src/components/form-dialog.ts",
+    "src/markdown.ts",
+    "src/json.ts",
+    "src/core.ts",
+    "src/usage-summary.ts",
+    "src/workbench.ts",
+    "src/inspector.ts",
+    "src/live.ts",
+    "src/transcript.ts",
+    "src/analytics-accounting.ts",
+    "src/analytics-filters.ts",
+    "src/analytics-retry-latency.ts",
+    "src/analytics.ts",
+    "src/operations.ts",
+    "src/operations-hub.ts",
+    "src/boot.ts",
+    "src/workspace.ts",
+    "src/interactions.ts",
+    "src/main.ts"
+  ],
+  "include": [
+    "src/*.d.ts"
+  ]
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -578,33 +579,16 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			api.ServeHTTP(w, r)
 			return
 		}
-		assets := map[string]string{
-			"/operations.css":                "operations.css",
-			"/":                              "index.html",
-			"/app.css":                       "app.css",
-			"/workspace.js":                  "workspace.js",
-			"/workspace.css":                 "workspace.css",
-			"/js/markdown.js":                "js/markdown.js",
-			"/js/json.js":                    "js/json.js",
-			"/js/core.js":                    "js/core.js",
-			"/js/format.js":                  "js/format.js",
-			"/js/usage-summary.js":           "js/usage-summary.js",
-			"/js/workbench.js":               "js/workbench.js",
-			"/js/inspector.js":               "js/inspector.js",
-			"/js/live.js":                    "js/live.js",
-			"/js/transcript.js":              "js/transcript.js",
-			"/js/analytics-accounting.js":    "js/analytics-accounting.js",
-			"/js/analytics-filters.js":       "js/analytics-filters.js",
-			"/js/analytics-retry-latency.js": "js/analytics-retry-latency.js",
-			"/js/analytics.js":               "js/analytics.js",
-			"/js/operations.js":              "js/operations.js",
-			"/js/operations-hub.js":          "js/operations-hub.js",
-			"/js/boot.js":                    "js/boot.js",
-			"/logo.png":                      "logo.png",
-			"/favicon.ico":                   "favicon.ico",
-		}
-		name, ok := assets[r.URL.Path]
-		if !ok && isUIRoute(r.URL.EscapedPath()) {
+		name, ok := "", false
+		cleanPath := path.Clean(r.URL.Path)
+		if strings.HasPrefix(cleanPath, "/dist/") && cleanPath == r.URL.Path {
+			switch path.Ext(cleanPath) {
+			case ".js", ".css", ".map", ".png", ".ico":
+				name, ok = strings.TrimPrefix(cleanPath, "/"), true
+			}
+		} else if r.URL.Path == "/logo.png" || r.URL.Path == "/favicon.ico" {
+			name, ok = strings.TrimPrefix(r.URL.Path, "/"), true
+		} else if isUIRoute(r.URL.EscapedPath()) {
 			name, ok = "index.html", true
 		}
 		if !ok {

@@ -52,7 +52,7 @@ func cmdUI(args []string, globalJSON bool) int {
 		return 0
 	}
 
-	// Find UI server.mjs or directory
+	// Find the compiled UI server.
 	uiScript := findUIScript()
 	if uiScript == "" {
 		fmt.Fprintf(os.Stderr, "error: UI assets not found. Check that ~/.muxlio/share/muxlio/ui or muxlio-ui exists.\n")
@@ -97,8 +97,8 @@ func cmdUI(args []string, globalJSON bool) int {
 func findUIScript() string {
 	candidates := []string{
 		os.Getenv("MUXLIO_UI"),
-		filepath.Join(defaultRuntime(), "share", "muxlio", "ui", "server.mjs"),
-		filepath.Join(defaultRuntime(), "ui", "server.mjs"),
+		filepath.Join(defaultRuntime(), "share", "muxlio", "ui", "dist", "server.mjs"),
+		filepath.Join(defaultRuntime(), "ui", "dist", "server.mjs"),
 	}
 
 	// Also check relative to executable
@@ -108,16 +108,16 @@ func findUIScript() string {
 		}
 		prefix := filepath.Dir(filepath.Dir(exe))
 		candidates = append(candidates,
-			filepath.Join(prefix, "share", "muxlio", "ui", "server.mjs"),
-			filepath.Join(prefix, "muxlio-ui", "server.mjs"),
+			filepath.Join(prefix, "share", "muxlio", "ui", "dist", "server.mjs"),
+			filepath.Join(prefix, "muxlio-ui", "dist", "server.mjs"),
 		)
 	}
 
 	// Check current directory
 	if cwd, err := os.Getwd(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(cwd, "muxlio-ui", "server.mjs"),
-			filepath.Join(cwd, "..", "muxlio-ui", "server.mjs"),
+			filepath.Join(cwd, "muxlio-ui", "dist", "server.mjs"),
+			filepath.Join(cwd, "..", "muxlio-ui", "dist", "server.mjs"),
 		)
 	}
 

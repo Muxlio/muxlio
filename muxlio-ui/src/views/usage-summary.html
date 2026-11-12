@@ -1,0 +1,35 @@
+<template data-view="build-attempt-accounting-markup-div">
+<div title="{{value0}}"><dt>{{value1}} model</dt><dd>{{value2}}</dd></div>
+</template>
+
+<template data-view="reading-div">
+<div title="{{value0}}"><dt>{{value1}}</dt><dd>{{value2}}</dd></div>
+</template>
+
+<template data-view="build-attempt-accounting-markup-div-2">
+<div><dt>Accounting</dt><dd>Unavailable</dd></div>
+</template>
+
+<template data-view="build-usage-grid-markup-usage-column">
+<div class="usage-column">{{value0}}</div>
+</template>
+
+<template data-view="build-operations-usage-section-markup-operations-summary">
+<div class="operations-summary"><div class="operations-heading"><h2>Accounting</h2><div class="operation-states">{{value0}}</div></div><div class="usage-grid">{{value1}}</div></div>
+</template>
+
+<template data-view="build-workbench-usage-markup-stat">
+<div class="stat wb-usage wb-usage--idle" aria-label="Usage not available yet"><div class="stat-val">—</div><div class="stat-label">Accounting</div></div>
+</template>
+
+<template data-view="build-workbench-usage-markup-stat-2">
+<div class="stat wb-usage wb-usage--error" role="status"><div class="stat-val subtle">Unavailable</div><div class="stat-label">Accounting</div></div>
+</template>
+
+<template data-view="build-workbench-usage-markup-stat-3">
+<div class="stat wb-usage wb-usage--{{value0}}" role="status"><div class="stat-val subtle">{{value1}}</div><div class="stat-label">Accounting</div></div>
+</template>
+
+<template data-view="build-workbench-usage-markup-stat-4">
+<div class="stat wb-usage" data-usage-state="{{value0}}" aria-label="{{value1}}"><div class="stat-val">{{value2}}</div><div class="stat-label">{{value3}}</div></div>
+</template>

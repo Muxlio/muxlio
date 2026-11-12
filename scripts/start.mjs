@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
@@ -13,6 +13,11 @@ const [service = 'server', ...args] = argv;
 if (!['server', 'ui'].includes(service)) {
   console.error('Usage: bash scripts/start.sh [restart] [server|ui] [options]');
   process.exit(2);
+}
+if (service === 'ui') {
+  const build = spawnSync('npm', ['run', 'build', '--workspace', 'muxlio-ui'], { cwd: repo, stdio: 'inherit' });
+  if (build.error) throw build.error;
+  if (build.status !== 0) process.exit(build.status || 1);
 }
 mkdirSync(join(root, 'logs'), { recursive: true });
 mkdirSync(join(root, 'data'), { recursive: true });
@@ -58,7 +63,7 @@ try {
   if (!pid) {
     log = openSync(join(root, 'logs', service + '.log'), 'a', 0o600);
     const command = service === 'server' ? join(repo, '.bin', 'muxlio') : process.execPath;
-    const commandArgs = service === 'server' ? ['server', 'start', ...args] : [join(repo, 'muxlio-ui', 'server.mjs'), ...args];
+    const commandArgs = service === 'server' ? ['server', 'start', ...args] : [join(repo, 'muxlio-ui', 'dist', 'server.mjs'), ...args];
     const child = spawn(command, commandArgs, { cwd: repo, env: { ...process.env, ...(service === 'ui' ? { HOST: process.env.HOST || '127.0.0.1' } : {}) }, detached: true, stdio: ['ignore', log, log] });
     await new Promise((resolve, reject) => {
       child.once('error', reject);
