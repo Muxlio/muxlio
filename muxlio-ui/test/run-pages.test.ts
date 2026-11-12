@@ -227,11 +227,11 @@ regression("run pages regression", async () => {
   );
   assert.match(
     panel("runContract").innerHTML,
-    /<dt>Estimated fallback<\/dt><dd>1<\/dd>/,
+    /<dt>Estimated<\/dt><dd>1<\/dd>/,
   );
   assert.match(
     panel("runContract").innerHTML,
-    /<dt>Coverage<\/dt><dd>partial<\/dd>/,
+    /Incomplete · total may be higher/,
   );
   assert.match(panel("runSettings").innerHTML, /sha256:pinned/);
   assert.doesNotMatch(
@@ -283,9 +283,8 @@ regression("run pages regression", async () => {
     },
   });
   assert.match(panel("runContract").innerHTML, /<h3>Tokens<\/h3>/);
-  assert.match(panel("runContract").innerHTML, /<h3>Credits<\/h3>/);
-  assert.match(panel("runContract").innerHTML, /<h3>Cost<\/h3>/);
-  assert.match(panel("runContract").innerHTML, />—<\/dd>/);
+  assert.match(panel("runContract").innerHTML, /Credits and cost unavailable/);
+  assert.match(panel("runContract").innerHTML, />Unavailable<\/dd>/);
   assert.doesNotMatch(panel("runContract").innerHTML, /\$NaN|\$-1/);
 
   console.log(

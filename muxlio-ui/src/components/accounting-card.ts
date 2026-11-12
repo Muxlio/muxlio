@@ -5,18 +5,23 @@ interface AccountingCardReading {
 }
 function renderAccountingCard(
   label: string,
-  readings: readonly AccountingCardReading[],
-  coverage: string,
+  reading: AccountingCardReading,
+  note: string,
+  breakdown: readonly AccountingCardReading[] = [],
 ): string {
+  const rows = breakdown
+    .map((item) => renderDefinitionRow(item.label, item.value, item.title))
+    .join("");
   return renderComponent("accounting-card", {
     label,
-    coverage,
-    rows: componentBody(
-      readings
-        .map((reading) =>
-          renderDefinitionRow(reading.label, reading.value, reading.title),
-        )
-        .join(""),
+    note,
+    reading: componentBody(
+      renderDefinitionRow(reading.label, reading.value, reading.title),
+    ),
+    breakdown: componentBody(
+      rows
+        ? renderComponent("accounting-breakdown", { rows: componentBody(rows) })
+        : "",
     ),
   });
 }

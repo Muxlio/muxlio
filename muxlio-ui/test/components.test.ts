@@ -55,17 +55,21 @@ test("metrics and accounting cards preserve reported zero and unavailable readin
   );
   const card = components.renderAccountingCard(
     "Tokens",
-    [
-      { label: "Known subtotal", value: "0" },
-      { label: "Complete total", value: "—", title: "Not reported" },
-      { label: "Collected", value: "9223372036854775807" },
-    ],
-    "partial",
+    { label: "Collected", value: "0" },
+    "Incomplete · total may be higher",
+    [{ label: "Estimated fallback", value: "9223372036854775807" }],
   );
   assert.match(card, />0<\/dd>/);
-  assert.match(card, /title="Not reported">—<\/dd>/);
+  assert.match(
+    components.renderAccountingCard(
+      "Cost",
+      { label: "Usage", value: "Unavailable" },
+      "No usage reported",
+    ),
+    /Unavailable/,
+  );
   assert.match(card, /9223372036854775807/);
-  assert.match(card, /<dd>partial<\/dd>/);
+  assert.match(card, /Incomplete · total may be higher/);
 });
 
 test("pagination renders delegated actions and disables unavailable directions", () => {

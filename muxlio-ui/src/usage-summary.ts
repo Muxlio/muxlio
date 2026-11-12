@@ -10,6 +10,19 @@ function buildAttemptAccountingMarkup(accounting){
  for(const entry of accounting?.entries||[]){for(const [key,label] of [['total','Tokens'],['input','Input'],['output','Output'],['cacheRead','Cache read'],['cacheWrite','Cache write'],['reasoning','Reasoning']])reading(entry.model?`${entry.model} · ${label}`:label,entry.tokens?.[key]);for(const credit of entry.credits||[])reading(`${credit.provider} · ${credit.unit}`,credit.amount);for(const cost of entry.costs||[])reading(`${cost.currency} · ${cost.basis}`,cost.amount)}
  return rows.join('')||renderViewTemplate("usage-summary/build-attempt-accounting-markup-div-2");
 }
+// Keep the narrow inspector concise; full readings and provenance stay in details.
+function buildAttemptAccountingPreviewMarkup(accounting){
+ const rows=[];
+ const reading=(label,measure,tokens=false)=>{const value=measure?.collected??measure?.estimated;if(!value)return;const origin=measure.collected?(value.fidelity==='provider-estimate'?' (provider estimate)':value.fidelity==='proxy'?' (proxy)':''):' (estimated)';rows.push(renderViewTemplate("usage-summary/reading-div",[viewValue(esc(value.value)),viewValue(esc(label+origin)),viewValue(esc(tokens?fmtTokens(value.value):value.value))]))};
+ for(const entry of accounting?.entries||[]){
+  const prefix=entry.model?entry.model+' · ':'';
+  if(entry.tokens?.total?.collected||entry.tokens?.total?.estimated)reading(prefix+'Tokens',entry.tokens.total,true);
+  else{reading(prefix+'Input',entry.tokens?.input,true);reading(prefix+'Output',entry.tokens?.output,true)}
+  for(const credit of entry.credits||[])reading(`Credits · ${credit.provider} · ${credit.unit}`,credit.amount);
+  for(const cost of entry.costs||[])reading(`${cost.currency} · ${cost.basis==='api-equivalent'?'API-equivalent estimate':cost.basis==='plan-debit'?'Plan debit':'Cost (unspecified basis)'}`,cost.amount);
+ }
+ return rows.join('')||renderViewTemplate("usage-summary/build-attempt-accounting-markup-div-2");
+}
 function accountingMeasures(summary: AccountingSummary | null){
  const rows=[];
  if(summary?.tokens)rows.push({key:'tokens',label:'Tokens',row:summary.tokens});
@@ -34,17 +47,24 @@ function buildUsagePresentation(accounting: AccountingSummary | null,options: Us
 }
 function usageMeasureValue(measure){return measure.value==null?'Unavailable':measure.format(measure.value)}
 function usageCardMarkup(label,value,kind){
- const row=value||{};
- const rows=[['Known subtotal',row.knownSubtotal],[accountingCollectedLabel(row),row.collectedSubtotal],['Estimated fallback',row.estimatedFallbackSubtotal],['Complete total',row.effectiveTotal]];
- const readings=rows.map(([name,total])=>{const display=total==null?'—':kind==='tokens'?fmtTokens(total):accountingExact(total);return {label:String(name),value:display,title:total==null?'Not reported':display!==String(total)?String(total):''}});
- return renderAccountingCard(label,readings,accountingStatus(row));
+ const row=value||{},total=row.effectiveTotal??row.knownSubtotal;
+ const collected=row.collectedSubtotal!=null,estimated=row.estimatedFallbackSubtotal!=null;
+ const reading=(name,amount)=>{const display=amount==null?'Unavailable':kind==='tokens'?fmtTokens(amount):accountingExact(amount);return {label:name,value:display,title:amount!=null&&display!==String(amount)?String(amount):''}};
+ const name=collected&&estimated?'Known usage':estimated?'Estimated':collected?accountingCollectedLabel(row):'Usage';
+ const state=accountingStatus(row);
+ const note=total==null?(state==='inapplicable'?'Not applicable':'No usage reported'):row.effectiveTotal!=null?'Complete':state==='unknown'?'Coverage unverified · total may be higher':'Incomplete · total may be higher';
+ const breakdown=collected&&estimated?[reading(accountingCollectedLabel(row),row.collectedSubtotal),reading('Estimated fallback',row.estimatedFallbackSubtotal)]:[];
+ return renderAccountingCard(label,reading(name,total),note,breakdown);
 }
 function buildUsageGridMarkup(accounting){
  const measures=accountingMeasures(accounting);
  if(!measures.some(x=>x.key==='tokens'))measures.unshift({key:'tokens',label:'Tokens'});
- if(!accounting?.credits?.length)measures.push({key:'credit:unavailable',label:'Credits'});
- if(!accounting?.costs?.length)measures.push({key:'cost:unavailable',label:'Cost'});
- return ['tokens','credit:','cost:'].map(key=>renderViewTemplate("usage-summary/build-usage-grid-markup-usage-column", [viewValue(measures.filter(x=>key==='tokens'?x.key===key:x.key.startsWith(key)).map(x=>usageCardMarkup(x.label,x.row,x.key)).join(''))])).join('');
+ const columns=['tokens','credit:','cost:'].map(key=>measures.filter(x=>key==='tokens'?x.key===key:x.key.startsWith(key))).filter(items=>items.length).map(items=>renderViewTemplate("usage-summary/build-usage-grid-markup-usage-column", [viewValue(items.map(x=>usageCardMarkup(x.label,x.row,x.key)).join(''))])).join('');
+ const missing=[];
+ if(!accounting?.credits?.length)missing.push('Credits');
+ if(!accounting?.costs?.length)missing.push('cost');
+ const unavailable=missing.length?renderViewTemplate("usage-summary/unavailable-meters",[viewValue(esc((missing.join(' and ').replace(/^cost/,'Cost'))+' unavailable'))]):'';
+ return columns+unavailable;
 }
 function buildOperationsUsageSectionMarkup(accounting,attemptCount,attemptStates){return renderViewTemplate("usage-summary/build-operations-usage-section-markup-operations-summary", [viewValue(Object.entries(attemptStates||{}).map(([state,count])=>renderStatusBadge(stateClass(state), `${state} · ${count}`)).join('')), viewValue(buildUsageGridMarkup(accounting))])}
 

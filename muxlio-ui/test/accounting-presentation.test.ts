@@ -77,8 +77,11 @@ regression("accounting presentation regression", async () => {
   });
   assert.match(unavailableGrid, /<h3>Tokens<\/h3>/);
   assert.match(unavailableGrid, /title="9809008">9\.8M<\/dd>/);
-  assert.match(unavailableGrid, /<h3>Credits<\/h3>/);
-  assert.match(unavailableGrid, /<h3>Cost<\/h3>/);
+  assert.match(unavailableGrid, /Credits and cost unavailable/);
+  assert.doesNotMatch(
+    unavailableGrid,
+    /<h3>Credits|<h3>Cost|Known subtotal|Complete total|<dt>Coverage/,
+  );
   assert.doesNotMatch(unavailableGrid, /USD|kiro/);
   const grid = api.buildUsageGridMarkup(summary);
   assert.match(grid, /0\.18065595854063016/);

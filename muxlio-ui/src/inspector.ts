@@ -124,7 +124,13 @@ function buildAttemptUsageMarkup(act){
  const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
  const rows=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
  if(!rows.length)return '';
- return renderViewTemplate("inspector/build-attempt-usage-markup-insp-section", [viewValue(rows.map((a,i)=>renderViewTemplate("inspector/build-attempt-usage-markup-section", [viewValue(esc(attemptOffset+i+1)), viewValue(buildAttemptAccountingMarkup(a.accounting))])).join(''))]);
+ return renderViewTemplate("inspector/build-attempt-usage-markup-insp-section", [viewValue(rows.map((a,i)=>renderViewTemplate("inspector/build-attempt-usage-markup-section", [viewValue(esc(attemptOffset+i+1)), viewValue(buildAttemptAccountingPreviewMarkup(a.accounting)), viewValue(buildAttemptAccountingMarkup(a.accounting))])).join(''))]);
+}
+
+function buildInspectorAttemptsMarkup(attempts){
+ const pager=attemptOffset>0||attemptPageMore?renderViewTemplate("inspector/attempt-pager",[viewValue(Math.floor(attemptOffset/50)+1),viewValue(attemptOffset===0?' disabled':''),viewValue(!attemptPageMore?' disabled':'')]):'';
+ const cards=typeof attemptMetadataMarkup==='function'?attemptMetadataMarkup(attempts):'';
+ return renderViewTemplate("inspector/attempts-section",[viewValue(cards||renderViewTemplate("inspector/attempts-empty")),viewValue(pager)]);
 }
 
 function renderInspectorWb(act){
@@ -153,7 +159,7 @@ function renderInspectorWb(act){
   const transcriptUrl=`/transcripts/${encodeURIComponent(current||'')}/${encodeURIComponent(act.id)}`;
   const hasTranscript=activationHasTranscript(act);
   replaceHTMLPreservingDetails(body,renderViewTemplate("inspector/render-inspector-wb-insp-section", [viewValue(stateClass(act.state)||''), viewValue(esc(act.state)), viewValue(act.occurrence?`· iteration ${act.occurrence}`:'')]).trimEnd()+renderViewTemplate("inspector/render-inspector-wb-dd")+
-        renderViewTemplate("inspector/render-inspector-wb-insp-value-id", [viewValue(act.queueReason?renderViewTemplate("inspector/render-inspector-wb-dt", [viewValue(esc(act.queueReason))]):""), viewValue(esc(agent)), viewValue(act.skill?renderViewTemplate("inspector/render-inspector-wb-dt-2", [viewValue(esc(skill))]):""), viewValue(esc(inRef)), viewValue(esc(inRef)), viewValue(esc(outRef)), viewValue(esc(outRef)), viewValue(hasTranscript?renderViewTemplate("inspector/render-inspector-wb-insp-detail-actions", [viewValue(transcriptUrl)]):''), viewValue(evidences.length?renderViewTemplate("inspector/render-inspector-wb-insp-section-2", [viewValue(evidences.map(ev=>renderViewTemplate("inspector/render-inspector-wb-evidence-item", [viewValue(esc(ev))])).join('')), viewValue(route?renderViewTemplate("inspector/render-inspector-wb-evidence-route", [viewValue(esc(route)), viewValue(esc(route))]):'')]):''), viewValue(act.outputs?renderViewTemplate("inspector/render-inspector-wb-insp-section-3", [viewValue(outputMarkup(act.outputs))]):''), viewValue(act.error?renderViewTemplate("inspector/render-inspector-wb-insp-section-4", [viewValue(esc(act.error))]):''), viewValue(buildAttemptUsageMarkup(act)), viewValue(typeof attemptMetadataMarkup==='function'?attemptMetadataMarkup(inspectorAttempts.filter(a=>a.activationId===act.id)):''), viewValue(session?renderViewTemplate("inspector/render-inspector-wb-insp-section-5"):''), viewValue(Math.floor(attemptOffset/50)+1), viewValue(attemptOffset===0?' disabled':''), viewValue(!attemptPageMore?' disabled':''), viewValue(transcriptSectionMarkup(act,current))]));
+        renderViewTemplate("inspector/render-inspector-wb-insp-value-id", [viewValue(act.queueReason?renderViewTemplate("inspector/render-inspector-wb-dt", [viewValue(esc(act.queueReason))]):""), viewValue(esc(agent)), viewValue(act.skill?renderViewTemplate("inspector/render-inspector-wb-dt-2", [viewValue(esc(skill))]):""), viewValue(esc(inRef)), viewValue(esc(inRef)), viewValue(esc(outRef)), viewValue(esc(outRef)), viewValue(hasTranscript?renderViewTemplate("inspector/render-inspector-wb-insp-detail-actions", [viewValue(transcriptUrl)]):''), viewValue(evidences.length?renderViewTemplate("inspector/render-inspector-wb-insp-section-2", [viewValue(evidences.map(ev=>renderViewTemplate("inspector/render-inspector-wb-evidence-item", [viewValue(esc(ev))])).join('')), viewValue(route?renderViewTemplate("inspector/render-inspector-wb-evidence-route", [viewValue(esc(route)), viewValue(esc(route))]):'')]):''), viewValue(act.outputs?renderViewTemplate("inspector/render-inspector-wb-insp-section-3", [viewValue(outputMarkup(act.outputs))]):''), viewValue(act.error?renderViewTemplate("inspector/render-inspector-wb-insp-section-4", [viewValue(esc(act.error))]):''), viewValue(buildAttemptUsageMarkup(act)), viewValue(buildInspectorAttemptsMarkup(inspectorAttempts.filter(a=>a.activationId===act.id))), viewValue(session?renderViewTemplate("inspector/render-inspector-wb-insp-section-5"):''), viewValue(transcriptSectionMarkup(act,current))]));
   if(activationHasTranscript(act)&&(act.state==='running'||activationTranscripts.get(act.id)?.agent))scheduleTranscriptPoll(act,current);
   loadInspectorSnapshots(act,current);
   if(session&&typeof loadSessionControls==='function'){
@@ -176,11 +182,11 @@ async function loadInspectorSnapshots(act,runId){
   const snapshots=data.snapshots||[];
   snapshotCursors[snapshotPageIndex+1]=data.nextAfter||0;
   const el=$('#inspSnapshots');if(!el)return;
-  const markup=renderViewTemplate("inspector/markup-insp-output-title")+snapshots.map(event=>{
+  const markup=renderViewTemplate("inspector/markup-insp-output-title")+(snapshots.length?renderViewTemplate("inspector/snapshot-caption"):'')+snapshots.map(event=>{
    const ref=event.payload.snapshot;
    return renderViewTemplate("inspector/markup-artifact", [viewValue(esc(ref.name)), viewValue(esc(event.seq)), viewValue(esc(event.subjectId)), viewValue(esc(event.subjectId)), viewValue(esc(date(event.timestamp))), viewValue(esc(ref.digest)), viewValue(esc(ref.digest)), viewValue(esc(event.seq))]);
   }).join('')+(!snapshots.length?renderViewTemplate("inspector/markup-subtle"):'')+
-  renderViewTemplate("inspector/markup-pager", [viewValue(snapshotPageIndex+1), viewValue(snapshotPageIndex===0?' disabled':''), viewValue(!data.hasMore?' disabled':'')]);
+  (snapshotPageIndex>0||data.hasMore?renderViewTemplate("inspector/markup-pager", [viewValue(snapshotPageIndex+1), viewValue(snapshotPageIndex===0?' disabled':''), viewValue(!data.hasMore?' disabled':'')]):'');
   if(el._snapshotMarkup!==markup){el._snapshotMarkup=markup;if(typeof replaceHTMLPreservingDetails==='function')replaceHTMLPreservingDetails(el,markup);else el.innerHTML=markup;}
   for(const button of el.querySelectorAll<UIElement>('[data-snapshot-seq]'))button.onclick=()=>{
    const event=snapshots.find(e=>String(e.seq)===button.dataset.snapshotSeq);

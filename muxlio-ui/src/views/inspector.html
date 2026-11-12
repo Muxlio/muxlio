@@ -3,11 +3,11 @@
 </template>
 
 <template data-view="build-attempt-usage-markup-section">
-<section><h4>Attempt {{value0}}</h4><dl>{{value1}}</dl></section>
+<section class="artifact insp-accounting-attempt"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>Attempt {{value0}}</strong><span class="artifact-subtitle">Reported usage</span></div></div></div><dl class="insp-accounting-values">{{value1}}</dl><details class="insp-accounting-details"><summary>Usage details</summary><dl>{{value2}}</dl></details></section>
 </template>
 
 <template data-view="build-attempt-usage-markup-insp-section">
-<div class="insp-section"><h3>Accounting</h3>{{value0}}</div>
+<section class="insp-section"><h3 class="insp-output-title">Accounting</h3>{{value0}}</section>
 </template>
 
 <template data-view="render-inspector-wb-insp-section">
@@ -80,26 +80,25 @@
     {{value11}}
     {{value12}}
     {{value13}}
-    <nav class="pager" aria-label="Attempt pages"><span>Attempts · page {{value14}}</span><button class="btn ghost" data-attempt-page="-1"{{value15}}>Previous</button><button class="btn ghost" data-attempt-page="1"{{value16}}>Next</button></nav>
-    <div class="insp-section" id="inspSnapshots"><h3 class="insp-output-title">Intermediate snapshots</h3><div class="subtle">Loading snapshots…</div></div>
-    {{value17}}
+    <div class="insp-section" id="inspSnapshots"><h3 class="insp-output-title">Intermediate snapshots</h3><div class="data-empty">Loading snapshots…</div></div>
+    {{value14}}
 
 </template>
 
 <template data-view="markup-insp-output-title">
-<h3 class="insp-output-title">Intermediate snapshots</h3><p class="subtle">Observations from attempts; not committed final outputs.</p>
+<h3 class="insp-output-title">Intermediate snapshots</h3>
 </template>
 
 <template data-view="markup-artifact">
-<section class="artifact snapshot-artifact"><div class="snapshot-title"><strong>{{value0}}</strong><span class="subtle">seq {{value1}}</span></div><div class="snapshot-subject" title="{{value2}}">{{value3}}</div><time class="snapshot-time">{{value4}}</time><details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">{{value5}}</code><button class="btn ghost" data-copy-value="{{value6}}">Copy digest</button></details><button class="btn ghost" data-snapshot-seq="{{value7}}">View snapshot</button></section>
+<section class="artifact snapshot-artifact"><div class="artifact-head"><div class="artifact-title"><span class="artifact-file-icon" aria-hidden="true">▤</span><div><strong>{{value0}}</strong><span class="artifact-subtitle">seq {{value1}}</span></div></div></div><time class="snapshot-time">{{value4}}</time><details class="insp-record-details"><summary>Snapshot details</summary><dl class="artifact-meta"><dt>Attempt</dt><dd title="{{value2}}">{{value3}}</dd></dl><details class="digest-details"><summary>Show digest</summary><code class="artifact-digest">{{value5}}</code><button class="btn ghost" data-copy-value="{{value6}}">Copy digest</button></details></details><div class="artifact-actions"><button class="btn ghost" data-snapshot-seq="{{value7}}">View snapshot</button></div></section>
 </template>
 
 <template data-view="markup-subtle">
-<div class="subtle">No snapshots recorded.</div>
+<div class="data-empty">No snapshots recorded.</div>
 </template>
 
 <template data-view="markup-pager">
-<nav class="pager" aria-label="Snapshot pages"><span>Page {{value0}}</span><button class="btn ghost" data-snapshot-page="-1"{{value1}}>Previous</button><button class="btn ghost" data-snapshot-page="1"{{value2}}>Next</button></nav>
+<nav class="insp-pagination" aria-label="Snapshot pages"><span>Page {{value0}}</span><button class="btn ghost" data-snapshot-page="-1"{{value1}}>Previous</button><button class="btn ghost" data-snapshot-page="1"{{value2}}>Next</button></nav>
 </template>
 
 <template data-view="input-markup-data-empty">
@@ -276,4 +275,20 @@ min="{{value0}}"
 
 <template data-view="control-fragment-4">
 max="{{value0}}"
+</template>
+
+<template data-view="attempts-section">
+<section class="insp-section"><h3 class="insp-output-title">Attempts</h3>{{value0}}{{value1}}</section>
+</template>
+
+<template data-view="attempts-empty">
+<div class="data-empty">No attempts recorded.</div>
+</template>
+
+<template data-view="attempt-pager">
+<nav class="insp-pagination" aria-label="Attempt pages"><span>Page {{value0}}</span><button class="btn ghost" data-attempt-page="-1"{{value1}}>Previous</button><button class="btn ghost" data-attempt-page="1"{{value2}}>Next</button></nav>
+</template>
+
+<template data-view="snapshot-caption">
+<p class="insp-section-caption">Attempt observations, not committed final outputs.</p>
 </template>
