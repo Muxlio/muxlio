@@ -26,6 +26,7 @@ regression("timing regression", async () => {
   }
   const context = vm.createContext({
     Date: Clock,
+    URLSearchParams,
     document: { addEventListener() {} },
     location: { pathname: "/runs", search: "" },
     currentRoute: () => "/runs",

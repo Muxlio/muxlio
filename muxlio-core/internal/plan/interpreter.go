@@ -70,20 +70,21 @@ func inputRequestID(actID, name string) string {
 // Engine interprets a Plan IR against a Store. The default store is
 // in-memory; pass a SQLite store for durable runs.
 type Engine struct {
-	workspaceID     string // Authorized run target; kept separate from the immutable plan.
-	traceContext    context.Context
-	budgetMu        sync.Mutex
-	Context         context.Context
-	plan            *Plan
-	store           state.Store
-	executor        workers.Executor
-	ctxOnce         sync.Once
-	ctx             context.Context
-	cancel          context.CancelFunc
-	controlMu       sync.Mutex
-	cancelRequested bool
-	paused          bool
-	resumeCh        chan struct{}
+	SubmissionMetadata state.SubmissionMetadata
+	workspaceID        string // Authorized run target; kept separate from the immutable plan.
+	traceContext       context.Context
+	budgetMu           sync.Mutex
+	Context            context.Context
+	plan               *Plan
+	store              state.Store
+	executor           workers.Executor
+	ctxOnce            sync.Once
+	ctx                context.Context
+	cancel             context.CancelFunc
+	controlMu          sync.Mutex
+	cancelRequested    bool
+	paused             bool
+	resumeCh           chan struct{}
 }
 
 // NewEngine creates an interpreter with an in-memory store.
@@ -171,12 +172,13 @@ func (e *Engine) persistIdempotentRun(input json.RawMessage, idempotencyKey, inp
 	}
 	runIDNew := generateRunID()
 	run := &state.Run{
-		WorkspaceID:  workspaceID,
-		PlanJSON:     pinned,
-		PlanDigest:   snapshot.Digest,
-		ID:           runIDNew,
-		WorkflowName: e.plan.Name,
-		Input:        inputVal,
+		SubmissionMetadata: e.SubmissionMetadata,
+		WorkspaceID:        workspaceID,
+		PlanJSON:           pinned,
+		PlanDigest:         snapshot.Digest,
+		ID:                 runIDNew,
+		WorkflowName:       e.plan.Name,
+		Input:              inputVal,
 	}
 	existingID, isDuplicate, storeErr := e.store.CreateRunIdempotent(run, idempotencyKey, inputDigest)
 	if storeErr != nil {
@@ -215,13 +217,14 @@ func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (s
 	}
 	runID := generateRunID()
 	run := &state.Run{
-		WorkspaceID:  snapshot.WorkspaceID,
-		Fork:         fork,
-		PlanJSON:     pinned,
-		PlanDigest:   snapshot.Digest,
-		ID:           runID,
-		WorkflowName: e.plan.Name,
-		Input:        inputVal,
+		SubmissionMetadata: e.SubmissionMetadata,
+		WorkspaceID:        snapshot.WorkspaceID,
+		Fork:               fork,
+		PlanJSON:           pinned,
+		PlanDigest:         snapshot.Digest,
+		ID:                 runID,
+		WorkflowName:       e.plan.Name,
+		Input:              inputVal,
 	}
 	if err := e.store.CreateRun(run); err != nil {
 		return "", err

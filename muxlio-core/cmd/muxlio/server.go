@@ -23,6 +23,7 @@ import (
 	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
 	"github.com/muxlio/muxlio-core/internal/mcp"
 	"github.com/muxlio/muxlio-core/internal/plan"
+	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/subscription"
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -113,6 +114,10 @@ func (r *serverRunner) CreatePlanRun(p *plan.Plan, input json.RawMessage) (strin
 // CreateIdempotentRun implements api.idempotentRunner. It creates a run while
 // atomically deduplicating concurrent or retried submissions with the same key.
 func (r *serverRunner) CreateIdempotentRun(p *plan.Plan, input json.RawMessage, workspaceID, idempotencyKey string) (string, bool, error) {
+	return r.createIdempotentRun(p, input, workspaceID, idempotencyKey, state.SubmissionMetadata{})
+}
+
+func (r *serverRunner) createIdempotentRun(p *plan.Plan, input json.RawMessage, workspaceID, idempotencyKey string, metadata state.SubmissionMetadata) (string, bool, error) {
 	// Normalize: apply workspace authorization and compute the plan digest the
 	// same way CreateWorkspacePlanRun / CreatePlanRun would, so the binding is
 	// consistent regardless of whether a workspaceID is provided.
@@ -167,6 +172,7 @@ func (r *serverRunner) CreateIdempotentRun(p *plan.Plan, input json.RawMessage, 
 	// validation, and plan pinning happen exactly as in CreatePlanRun.
 	engine := plan.NewEngineWithStore(&pcopy, r.exec, r.store)
 	engine.Context = r.ctx
+	engine.SubmissionMetadata = metadata
 	runID, isDuplicate, err := engine.CreateRunIdempotent(rawInput, idempotencyKey, inputDigest)
 	if err != nil {
 		return "", false, err
@@ -187,6 +193,10 @@ func (r *serverRunner) CreateIdempotentRun(p *plan.Plan, input json.RawMessage, 
 // CreateRegisteredRun authorizes a separate workspace selector without rewriting
 // the immutable definition. Execution and restart read the workspace from the run.
 func (r *serverRunner) CreateRegisteredRun(raw []byte, input json.RawMessage, workspaceID, key string) (string, bool, error) {
+	return r.createRegisteredRun(raw, input, workspaceID, key, state.SubmissionMetadata{})
+}
+
+func (r *serverRunner) createRegisteredRun(raw []byte, input json.RawMessage, workspaceID, key string, metadata state.SubmissionMetadata) (string, bool, error) {
 	var p plan.Plan
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "", false, err
@@ -223,6 +233,7 @@ func (r *serverRunner) CreateRegisteredRun(raw []byte, input json.RawMessage, wo
 	h := sha256.Sum256(input)
 	engine := plan.NewEngineWithStore(&p, r.exec, r.store)
 	engine.Context = r.ctx
+	engine.SubmissionMetadata = metadata
 	id, duplicate, err := engine.CreateRegisteredRun(raw, input, selected.WorkspaceID, key, hex.EncodeToString(h[:]))
 	if err != nil || duplicate {
 		return id, duplicate, err
@@ -838,4 +849,19 @@ func isUIRoute(path string) bool {
 		return len(parts) == 1
 	}
 	return path == "/"
+}
+
+// CreateSubmittedRun persists discovery metadata atomically with the run.
+func (r *serverRunner) CreateSubmittedRun(p *plan.Plan, pinned []byte, input json.RawMessage, workspaceID, key string, metadata state.SubmissionMetadata) (string, bool, error) {
+	if pinned != nil {
+		return r.createRegisteredRun(pinned, input, workspaceID, key, metadata)
+	}
+	return r.createIdempotentRun(p, input, workspaceID, key, metadata)
+}
+
+func (r *serverRunner) ResolveRunWorkspaceID(id string) (string, error) {
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		return c.ResolveRunWorkspaceID(id)
+	}
+	return id, nil
 }

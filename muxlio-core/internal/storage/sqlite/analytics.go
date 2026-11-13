@@ -99,7 +99,7 @@ func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot
 	if limit <= 0 {
 		limit = 200
 	}
-	query := `SELECT id,workflow_name,state,NULL,NULL,'',created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json,COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),'') FROM runs` + where + ` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`
+	query := `SELECT id,workflow_name,state,NULL,NULL,'',created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json,COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''),origin_label,caller_id FROM runs` + where + ` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`
 	pageArgs := append(append([]any{}, args...), limit, offset)
 	rows, err := s.db.Query(query, pageArgs...)
 	if err != nil {

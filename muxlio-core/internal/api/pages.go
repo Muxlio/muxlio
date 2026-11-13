@@ -130,6 +130,7 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	safe.Input = nil
 	safe.Output = nil
 	writeJSON(w, 200, map[string]any{"id": safe.ID, "workflowName": safe.WorkflowName, "state": safe.State, "createdAt": safe.CreatedAt, "updatedAt": safe.UpdatedAt,
+		"workspaceId": run.WorkspaceID, "originLabel": run.OriginLabel, "callerId": run.CallerID,
 		"planDigest": run.PlanDigest, "fork": run.Fork, "pinned": run.Pinned, "retainedUntil": run.RetainedUntil, "error": diagnostic.Redact(run.Error),
 		"limits": pinned.Limits, "deadlineSeconds": pinned.DeadlineSeconds,
 		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": accountingSummary(attempts), "executionDurationMs": elapsed}})

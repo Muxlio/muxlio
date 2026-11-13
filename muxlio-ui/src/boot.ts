@@ -10,9 +10,9 @@ const refreshRuns=get('refreshRuns');if(refreshRuns)refreshRuns.onclick=loadRuns
 const refreshWorkers=get('refreshWorkers');if(refreshWorkers)refreshWorkers.onclick=loadWorkers;
 const refreshWorkflowsEl=get('refreshWorkflows');if(refreshWorkflowsEl)refreshWorkflowsEl.onclick=()=>loadWorkflows(true);
 const refreshArtifactsEl=get('refreshArtifacts');if(refreshArtifactsEl)refreshArtifactsEl.onclick=()=>loadArtifacts(true);
-const searchEl=get('search');if(searchEl)searchEl.oninput=()=>{runsPage=1;loadRuns()};
-const stateFilterEl=get('stateFilter');if(stateFilterEl)stateFilterEl.onchange=()=>{runsPage=1;loadRuns()};
-const sortOrderEl=get('sortOrder');if(sortOrderEl)sortOrderEl.onchange=()=>{runsPage=1;loadRuns()};
+const searchEl=get('search');if(searchEl)searchEl.oninput=updateRunDiscoveryFilters;
+const stateFilterEl=get('stateFilter');if(stateFilterEl)stateFilterEl.onchange=updateRunDiscoveryFilters;
+const sortOrderEl=get('sortOrder');if(sortOrderEl)sortOrderEl.onchange=updateRunDiscoveryFilters;
 const artifactSearchEl=get('artifactSearch');if(artifactSearchEl)artifactSearchEl.oninput=()=>loadArtifacts();
 const moreEventsWbEl=get('moreEventsWb');if(moreEventsWbEl)moreEventsWbEl.onclick=loadOlder;
 document.querySelectorAll<UIElement>('[data-wb-tab]').forEach(b=>b.onclick=()=>showWbTab(b.dataset.wbTab));
@@ -25,3 +25,8 @@ async function checkConnection(){
 // workspace.js will call navigate() and handle connection status
 window.addEventListener('popstate',navigate);
 // initial navigation handled by workspace.js
+
+for(const id of Object.values(runDiscoveryFields)){
+ if(id==='search')continue;
+ const control=get(id);if(control)control.onchange=updateRunDiscoveryFilters;
+}

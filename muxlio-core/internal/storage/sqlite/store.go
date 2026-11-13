@@ -156,6 +156,8 @@ func Open(path string) (*Store, error) {
 	for _, stmt := range []string{
 		`ALTER TABLE workflow_versions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE runs ADD COLUMN workspace_id TEXT`,
+		`ALTER TABLE runs ADD COLUMN origin_label TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE runs ADD COLUMN caller_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE runs ADD COLUMN fork_json BLOB`,
 		`ALTER TABLE runs ADD COLUMN plan_json BLOB`,
 		`ALTER TABLE runs ADD COLUMN plan_digest TEXT NOT NULL DEFAULT ''`,
@@ -185,6 +187,18 @@ func Open(path string) (*Store, error) {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
 			return nil, fmt.Errorf("muxlio: migrating sqlite schema: %w", err)
+		}
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_runs_discovery_workspace ON runs(COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''),` + runTimestamp("created_at") + `,id)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_discovery_digest ON runs(plan_digest,` + runTimestamp("created_at") + `,id)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_discovery_caller ON runs(caller_id,` + runTimestamp("created_at") + `,id)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_discovery_created ON runs(` + runTimestamp("created_at") + `,id)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_discovery_state ON runs(state,` + runTimestamp("created_at") + `,id)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, err
 		}
 	}
 	if err := normalizeLeaseTimestamps(db); err != nil {
@@ -1497,9 +1511,9 @@ func (s *Store) CreateRun(run *state.Run) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json, workspace_id)
-		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULLIF(?,''))`,
-		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON, run.WorkspaceID,
+		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json, workspace_id, origin_label, caller_id)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULLIF(?,''), ?, ?)`,
+		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON, run.WorkspaceID, run.OriginLabel, run.CallerID,
 	)
 	if err != nil {
 		return fmt.Errorf("muxlio: inserting run: %w", err)
@@ -1594,9 +1608,9 @@ func (s *Store) CreateRunIdempotent(run *state.Run, idempotencyKey, inputDigest 
 		return "", false, err
 	}
 	_, err = tx.Exec(
-		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json, workspace_id)
-		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULLIF(?,''))`,
-		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON, run.WorkspaceID,
+		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json, workspace_id, origin_label, caller_id)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULLIF(?,''), ?, ?)`,
+		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON, run.WorkspaceID, run.OriginLabel, run.CallerID,
 	)
 	if err != nil {
 		return "", false, fmt.Errorf("muxlio: inserting run: %w", err)
@@ -1644,7 +1658,7 @@ func (s *Store) getRun(id string, details bool) (*state.Run, error) {
 	row := s.db.QueryRow(
 		`SELECT id, workflow_name, state, `+contents+`, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
-   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json, COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),'')
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json, COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''), origin_label, caller_id
    FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
@@ -1933,7 +1947,7 @@ func (s *Store) ListRuns() ([]*state.Run, error) {
 	rows, err := s.db.Query(
 		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
-   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json, COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),'')
+   (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json, COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''), origin_label, caller_id
    FROM runs ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -2270,7 +2284,7 @@ func scanRun(row rowScanner) (*state.Run, error) {
 	var input, output sql.NullString
 	var created, updated string
 	var until sql.NullString
-	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest, &r.Pinned, &until, &fork, &r.WorkspaceID); err != nil {
+	if err := row.Scan(&r.ID, &r.WorkflowName, &r.State, &input, &output, &r.Error, &created, &updated, &pinned, &r.PlanDigest, &r.Pinned, &until, &fork, &r.WorkspaceID, &r.OriginLabel, &r.CallerID); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("muxlio: run not found")
 		}

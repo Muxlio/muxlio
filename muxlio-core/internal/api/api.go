@@ -335,10 +335,39 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET or POST")
 			return
 		}
+		filter, err := discoveryFilter(r)
+		if err != nil {
+			writeError(w, 400, CodeInvalidJSON, err.Error())
+			return
+		}
+		if filter.WorkspaceID != "" {
+			if resolver, ok := runner.(interface{ ResolveRunWorkspaceID(string) (string, error) }); ok {
+				id, err := resolver.ResolveRunWorkspaceID(filter.WorkspaceID)
+				if err != nil {
+					writeError(w, 400, "MUXLIO_WORKSPACE_UNAUTHORIZED", err.Error())
+					return
+				}
+				filter.WorkspaceID = id
+			}
+		}
+		if filter.CallerID != "" {
+			caller := CallerFromRequest(r)
+			if filter.CallerID == "me" {
+				filter.CallerID = caller.ID
+				if caller.ID == "" {
+					writeError(w, 403, CodeUnauthorized, "caller scope requires an authenticated identity")
+					return
+				}
+			}
+			if filter.CallerID != caller.ID && !caller.IsAdmin {
+				writeError(w, 403, CodeUnauthorized, "only an administrator may select another caller")
+				return
+			}
+		}
 		if r.URL.Query().Has("limit") {
 			if index, ok := store.(state.RunIndexStore); ok {
 				offset, limit := pageOptions(r)
-				runs, total, counts, err := index.ListRunPage(offset, limit+1, r.URL.Query().Get("q"), r.URL.Query().Get("state"), r.URL.Query().Get("sort"))
+				runs, total, counts, err := index.ListRunPage(offset, limit+1, r.URL.Query().Get("q"), r.URL.Query().Get("state"), r.URL.Query().Get("sort"), filter)
 				if err != nil {
 					writeError(w, 500, CodeStoreError, err.Error())
 					return
@@ -355,7 +384,13 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+		items := []*state.Run{}
+		for _, run := range runs {
+			if filter.Matches(run) && (r.URL.Query().Get("state") == "" || run.State == r.URL.Query().Get("state")) {
+				items = append(items, run)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"runs": items})
 	})
 
 	mux.HandleFunc("/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
@@ -663,6 +698,7 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 
 func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, store state.Store) {
 	var request struct {
+		OriginLabel string          `json:"originLabel,omitempty"`
 		WorkspaceID string          `json:"workspaceId,omitempty"`
 		Plan        *plan.Plan      `json:"plan"`
 		PlanDigest  string          `json:"planDigest,omitempty"`
@@ -731,7 +767,10 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, stor
 	var runID string
 	var duplicate bool
 	var err error
+	submitted, supportsSubmission := runner.(submittedRunner)
 	switch {
+	case supportsSubmission:
+		runID, duplicate, err = submitted.CreateSubmittedRun(request.Plan, registered, request.Input, request.WorkspaceID, idempotencyKey, state.SubmissionMetadata{OriginLabel: request.OriginLabel, CallerID: CallerFromRequest(r).ID})
 	case registered != nil:
 		rr, ok := runner.(registeredRunner)
 		if !ok {
@@ -1128,4 +1167,29 @@ func writeValidationErrors(w http.ResponseWriter, errs []plan.ValidationError) {
 		Details: details,
 	}
 	writeJSON(w, http.StatusUnprocessableEntity, env)
+}
+
+type submittedRunner interface {
+	CreateSubmittedRun(*plan.Plan, []byte, json.RawMessage, string, string, state.SubmissionMetadata) (string, bool, error)
+}
+
+func discoveryFilter(r *http.Request) (state.RunFilter, error) {
+	q := r.URL.Query()
+	f := state.RunFilter{WorkspaceID: q.Get("workspaceId"), PlanDigest: q.Get("planDigest"), CallerID: q.Get("callerId")}
+	for _, field := range []struct {
+		name   string
+		target *time.Time
+	}{{"createdAfter", &f.CreatedAfter}, {"createdBefore", &f.CreatedBefore}} {
+		if q.Has(field.name) {
+			value, err := time.Parse(time.RFC3339Nano, q.Get(field.name))
+			if err != nil {
+				return f, fmt.Errorf("%s must be an RFC3339 timestamp", field.name)
+			}
+			*field.target = value
+		}
+	}
+	if !f.CreatedAfter.IsZero() && !f.CreatedBefore.IsZero() && !f.CreatedAfter.Before(f.CreatedBefore) {
+		return f, fmt.Errorf("createdAfter must precede createdBefore")
+	}
+	return f, nil
 }

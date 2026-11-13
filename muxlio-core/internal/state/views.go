@@ -237,14 +237,17 @@ func (s *Memory) GetAttempt(runID, id string) (*ExecutionAttempt, error) {
 }
 
 type RunIndexStore interface {
-	ListRunPage(int, int, string, string, string) ([]*Run, int, map[string]int, error)
+	ListRunPage(int, int, string, string, string, ...RunFilter) ([]*Run, int, map[string]int, error)
 }
 
-func (s *Memory) ListRunPage(offset, limit int, search, status, order string) ([]*Run, int, map[string]int, error) {
+func (s *Memory) ListRunPage(offset, limit int, search, status, order string, filters ...RunFilter) ([]*Run, int, map[string]int, error) {
 	runs, err := s.ListRuns()
 	counts := map[string]int{}
 	items := []*Run{}
 	for _, r := range runs {
+		if len(filters) > 0 && !filters[0].Matches(r) {
+			continue
+		}
 		counts[r.State]++
 		if status != "" && r.State != status {
 			continue
@@ -352,4 +355,22 @@ func (s *Memory) RunLifecycleTimes(id string) (*time.Time, *time.Time, error) {
 		}
 	}
 	return start, finish, err
+}
+
+// RunFilter uses exact opaque identities and a half-open creation time range.
+// Empty fields preserve generic discovery, including runs predating metadata.
+type RunFilter struct {
+	WorkspaceID   string
+	PlanDigest    string
+	CallerID      string
+	CreatedAfter  time.Time
+	CreatedBefore time.Time
+}
+
+func (f RunFilter) Matches(r *Run) bool {
+	return (f.WorkspaceID == "" || f.WorkspaceID == r.WorkspaceID) &&
+		(f.PlanDigest == "" || f.PlanDigest == r.PlanDigest) &&
+		(f.CallerID == "" || f.CallerID == r.CallerID) &&
+		(f.CreatedAfter.IsZero() || !r.CreatedAt.Before(f.CreatedAfter)) &&
+		(f.CreatedBefore.IsZero() || r.CreatedAt.Before(f.CreatedBefore))
 }

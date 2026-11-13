@@ -19,7 +19,15 @@ type ForkProvenance struct {
 	ReuseActivations []string `json:"reuseActivations,omitempty"`
 }
 
+// SubmissionMetadata is opaque discovery metadata, independent of execution state.
+// CallerID is assigned by the authenticated API, never supplied by the client.
+type SubmissionMetadata struct {
+	OriginLabel string `json:"originLabel,omitempty"`
+	CallerID    string `json:"callerId,omitempty"`
+}
+
 type Run struct {
+	SubmissionMetadata
 	WorkspaceID   string          `json:"workspaceId,omitempty"`
 	Fork          *ForkProvenance `json:"fork,omitempty"`
 	Pinned        bool            `json:"pinned,omitempty"`

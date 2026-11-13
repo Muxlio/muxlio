@@ -3,11 +3,12 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/muxlio/muxlio-core/internal/api"
-	"github.com/muxlio/muxlio-core/internal/state"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/muxlio/muxlio-core/internal/api"
+	"github.com/muxlio/muxlio-core/internal/state"
 )
 
 func TestStartRunForwardsStableIdempotencyKey(t *testing.T) {
@@ -56,14 +57,14 @@ func TestStartRunForwardsRegisteredReference(t *testing.T) {
 		if _, ok := body["plan"]; ok {
 			t.Error("reference submission sent a plan")
 		}
-		if string(body["planDigest"]) != `"sha256:registered"` || string(body["workspaceId"]) != `"project"` || string(body["input"]) != `{"n":9007199254740993}` {
+		if string(body["planDigest"]) != `"sha256:registered"` || string(body["originLabel"]) != `"Editor"` || string(body["workspaceId"]) != `"project"` || string(body["input"]) != `{"n":9007199254740993}` {
 			t.Errorf("body: %s", body)
 		}
 		_, _ = w.Write([]byte(`{"runId":"original"}`))
 	}))
 	defer coordinator.Close()
 	s := &server{api: newAPIClient(coordinator.URL, "token")}
-	args := json.RawMessage(`{"planDigest":"sha256:registered","workspaceId":"project","input":{"n":9007199254740993},"idempotencyKey":"retry"}`)
+	args := json.RawMessage(`{"originLabel":"Editor","planDigest":"sha256:registered","workspaceId":"project","input":{"n":9007199254740993},"idempotencyKey":"retry"}`)
 	for i := 0; i < 2; i++ {
 		if got := s.dispatchTool("start_run", args); got.IsError {
 			t.Fatalf("%+v", got)
@@ -97,5 +98,55 @@ func TestMCPRegistrationStoresCoordinatorPlan(t *testing.T) {
 	stored, err := st.GetWorkflowVersion(version["digest"])
 	if err != nil || !bytes.Contains(stored, []byte(`"name":"registered"`)) {
 		t.Fatalf("stored: %s %v", stored, err)
+	}
+}
+
+func TestListRunsForwardsDiscoveryFilters(t *testing.T) {
+	coordinator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := map[string]string{"workspaceId": "project / one", "planDigest": "sha256:one", "state": "running", "callerId": "me", "createdAfter": "2026-01-02T00:00:00Z", "createdBefore": "2026-02-02T00:00:00Z", "limit": "10", "offset": "20"}
+		for key, value := range want {
+			if r.URL.Query().Get(key) != value {
+				t.Errorf("%s=%q", key, r.URL.Query().Get(key))
+			}
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing auth")
+		}
+		_, _ = w.Write([]byte(`{"runs":[],"total":0}`))
+	}))
+	defer coordinator.Close()
+	s := &server{api: newAPIClient(coordinator.URL, "token")}
+	result := s.dispatchTool("list_runs", json.RawMessage(`{"workspaceId":"project / one","planDigest":"sha256:one","state":"running","callerId":"me","createdAfter":"2026-01-02T00:00:00Z","createdBefore":"2026-02-02T00:00:00Z","limit":10,"offset":20}`))
+	if result.IsError {
+		t.Fatal(result)
+	}
+	if result := s.dispatchTool("list_runs", json.RawMessage(`{"limit":"ten"}`)); !result.IsError {
+		t.Fatal("invalid pagination accepted")
+	}
+}
+
+func TestListRunsWithoutArgumentsPreservesGenericDiscovery(t *testing.T) {
+	st := state.New()
+	defer st.Close()
+	if err := st.CreateRun(&state.Run{ID: "legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	coordinator := httptest.NewServer(api.WithAuth(api.NewRouter(st, nil), "token", "worker"))
+	defer coordinator.Close()
+	s := &server{api: newAPIClient(coordinator.URL, "token")}
+	for _, args := range []json.RawMessage{nil, json.RawMessage(`{}`)} {
+		got := s.dispatchTool("list_runs", args)
+		if got.IsError {
+			t.Fatalf("arguments %s: %+v", args, got)
+		}
+		var result struct {
+			Runs []state.Run `json:"runs"`
+		}
+		if err := json.Unmarshal([]byte(got.Content[0].Text), &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Runs) != 1 || result.Runs[0].ID != "legacy" {
+			t.Fatalf("generic discovery lost legacy run: %+v", result)
+		}
 	}
 }

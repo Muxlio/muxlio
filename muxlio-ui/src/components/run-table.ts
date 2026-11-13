@@ -2,6 +2,8 @@ interface RunTableRecord {
   id: string;
   workflowName?: string;
   state: string;
+  workspaceId?: string;
+  originLabel?: string;
   createdAt: string;
   updatedAt: string;
   totalExecutionTimeMs?: number | null;
@@ -15,6 +17,7 @@ function renderRunTable(
     renderComponent("run-row", {
       href: `/runs/${encodeURIComponent(run.id)}`,
       id: run.id,
+      origin: [run.originLabel, run.workspaceId].filter(Boolean).join(" · "),
       workflow: run.workflowName || "Unnamed workflow",
       status: componentBody(renderStatusBadge(run.state, run.state)),
       created: date(run.createdAt),

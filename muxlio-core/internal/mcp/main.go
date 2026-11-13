@@ -258,7 +258,8 @@ var tools = []toolDef{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory."},
+				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory. Use the same identity in list_runs to discover runs across clients."},
+				"originLabel": map[string]any{"type": "string", "description": "Optional opaque, user-visible origin label."},
 				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by register_workflow_version or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
 				"plan": map[string]any{
 					"description": "The Plan IR document as a JSON object.",
@@ -289,10 +290,19 @@ var tools = []toolDef{
 	},
 	{
 		Name:        "list_runs",
-		Description: "List all workflow runs known to the coordinator.",
+		Description: "Discover workflow runs using exact workspace, workflow digest, state, creation date and authorized caller filters. Omit filters for generic discovery including older runs. Use the same workspaceId as start_run; runs from other workspaces are excluded. Pagination preserves coordinator retention semantics.",
 		InputSchema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			"type": "object",
+			"properties": map[string]any{
+				"workspaceId":   map[string]any{"type": "string"},
+				"planDigest":    map[string]any{"type": "string"},
+				"state":         map[string]any{"type": "string"},
+				"callerId":      map[string]any{"type": "string", "description": "Use me for the authenticated caller; selecting another identity requires administrator authorization."},
+				"createdAfter":  map[string]any{"type": "string", "description": "Inclusive creation timestamp (RFC3339)."},
+				"createdBefore": map[string]any{"type": "string", "description": "Exclusive creation timestamp (RFC3339)."},
+				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+				"offset":        map[string]any{"type": "integer", "minimum": 0},
+			},
 		},
 	},
 	{
@@ -693,7 +703,7 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		}
 		return apiResultOrError(resp)
 	case "list_runs":
-		return s.toolListRuns()
+		return s.toolListRuns(args)
 	case "get_run_summary":
 		runID, err := extractRunID(args)
 		if err != nil {
@@ -1080,6 +1090,7 @@ func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResul
 
 func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	var params struct {
+		OriginLabel    string          `json:"originLabel,omitempty"`
 		WorkspaceID    string          `json:"workspaceId,omitempty"`
 		Plan           json.RawMessage `json:"plan"`
 		PlanDigest     string          `json:"planDigest,omitempty"`
@@ -1114,6 +1125,9 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 		}
 	}
 	body := map[string]json.RawMessage{"input": params.Input}
+	if params.OriginLabel != "" {
+		body["originLabel"], _ = json.Marshal(params.OriginLabel)
+	}
 	if hasPlan {
 		body["plan"] = params.Plan
 	} else {
@@ -1133,8 +1147,38 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	return apiResultOrError(resp)
 }
 
-func (s *server) toolListRuns() toolCallResult {
-	resp, err := s.api.get("/v1/runs", nil)
+func (s *server) toolListRuns(args json.RawMessage) toolCallResult {
+	// Arguments were optional before discovery filters were added. Keep bare
+	// list_runs calls available for generic discovery of older runs.
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	var params struct {
+		WorkspaceID   string `json:"workspaceId"`
+		PlanDigest    string `json:"planDigest"`
+		State         string `json:"state"`
+		CallerID      string `json:"callerId"`
+		CreatedAfter  string `json:"createdAfter"`
+		CreatedBefore string `json:"createdBefore"`
+		Limit         *int   `json:"limit"`
+		Offset        *int   `json:"offset"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return errResult("invalid arguments: " + err.Error())
+	}
+	query := url.Values{}
+	for key, value := range map[string]string{"workspaceId": params.WorkspaceID, "planDigest": params.PlanDigest, "state": params.State, "callerId": params.CallerID, "createdAfter": params.CreatedAfter, "createdBefore": params.CreatedBefore} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	if params.Limit != nil {
+		query.Set("limit", fmt.Sprint(*params.Limit))
+	}
+	if params.Offset != nil {
+		query.Set("offset", fmt.Sprint(*params.Offset))
+	}
+	resp, err := s.api.get("/v1/runs", query)
 	if err != nil {
 		return errResult("coordinator request failed: " + err.Error())
 	}

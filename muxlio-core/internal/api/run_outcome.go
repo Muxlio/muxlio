@@ -183,7 +183,7 @@ func handleRunOutcome(w http.ResponseWriter, r *http.Request, store state.Store,
 		fraction = &v
 	}
 	writeJSON(w, 200, map[string]any{
-		"runId": id, "workspaceId": run.WorkspaceID, "workflowName": run.WorkflowName, "planDigest": run.PlanDigest,
+		"runId": id, "originLabel": run.OriginLabel, "callerId": run.CallerID, "workspaceId": run.WorkspaceID, "workflowName": run.WorkflowName, "planDigest": run.PlanDigest,
 		"error": text(run.Error), "state": run.State, "outcome": outcome, "terminal": terminal, "createdAt": run.CreatedAt, "startedAt": started, "finishedAt": finished, "updatedAt": run.UpdatedAt,
 		"progress":               map[string]any{"basis": "materialised_activations", "total": len(acts), "succeeded": completed, "states": states, "fraction": fraction},
 		"failedSteps":            map[string]any{"items": failed, "total": failedTotal, "hasMore": failedTotal > len(failed)},

@@ -67,11 +67,11 @@ function setView(view){
   }
   $('#topContext').textContent=view==='workerCapability'?'Capability details':view==='detail'?'Run detail':view==='transcript'?'Transcript':view[0].toUpperCase()+view.slice(1);
 }
-function navigate(){message('');const hash=currentRoute();const path=hash.split('?')[0];const id=path.startsWith('/runs/')?decodeURIComponent(path.slice('/runs/'.length)):'';const transcriptMatch=path.startsWith('/transcripts/')?path.slice('/transcripts/'.length).split('/'):null;if(transcriptMatch&&transcriptMatch.length>=2){const runId=decodeURIComponent(transcriptMatch[0]),actId=decodeURIComponent(transcriptMatch[1]);current=runId;setView('transcript');if(typeof loadTranscriptPage==='function')loadTranscriptPage(runId,actId)}else if(id){current=id;setView('detail');openRun(id)}else if(path==='/operations'){setView('operations');loadOpsDashboard()}else if(path==='/automation'){setView('automation');loadAutomation()}else if(path==='/retention'){setView('retention');loadRetention()}else if(path.startsWith('/worker-capabilities/')){setView('workerCapability');loadWorkerCapabilityPage(...path.slice('/worker-capabilities/'.length).split('/').map(decodeURIComponent) as [string, string, string?])}else if(path==='/workers'){setView('workers');loadWorkers()}else if(path==='/live'){setView('live');loadLive()}else if(path==='/runs'){setView('runs');loadRuns()}else if(path==='/workflows'){setView('workflows');loadWorkflows()}else if(path==='/artifacts'){setView('artifacts');loadArtifacts()}else if(path.startsWith('/analytics')){setView('analytics');loadAnalytics(typeof analyticsFiltersFromURL==='function'?analyticsFiltersFromURL(hash):undefined)}else{setView('overview');loadOverview()}}
+function navigate(){message('');const hash=currentRoute();const path=hash.split('?')[0];const id=path.startsWith('/runs/')?decodeURIComponent(path.slice('/runs/'.length)):'';const transcriptMatch=path.startsWith('/transcripts/')?path.slice('/transcripts/'.length).split('/'):null;if(transcriptMatch&&transcriptMatch.length>=2){const runId=decodeURIComponent(transcriptMatch[0]),actId=decodeURIComponent(transcriptMatch[1]);current=runId;setView('transcript');if(typeof loadTranscriptPage==='function')loadTranscriptPage(runId,actId)}else if(id){current=id;setView('detail');openRun(id)}else if(path==='/operations'){setView('operations');loadOpsDashboard()}else if(path==='/automation'){setView('automation');loadAutomation()}else if(path==='/retention'){setView('retention');loadRetention()}else if(path.startsWith('/worker-capabilities/')){setView('workerCapability');loadWorkerCapabilityPage(...path.slice('/worker-capabilities/'.length).split('/').map(decodeURIComponent) as [string, string, string?])}else if(path==='/workers'){setView('workers');loadWorkers()}else if(path==='/live'){setView('live');loadLive()}else if(path==='/runs'){setView('runs');restoreRunDiscoveryFilters();loadRuns()}else if(path==='/workflows'){setView('workflows');loadWorkflows()}else if(path==='/artifacts'){setView('artifacts');loadArtifacts()}else if(path.startsWith('/analytics')){setView('analytics');loadAnalytics(typeof analyticsFiltersFromURL==='function'?analyticsFiltersFromURL(hash):undefined)}else{setView('overview');loadOverview()}}
 async function fetchRuns(){
  const history=currentRoute().split('?')[0]==='/runs';
- const q=history?(get('search')?.value||'').trim():'',state=history?get('stateFilter')?.value||'':'',sort=history?get('sortOrder')?.value||'updated':'updated';
- const page=await api(`/v1/runs?limit=25&offset=${history?(runsPage-1)*RUNS_PAGE_SIZE:0}&q=${encodeURIComponent(q)}&state=${encodeURIComponent(state)}&sort=${encodeURIComponent(sort)}`);
+ const discovery=history?runDiscoveryQuery():'';
+ const page=await api(`/v1/runs?${discovery}&limit=25&offset=${history?(runsPage-1)*RUNS_PAGE_SIZE:0}`);
  if(!Number.isInteger(page.total)||!Array.isArray(page.runs))throw Error('Coordinator update required for paged run history.');
  runsListing=page;
  const items=page.runs||[];
@@ -111,3 +111,33 @@ function renderRuns(){
 }
 document.addEventListener('click',event=>{const button=(event.target as UIElement).closest<UIElement>('#runList .pager [data-page]');if(!button||button.disabled)return;runsPage=Number(button.dataset.page)||1;loadRuns()});
 
+const runDiscoveryFields={q:'search',state:'stateFilter',sort:'sortOrder',workspaceId:'workspaceFilter',planDigest:'digestFilter',createdAfter:'createdAfterFilter',createdBefore:'createdBeforeFilter',callerId:'callerFilter'};
+function runDiscoveryQuery(){
+ const query=new URLSearchParams();
+ for(const [key,id] of Object.entries(runDiscoveryFields)){
+  let value=get(id)?.value||'';
+  if(key==='q')value=value.trim();
+  if(value&&(key==='createdAfter'||key==='createdBefore'))value=new Date(value).toISOString();
+  if(value)query.set(key,value);
+ }
+ return query.toString();
+}
+function restoreRunDiscoveryFilters(){
+ runsPage=1;
+ const query=new URLSearchParams(currentRoute().split('?')[1]||'');
+ for(const [key,id] of Object.entries(runDiscoveryFields)){
+  const control=get(id);if(!control)continue;
+  let value=query.get(key)||(key==='sort'?'updated':'');
+  if(value&&(key==='createdAfter'||key==='createdBefore')){
+   const date=new Date(value);value=Number.isNaN(date.getTime())?'':new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,-1);
+  }
+  control.value=value;
+ }
+}
+
+function updateRunDiscoveryFilters(){
+ runsPage=1;
+ const query=runDiscoveryQuery();
+ history.replaceState(null,'','/runs'+(query?'?'+query:''));
+ loadRuns();
+}

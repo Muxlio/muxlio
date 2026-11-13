@@ -20,6 +20,24 @@ Read verification outputs and errors before retrying. A successful fake run does
 not prove that real agent output is correct. Preserve completed work, inspect
 uncertain external effects, and use the workflow's bounded recovery policy.
 
+## Find a past run
+
+When continuing work from another client without a run ID, call `list_runs` with
+its operator-configured `workspaceId` and a bounded `limit` (for example, 25).
+Use the same workspace identity as submission; configured aliases resolve to the
+canonical identity. Do not infer workspace authority from the current directory.
+Inspect the relevant active and recent runs before deciding whether to submit
+again. Use `planDigest`, `state`, `createdAfter` (inclusive RFC3339),
+`createdBefore` (exclusive RFC3339), and `callerId: "me"` to narrow results, and
+follow `nextOffset` while `hasMore` is true. A run in another workspace is not a
+candidate for reuse. A matching label or workflow name alone does not establish
+that a run belongs to the current task.
+
+On submission, supply an optional `originLabel` so people can recognize where the
+run came from. It is opaque metadata and grants no permissions. Unfiltered
+`list_runs` remains available for older runs without workspace metadata.
+Discovery does not extend retention or pin results.
+
 ## CLI reference
 
 Useful CLI commands include:

@@ -356,6 +356,42 @@
                 <option>failed</option>
                 <option>cancelled</option>
               </select>
+              <input
+                class="control"
+                id="workspaceFilter"
+                type="text"
+                placeholder="Workspace identity"
+                aria-label="Filter by workspace identity"
+              />
+              <input
+                class="control"
+                id="digestFilter"
+                type="text"
+                placeholder="Workflow digest"
+                aria-label="Filter by workflow digest"
+              />
+              <input
+                class="control"
+                id="createdAfterFilter"
+                type="datetime-local"
+                step="0.001"
+                aria-label="Created on or after"
+              />
+              <input
+                class="control"
+                id="createdBeforeFilter"
+                type="datetime-local"
+                step="0.001"
+                aria-label="Created before"
+              />
+              <select
+                class="control"
+                id="callerFilter"
+                aria-label="Filter by caller"
+              >
+                <option value="">All authorized callers</option>
+                <option value="me">Submitted by me</option>
+              </select>
               <select class="control" id="sortOrder" aria-label="Sort">
                 <option value="updated">Recently updated</option>
                 <option value="created">Recently created</option>

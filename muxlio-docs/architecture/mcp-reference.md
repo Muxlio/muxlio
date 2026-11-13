@@ -445,6 +445,7 @@ and start a workflow run.
 | planDigest | string | Either this or `plan` | Content digest returned by `register_workflow_version` or `list_workflow_versions`. The coordinator loads the stored definition. |
 | input | object | ✓        | Typed JSON input matching the plan's `inputSchema`. Use `{}` when the plan requires no input. |
 | workspaceId | string | | Operator-authorized target workspace. Defaults to the plan's workspace or the configured coordinator default. |
+| originLabel | string | | Optional opaque, user-visible submission origin (for example, a client or project label). Stored separately from workflow and run state. |
 | idempotencyKey | string | | Stable caller-generated submission key; reuse it on retries. |
 
 **Output:** `{runId, state}` — the new run ID and initial state (`running`).
@@ -475,11 +476,35 @@ and retirement details.
 
 ### `list_runs`
 
-List all workflow runs known to the coordinator.
+Discover runs without a run ID, including active work and retained history.
 
-**Input:** (no fields required)
+All inputs are optional. `workspaceId` matches the authorized workspace identity
+stored at submission; configured aliases resolve to that identity. `planDigest`
+and `state` match exactly. Stored workspace identities remain searchable after
+their execution bindings are removed; unknown identities return no matches.
+`createdAfter` (inclusive) and `createdBefore`
+(exclusive) accept RFC3339 creation timestamps. `callerId: "me"` selects the
+current authenticated caller; selecting another caller ID requires administrator
+authorization. Filters narrow the caller's existing authorization.
 
-**Output:** `{runs: [{id, workflowName, state, createdAt, updatedAt, error?, output?}]}`
+```json
+{"workspaceId":"project","limit":25,"offset":0}
+```
+
+Open another client with access to the same coordinator and use the same workspace
+selector to find relevant active and recent runs. A different workspace is excluded.
+Do not automatically reuse a run based only on a workflow name or origin label.
+These labels are opaque metadata, not execution states or filesystem permissions.
+
+The HTTP equivalent is `GET /v1/runs?workspaceId=project&limit=25&offset=0`.
+Results expose `workspaceId`, `originLabel`, `callerId` and `planDigest` when known.
+Supplying `limit` enables bounded pages (maximum 200) with `offset`, `nextOffset`,
+`hasMore`, `total` and scoped `states` counts. All filters apply before pagination;
+creation-time ties use run ID for stable ordering. Omit filters for generic
+discovery, including old runs without metadata. Discovery does not pin runs or
+extend retention. Idempotent retries retain the original origin label.
+
+**Output without pagination:** `{runs: [{id, workflowName, state, workspaceId?, originLabel?, callerId?, planDigest?, createdAt, updatedAt, error?, output?}]}`
 
 ---
 

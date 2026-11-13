@@ -131,3 +131,17 @@ func (c *Coordinator) authorizeWorkspace(req workers.ExecuteRequest) (workers.Ex
 	}
 	return req, fmt.Errorf("workspace %q has no available owning worker %q; no checkout substitution is allowed", id, binding.WorkerID)
 }
+
+// ResolveRunWorkspaceID resolves current aliases for discovery. Unknown selectors
+// remain exact metadata filters so retained runs outlive their execution bindings.
+// It grants no filesystem authority and performs no execution.
+func (c *Coordinator) ResolveRunWorkspaceID(id string) (string, error) {
+	registry := c.workspaceRegistry()
+	if err := registry.Validate(); err != nil {
+		return "", err
+	}
+	if canonical, _, err := registry.Resolve(id); err == nil {
+		return canonical, nil
+	}
+	return id, nil
+}
