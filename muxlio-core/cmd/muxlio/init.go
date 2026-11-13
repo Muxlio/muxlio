@@ -9,12 +9,16 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/muxlio/muxlio-core/internal/integrations"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	agent := fs.String("agent", "", "agent type to configure skill for (antigravity, codex, cursor, claude, kiro)")
+	agent := fs.String("agent", "", "compatible alias for --client (authoring client, independent of execution adapters)")
+	client := fs.String("client", "", "authoring client: claude, codex, cursor, kiro; antigravity instructions only")
+	scope := fs.String("scope", "project", "client registration scope: project or user (init defaults to project)")
+	mcpBinary := fs.String("mcp-binary", integrationBinary(), "absolute muxlio-mcp executable for client registration")
 	workspace := fs.String("workspace", "", "authorized workspace directory (default: current dir)")
 	dataDir := fs.String("data-dir", globalDataDir, "runtime data directory (default: ~/.muxlio)")
 	workerPath := fs.String("worker-path", "", "persist this absolute executable search path (default: preserve saved workerEnv.PATH, otherwise capture PATH)")
@@ -24,6 +28,17 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON output")
 
 	if err := fs.Parse(reorderArgs(args)); err != nil {
+		return 2
+	}
+	if *client != "" {
+		if *agent != "" && *agent != *client {
+			fmt.Fprintln(os.Stderr, "error: --client and --agent must agree")
+			return 2
+		}
+		*agent = *client
+	}
+	if *scope != "user" && *scope != "project" {
+		fmt.Fprintln(os.Stderr, "error: --scope must be project or user")
 		return 2
 	}
 	switch *agent {
@@ -120,6 +135,38 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 	configChanged := false
+	// The stdio bridge resolves this default and its credentials from the saved
+	// config, keeping credentials out of client settings and process arguments.
+	if _, exists := config["defaultServer"]; !exists {
+		addr := "127.0.0.1:7600"
+		if raw := config["addr"]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &addr); err != nil {
+				fmt.Fprintln(os.Stderr, "error: addr must be host:port")
+				return 1
+			}
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: addr must be host:port")
+			return 1
+		}
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		scheme := "http"
+		var tlsCert string
+		if raw := config["tlsCert"]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &tlsCert); err != nil {
+				fmt.Fprintln(os.Stderr, "error: tlsCert must be a string")
+				return 1
+			}
+		}
+		if tlsCert != "" {
+			scheme = "https"
+		}
+		config["defaultServer"], _ = json.Marshal(scheme + "://" + net.JoinHostPort(host, port))
+		configChanged = true
+	}
 	if *allowCommand {
 		executors := map[string]json.RawMessage{}
 		if raw := config["executors"]; len(raw) > 0 {
@@ -229,6 +276,17 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 
+	var registration *integrations.Status
+	if *agent != "" && *agent != "antigravity" {
+		home, _ := os.UserHomeDir()
+		status, err := integrations.Apply(integrations.Options{Client: *agent, Scope: *scope, Home: home, Workspace: ws, Transport: "stdio", Binary: *mcpBinary, Config: configPath}, "add")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: client registration:", err)
+			return 1
+		}
+		registration = &status
+	}
+
 	// 3. Write env script for shell sourcing
 	envScriptPath := filepath.Join(root, "env")
 	envContent := fmt.Sprintf(`# Muxlio shell environment
@@ -241,6 +299,14 @@ esac
 	_ = os.WriteFile(envScriptPath, []byte(envContent), 0o600)
 
 	// 4. Install Agent Skill
+	instructionBase := ws
+	if *scope == "user" {
+		instructionBase, err = os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: locating user instructions directory")
+			return 1
+		}
+	}
 	skillInstalledPaths := make([]string, 0)
 	skillContent := getSkillContent(root)
 	if len(skillContent) > 0 {
@@ -250,7 +316,7 @@ esac
 		}
 
 		// Workspace standard skill locations
-		workspaceSkillsDir := filepath.Join(ws, ".skills", "muxlio")
+		workspaceSkillsDir := filepath.Join(instructionBase, ".skills", "muxlio")
 		_ = os.MkdirAll(workspaceSkillsDir, 0o755)
 		wsSkill := filepath.Join(workspaceSkillsDir, "SKILL.md")
 		if err := os.WriteFile(wsSkill, skillContent, 0o644); err == nil {
@@ -260,26 +326,26 @@ esac
 		// Agent-specific locations
 		switch *agent {
 		case "codex":
-			codexDir := filepath.Join(ws, ".codex", "skills", "muxlio")
+			codexDir := filepath.Join(instructionBase, ".codex", "skills", "muxlio")
 			_ = os.MkdirAll(codexDir, 0o755)
 			codexSkill := filepath.Join(codexDir, "SKILL.md")
 			_ = os.WriteFile(codexSkill, skillContent, 0o644)
 			skillInstalledPaths = append(skillInstalledPaths, codexSkill)
 		case "cursor":
-			cursorDir := filepath.Join(ws, ".cursor", "rules")
+			cursorDir := filepath.Join(instructionBase, ".cursor", "rules")
 			_ = os.MkdirAll(cursorDir, 0o755)
 			cursorRule := filepath.Join(cursorDir, "muxlio.mdc")
 			ruleContent := fmt.Sprintf("---\ndescription: Muxlio workflow authoring rules and conventions\nglobs: workflows/**,*.plan.json\n---\n\n%s", string(skillContent))
 			_ = os.WriteFile(cursorRule, []byte(ruleContent), 0o644)
 			skillInstalledPaths = append(skillInstalledPaths, cursorRule)
 		case "claude":
-			claudeDir := filepath.Join(ws, ".claude", "skills", "muxlio")
+			claudeDir := filepath.Join(instructionBase, ".claude", "skills", "muxlio")
 			_ = os.MkdirAll(claudeDir, 0o755)
 			claudeSkill := filepath.Join(claudeDir, "SKILL.md")
 			_ = os.WriteFile(claudeSkill, skillContent, 0o644)
 			skillInstalledPaths = append(skillInstalledPaths, claudeSkill)
 		case "antigravity":
-			antigravityDir := filepath.Join(ws, ".agents", "skills", "muxlio")
+			antigravityDir := filepath.Join(instructionBase, ".agents", "skills", "muxlio")
 			_ = os.MkdirAll(antigravityDir, 0o755)
 			antigravitySkill := filepath.Join(antigravityDir, "SKILL.md")
 			_ = os.WriteFile(antigravitySkill, skillContent, 0o644)
@@ -333,6 +399,9 @@ esac
 			"envScript":     envScriptPath,
 			"skills":        skillInstalledPaths,
 		}
+		if registration != nil {
+			res["integration"] = registration
+		}
 		if starterPlanPath != "" {
 			res["starterPlan"] = starterPlanPath
 			res["starterInput"] = starterInputPath
@@ -345,6 +414,9 @@ esac
 	fmt.Println("✓ Muxlio environment initialized successfully!")
 	fmt.Printf("  Runtime dir: %s\n", root)
 	fmt.Printf("  Workspace:   %s\n", ws)
+	if registration != nil {
+		fmt.Printf("  Client MCP:  %s (%s): %s\n", registration.Client, registration.Scope, registration.Path)
+	}
 	if configCreated {
 		fmt.Printf("  Config:      %s (created)\n", configPath)
 	} else {

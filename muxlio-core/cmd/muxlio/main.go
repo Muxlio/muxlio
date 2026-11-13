@@ -31,7 +31,8 @@ import (
 const usage = `muxlio — workflow execution engine
 
 Usage:
-  muxlio init [--agent name] [--allow-command]        Initialize ~/.muxlio and configure agent skills
+  muxlio init [--client name] [--scope project|user]  Initialize Muxlio and register authoring-client MCP (--agent is an alias)
+  muxlio integrations add|list|doctor|repair|remove   Register and verify authoring-client MCP setup (--client NAME --scope project|user)
   muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
   muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
   muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
@@ -238,6 +239,8 @@ func main() {
 		coordinatorlog.SetOutput(os.Stderr)
 	}
 	switch cmd {
+	case "integrations":
+		os.Exit(cmdIntegrations(args[1:], dataDir, jsonOut))
 	case "init":
 		os.Exit(cmdInit(args[1:], dataDir, jsonOut))
 

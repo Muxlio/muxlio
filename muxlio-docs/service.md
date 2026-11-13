@@ -23,12 +23,15 @@ workflow commands need as well.
 From the project or workspace where you want work to happen:
 
 ```sh
-muxlio init --agent kiro --allow-command
+muxlio init --client kiro --scope project --allow-command
 muxlio service start
 ```
 
-Choose `--agent` for the assistant you use: `kiro`, `codex`, `claude`, `cursor`,
-or `antigravity`. It installs Muxlio authoring instructions for that assistant.
+Choose `--client` for the assistant you use: `kiro`, `codex`, `claude`, `cursor`,
+or `antigravity`. It installs Muxlio authoring instructions and registers its local stdio MCP server.
+`--agent` is a compatible alias for the authoring client, independent of workflow
+execution adapters. Antigravity receives instructions only until its MCP CLI
+contract can be verified. Use `--scope user` for user registration.
 `--allow-command` explicitly permits command steps, including build checks and
 Git commands. Omit it if your workflows do not need command execution.
 
@@ -40,6 +43,9 @@ and MCP listener together in the background.
 
 Open **http://localhost:7600** for the UI. Connect your assistant using the
 [MCP guide](mcp.md), then ask it to build, validate, and run a workflow.
+Run `muxlio integrations doctor --client kiro --scope project` to verify tool
+calls through the client (requires login and trust approvals). See the MCP guide
+for remote HTTP profiles, repair and removal.
 The worker needs the files being processed; the installed service does not need
 Muxlio's source repository.
 
