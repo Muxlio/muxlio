@@ -81,7 +81,7 @@ test("materialized counts avoid percentage framing", () => {
     /3 materialized|materialized nodes|<details[^>]*\bopen\b/,
   );
   assert.match(html, /wb-activity-strip-summary/);
-  assert.match(html, /1 running · 1 waiting/);
+  assert.match(html, /1 running · 1 queued/);
   assert.doesNotMatch(html, /\b\d{1,3}%\b|estimated time remaining/i);
   assert.match(html, /Waiting for capacity/);
   assert.equal(counts.succeeded, 1);
@@ -387,7 +387,7 @@ test("collapsed strip summarizes actionable activity without succeeded totals", 
     [],
     [],
   );
-  assert.equal(waiting.announce, "Current activity. 2 waiting.");
+  assert.equal(waiting.announce, "Current activity. 1 queued. 1 waiting.");
 });
 
 test("paused activations stay distinct from waiting and run status", () => {
@@ -421,11 +421,11 @@ test("paused activations stay distinct from waiting and run status", () => {
   );
   assert.match(
     mixed.html,
-    /1 running · 2 waiting · 2 paused · 1 needs attention/,
+    /1 running · 1 queued · 1 waiting · 2 paused · 1 needs attention/,
   );
   assert.equal(
     mixed.announce,
-    "Current activity. 1 running. 2 waiting. 2 paused. 1 needs attention.",
+    "Current activity. 1 running. 1 queued. 1 waiting. 2 paused. 1 needs attention.",
   );
   for (const state of ["created", "waiting"]) {
     const result = buildWbActivityMarkup({ id: "run", state }, [], [], []);
@@ -466,7 +466,7 @@ test("live announcements give context without repeating unchanged activity", () 
     { id: "a", nodeId: "work", state: "running" },
     { id: "b", nodeId: "queue", state: "queued" },
   ]);
-  assert.deepEqual(announcements, ["Current activity. 1 running. 1 waiting."]);
+  assert.deepEqual(announcements, ["Current activity. 1 running. 1 queued."]);
   renderWbActivity(run, [
     { id: "a", nodeId: "work", state: "running" },
     {
@@ -494,4 +494,71 @@ test("live announcements give context without repeating unchanged activity", () 
     { id: "a", nodeId: "work", state: "running" },
   ]);
   assert.equal(announcements.at(-1), "Current activity. 1 running.");
+});
+
+test("run errors repeated on failed activations count once without hiding actions", () => {
+  const failed = {
+    id: "a",
+    nodeId: "work",
+    state: "failed",
+    error: "Step failed",
+  };
+  for (const { error, acts, count } of [
+    { error: "Step failed", acts: [failed], count: 1 },
+    { error: "Step failed", acts: [failed, { ...failed, id: "b" }], count: 2 },
+    { error: "Run admission failed", acts: [failed], count: 2 },
+    { error: "Step failed", acts: [], count: 1 },
+    {
+      error: "Step failed",
+      acts: [{ ...failed, state: "succeeded" }],
+      count: 1,
+    },
+  ]) {
+    const result = buildWbActivityMarkup(
+      { id: "run", state: "failed", error },
+      acts,
+      [],
+      [],
+    );
+    assert.equal(
+      result.announce,
+      `Current activity. ${count} ${count === 1 ? "needs" : "need"} attention.`,
+    );
+    assert.match(result.html, /Run failed/);
+    assert.match(result.html, /Inspect operations/);
+    if (acts.some((act) => act.state === "failed")) {
+      assert.match(result.html, /View node/);
+      assert.match(result.html, /Live transcript/);
+    }
+  }
+});
+
+test("reconciliation and input remain separate actions alongside a repeated failure", () => {
+  const result = buildWbActivityMarkup(
+    {
+      id: "run",
+      state: "failed",
+      error: "Step failed",
+      overview: { heldAttempts: 1 },
+    },
+    [{ id: "a", nodeId: "work", state: "failed", error: "Step failed" }],
+    [
+      {
+        id: "held",
+        activationId: "a",
+        awaitReconciliationReason: "Check outcome",
+      },
+    ],
+    [
+      {
+        requestId: "input",
+        activationId: "a",
+        state: "pending",
+        name: "Approval",
+      },
+    ],
+  );
+  assert.equal(result.announce, "Current activity. 3 need attention.");
+  assert.match(result.html, /Resolve uncertain execution/);
+  assert.match(result.html, /Respond/);
 });

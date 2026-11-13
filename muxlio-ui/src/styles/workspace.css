@@ -109,7 +109,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .wb-activity{margin:0;padding:10px 16px;background:var(--surface);border:0;border-bottom:1px solid var(--border);border-radius:0;overflow:visible}
 .wb-activity-details{margin:0;border:0}
-.wb-activity-details>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;justify-content:space-between;min-height:32px;padding:2px 0}
+.wb-activity-details>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;justify-content:space-between;min-height:36px;padding:2px 0}
 .wb-activity-details>summary::-webkit-details-marker{display:none}
 .wb-activity-details>summary::after{content:"";width:7px;height:7px;flex:none;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg) translateY(-2px);transition:transform .16s ease}
 .wb-activity-details[open]>summary::after{transform:rotate(225deg) translate(-2px,-1px)}

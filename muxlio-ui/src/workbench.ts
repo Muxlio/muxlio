@@ -41,17 +41,19 @@ function materializedStateCounts(acts){
   const counts={};for(const act of acts||[])counts[act.state||'queued']=(counts[act.state||'queued']||0)+1;return counts;
 }
 function wbActivityStripSummary(items){
-  let running=0,waiting=0,paused=0,attention=0;
+  let running=0,queued=0,waiting=0,paused=0,attention=0;
   const runStatus=(items||[]).find(item=>item.scope==='run')?.title;
   for(const item of items||[]){
     if(item.scope==='run')continue;
-    if(item.tone==='attention')attention++;
+    if(item.tone==='attention')attention+=item.summaryCount??1;
     else if(item.tone==='progress')running++;
     else if(item.tone==='paused')paused++;
-    else if(item.tone==='waiting'||item.tone==='queued')waiting++;
+    else if(item.tone==='waiting')waiting++;
+    else if(item.tone==='queued')queued++;
   }
   const parts=runStatus?[runStatus]:[];
   if(running)parts.push(`${running} running`);
+  if(queued)parts.push(`${queued} queued`);
   if(waiting)parts.push(`${waiting} waiting`);
   if(paused)parts.push(`${paused} paused`);
   if(attention)parts.push(`${attention} ${attention===1?'needs':'need'} attention`);
@@ -68,7 +70,9 @@ function buildWbActivityMarkup(run,acts,attempts,inputRequests,nowIso=new Date()
   const runDetail={created:'Run created and waiting to start.',waiting:'Run is waiting for admission or capacity.',paused:'Run is paused.'}[run.state]||'Waiting for coordinator admission or worker capacity.';
     items.push({scope:'run',tone:run.state==='paused'?'paused':'waiting',title:`Run ${run.state}`,detail:runDetail,elapsed,timing:elapsed?`${run.state==='paused'?'Paused':'Waiting'} ${elapsed}`:'Timing unavailable',actions:`${run.state==='paused'?wbActivityButton('Resume run',renderViewTemplate("workbench/build-wb-activity-markup-fragment")):''}`});
   }
-  if(run.error&&!runWait)items.push({tone:'attention',title:'Run failed',detail:run.error,actions:wbActivityButton('Inspect operations','data-open-operations')});
+  // Keep run diagnostics and actions, but count an error repeated by a failed
+  // activation only there. Equal errors on separate activations remain separate.
+  if(run.error&&!runWait)items.push({tone:'attention',summaryCount:actsList.some(a=>a.state==='failed'&&a.error===run.error)?0:1,title:'Run failed',detail:run.error,actions:wbActivityButton('Inspect operations','data-open-operations')});
   const held=attemptList.filter(a=>a.awaitReconciliationReason);
   for(const attempt of held){
     const act=actsList.find(a=>a.id===attempt.activationId);
