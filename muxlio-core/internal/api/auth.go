@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 )
@@ -261,4 +262,38 @@ func LocalCredentialRequest(r *http.Request) bool {
 	host = strings.Trim(host, "[]")
 	ip := net.ParseIP(host)
 	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
+}
+
+// LocalNetworkCredentialRequest permits the UI's automatic operator credential
+// for same-origin requests whose peer and literal Host are on a private network.
+// Requiring a private IP Host prevents a public DNS name rebinding to this server.
+func LocalNetworkCredentialRequest(r *http.Request) bool {
+	if LocalCredentialRequest(r) {
+		return true
+	}
+	if !BrowserRequestAllowed(r) {
+		return false
+	}
+	peerHost := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(peerHost); err == nil {
+		peerHost = h
+	}
+	peer := requestAddress(peerHost)
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return peer.IsValid() && peer.IsPrivate() && requestAddress(host).IsPrivate()
+}
+
+func requestAddress(host string) netip.Addr {
+	host = strings.Trim(host, "[]")
+	if zone := strings.LastIndexByte(host, '%'); zone >= 0 {
+		host = host[:zone]
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
 }

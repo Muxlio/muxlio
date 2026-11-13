@@ -6,7 +6,6 @@ import (
 	"github.com/muxlio/muxlio-core/internal/state"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 // nonNegativeEventSeq parses a non-empty event sequence cursor. Invalid or
@@ -92,28 +91,29 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	states := map[string]int{}
 	held := 0
 	var elapsed *int64
-	missingTiming := false
+	missingTimingAttempts := 0
+	measuredTimingAttempts := 0
 	for _, a := range attempts {
 		states[a.State]++
 		if a.AwaitReconciliationReason != "" {
 			held++
 		}
 		ms := a.ExecutionDurationMS
-		if ms == nil && a.State != "running" && !a.StartedAt.IsZero() && !a.FinishedAt.IsZero() && !a.FinishedAt.Before(a.StartedAt) {
-			n := a.FinishedAt.Sub(a.StartedAt) / time.Millisecond
-			v := int64(n)
-			ms = &v
-		}
 		if ms != nil {
+			measuredTimingAttempts++
 			if elapsed == nil {
 				elapsed = new(int64)
 			}
 			*elapsed += *ms
 		} else if a.State != "running" && a.State != "queued" {
-			missingTiming = true
+			missingTimingAttempts++
 		}
 	}
-	if missingTiming {
+	knownDuration := int64(0)
+	if elapsed != nil {
+		knownDuration = *elapsed
+	}
+	if missingTimingAttempts > 0 {
 		elapsed = nil
 	}
 	latest, err := views.LatestEventSeq(run.ID)
@@ -133,7 +133,7 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 		"workspaceId": run.WorkspaceID, "originLabel": run.OriginLabel, "callerId": run.CallerID,
 		"planDigest": run.PlanDigest, "fork": run.Fork, "pinned": run.Pinned, "retainedUntil": run.RetainedUntil, "error": diagnostic.Redact(run.Error),
 		"limits": pinned.Limits, "deadlineSeconds": pinned.DeadlineSeconds,
-		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": accountingSummary(attempts), "executionDurationMs": elapsed}})
+		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": accountingSummary(attempts), "executionDurationMs": elapsed, "executionDurationKnownMs": knownDuration, "executionDurationMeasuredAttempts": measuredTimingAttempts, "executionDurationMissingAttempts": missingTimingAttempts}})
 }
 
 func accountingSummary(attempts []state.ExecutionAttempt) any {

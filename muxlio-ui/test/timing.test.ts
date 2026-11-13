@@ -85,8 +85,8 @@ regression("timing regression", async () => {
       { executionDurationMs: 30 },
       { state: "succeeded" },
     ]),
-    null,
-    "mixed historical timing is unavailable",
+    30,
+    "measured subtotal ignores attempts without a reported duration",
   );
   assert.equal(
     context.sumExecutionTime([

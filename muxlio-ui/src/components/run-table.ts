@@ -7,6 +7,7 @@ interface RunTableRecord {
   createdAt: string;
   updatedAt: string;
   totalExecutionTimeMs?: number | null;
+  totalExecutionTimeMeasuredAttempts?: number;
 }
 function renderRunTable(
   runs: readonly RunTableRecord[],
@@ -31,7 +32,10 @@ function renderRunTable(
       execution:
         run.totalExecutionTimeMs == null
           ? "Unavailable"
-          : duration(new Date(0), new Date(run.totalExecutionTimeMs)),
+          : formatExecutionDuration(
+              run.totalExecutionTimeMs,
+              run.totalExecutionTimeMeasuredAttempts ?? 1,
+            ),
     }),
   );
   return renderDataTable(

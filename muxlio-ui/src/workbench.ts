@@ -5,19 +5,15 @@ function nodeDisplayName(nodeId){return /^each__\d+$/.test(nodeId||'')?'each':no
 function stateClass(s){return{succeeded:'succeeded',failed:'failed',running:'running',waiting:'waiting',paused:'paused',queued:'queued',cancelled:'cancelled'}[s]||''}
 function checkIcon(s){if(s==='succeeded')return renderViewTemplate("workbench/check-icon-node-card-check");if(s==='failed')return renderViewTemplate("workbench/check-icon-node-card-check-2");if(s==='running')return renderViewTemplate("workbench/check-icon-node-card-check-3");return ''}
 
-// Prefer worker measurements; older attempts retain coordinator timestamps.
-// Sum attempt durations individually so parallel work and retries are included.
+// Sum worker-measured attempt durations so parallel work and retries are included.
 function sumExecutionTime(attempts){
   if(!attempts?.length)return null;
   let total=0,known=false;
   for(const a of attempts){
     if(a.state==='queued')continue;
-    let ms=a.executionDurationMs;
+    const ms=a.executionDurationMs;
     if(typeof ms!=='number'||!Number.isFinite(ms)||ms<0){
-      if(a.state==='running')continue;
-      const start=Date.parse(a.startedAt),finish=Date.parse(a.finishedAt);
-      if(!Number.isFinite(start)||!Number.isFinite(finish)||start<=0||finish<start)return null;
-      ms=finish-start;
+      continue;
     }
     known=true;total+=ms;
   }
@@ -147,13 +143,14 @@ function buildWbStats(r,acts){
   const usage=r.overview?.accounting??r.accounting;
   const dimensions=usage?.tokenDimensions;
   const attemptCount=r.overview?.attempts??dimensions?.coverage?.attempts??attempts.length;
-  const executionTime=r.overview?r.overview.executionDurationMs:sumExecutionTime(attempts);
+  const executionTime=r.overview?(r.overview.executionDurationMs??r.overview.executionDurationKnownMs):sumExecutionTime(attempts);
+  const measuredExecutionAttempts=r.overview?.executionDurationMeasuredAttempts??(r.overview?.executionDurationMs!=null?1:attempts.filter(a=>typeof a.executionDurationMs==='number').length);
   const elapsedEnd=!['succeeded','failed','cancelled'].includes(r.state)?new Date().toISOString():r.updatedAt;
   const stats=[
     {val:`${done}/${total}`,label:'Node executions',cls:''},
     {val:r.state?(r.state[0].toUpperCase()+r.state.slice(1)):'—',label:'Run state',cls:r.state==='succeeded'?'green':r.state==='failed'?'red':r.state==='running'?'amber':''},
     {val:formatElapsed(r.createdAt,elapsedEnd),label:'Elapsed time',cls:''},
-    {val:executionTime==null?'Unavailable':formatElapsed(new Date(0),new Date(executionTime)),label:'Total execution time',cls:'',title:'Sum across execution attempts, including retries and parallel tasks. Uses worker durations when recorded; older attempts use coordinator start and finish times, which can include dispatch overhead.'},
+    {val:executionTime==null?'Unavailable':formatExecutionDuration(executionTime,measuredExecutionAttempts),label:'Total execution time',cls:'',title:'Sum of worker-reported attempt durations, including failures and retries. Attempts without a confirmed worker duration are excluded; their time is not estimated.'},
   ];
   const progress=stats.map(s=>renderViewTemplate("workbench/progress-stat", [viewValue(s.title?renderViewTemplate("workbench/progress-fragment", [viewValue(esc(s.title))]):''), viewValue(s.cls), viewValue(esc(s.val)), viewValue(esc(s.label))])).join('');
   const presentation=buildUsagePresentation(usage||{},{

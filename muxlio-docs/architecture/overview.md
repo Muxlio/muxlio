@@ -1,6 +1,6 @@
 # Muxlio Architecture Overview
 
-Run timing has two definitions: **Elapsed time** is wall-clock time from run creation to completion (or the current time while active), including queueing, pauses, and waits. **Total execution time** is the sum of worker-measured executor durations across attempts, including failures and retries, excluding coordinator dispatch queues, pauses, retry backoff, and external waits. Parallel worker durations add together and can exceed elapsed time. Timing becomes available when an attempt returns; active totals include the measured attempts completed so far. Historical attempts without worker timing make the total unavailable, rather than showing an incomplete sum as a complete total.
+Run timing has two definitions: **Elapsed time** is wall-clock time from run creation to completion (or the current time while active), including queueing, pauses, and waits. **Total execution time** is the sum of worker-reported executor durations across attempts with a confirmed measurement, including failures and retries, excluding coordinator dispatch queues, pauses, retry backoff, and external waits. Parallel worker durations add together and can exceed elapsed time. Active totals include the measured attempts completed so far. Attempts without a confirmed worker duration are omitted from the displayed sum; their time is not estimated from coordinator timestamps.
 
 The [durable execution contracts](durable-execution.md) define run, activation,
 attempt, plan-version, replay, and waiting semantics.

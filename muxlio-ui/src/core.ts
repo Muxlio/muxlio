@@ -99,8 +99,8 @@ async function attachRunExecutionTimes(items){
   // Bound concurrent requests so a large history cannot flood the coordinator.
   for(let offset=0;offset<items.length;offset+=8){
     await Promise.all(items.slice(offset,offset+8).map(async r=>{
-      try{const data=await api(`/v1/runs/${encodeURIComponent(r.id)}?summary=true`);r.totalExecutionTimeMs=data.overview?.executionDurationMs??null}
-      catch{r.totalExecutionTimeMs=null}
+      try{const data=await api(`/v1/runs/${encodeURIComponent(r.id)}?summary=true`);const overview=data.overview||{};r.totalExecutionTimeMs=overview.executionDurationMs??overview.executionDurationKnownMs??null;r.totalExecutionTimeMeasuredAttempts=overview.executionDurationMeasuredAttempts??0}
+      catch{r.totalExecutionTimeMs=null;r.totalExecutionTimeMeasuredAttempts=0}
     }));
   }
 }

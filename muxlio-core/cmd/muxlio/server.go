@@ -789,10 +789,10 @@ func serviceUI(next http.Handler, directory, token string) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
-			// Only loopback browsers receive automatic operator credentials.
+			// Loopback and same-origin private-LAN browsers receive automatic operator credentials.
 			// Explicit client and worker credentials retain their scopes.
 			r = r.Clone(r.Context())
-			if token != "" && len(r.Header.Values("Authorization")) == 0 && api.LocalCredentialRequest(r) {
+			if token != "" && len(r.Header.Values("Authorization")) == 0 && api.LocalNetworkCredentialRequest(r) {
 				r.Header.Set("Authorization", "Bearer "+token)
 			}
 			next.ServeHTTP(w, r)

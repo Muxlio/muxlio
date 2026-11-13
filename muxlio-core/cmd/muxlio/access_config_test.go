@@ -84,7 +84,7 @@ func TestServiceUILimitsAutomaticCredentialsAndRespectsExplicitScopes(t *testing
 		emptyAuth                                   bool
 		want                                        int
 	}{
-		{name: "network UI without credentials", peer: "192.168.1.2:9", host: "192.168.1.1:7600", want: 401},
+		{name: "private network UI without credentials", peer: "192.168.1.2:9", host: "192.168.1.1:7600", want: 204},
 		{name: "remote scoped cancel another run", peer: "203.0.113.1:9", token: "scoped", want: 403},
 		{name: "local scoped cancel another run", peer: "127.0.0.1:9", token: "scoped", want: 403},
 		{name: "remote scoped answer another run", peer: "203.0.113.1:9", token: "scoped", path: "/runs/other/signals/answer", want: 403},

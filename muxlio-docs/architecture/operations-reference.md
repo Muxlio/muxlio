@@ -42,7 +42,8 @@ choosing whether to retry or start a run.
 
 The new global management endpoints use the coordinator's existing authorization
 middleware; explicit run-scoped and worker credentials do not authorize them.
-Automatic UI operator access is limited to loopback peers using a loopback Host.
+Automatic UI operator access is available to loopback peers and same-origin
+private-network peers using a private IP Host.
 Remote browsers require an authenticated gateway and scoped credentials; see
 [remote web access](execution-security.md#remote-web-and-mcp-access).
 

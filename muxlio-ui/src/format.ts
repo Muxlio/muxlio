@@ -54,6 +54,12 @@ function fmtCredits(value){
 }
 function fmtTok(value){return MuxlioFormat.tokens(value)}
 function fmtDuration(value){return MuxlioFormat.duration(value)}
+function formatExecutionDuration(value,measuredAttempts){
+ if(typeof value!=='number'||!Number.isFinite(value)||value<0)return 'Unavailable';
+ const duration=MuxlioFormat.duration(value);
+ if(measuredAttempts===0)return 'No durations reported';
+ return duration;
+}
 function duration(start,end){return MuxlioFormat.elapsed(start,end)}
 function formatElapsed(start,end){return MuxlioFormat.elapsed(start,end)}
 function date(value){return MuxlioFormat.timestamp(value)}

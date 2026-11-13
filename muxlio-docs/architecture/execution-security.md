@@ -159,13 +159,13 @@ identity and denies revoked, expired, invalid or missing credentials.
 
 Keep the default loopback bind and use SSH forwarding for the easiest remote
 setup (`ssh -N -L 17600:127.0.0.1:7600 host`, then open
-`http://127.0.0.1:17600/`). Local UI requests using a loopback Host and peer receive
-automatic operator credentials. Cross-origin and cross-site browser requests are
-rejected, including requests with explicit bearer credentials. Hostnames outside
-`localhost` and loopback IPs cannot receive automatic credentials, preventing DNS
-rebinding. The standalone UI also disables automatic credentials entirely when
-its listener binds to a wildcard or remote interface. Forwarded headers do not
-establish trust.
+`http://127.0.0.1:17600/`). Loopback UI requests receive automatic operator
+credentials. Same-origin UI requests from private-network peers also receive
+them when the Host is a private IP literal, such as `192.168.1.1`; this supports
+trusted LAN access while preventing public DNS names from rebinding to the
+coordinator. Cross-origin and cross-site browser requests are rejected, including
+requests with explicit bearer credentials. Forwarded headers do not establish
+trust.
 Explicit credentials retain their scopes even on loopback. Empty, malformed, or
 duplicate Authorization headers are rejected instead of falling back to local
 operator access.

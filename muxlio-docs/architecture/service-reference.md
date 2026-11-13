@@ -268,7 +268,7 @@ muxlio submit --server http://127.0.0.1:17600 plan.json input.json
 muxlio status --server http://127.0.0.1:17600
 ```
 
-With UI serving enabled, only loopback peers using a loopback Host receive automatic operator access. Cross-origin and cross-site browser requests are rejected. Remote clients must supply a Bearer token; use separate scoped grants for each client. Public browser hosting requires TLS and an authenticated gateway; see [remote web and MCP access](execution-security.md#remote-web-and-mcp-access). Without UI serving, the API requires a Bearer token; the CLI attaches it automatically for loopback URLs from `~/.muxlio/config.json`. Pass `--token` or set `MUXLIO_TOKEN` for other endpoints.
+With UI serving enabled, loopback peers receive automatic operator access. Same-origin browser requests from private-network peers also receive it when the Host is a private IP literal. Cross-origin and cross-site browser requests are rejected. Other remote clients must supply a Bearer token; use separate scoped grants for each client. Public browser hosting requires TLS and an authenticated gateway; see [remote web and MCP access](execution-security.md#remote-web-and-mcp-access). Without UI serving, the API requires a Bearer token; the CLI attaches it automatically for loopback URLs from `~/.muxlio/config.json`. Pass `--token` or set `MUXLIO_TOKEN` for other endpoints.
 
 ## Recovery and limits
 
