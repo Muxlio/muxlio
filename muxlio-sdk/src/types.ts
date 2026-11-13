@@ -182,6 +182,8 @@ export interface RunLimits {
 }
 
 export interface Plan {
+  /** Operator-authorized workspace identity, independent of the client directory. */
+  workspaceId?: string;
   limits?: RunLimits;
   /** Wall-clock limit from persisted run creation, including queueing and pauses. */
   deadlineSeconds?: number;

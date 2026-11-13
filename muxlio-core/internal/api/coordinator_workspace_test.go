@@ -7,10 +7,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
+
+func TestWorkspaceSubmissionPreflight(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	c := &Coordinator{Workspaces: workers.WorkspaceRegistry{
+		"project": {WorkerID: "local", Path: root, Aliases: []string{"client-alias"}},
+		"remote":  {WorkerID: "remote", Path: "/missing/worktree"},
+	}}
+	for _, tc := range []struct {
+		name, id, mode string
+		path           any
+		wantError      bool
+	}{
+		{name: "alias", id: "client-alias", path: root},
+		{name: "outside", id: "project", path: outside, wantError: true},
+		{name: "relative", id: "project", path: ".", wantError: true},
+		{name: "malformed", id: "project", path: 42, wantError: true},
+		{name: "missing-id", wantError: true},
+		{name: "unknown", id: "unknown", wantError: true},
+		{name: "empty-needs-no-source", id: "remote", mode: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := plan.Node{ID: "work", Kind: "execute", Executor: "test", WorkspaceMode: tc.mode}
+			if tc.path != nil {
+				value, _ := json.Marshal(tc.path)
+				node.Inputs = map[string]plan.Binding{"workspace": {Expr: &plan.Expr{Op: "literal", Value: value}}}
+			}
+			p := &plan.Plan{WorkspaceID: tc.id, Subgraphs: map[string]plan.Subgraph{"root": {Nodes: []plan.Node{node}}}}
+			_, _ = p.ComputeDigest()
+			err := c.AuthorizePlanWorkspace(p, json.RawMessage(`{}`))
+			if (err != nil) != tc.wantError {
+				t.Fatalf("preflight error = %v", err)
+			}
+			if err == nil {
+				if err := p.VerifyDigest(); err != nil {
+					t.Fatal(err)
+				}
+				if tc.id == "client-alias" && p.WorkspaceID != "project" {
+					t.Fatal("alias not canonicalized")
+				}
+			}
+		})
+	}
+	// Without operator authority, a client path cannot grant a workspace.
+	if _, err := (&Coordinator{}).authorizeWorkspace(workers.ExecuteRequest{Inputs: map[string]any{"workspace": root}}); err == nil {
+		t.Fatal("client path granted filesystem authority")
+	}
+}
 
 func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
@@ -22,14 +70,16 @@ func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NewCoordinator(store)
-	c.Workspace = filepath.Join(t.TempDir(), "coordinator-authorized")
-	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+	c.Workspaces = workers.WorkspaceRegistry{"project": {WorkerID: "worker", Path: "/coordinator/authorized"}}
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Labels: map[string]string{workers.WorkspaceIdentityLabelPrefix + "project": "true"}, Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	done := make(chan struct{})
+	defer func() { cancel(); <-done }()
 	go func() {
-		_, _ = c.Execute(workers.ExecuteRequest{Context: ctx, RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test"})
+		defer close(done)
+		_, _ = c.Execute(workers.ExecuteRequest{WorkspaceID: "project", Context: ctx, RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test"})
 	}()
 	var assignment *WorkerAssignment
 	deadline := time.Now().Add(time.Second)

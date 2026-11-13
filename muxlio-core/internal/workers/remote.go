@@ -113,6 +113,7 @@ type RemoteWorkerConfig struct {
 	HeartbeatInterval time.Duration
 	HTTPClient        *http.Client
 	WorkBase          string
+	Workspaces        WorkspaceRegistry
 	Workspace         string
 	// CapacityLimit optionally supplies a live admission limit (zero drains).
 	// It is read by the supervisor, never by executor goroutines.
@@ -195,12 +196,29 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 		return resp.StatusCode, nil
 	}
+	if len(cfg.Workspaces) == 0 && cfg.Workspace != "" {
+		cfg.Workspaces = WorkspaceRegistry{"default": {WorkerID: cfg.WorkerID, Path: cfg.Workspace}}
+	}
+	localBindings, err := cfg.Workspaces.LocalBindings(cfg.WorkerID)
+	if err != nil {
+		return err
+	}
+	cfg.Workspaces = localBindings
+	labels := make(map[string]string, len(cfg.Labels)+len(localBindings))
+	for key, value := range cfg.Labels {
+		labels[key] = value
+	}
+	for id := range localBindings {
+		labels[WorkspaceIdentityLabelPrefix+id] = "true"
+	}
+	cfg.Labels = labels
 	instance := make([]byte, 16)
 	if _, err := rand.Read(instance); err != nil {
 		return err
 	}
 	if script, ok := executor.(*ScriptExecutor); ok {
 		script.WorkerID = cfg.WorkerID
+		script.Workspaces = cfg.Workspaces
 		labels := make(map[string]string, len(cfg.Labels)+1)
 		for key, value := range cfg.Labels {
 			labels[key] = value
@@ -364,7 +382,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 		executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID = assignment.RunID, assignment.ActivationID, assignment.AttemptID
 		executeReq.resourcesAdmitted = true
-		executeReq, err = ApplyWorkerWorkspace(executeReq, cfg.Workspace)
+		executeReq, err = ApplyAuthorizedWorkspace(executeReq, cfg.WorkerID, cfg.Workspaces, cfg.Workspace)
 		if err != nil {
 			return reject(fmt.Errorf("workspace: %w", err))
 		}

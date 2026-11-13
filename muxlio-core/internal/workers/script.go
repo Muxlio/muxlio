@@ -45,6 +45,7 @@ type ScriptExecutor struct {
 	sessionInstance string
 	adapterDir      string
 	workBase        string
+	Workspaces      WorkspaceRegistry
 	Workspace       string
 	// AgentHome sets HOME for native executor processes. Isolated processes
 	// always keep their scratch HOME.
@@ -118,7 +119,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		return ExecuteResult{Error: "exclusive concurrency keys require coordinator worker admission; submit this task to a coordinator"}, nil
 	}
 	var workspaceErr error
-	req, workspaceErr = ApplyWorkerWorkspace(req, s.Workspace)
+	req, workspaceErr = ApplyAuthorizedWorkspace(req, s.WorkerID, s.Workspaces, s.Workspace)
 	if workspaceErr != nil {
 		return ExecuteResult{Error: workspaceErr.Error()}, nil
 	}

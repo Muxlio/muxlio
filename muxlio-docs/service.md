@@ -39,6 +39,37 @@ Git commands. Omit it if your workflows do not need command execution.
 and MCP settings. `service start` starts the coordinator, local worker, web UI,
 and MCP listener together in the background.
 
+## Select an authorized project per run
+
+For multiple projects, configure `workspaces` in the service's `config.json`:
+
+```json
+{
+  "workspaces": {
+    "frontend": {"workerId": "local", "path": "/srv/frontend", "aliases": ["web"]},
+    "backend": {"workerId": "build-host", "path": "/srv/backend"}
+  }
+}
+```
+
+Submit `workspaceId` in `POST /v1/runs`, the MCP `start_run` arguments,
+or the SDK workflow options. Remote CLI submissions accept `--workspace-id`.
+With a workspace registry configured, steps that need a source require an explicit
+ID. Aliases such as `web` are stored as the canonical ID (`frontend`) in the run
+and its attempts. The legacy single `workspace` configuration selects `default`.
+
+Each identity belongs to one worker. Configure the same identity and owner in
+that worker's runtime `config.json`, with a path that exists on that machine.
+Workers resolve symlinks at startup and check bindings again before execution.
+Unknown IDs, unauthorized input paths, unavailable owning workers, and missing
+worktrees fail closed; another checkout is never substituted. Client current
+directories do not select worker directories. Prefer IDs without a `workspace`
+input; if supplied, that input must match the authorized binding.
+
+Workspace selection is independent of mode: `snapshot` copies the selected
+source into attempt scratch, `empty` starts without a source, `read-only` requires
+enforced isolation, and `shared-write` requires an exclusive concurrency key.
+
 ## Connect and run
 
 Open **http://localhost:7600** for the UI. Connect your assistant using the

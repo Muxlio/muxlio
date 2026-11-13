@@ -16,6 +16,7 @@ import (
 func cmdRemote(command string, args []string, dataDir string) int {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile name")
+	workspaceID := fs.String("workspace-id", "", "operator-authorized workspace ID")
 	tokenFlag := fs.String("token", "", "bearer authentication token")
 	tokenFile := fs.String("token-file", "", "file containing bearer authentication token")
 	if err := fs.Parse(args); err != nil {
@@ -48,9 +49,10 @@ func cmdRemote(command string, args []string, dataDir string) int {
 			return 1
 		}
 		raw, e := json.Marshal(struct {
-			Plan  json.RawMessage `json:"plan"`
-			Input json.RawMessage `json:"input"`
-		}{p, input})
+			WorkspaceID string          `json:"workspaceId,omitempty"`
+			Plan        json.RawMessage `json:"plan"`
+			Input       json.RawMessage `json:"input"`
+		}{*workspaceID, p, input})
 		if e != nil {
 			fmt.Fprintln(os.Stderr, e)
 			return 1

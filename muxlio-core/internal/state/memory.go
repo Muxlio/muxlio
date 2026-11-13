@@ -747,6 +747,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if run := s.runs[a.RunID]; run != nil {
+		a.WorkspaceID = run.WorkspaceID
+	}
 	found := false
 	for i := range s.attempts {
 		if s.attempts[i].ID == a.ID {

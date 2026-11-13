@@ -16,6 +16,8 @@ import (
 
 // Plan is an immutable compiled workflow definition.
 type Plan struct {
+	// WorkspaceID selects operator authority; paths in inputs never grant authority.
+	WorkspaceID string     `json:"workspaceId,omitempty"`
 	Limits      *RunLimits `json:"limits,omitempty"`
 	sourceJSON  json.RawMessage
 	sourceTyped []byte

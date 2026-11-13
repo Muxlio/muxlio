@@ -20,6 +20,7 @@ type ForkProvenance struct {
 }
 
 type Run struct {
+	WorkspaceID   string          `json:"workspaceId,omitempty"`
 	Fork          *ForkProvenance `json:"fork,omitempty"`
 	Pinned        bool            `json:"pinned,omitempty"`
 	RetainedUntil *time.Time      `json:"retainedUntil,omitempty"`
@@ -148,6 +149,8 @@ type AttemptResult struct {
 // executor termination; execution.returned events and worker diagnostics record
 // later returns separately, without asserting external effect completion.
 type ExecutionAttempt struct {
+	// Inherited from the run's immutable workspace selection.
+	WorkspaceID              string               `json:"workspaceId,omitempty"`
 	OperationAttemptID       string               `json:"operationAttemptId,omitempty"`
 	OperationAction          string               `json:"operationAction,omitempty"`
 	AccountingRemoteRevision string               `json:"-"`

@@ -40,7 +40,7 @@ func partitionArgs(args []string) (before, cmdAndRest []string) {
 
 func globalFlagTakesValue(flag string) bool {
 	switch longFlagName(flag) {
-	case "fake-config", "data-dir", "adapters", "workspace", "addr", "coordinator", "worker-id", "capabilities", "capacity", "state", "server", "token", "token-file", "worker-token", "worker-token-file":
+	case "fake-config", "data-dir", "adapters", "workspace", "workspace-id", "addr", "coordinator", "worker-id", "capabilities", "capacity", "state", "server", "token", "token-file", "worker-token", "worker-token-file":
 		return true
 	default:
 		return false
@@ -129,4 +129,3 @@ func isBoolFlag(flagName string) bool {
 		return false
 	}
 }
-

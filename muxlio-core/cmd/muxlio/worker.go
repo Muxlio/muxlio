@@ -70,19 +70,28 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	if dataDir == "" {
 		dataDir = filepath.Join(os.Getenv("HOME"), ".muxlio")
 	}
-	if workspace == "" {
+	workerConfig, configErr := localWorkerSettings(dataDir)
+	if configErr != nil {
+		fmt.Fprintln(os.Stderr, configErr)
+		return 2
+	}
+	bindings := workerConfig.Workspaces
+	if workspace == "" && len(bindings) == 0 {
 		fmt.Fprintln(os.Stderr, "error: worker start requires --workspace or MUXLIO_WORKSPACE")
 		return 2
 	}
-	if !filepath.IsAbs(workspace) {
+	if workspace != "" && !filepath.IsAbs(workspace) {
 		fmt.Fprintln(os.Stderr, "error: workspace must be an absolute path")
 		return 2
 	}
-	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
+	if info, err := os.Stat(workspace); workspace != "" && (err != nil || !info.IsDir()) {
 		fmt.Fprintln(os.Stderr, "error: workspace must be an existing directory")
 		return 2
 	}
-	workspace, err := filepath.Abs(workspace)
+	var err error
+	if workspace != "" {
+		workspace, err = workers.CanonicalWorkspace(workspace)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: resolving workspace: %v\n", err)
 		return 2
@@ -172,7 +181,8 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 	fmt.Fprintf(os.Stderr, "muxlio worker %s connecting to %s (%s/%s, capacity=%d)\n", workerID, coordinator, runtime.GOOS, runtime.GOARCH, capacity)
 	executor.Context = context.Background()
 	executor.Workspace = workspace
-	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Labels: isolationLabels, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, ShutdownGracePeriod: 30 * time.Second}, executor)
+	executor.Workspaces = bindings
+	err = workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: coordinator, WorkerID: workerID, Labels: isolationLabels, Capacity: capacity, Capabilities: caps, Token: token, WorkBase: filepath.Join(dataDir, "work"), Workspace: workspace, Workspaces: bindings, ShutdownGracePeriod: 30 * time.Second}, executor)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "worker stopped:", err)
 		return 1

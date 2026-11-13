@@ -2,8 +2,6 @@ package workers
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // WorkspacePlacementLabel routes execute steps that share a prepared worktree
@@ -19,10 +17,8 @@ func PrepareRemoteDispatch(req ExecuteRequest) ExecuteRequest {
 }
 
 // ApplyWorkerWorkspace binds a remote assignment to an execution workspace.
-// When the request inputs carry an absolute workspace path that exists on this
-// host (e.g. a prepared worktree), that path is used. When inputs require a
-// workspace that is missing on this worker, execution fails instead of falling
-// back to the worker default checkout.
+// The legacy single-workspace configuration is an exact allowlist. Inputs may
+// name that directory through a symlink alias, but cannot authorize a checkout.
 func ApplyWorkerWorkspace(req ExecuteRequest, workerWorkspace string) (ExecuteRequest, error) {
 	if req.WorkspaceMode == "empty" {
 		req.Workspace = ""
@@ -34,34 +30,22 @@ func ApplyWorkerWorkspace(req ExecuteRequest, workerWorkspace string) (ExecuteRe
 		req.Workspace = ""
 		return req, nil
 	}
-	if ws := workspaceFromExecuteInputs(req.Inputs); ws != "" {
-		if resolved := ignoreMissingWorkspace(ws); resolved != "" {
-			req.Workspace = resolved
-			return req, nil
-		}
-		return req, fmt.Errorf("muxlio: execute input workspace %q is not accessible on this worker", ws)
-	}
+	var authorized string
 	if workerWorkspace != "" {
-		if abs, err := filepath.Abs(workerWorkspace); err == nil {
-			req.Workspace = abs
-		} else {
-			req.Workspace = workerWorkspace
+		path, err := CanonicalWorkspace(workerWorkspace)
+		if err != nil {
+			return req, err
 		}
-		return req, nil
+		authorized = path
 	}
-	req.Workspace = ignoreMissingWorkspace(req.Workspace)
+	if authorized == "" && req.Workspace != "" {
+		return req, fmt.Errorf("muxlio: workspace requires an operator-authorized binding")
+	}
+	if err := CheckWorkspaceInput(req.Inputs, authorized, true); err != nil {
+		return req, err
+	}
+	req.Workspace = authorized
 	return req, nil
-}
-
-func ignoreMissingWorkspace(workspace string) string {
-	if workspace == "" {
-		return ""
-	}
-	info, err := os.Stat(workspace)
-	if err != nil || !info.IsDir() {
-		return ""
-	}
-	return workspace
 }
 
 // workspaceFromExecuteInputs reads an absolute workspace path from execute

@@ -55,18 +55,15 @@ func TestApplyWorkerWorkspaceIgnoresMissingCoordinatorPath(t *testing.T) {
 	}
 }
 
-func TestApplyWorkerWorkspacePrefersExecuteInputPath(t *testing.T) {
+func TestApplyWorkerWorkspaceRejectsUnauthorizedExistingInputPath(t *testing.T) {
 	worktree := t.TempDir()
 	workerDefault := t.TempDir()
 	got, err := ApplyWorkerWorkspace(ExecuteRequest{
 		Workspace: filepath.Join(t.TempDir(), "missing-coordinator-path"),
 		Inputs:    map[string]any{"workspace": worktree},
 	}, workerDefault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Workspace != worktree {
-		t.Fatalf("workspace = %q, want input worktree %q", got.Workspace, worktree)
+	if err == nil {
+		t.Fatalf("unauthorized workspace accepted: %+v", got)
 	}
 }
 
@@ -84,9 +81,10 @@ func TestRemoteExecuteDoesNotRequireCoordinatorWorkspaceOnWorker(t *testing.T) {
 	workerWorkspace := t.TempDir()
 	coordinatorWorkspace := filepath.Join(t.TempDir(), "coordinator-workspace-missing-on-worker")
 	requestBody, err := json.Marshal(ExecuteRequest{
-		Workspace: coordinatorWorkspace,
-		Executor:  "test",
-		RunID:     "run",
+		Workspace:   coordinatorWorkspace,
+		WorkspaceID: "default", WorkspaceWorkerID: "w",
+		Executor: "test",
+		RunID:    "run",
 	})
 	if err != nil {
 		t.Fatal(err)

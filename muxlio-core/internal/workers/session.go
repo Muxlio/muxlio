@@ -219,6 +219,11 @@ func MatchWorkerDispatch(workerID, executor string, raw []byte, caps []state.Wor
 	if contract.DecodeJSON(raw, &req) != nil {
 		return false
 	}
+	if req.WorkspaceID != "" && req.WorkspaceMode != "empty" && req.Action != "poll" && req.Action != "reconcile" {
+		if req.WorkspaceWorkerID != workerID || labels[WorkspaceIdentityLabelPrefix+req.WorkspaceID] != "true" {
+			return false
+		}
+	}
 	if req.Session != nil && req.Session.Mode == "resume" {
 		h := req.Session.Handle
 		if h == nil || h.OwnerWorker != workerID || h.OwnerEnvironment != labels[SessionEnvironmentLabel] {

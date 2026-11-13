@@ -297,6 +297,38 @@ func TestToolStartRun_Valid(t *testing.T) {
 	}
 }
 
+func TestToolStartRunForwardsWorkspaceIdentity(t *testing.T) {
+	for _, tool := range tools {
+		if tool.Name == "start_run" {
+			properties := tool.InputSchema["properties"].(map[string]any)
+			if _, ok := properties["workspaceId"]; !ok {
+				t.Fatal("workspaceId missing from start_run schema")
+			}
+		}
+	}
+	received := make(chan string, 1)
+	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			WorkspaceID string `json:"workspaceId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- body.WorkspaceID
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"runId":"targeted","state":"running"}`))
+	}))
+	srv := &server{api: newAPIClient(ts.URL)}
+	result := srv.dispatchTool("start_run", json.RawMessage(`{"workspaceId":"project","plan":{"irVersion":"1.0","name":"test","subgraphs":{"root":{"nodes":[]}}},"input":{}}`))
+	if result.IsError {
+		t.Fatalf("start_run failed: %+v", result)
+	}
+	if id := <-received; id != "project" {
+		t.Fatalf("workspaceId = %q", id)
+	}
+}
+
 func TestToolStartRun_InvalidPlan(t *testing.T) {
 	srv := newTestToolServer(t)
 	// Missing irVersion – local validation should reject before hitting coordinator.

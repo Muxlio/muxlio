@@ -248,6 +248,7 @@ var tools = []toolDef{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory."},
 				"plan": map[string]any{
 					"description": "The Plan IR document as a JSON object.",
 					"type":        "object",
@@ -1032,8 +1033,9 @@ func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResul
 
 func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	var params struct {
-		Plan  json.RawMessage `json:"plan"`
-		Input json.RawMessage `json:"input"`
+		WorkspaceID string          `json:"workspaceId,omitempty"`
+		Plan        json.RawMessage `json:"plan"`
+		Input       json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
@@ -1063,6 +1065,9 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	body := map[string]json.RawMessage{
 		"plan":  params.Plan,
 		"input": params.Input,
+	}
+	if params.WorkspaceID != "" {
+		body["workspaceId"], _ = json.Marshal(params.WorkspaceID)
 	}
 	resp, err := s.api.post("/v1/runs", body)
 	if err != nil {

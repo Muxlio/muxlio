@@ -51,15 +51,16 @@ type dispatchStore interface {
 type Coordinator struct {
 	// Serialize registration with heartbeat snapshots so a late heartbeat cannot
 	// restore a replaced process identity or overwrite its capacity.
-	workerMu  sync.Mutex
-	Workspace string
-	Context   context.Context
-	store     dispatchStore
-	Artifacts artifacts.Driver
-	lease     time.Duration
-	heartbeat time.Duration
-	epoch     int64
-	initErr   error
+	workerMu   sync.Mutex
+	Workspaces workers.WorkspaceRegistry
+	Workspace  string
+	Context    context.Context
+	store      dispatchStore
+	Artifacts  artifacts.Driver
+	lease      time.Duration
+	heartbeat  time.Duration
+	epoch      int64
+	initErr    error
 }
 
 func NewCoordinator(store state.Store) *Coordinator {
@@ -509,6 +510,10 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	coordinatorlog.RegisterSecrets(guarded.Secrets)
 	if len(guarded.Secrets) != 0 {
 		return workers.ExecuteResult{}, fmt.Errorf("durable dispatch requires secret handles instead of credential values")
+	}
+	guarded, err = c.authorizeWorkspace(guarded)
+	if err != nil {
+		return workers.ExecuteResult{}, err
 	}
 	guarded.TraceContext = telemetry.Inject(ctx)
 	queuedAt := time.Now()

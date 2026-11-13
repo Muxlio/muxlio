@@ -41,7 +41,45 @@ func (r *serverRunner) CreateRun(input json.RawMessage) (string, error) {
 	return "", errors.New("a plan is required to create a run")
 }
 
+func (r *serverRunner) CreateWorkspacePlanRun(p *plan.Plan, input json.RawMessage, id string) (string, error) {
+	if err := p.VerifyDigest(); err != nil {
+		return "", err
+	}
+	copy := *p
+	if copy.WorkspaceID != "" && copy.WorkspaceID != id {
+		// Compare authorized identities, since either selector may be an alias.
+		c, ok := r.exec.(*api.Coordinator)
+		if !ok {
+			return "", api.WorkspaceAuthorizationError{Message: "submission and plan workspace IDs disagree"}
+		}
+		if err := c.AuthorizePlanWorkspace(&copy, input); err != nil {
+			return "", err
+		}
+		selected := copy
+		selected.WorkspaceID = id
+		if _, err := selected.ComputeDigest(); err != nil {
+			return "", err
+		}
+		if err := c.AuthorizePlanWorkspace(&selected, input); err != nil {
+			return "", err
+		}
+		if copy.WorkspaceID != selected.WorkspaceID {
+			return "", api.WorkspaceAuthorizationError{Message: "submission and plan workspace IDs disagree"}
+		}
+	}
+	copy.WorkspaceID = id
+	if _, err := copy.ComputeDigest(); err != nil {
+		return "", err
+	}
+	return r.CreatePlanRun(&copy, input)
+}
+
 func (r *serverRunner) CreatePlanRun(p *plan.Plan, input json.RawMessage) (string, error) {
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		if err := c.AuthorizePlanWorkspace(p, input); err != nil {
+			return "", err
+		}
+	}
 	engine := plan.NewEngineWithStore(p, r.exec, r.store)
 	engine.Context = r.ctx
 	runID, err := engine.CreateRun(input)
@@ -307,9 +345,35 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	defer stop()
 	coordinator.Context = ctx
 	if config != nil {
+		coordinator.Workspaces = config.Workspaces
 		coordinator.Workspace = config.Workspace
 	} else {
 		coordinator.Workspace = os.Getenv("MUXLIO_WORKSPACE")
+	}
+	// Pin local authority once at startup. A configured symlink must never
+	// retarget an existing identity when the next client submits a run.
+	localBindings, err := coordinator.Workspaces.LocalBindings("local")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: workspace configuration: %v\n", err)
+		return 2
+	}
+	pinnedBindings := workers.WorkspaceRegistry{}
+	for id, binding := range coordinator.Workspaces {
+		pinnedBindings[id] = binding
+	}
+	for id, binding := range localBindings {
+		pinnedBindings[id] = binding
+	}
+	coordinator.Workspaces = pinnedBindings
+	if coordinator.Workspace != "" && len(pinnedBindings) == 0 {
+		coordinator.Workspace, err = workers.CanonicalWorkspace(coordinator.Workspace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: workspace configuration: %v\n", err)
+			return 2
+		}
+	}
+	if config != nil {
+		config.Workspaces, config.Workspace = pinnedBindings, coordinator.Workspace
 	}
 	coordinator.Artifacts = artifactDriver
 	runner := &serverRunner{store: store, exec: coordinator, artifacts: artifactDriver, engines: make(map[string]*plan.Engine), workers: make(map[string]chan struct{}), ctx: ctx}
@@ -449,6 +513,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	if config != nil {
 		executor := workers.NewScriptExecutor(config.Adapters, filepath.Join(dataDir, "work"))
 		executor.Context = ctx
+		executor.Workspaces = config.Workspaces
 		executor.Workspace = config.Workspace
 		executor.AgentHome = config.AgentHome
 		executor.Executors = config.Executors
@@ -484,7 +549,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 				if ctx.Err() != nil {
 					return
 				}
-				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Labels: isolationLabels, Capacity: 1, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace}, executor)
+				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Labels: isolationLabels, Capacity: 1, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace, Workspaces: config.Workspaces}, executor)
 				if err == nil || ctx.Err() != nil {
 					return
 				}

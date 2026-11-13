@@ -140,6 +140,7 @@ func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (s
 	}
 	runID := generateRunID()
 	run := &state.Run{
+		WorkspaceID:  snapshot.WorkspaceID,
 		Fork:         fork,
 		PlanJSON:     pinned,
 		PlanDigest:   snapshot.Digest,
@@ -644,6 +645,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		parent = e.telemetryContext()
 	}
 	req := workers.ExecuteRequest{
+		WorkspaceID:          e.plan.WorkspaceID,
 		Context:              parent,
 		LifetimeContext:      e.Context,
 		Executor:             node.Executor,
@@ -667,7 +669,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	if node.Retry != nil {
 		req.Effect = node.Retry.Effect
 	}
-	if ws := workspaceFromInputs(inputs); ws != "" && node.WorkspaceMode != "empty" {
+	if ws := workspaceFromInputs(inputs); ws != "" && node.WorkspaceMode != "empty" && e.plan.WorkspaceID == "" {
 		req.Workspace = ws
 		if req.PlacementLabels == nil {
 			req.PlacementLabels = make(map[string]string)

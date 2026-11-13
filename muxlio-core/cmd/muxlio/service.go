@@ -21,7 +21,7 @@ import (
 // re-exec can replay the same invocation (including test-harness flags).
 var originalArgs = append([]string(nil), os.Args...)
 
-// serviceConfig authorizes native execution within one explicit workspace.
+// serviceConfig declares operator-authorized workspace identities and worker bindings.
 type serviceConfig struct {
 	IsolationBackends []string              `json:"isolationBackends,omitempty"`
 	Admission         state.AdmissionConfig `json:"admission,omitempty"`
@@ -33,6 +33,7 @@ type serviceConfig struct {
 	Addr                  string                            `json:"addr"`
 	Adapters              string                            `json:"adapters"`
 	UI                    string                            `json:"ui"`
+	Workspaces            workers.WorkspaceRegistry         `json:"workspaces,omitempty"`
 	Workspace             string                            `json:"workspace"`
 	Capabilities          []string                          `json:"capabilities"`
 	Executors             map[string]workers.ExecutorConfig `json:"executors,omitempty"`
@@ -121,6 +122,9 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	}
 	if err := workers.ValidateExecutorConfigs(c.Executors); err != nil {
 		return c, err
+	}
+	if err := c.Workspaces.Validate(); err != nil {
+		return c, fmt.Errorf("workspaces: %w", err)
 	}
 	return c, nil
 }
@@ -306,12 +310,15 @@ func cmdServiceStartRun(args []string) int {
 			return 1
 		}
 	}
-	if !filepath.IsAbs(c.RuntimeDir) || !filepath.IsAbs(c.Workspace) {
+	if !filepath.IsAbs(c.RuntimeDir) || (len(c.Workspaces) == 0 && !filepath.IsAbs(c.Workspace)) {
 		fmt.Fprintln(os.Stderr, "runtimeDir and workspace must be absolute paths; configure an authorized workspace")
 		return 2
 	}
-	info, err := os.Stat(c.Workspace)
-	if err != nil || !info.IsDir() {
+	_, workspaceErr := c.Workspaces.LocalBindings("local")
+	if len(c.Workspaces) == 0 {
+		_, workspaceErr = workers.CanonicalWorkspace(c.Workspace)
+	}
+	if workspaceErr != nil {
 		fmt.Fprintln(os.Stderr, "workspace must be an existing directory")
 		return 2
 	}

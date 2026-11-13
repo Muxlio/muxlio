@@ -382,6 +382,7 @@ class IRBuilder implements BuildContext {
 // --- defineWorkflow ---
 
 export interface WorkflowDefinition {
+  workspaceId?: string;
   limits?: Plan['limits'];
   deadlineSeconds?: number;
   name: string;
@@ -404,6 +405,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
   const plan: Plan = {
     irVersion: '1.0',
     name: def.name,
+    workspaceId: def.workspaceId,
     deadlineSeconds: def.deadlineSeconds,
     limits: def.limits,
     root: 'root',

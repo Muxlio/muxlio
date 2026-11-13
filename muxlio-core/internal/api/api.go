@@ -628,8 +628,9 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 
 func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner) {
 	var request struct {
-		Plan  plan.Plan       `json:"plan"`
-		Input json.RawMessage `json:"input"`
+		WorkspaceID string          `json:"workspaceId,omitempty"`
+		Plan        plan.Plan       `json:"plan"`
+		Input       json.RawMessage `json:"input"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&request); err != nil {
@@ -651,12 +652,26 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner) {
 	}
 	var runID string
 	var err error
-	if planRunner, ok := runner.(planRunner); ok {
+	if request.WorkspaceID != "" {
+		targeted, ok := runner.(interface {
+			CreateWorkspacePlanRun(*plan.Plan, json.RawMessage, string) (string, error)
+		})
+		if !ok {
+			writeError(w, 400, "MUXLIO_WORKSPACE_UNAUTHORIZED", "runner does not support workspace selection")
+			return
+		}
+		runID, err = targeted.CreateWorkspacePlanRun(&request.Plan, request.Input, request.WorkspaceID)
+	} else if planRunner, ok := runner.(planRunner); ok {
 		runID, err = planRunner.CreatePlanRun(&request.Plan, request.Input)
 	} else {
 		runID, err = runner.CreateRun(request.Input)
 	}
 	if err != nil {
+		if e, ok := err.(interface{ ProtocolError() (int, string, string) }); ok {
+			status, code, message := e.ProtocolError()
+			writeError(w, status, code, message)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeRunError, err.Error())
 		return
 	}

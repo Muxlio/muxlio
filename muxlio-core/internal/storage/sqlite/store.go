@@ -1366,7 +1366,7 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offset, limit int, details bool, attemptID string, analyticsOrder bool) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,operation_attempt_id,operation_action FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,operation_attempt_id,operation_action,COALESCE((SELECT json_extract(NULLIF(plan_json,''),'$.workspaceId') FROM runs WHERE runs.id=execution_attempts.run_id),'') FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -1403,7 +1403,7 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 		var resultJSON, accountingJSON sql.NullString
 		var execDuration sql.NullInt64
 		var operationRefJSON, effect, idempotencyKey, awaitReconciliation sql.NullString
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &accountingJSON, &a.OperationAttemptID, &a.OperationAction); err != nil {
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &accountingJSON, &a.OperationAttemptID, &a.OperationAction, &a.WorkspaceID); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -2165,6 +2165,13 @@ func scanRun(row rowScanner) (*state.Run, error) {
 		}
 	}
 	r.PlanJSON = pinned
+	var workspace struct {
+		WorkspaceID string `json:"workspaceId"`
+	}
+	if err := json.Unmarshal(pinned, &workspace); len(pinned) > 0 && err != nil {
+		return nil, err
+	}
+	r.WorkspaceID = workspace.WorkspaceID
 	r.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	if input.Valid && input.String != "" {
