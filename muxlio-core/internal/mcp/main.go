@@ -645,6 +645,8 @@ type server struct {
 
 func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult {
 	switch name {
+	case "list_workflow_templates", "get_workflow_template", "instantiate_workflow_template":
+		return s.toolWorkflowCatalog(name, args)
 	case "workflow_template":
 		var params struct {
 			Name string `json:"name"`
@@ -1426,7 +1428,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Validate it with check_plan and start it with start_run. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON authoring. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
+				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
 			},
 		})
 

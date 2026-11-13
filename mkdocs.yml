@@ -58,6 +58,7 @@ nav:
   - Choosing an adapter: adapters.md
   - Service Guide: service.md
   - MCP Integration: mcp.md
+  - Workflow templates: workflow-templates.md
   - Observability UI: ui-operations.md
   - Accounting: accounting.md
   - Benchmarks: benchmarks.md

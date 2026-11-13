@@ -9,6 +9,15 @@ its chat interface.
 The MCP server is an adapter to the existing HTTP API. It does not execute
 runs itself; the Muxlio coordinator must be running separately.
 
+Offline authoring tools include `list_workflow_templates` (`{}`),
+`get_workflow_template` (`{name, version}`), and `instantiate_workflow_template`
+(`{name, version, parameters}`). All three are read-only, deterministic operations.
+Discovery and inspection return JSON Schemas; instantiation returns an editable
+ordinary `plan` with its `digest` and template identity. See the
+[workflow template catalog](../workflow-templates.md) for contracts and examples.
+Templates are reusable authoring recipes; `register_workflow_version` and
+`list_workflow_versions` store and expose pinned compiled plans separately.
+
 ---
 
 ## Prerequisites

@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -13,10 +15,11 @@ func TestForkProvenanceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(&state.Run{ID: "source"}); err != nil {
+	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.CreateRun(&state.Run{ID: "source", CreatedAt: createdAt}); err != nil {
 		t.Fatal(err)
 	}
-	fork := &state.Run{ID: "fork", Fork: &state.ForkProvenance{SourceRunID: "source", SourcePlanDigest: "original", ReuseActivations: []string{"source:work"}}}
+	fork := &state.Run{ID: "fork", CreatedAt: createdAt.Add(time.Second), Fork: &state.ForkProvenance{SourceRunID: "source", SourcePlanDigest: "original", ReuseActivations: []string{"source:work"}}}
 	if err := s.CreateRun(fork); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +46,14 @@ func TestForkProvenanceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 2 || runs[1].Fork == nil {
-		t.Fatalf("list provenance: %+v", runs)
+	if len(runs) != 2 {
+		t.Fatalf("listed %d runs, want 2", len(runs))
+	}
+	// Explicit timestamps keep this persistence check independent of the clock.
+	if source := runs[0]; source.ID != "source" || source.Fork != nil {
+		t.Fatalf("listed source: %+v", source)
+	}
+	if forked := runs[1]; forked.ID != "fork" || !reflect.DeepEqual(forked.Fork, fork.Fork) {
+		t.Fatalf("listed fork provenance: %+v, want %+v", forked, fork.Fork)
 	}
 }

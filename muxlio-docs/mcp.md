@@ -146,6 +146,12 @@ Client config contracts: [Claude Code](https://code.claude.com/docs/en/mcp),
 
 ## Ask for a workflow
 
+For repeatable work, ask the assistant to use `list_workflow_templates`, inspect
+a template's schemas, and call `instantiate_workflow_template` with your chosen
+executors. The [workflow template catalog](workflow-templates.md) provides five
+generic shapes and a non-code example. Instantiation returns an ordinary plan
+and digest for inspection, validation and submission with separate run inputs.
+
 Describe the inputs, the steps to run, the checks they must pass, and the output
 you need. For example:
 
