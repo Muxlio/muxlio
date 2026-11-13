@@ -35,7 +35,7 @@ func cleanupIdleRuntimeAt(store *sqlite.Store, driver artifacts.Driver, dataDir 
 	if err != nil || report == nil {
 		return report, err
 	}
-	if len(report.Artifacts)+len(report.Workspaces)+len(report.Events)+len(report.Logs)+len(report.Plans) == 0 {
+	if len(report.Artifacts)+len(report.Workspaces)+len(report.Events)+len(report.Logs)+len(report.Plans)+len(report.IdempotencyKeys) == 0 {
 		return report, nil
 	}
 	return store.CollectIdleGarbage(local, policy, now, report.Token, root)

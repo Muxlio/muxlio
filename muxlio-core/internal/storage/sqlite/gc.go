@@ -19,6 +19,7 @@ import (
 // GCReport is a deterministic preview. Apply requires its token and recalculates
 // reachability; a changed candidate set requires another operator review.
 type GCReport struct {
+	IdempotencyKeys []string                          `json:"idempotencyKeys,omitempty"`
 	ArtifactStorage string                            `json:"artifactStorage"`
 	Artifacts       []artifacts.Candidate             `json:"artifacts"`
 	Events          map[string]int                    `json:"events"`
@@ -220,6 +221,20 @@ func (s *Store) collectGarbage(local *artifacts.Local, policy state.Retention, n
 		if parent := runs[id].parent; parent != "" {
 			ancestors[parent] = true
 		}
+	}
+	// Keep submission keys for the full run-data retention window, including
+	// pins, unresolved effects, and retained descendants. Never expire live runs.
+	if err := gcRows(tx, `SELECT DISTINCT run_id FROM run_idempotency_keys ORDER BY run_id`, func(rows *sql.Rows) error {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		if runs[id] != nil && !protected[id] {
+			report.IdempotencyKeys = append(report.IdempotencyKeys, id)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	reachable := map[string]bool{}
 	if err := gcRows(tx, `SELECT id FROM retention_pins WHERE kind='artifact'`, func(rows *sql.Rows) error {
@@ -500,6 +515,11 @@ func (s *Store) collectGarbage(local *artifacts.Local, policy state.Retention, n
 	}
 	for _, digest := range report.Plans {
 		if _, err := tx.Exec(`DELETE FROM workflow_versions WHERE digest=?`, digest); err != nil {
+			return report, err
+		}
+	}
+	for _, id := range report.IdempotencyKeys {
+		if _, err := tx.Exec(`DELETE FROM run_idempotency_keys WHERE run_id=?`, id); err != nil {
 			return report, err
 		}
 	}

@@ -38,10 +38,11 @@ const (
 	CodeMethodNotAllowed = "MUXLIO_METHOD_NOT_ALLOWED"
 
 	// 409
-	CodeWorkerNotRegistered = "MUXLIO_WORKER_NOT_REGISTERED"
-	CodeStaleAssignment     = "MUXLIO_STALE_ASSIGNMENT"
-	CodeRunControlRejected  = "MUXLIO_RUN_CONTROL_REJECTED"
-	CodeInputRequestClosed  = "MUXLIO_INPUT_REQUEST_CLOSED"
+	CodeWorkerNotRegistered    = "MUXLIO_WORKER_NOT_REGISTERED"
+	CodeStaleAssignment        = "MUXLIO_STALE_ASSIGNMENT"
+	CodeRunControlRejected     = "MUXLIO_RUN_CONTROL_REJECTED"
+	CodeInputRequestClosed     = "MUXLIO_INPUT_REQUEST_CLOSED"
+	CodeIdempotencyKeyConflict = "MUXLIO_IDEMPOTENCY_KEY_CONFLICT"
 
 	// 410 – intentionally removed by retention
 	CodeArtifactExpired = "MUXLIO_ARTIFACT_EXPIRED"
@@ -80,6 +81,7 @@ var codeFix = map[string]string{
 	CodeStaleAssignment:                       "Fetch a fresh assignment via GET /v1/workers/<workerId>/assignments.",
 	CodeRunControlRejected:                    "The run may already be terminal or in an incompatible state; check GET /v1/runs/<runId>.",
 	CodeInputRequestClosed:                    "List input requests to inspect their state; retry accepted delivery with its original Idempotency-Key.",
+	CodeIdempotencyKeyConflict:                "The Idempotency-Key was already used with a different plan, input, or workspace; use a new key for a different submission.",
 	"MUXLIO_INPUT_RESPONSE_VALIDATION_FAILED": "Submit a JSON value matching the input request's schema.",
 	CodeValidationError:                       "Correct the plan validation errors listed in details[] and resubmit.",
 	CodeDigestMismatch:                        "Recompile the workflow to regenerate a consistent plan digest before submitting.",

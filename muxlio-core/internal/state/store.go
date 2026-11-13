@@ -12,6 +12,10 @@ import (
 // different idempotency key, or it has expired or been cancelled.
 var ErrInputRequestNotAccepting = errors.New("muxlio: input request is not accepting responses")
 
+// ErrIdempotencyKeyConflict is returned by CreateRunIdempotent when the key
+// was already used with a different plan digest, input, or workspace identity.
+var ErrIdempotencyKeyConflict = errors.New("muxlio: idempotency key reused with different payload")
+
 // WorkflowVersionSummary provides metadata for a registered immutable workflow version.
 type WorkflowVersionSummary struct {
 	Digest    string `json:"digest"`
@@ -25,6 +29,12 @@ type WorkflowVersionSummary struct {
 type Store interface {
 	SessionQueueStore
 	CreateRun(run *Run) error
+	// CreateRunIdempotent creates a run bound to idempotencyKey, planDigest,
+	// inputDigest and workspaceID.  When a run with the same key already exists
+	// and all binding fields match, the existing run ID is returned (Duplicate=true).
+	// When the key exists but the bindings differ, ErrIdempotencyKeyConflict is
+	// returned.  An empty key falls back to plain CreateRun.
+	CreateRunIdempotent(run *Run, idempotencyKey, inputDigest string) (runID string, duplicate bool, err error)
 	GetRun(id string) (*Run, error)
 	SetRunState(id, state string) error
 	TransitionRunState(id string, expected []string, next string) (bool, error)

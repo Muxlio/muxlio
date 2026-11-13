@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,6 +95,80 @@ func (r *serverRunner) CreatePlanRun(p *plan.Plan, input json.RawMessage) (strin
 	r.wg.Add(1)
 	r.mu.Unlock()
 	return runID, nil
+}
+
+// CreateIdempotentRun implements api.idempotentRunner. It creates a run while
+// atomically deduplicating concurrent or retried submissions with the same key.
+func (r *serverRunner) CreateIdempotentRun(p *plan.Plan, input json.RawMessage, workspaceID, idempotencyKey string) (string, bool, error) {
+	// Normalize: apply workspace authorization and compute the plan digest the
+	// same way CreateWorkspacePlanRun / CreatePlanRun would, so the binding is
+	// consistent regardless of whether a workspaceID is provided.
+	if err := p.VerifyDigest(); err != nil {
+		return "", false, err
+	}
+	pcopy := *p
+	if workspaceID != "" {
+		if pcopy.WorkspaceID != "" && pcopy.WorkspaceID != workspaceID {
+			c, ok := r.exec.(*api.Coordinator)
+			if !ok {
+				return "", false, api.WorkspaceAuthorizationError{Message: "submission and plan workspace IDs disagree"}
+			}
+			if err := c.AuthorizePlanWorkspace(&pcopy, input); err != nil {
+				return "", false, err
+			}
+			selected := pcopy
+			selected.WorkspaceID = workspaceID
+			if _, err := selected.ComputeDigest(); err != nil {
+				return "", false, err
+			}
+			if err := c.AuthorizePlanWorkspace(&selected, input); err != nil {
+				return "", false, err
+			}
+			if pcopy.WorkspaceID != selected.WorkspaceID {
+				return "", false, api.WorkspaceAuthorizationError{Message: "submission and plan workspace IDs disagree"}
+			}
+		}
+		pcopy.WorkspaceID = workspaceID
+	}
+	// Recompute only after verifying the caller digest, then authorize every selector.
+	if _, err := pcopy.ComputeDigest(); err != nil {
+		return "", false, err
+	}
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		if err := c.AuthorizePlanWorkspace(&pcopy, input); err != nil {
+			return "", false, err
+		}
+	}
+	if _, err := pcopy.ComputeDigest(); err != nil {
+		return "", false, err
+	}
+	// Bind the exact input bytes without converting JSON numbers through float64.
+	rawInput := input
+	if len(rawInput) == 0 {
+		rawInput = json.RawMessage(`{}`)
+	}
+	h := sha256.Sum256(rawInput)
+	inputDigest := hex.EncodeToString(h[:])
+
+	// Delegate actual run creation to the Engine so plan validation, input
+	// validation, and plan pinning happen exactly as in CreatePlanRun.
+	engine := plan.NewEngineWithStore(&pcopy, r.exec, r.store)
+	engine.Context = r.ctx
+	runID, isDuplicate, err := engine.CreateRunIdempotent(rawInput, idempotencyKey, inputDigest)
+	if err != nil {
+		return "", false, err
+	}
+	if isDuplicate {
+		// Existing run returned without creating or running a duplicate.
+		return runID, true, nil
+	}
+	r.mu.Lock()
+	r.engines[runID] = engine
+	r.workers[runID] = make(chan struct{})
+	r.wg.Add(1)
+	r.mu.Unlock()
+	coordinatorlog.RunAccepted(runID, pcopy.Name)
+	return runID, false, nil
 }
 
 // StartPersistedRun attaches an engine to an already atomically persisted run.

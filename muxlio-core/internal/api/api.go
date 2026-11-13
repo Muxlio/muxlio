@@ -18,6 +18,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,12 @@ type Runner interface {
 
 type planRunner interface {
 	CreatePlanRun(p *plan.Plan, input json.RawMessage) (string, error)
+}
+
+// idempotentRunner is the optional extension interface for runners that support
+// caller-scoped idempotency for run creation.  workspaceID may be empty.
+type idempotentRunner interface {
+	CreateIdempotentRun(p *plan.Plan, input json.RawMessage, workspaceID, idempotencyKey string) (runID string, duplicate bool, err error)
 }
 
 type runController interface {
@@ -298,7 +305,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	mux.HandleFunc("/v1/outputs", func(w http.ResponseWriter, r *http.Request) { handleRunOutputs(w, r, store, "") })
 	mux.HandleFunc("/v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			handleCreateRun(w, r, runner)
+			handleCreateRun(w, r, runner, store)
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -626,7 +633,7 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
 }
 
-func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner) {
+func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, store state.Store) {
 	var request struct {
 		WorkspaceID string          `json:"workspaceId,omitempty"`
 		Plan        plan.Plan       `json:"plan"`
@@ -650,8 +657,58 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner) {
 		writeError(w, http.StatusInternalServerError, CodeRunnerUnavailable, "run execution is unavailable")
 		return
 	}
+
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+
 	var runID string
 	var err error
+	if idempotencyKey != "" {
+		if ir, ok := runner.(idempotentRunner); ok {
+			if err := request.Plan.VerifyDigest(); err != nil {
+				writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
+				return
+			}
+			if _, err = request.Plan.ComputeDigest(); err != nil {
+				writeError(w, http.StatusBadRequest, CodeInvalidJSON, "computing plan digest: "+err.Error())
+				return
+			}
+			// Separate authenticated callers as well as authorized workspaces.
+			if caller := CallerFromRequest(r); caller.ID != "" {
+				scope, _ := json.Marshal([]string{caller.ID, idempotencyKey})
+				idempotencyKey = fmt.Sprintf("sha256:%x", sha256.Sum256(scope))
+			}
+			var duplicate bool
+			runID, duplicate, err = ir.CreateIdempotentRun(&request.Plan, request.Input, request.WorkspaceID, idempotencyKey)
+			if err != nil {
+				if errors.Is(err, state.ErrIdempotencyKeyConflict) {
+					writeError(w, http.StatusConflict, CodeIdempotencyKeyConflict, err.Error())
+					return
+				}
+				if e, ok := err.(interface{ ProtocolError() (int, string, string) }); ok {
+					status, code, message := e.ProtocolError()
+					writeError(w, status, code, message)
+					return
+				}
+				writeError(w, http.StatusInternalServerError, CodeRunError, err.Error())
+				return
+			}
+			if duplicate {
+				// Return the original run with 200 instead of 201 to signal replay.
+				response := map[string]string{"runId": runID}
+				if run, err := runHeader(store, runID); err == nil {
+					response["state"] = run.State
+				}
+				writeJSON(w, http.StatusOK, response)
+				return
+			}
+			go func() { _ = runner.Run(runID) }()
+			writeJSON(w, http.StatusCreated, map[string]string{"runId": runID, "state": plan.RunRunning})
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, CodeRunnerUnavailable, "runner does not support idempotent submission")
+		return
+	}
+
 	if request.WorkspaceID != "" {
 		targeted, ok := runner.(interface {
 			CreateWorkspacePlanRun(*plan.Plan, json.RawMessage, string) (string, error)

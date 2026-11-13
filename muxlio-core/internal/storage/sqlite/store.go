@@ -108,6 +108,23 @@ var schemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_run ON trigger_deliveries(run_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_events_operational_type ON events(type,timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_attempts_operational_state ON execution_attempts(state,started_at)`,
+	// Caller-scoped idempotency for run submission.
+	// (workspace_id, key) scopes keys to the authorized workspace identity so
+	// different principals do not collide. plan_digest and input_digest bind
+	// the key to an exact payload so reuse with a different payload returns conflict.
+	// created_at is used for bounded retention: entries are pruned when the
+	// associated run falls outside the run retention window.
+	`CREATE TABLE IF NOT EXISTS run_idempotency_keys (
+  workspace_id TEXT NOT NULL DEFAULT '',
+  key TEXT NOT NULL,
+  plan_digest TEXT NOT NULL DEFAULT '',
+  input_digest TEXT NOT NULL DEFAULT '',
+  run_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_id, key),
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_run_idempotency_keys_run ON run_idempotency_keys(run_id)`,
 }
 
 var _ state.Store = (*Store)(nil)
@@ -1509,6 +1526,111 @@ func (s *Store) CreateRun(run *state.Run) error {
 }
 
 func (s *Store) GetRun(id string) (*state.Run, error) { return s.getRun(id, true) }
+
+// CreateRunIdempotent creates a run bound to an opaque caller idempotency key.
+// The key is scoped to (planDigest, inputDigest, workspaceID) so that:
+//   - an identical retry (same key + same binding) returns the original run ID without creating a new run;
+//   - a reuse with different bindings returns state.ErrIdempotencyKeyConflict.
+//
+// When idempotencyKey is empty the call falls back to plain CreateRun.
+// The write lock is held across the dedup check and the run INSERT so concurrent
+// duplicate submissions create exactly one run.
+func (s *Store) CreateRunIdempotent(run *state.Run, idempotencyKey, inputDigest string) (string, bool, error) {
+	if idempotencyKey == "" {
+		return run.ID, false, s.CreateRun(run)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now()
+	}
+	run.UpdatedAt = run.CreatedAt
+	run.State = "created"
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", false, err
+	}
+	defer tx.Rollback()
+
+	// Take the database write lock before reading, including across Store instances.
+	if _, err := tx.Exec(`UPDATE coordinator_meta SET value=value WHERE key='epoch'`); err != nil {
+		return "", false, err
+	}
+
+	// Check whether this key was already used in this workspace.
+	var existingRunID, existingPlanDigest, existingInputDigest string
+	queryErr := tx.QueryRow(
+		`SELECT run_id, plan_digest, input_digest FROM run_idempotency_keys WHERE workspace_id=? AND key=?`,
+		run.WorkspaceID, idempotencyKey,
+	).Scan(&existingRunID, &existingPlanDigest, &existingInputDigest)
+	if queryErr != nil && queryErr != sql.ErrNoRows {
+		return "", false, queryErr
+	}
+	if queryErr == nil {
+		// Key exists in this workspace – check binding fields.
+		if existingPlanDigest == run.PlanDigest &&
+			existingInputDigest == inputDigest {
+			// Identical retry: return the original run.
+			_ = tx.Rollback()
+			return existingRunID, true, nil
+		}
+		// Different payload: conflict.
+		_ = tx.Rollback()
+		return "", false, state.ErrIdempotencyKeyConflict
+	}
+
+	// Key is new – create the run.
+	forkJSON, err := json.Marshal(run.Fork)
+	if err != nil {
+		return "", false, err
+	}
+	inputJSON, err := marshalJSON(run.Input)
+	if err != nil {
+		return "", false, err
+	}
+	_, err = tx.Exec(
+		`INSERT INTO runs (id, workflow_name, state, input_json, error, created_at, updated_at, plan_json, plan_digest, fork_json)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
+		run.ID, run.WorkflowName, run.State, inputJSON, rfc3339(run.CreatedAt), rfc3339(run.UpdatedAt), []byte(run.PlanJSON), run.PlanDigest, forkJSON,
+	)
+	if err != nil {
+		return "", false, fmt.Errorf("muxlio: inserting run: %w", err)
+	}
+	if run.Pinned {
+		if _, err := tx.Exec(`INSERT INTO retention_pins(kind,id) VALUES('run',?)`, run.ID); err != nil {
+			return "", false, err
+		}
+	}
+	if run.Fork != nil || run.RetainedUntil != nil {
+		var parent, until any
+		if run.Fork != nil {
+			parent = run.Fork.SourceRunID
+		}
+		if run.RetainedUntil != nil {
+			until = rfc3339(*run.RetainedUntil)
+		}
+		if _, err := tx.Exec(`INSERT INTO run_retention(run_id,parent_id,retained_until) VALUES(?,?,?)`, run.ID, parent, until); err != nil {
+			return "", false, err
+		}
+	}
+	if err := appendEvent(tx, run.ID, state.EventRunCreated, run.ID, nil); err != nil {
+		return "", false, err
+	}
+	_, err = tx.Exec(
+		`INSERT INTO run_idempotency_keys(workspace_id, key, plan_digest, input_digest, run_id, created_at) VALUES (?,?,?,?,?,?)`,
+		run.WorkspaceID, idempotencyKey, run.PlanDigest, inputDigest, run.ID, rfc3339(run.CreatedAt),
+	)
+	if err != nil {
+		return "", false, fmt.Errorf("muxlio: inserting idempotency key: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, err
+	}
+	return run.ID, false, nil
+}
 
 func (s *Store) getRun(id string, details bool) (*state.Run, error) {
 	s.mu.Lock()

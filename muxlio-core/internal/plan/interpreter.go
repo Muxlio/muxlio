@@ -110,6 +110,54 @@ func (e *Engine) CreateRun(input json.RawMessage) (string, error) {
 	return e.createRun(input, nil)
 }
 
+// CreateRunIdempotent validates and creates a run with an idempotency key.
+// When a matching run already exists for the same key and binding (planDigest,
+// inputDigest, workspaceID), the existing run ID is returned with duplicate=true.
+// When the key was used with different bindings, state.ErrIdempotencyKeyConflict
+// is returned.  An empty key falls back to plain creation.
+func (e *Engine) CreateRunIdempotent(input json.RawMessage, idempotencyKey, inputDigest string) (runID string, duplicate bool, err error) {
+	if errs := Validate(e.plan); HasErrors(errs) {
+		errOnly := ErrorsOnly(errs)
+		return "", false, fmt.Errorf("muxlio: invalid plan: %s", errOnly[0].Message)
+	}
+	if err := e.plan.VerifyDigest(); err != nil {
+		return "", false, err
+	}
+	if err := ValidateInput(e.plan, input); err != nil {
+		return "", false, err
+	}
+	if _, err := e.plan.ComputeDigest(); err != nil {
+		return "", false, err
+	}
+	pinned, err := json.Marshal(e.plan)
+	if err != nil {
+		return "", false, err
+	}
+	var snapshot Plan
+	if err := json.Unmarshal(pinned, &snapshot); err != nil {
+		return "", false, err
+	}
+	e.plan = &snapshot
+	var inputVal any
+	if err := contract.DecodeJSON(input, &inputVal); err != nil {
+		return "", false, fmt.Errorf("muxlio: invalid input JSON: %w", err)
+	}
+	runIDNew := generateRunID()
+	run := &state.Run{
+		WorkspaceID:  snapshot.WorkspaceID,
+		PlanJSON:     pinned,
+		PlanDigest:   snapshot.Digest,
+		ID:           runIDNew,
+		WorkflowName: e.plan.Name,
+		Input:        inputVal,
+	}
+	existingID, isDuplicate, storeErr := e.store.CreateRunIdempotent(run, idempotencyKey, inputDigest)
+	if storeErr != nil {
+		return "", false, storeErr
+	}
+	return existingID, isDuplicate, nil
+}
+
 func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (string, error) {
 	if errs := Validate(e.plan); HasErrors(errs) {
 		errOnly := ErrorsOnly(errs)

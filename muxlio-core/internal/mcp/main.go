@@ -244,7 +244,9 @@ var tools = []toolDef{
 		Name: "start_run",
 		Description: "Submit a compiled Plan IR to the coordinator and start a workflow run. " +
 			"Returns the new run ID and initial state. " +
-			"Uses the configured coordinator, which may run on another machine; no local service is required.",
+			"Uses the configured coordinator, which may run on another machine; no local service is required. " +
+			"Supply idempotencyKey on every attempt for the same submission; the coordinator returns the " +
+			"original run ID without creating a duplicate when the key, plan, exact input bytes and authorized workspace match. Keys expire after terminal run data retention (24 hours by default); live and pinned runs remain protected.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -256,6 +258,10 @@ var tools = []toolDef{
 				"input": map[string]any{
 					"description": "Typed JSON input matching the plan's inputSchema. Use {} when the plan requires no input.",
 					"type":        "object",
+				},
+				"idempotencyKey": map[string]any{
+					"type":        "string",
+					"description": "Stable caller-generated key for this submission. Reuse on retries to prevent duplicate runs; a different plan or input with the same key returns a conflict error.",
 				},
 			},
 			"required": []string{"plan", "input"},
@@ -1033,9 +1039,10 @@ func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResul
 
 func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	var params struct {
-		WorkspaceID string          `json:"workspaceId,omitempty"`
-		Plan        json.RawMessage `json:"plan"`
-		Input       json.RawMessage `json:"input"`
+		WorkspaceID    string          `json:"workspaceId,omitempty"`
+		Plan           json.RawMessage `json:"plan"`
+		Input          json.RawMessage `json:"input"`
+		IdempotencyKey string          `json:"idempotencyKey,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
@@ -1069,7 +1076,11 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	if params.WorkspaceID != "" {
 		body["workspaceId"], _ = json.Marshal(params.WorkspaceID)
 	}
-	resp, err := s.api.post("/v1/runs", body)
+	var keys []string
+	if params.IdempotencyKey != "" {
+		keys = []string{params.IdempotencyKey}
+	}
+	resp, err := s.api.post("/v1/runs", body, keys...)
 	if err != nil {
 		return errResult("coordinator request failed: " + err.Error())
 	}

@@ -31,6 +31,15 @@ type Memory struct {
 	assignments      map[string]*Assignment
 	attempts         []ExecutionAttempt
 	outbox           []*OutboxRecord
+	// idempotencyKeys tracks run creation idempotency for in-process callers.
+	idempotencyKeys map[[2]string]*memIdempotencyEntry // key → entry
+}
+
+type memIdempotencyEntry struct {
+	runID       string
+	planDigest  string
+	inputDigest string
+	workspaceID string
 }
 
 // New returns an in-memory store.
@@ -45,6 +54,7 @@ func New() *Memory {
 		signalSeq:        make(map[string]int),
 		inputRequests:    make(map[string]*InputRequest),
 		assignments:      make(map[string]*Assignment),
+		idempotencyKeys:  make(map[[2]string]*memIdempotencyEntry),
 	}
 }
 
@@ -70,6 +80,70 @@ func (s *Memory) CreateRun(run *Run) error {
 	s.eventSeq[run.ID] = 0
 	s.appendEventLocked(run.ID, EventRunCreated, run.ID, nil)
 	return nil
+}
+
+func (s *Memory) CreateRunIdempotent(run *Run, idempotencyKey, inputDigest string) (string, bool, error) {
+	if idempotencyKey == "" {
+		return run.ID, false, s.CreateRun(run)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// The in-memory store uses the default terminal run retention window.
+	policy, now := DefaultRetention(), time.Now()
+	protected := map[string]bool{}
+	for id, run := range s.runs {
+		if !policy.ExpiredFor(run, policy.EventHistory, now) {
+			protected[id] = true
+		}
+	}
+	for _, attempt := range s.attempts {
+		if (attempt.State != "succeeded" && attempt.State != "failed" && attempt.State != "cancelled" && attempt.State != "resolved") || attempt.AwaitReconciliationReason != "" {
+			protected[attempt.RunID] = true
+		}
+	}
+	for id := range protected {
+		seen := map[string]bool{}
+		for run := s.runs[id]; run != nil && run.Fork != nil && !seen[run.ID]; run = s.runs[run.Fork.SourceRunID] {
+			seen[run.ID] = true
+			protected[run.Fork.SourceRunID] = true
+		}
+	}
+	for key, entry := range s.idempotencyKeys {
+		if !protected[entry.runID] {
+			delete(s.idempotencyKeys, key)
+		}
+	}
+	mapKey := [2]string{run.WorkspaceID, idempotencyKey}
+	if entry, ok := s.idempotencyKeys[mapKey]; ok {
+		if entry.planDigest == run.PlanDigest && entry.inputDigest == inputDigest && entry.workspaceID == run.WorkspaceID {
+			return entry.runID, true, nil
+		}
+		return "", false, ErrIdempotencyKeyConflict
+	}
+	// Create the run while already holding the write lock.
+	if _, ok := s.runs[run.ID]; ok {
+		return "", false, fmt.Errorf("muxlio: run %q already exists", run.ID)
+	}
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now()
+	}
+	run.UpdatedAt = run.CreatedAt
+	run.State = "created"
+	snapshot, err := cloneRun(run)
+	if err != nil {
+		return "", false, err
+	}
+	s.runs[run.ID] = snapshot
+	s.eventSeq[run.ID] = 0
+	s.appendEventLocked(run.ID, EventRunCreated, run.ID, nil)
+	s.idempotencyKeys[mapKey] = &memIdempotencyEntry{
+		runID:       run.ID,
+		planDigest:  run.PlanDigest,
+		inputDigest: inputDigest,
+		workspaceID: run.WorkspaceID,
+	}
+	return run.ID, false, nil
 }
 
 func (s *Memory) GetRun(id string) (*Run, error) {
