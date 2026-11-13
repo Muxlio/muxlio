@@ -11,6 +11,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
+    "test:acceptance": "node --test muxlio-testing/acceptance/installed.test.mjs",
+    "test:acceptance:real": "node --test muxlio-testing/acceptance/real.test.mjs",
     "setup": "bash scripts/setup.sh",
     "release": "bash scripts/release.sh",
     "upgrade": "bash scripts/upgrade.sh",

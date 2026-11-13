@@ -1,0 +1,46 @@
+name: Credentialed client acceptance
+
+# Run only on a maintained, authenticated macOS machine, with environment
+# approval configured in GitHub. Never run credentialed probes on a PR event.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-client-acceptance
+  cancel-in-progress: false
+
+jobs:
+  real-clients:
+    runs-on: [self-hosted, macOS, muxlio-acceptance]
+    environment: client-acceptance
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: muxlio-core/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: bash scripts/build-release.sh "$RUNNER_TEMP/muxlio-release"
+      - name: Two independent authenticated clients, pinned versions
+        env:
+          MUXLIO_ACCEPTANCE_PREFIX: ${{ runner.temp }}/muxlio-release
+          MUXLIO_REAL_CLIENTS: ${{ secrets.MUXLIO_REAL_CLIENTS }}
+        run: >-
+          node --test --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/real-clients.xml"
+          muxlio-testing/acceptance/real.test.mjs
+      - name: Real-client results (no transcripts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-clients-macos
+          path: ${{ runner.temp }}/real-clients.xml
+          if-no-files-found: ignore

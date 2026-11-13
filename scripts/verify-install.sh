@@ -13,6 +13,7 @@ prefix="$tmp/installed"
 runtime="$tmp/runtime"
 workspace="$tmp/workspace"
 mkdir -p "$workspace"
+printf '%s\n' 'authorized workspace' > "$workspace/acceptance-source.txt"
 
 cp -r "$source/." "$prefix"
 
@@ -20,11 +21,16 @@ cp -r "$source/." "$prefix"
 adapter="$prefix/libexec/muxlio/adapters/fake-echo"
 cat > "$adapter" <<'EOF'
 #!/bin/sh
+if [ "${1:-}" = "--muxlio-probe" ]; then
+  printf '%s' '{"ready":true,"checks":[{"name":"binary","passed":true}]}'
+  exit 0
+fi
 cat > request.json
 sleep 0.2
 printf '%s' '{"outputs":{"result":"installed result"}}'
 EOF
 chmod 700 "$adapter"
+printf '%s\n' '{"manifestVersion":"1","contractVersion":"1","executor":"fake/echo","probeVersion":"1"}' > "$adapter.json"
 
 # Pick a free port
 port="$(node -e 'const s = require("node:net").createServer().listen(0, "127.0.0.1", () => { console.log(s.address().port); s.close(); });')"
@@ -32,6 +38,13 @@ base="http://127.0.0.1:${port}"
 binary="$prefix/bin/muxlio"
 config_path="$tmp/config.json"
 log="$tmp/service.log"
+
+# Always stop the detached service, including after a failed assertion.
+cleanup() {
+  "$binary" service stop --config "$config_path" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
 
 json_field() {
   local key="$1"
@@ -86,7 +99,9 @@ stop_service() {
 }
 
 cli() {
-  "$binary" "$@" --server "$base"
+  local action="$1"
+  shift
+  "$binary" "$action" --server "$base" "$@"
 }
 
 # ── Phase 1: start with a capability the plan doesn't need ──────────────────
@@ -158,14 +173,14 @@ if [ "$output" != "installed result" ]; then
 fi
 
 # Exactly one execution request on disk
-requests="$(find "$runtime/work" -name "request.json" -path "*/exec-*" 2>/dev/null | wc -l | tr -d ' ')"
+requests="$(find "$runtime/runs" -name "request.json" -path "*/execution-*" 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$requests" != "1" ]; then
   echo "expected 1 execution request, found $requests" >&2; exit 1
 fi
-req_file="$(find "$runtime/work" -name "request.json" -path "*/exec-*" | head -1)"
+req_file="$(find "$runtime/runs" -name "request.json" -path "*/execution-*" | head -1)"
 req_workspace="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).workspace)" "$req_file")"
-if [ "$req_workspace" != "$workspace" ]; then
-  echo "request workspace mismatch: $req_workspace" >&2; exit 1
+if [ "$(cat "$req_workspace/acceptance-source.txt")" != 'authorized workspace' ]; then
+  echo "request workspace snapshot did not contain the authorized source" >&2; exit 1
 fi
 
 stop_service

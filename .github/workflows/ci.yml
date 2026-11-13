@@ -98,3 +98,45 @@ jobs:
       - name: Test core
         working-directory: muxlio-core
         run: go test ./...
+
+  # Installed-product fixtures deliberately run separately from unit tests.
+  installed-clients:
+    name: Installed ${{ matrix.profile }} – ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        profile: [claude-2.1.319, codex-0.167.0, cursor-2.4.0, cursor-2.3.0, kiro-2.37.0, antigravity-unavailable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: muxlio-core/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build installed product
+        run: bash scripts/build-release.sh "$RUNNER_TEMP/muxlio-release"
+      - name: Installed-prefix smoke test
+        if: matrix.profile == 'codex-0.167.0'
+        run: bash scripts/verify-install.sh "$RUNNER_TEMP/muxlio-release"
+      - name: Pinned client configuration/protocol fixtures
+        env:
+          MUXLIO_ACCEPTANCE_PREFIX: ${{ runner.temp }}/muxlio-release
+          MUXLIO_ACCEPTANCE_PROFILE: ${{ matrix.profile }}
+        run: >-
+          node --test --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/installed.xml"
+          muxlio-testing/acceptance/installed.test.mjs
+      - name: Installed-client results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-${{ matrix.os }}-${{ matrix.profile }}
+          path: ${{ runner.temp }}/installed.xml
+          if-no-files-found: ignore
