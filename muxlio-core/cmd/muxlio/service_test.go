@@ -183,8 +183,8 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != 401 {
-			t.Fatalf("MCP accepted upstream token instead of configured listener token: %d", resp.StatusCode)
+		if resp.StatusCode != 200 {
+			t.Fatalf("MCP rejected a directly authenticated coordinator identity: %d", resp.StatusCode)
 		}
 	}
 	checkMCP()

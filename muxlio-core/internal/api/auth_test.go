@@ -175,3 +175,103 @@ func TestAuthWorkerTokenAccountingAppend(t *testing.T) {
 		t.Fatalf("worker token must reach accounting endpoint, got 403: %s", resp.Body.String())
 	}
 }
+
+func TestRemoteClientScopes(t *testing.T) {
+	h := WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if CallerFromRequest(r).IsAdmin {
+			t.Error("scoped caller became administrator")
+		}
+		w.WriteHeader(204)
+	}), "admin", "worker",
+		AccessGrant{Token: "reader", RunID: "own", Permissions: []string{"read"}},
+		AccessGrant{Token: "submitter", Permissions: []string{"submit"}},
+		AccessGrant{Token: "controller", RunID: "own", Permissions: []string{"control"}},
+		AccessGrant{Token: "revoked", Revoked: true},
+		AccessGrant{Token: "expired", ExpiresAt: "2000-01-01T00:00:00Z"},
+	)
+	for _, tc := range []struct {
+		token, method, path string
+		want                int
+	}{
+		{"reader", "GET", "/v1/runs/own", 204},
+		{"reader", "POST", "/v1/runs/own/cancel", 403},
+		{"reader", "GET", "/v1/runs/other", 403},
+		{"reader", "POST", "/v1/runs", 403},
+		{"submitter", "POST", "/v1/runs", 204},
+		{"submitter", "POST", "/v1/runs/preflight", 204},
+		{"submitter", "GET", "/v1/runs", 403},
+		{"submitter", "POST", "/v1/runs/own/cancel", 403},
+		{"controller", "POST", "/v1/runs/own/cancel", 204},
+		{"controller", "GET", "/v1/runs/own", 403},
+		{"reader", "GET", "/v1/auth", 204},
+		{"revoked", "GET", "/v1/auth", 403},
+		{"expired", "GET", "/v1/auth", 403},
+		{"invalid", "GET", "/v1/auth", 401},
+		{"", "POST", "/v1/runs", 401},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, authRequest(tc.method, tc.path, tc.token, "203.0.113.1:9"))
+		if w.Code != tc.want {
+			t.Errorf("%s %s %s: got %d want %d", tc.token, tc.method, tc.path, w.Code, tc.want)
+		}
+	}
+}
+
+func TestBrowserSecurityBeforeAuthorization(t *testing.T) {
+	for _, token := range []string{"", "admin"} {
+		h := WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), token, "")
+		for _, tc := range []struct {
+			origin, host, site string
+			want               int
+		}{
+			{"http://localhost:7600", "localhost:7600", "same-origin", 204},
+			{"https://localhost:7600", "localhost:7600", "", 403},
+			{"http://evil.example", "localhost:7600", "", 403},
+			{"null", "localhost:7600", "", 403},
+			{"", "localhost:7600", "cross-site", 403},
+			{"", "localhost:7600", "same-site", 403},
+		} {
+			r := authRequest("POST", "/v1/runs", token, "127.0.0.1:9")
+			r.Host = tc.host
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			r.Header.Set("Sec-Fetch-Site", tc.site)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Errorf("%+v: %d", tc, w.Code)
+			}
+		}
+	}
+	h := WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), "", "")
+	for _, peer := range []string{"127.0.0.1:9", "203.0.113.1:9"} {
+		r := authRequest("POST", "/v1/runs", "", peer)
+		r.Host = "evil.example"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 401 {
+			t.Errorf("untrusted Host with peer %s: %d", peer, w.Code)
+		}
+	}
+}
+
+func TestExplicitInvalidCredentialsNeverBecomeLocalOperator(t *testing.T) {
+	for _, configured := range []string{"", "admin"} {
+		for _, headers := range [][]string{{""}, {"Basic invalid"}, {"Bearer "}, {"Bearer admin", "Bearer other"}} {
+			h := WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("invalid credential reached handler")
+			}), configured, "")
+			r := authRequest("POST", "/v1/runs", "", "127.0.0.1:9")
+			r.Host = "localhost"
+			for _, header := range headers {
+				r.Header.Add("Authorization", header)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("configured=%q headers=%q: got %d", configured, headers, w.Code)
+			}
+		}
+	}
+}

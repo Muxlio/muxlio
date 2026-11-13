@@ -128,6 +128,8 @@ must not have those powers. Set `accessGrants` in the coordinator configuration:
 {
   "accessGrants": [
     {"tokenFile":"client-a.token","runId":"run-a","permissions":["read","signals"]},
+    {"tokenFile":"submitter.token","permissions":["submit"]},
+    {"tokenFile":"controller.token","runId":"run-a","permissions":["control"]},
     {"tokenFile":"worker-a.token","workerId":"worker-a","permissions":["worker","artifacts:read","artifacts:write"],"artifactDigests":["sha256:..."]}
   ]
 }
@@ -138,22 +140,55 @@ them protected and deliver their values as bearer tokens over TLS outside truste
 local networks. Worker credentials and scoped grants reload on every API request; replacing token
 files or removing/revoking grants affects subsequent requests. Restart workers with
 new credentials after rotation. The administrator token is fixed at server startup.
-No scoped credential may list all runs, create runs or access another run.
+No scoped credential may list all runs or access another run. `submit` separately
+authorizes creating runs and submission preflight; it does not grant read or
+control access to the resulting run. Provision a run-scoped grant separately
+when those operations are needed.
 `read`, `control` (pause/resume/cancel/retry), `signals`, and `steer` are independent
 permissions. `steer` authorizes session input delivery at
 `/v1/runs/{runId}/sessions/{sessionId}/inputs`, subject to queue permissions and
 advertised adapter input capabilities. Worker registration and protocol URLs must match the
 grant's worker ID. Artifact permissions require an explicit digest allowlist;
 read permission cannot request a PUT transfer plan. Empty scopes grant nothing.
-Without UI serving, unauthenticated requests from remote addresses fail closed
-even when no tokens are configured. Health checks remain public.
+Unauthenticated requests from remote addresses fail closed even when no tokens
+are configured. Health checks remain public. `GET /v1/auth` checks a credential's
+current validity without granting resource access; it returns 204 for an active
+identity and denies revoked, expired, invalid or missing credentials.
 
-The embedded and standalone UI assume a trusted local network. Browser clients
-do not need credentials: the server supplies the operator token for `/v1/`
-requests without an Authorization header, regardless of peer address, Host, or
-Origin. Explicit bearer credentials, including scoped client and worker tokens,
-retain their configured permissions. Standalone coordinators without UI serving
-continue to enforce API authentication.
+### Remote web and MCP access
+
+Keep the default loopback bind and use SSH forwarding for the easiest remote
+setup (`ssh -N -L 17600:127.0.0.1:7600 host`, then open
+`http://127.0.0.1:17600/`). Local UI requests using a loopback Host and peer receive
+automatic operator credentials. Cross-origin and cross-site browser requests are
+rejected, including requests with explicit bearer credentials. Hostnames outside
+`localhost` and loopback IPs cannot receive automatic credentials, preventing DNS
+rebinding. The standalone UI also disables automatic credentials entirely when
+its listener binds to a wildcard or remote interface. Forwarded headers do not
+establish trust.
+Explicit credentials retain their scopes even on loopback. Empty, malformed, or
+duplicate Authorization headers are rejected instead of falling back to local
+operator access.
+
+For an explicit remote deployment, use HTTPS with a valid certificate, separate
+client grants, and an authenticated gateway for browser access. The UI has no
+browser login form: the gateway must authenticate each user and attach that
+user's scoped bearer credential to API requests. Validate the external browser
+Origin at the gateway; preserve the original Host and scheme through an HTTPS
+upstream, or remove Origin only after validating it when proxying to a different
+upstream origin. Do not forward unauthenticated requests to a loopback upstream
+with a rewritten loopback Host. Do not use a shared administrator token for all
+remote users. Binding HTTP publicly does not authenticate anyone. Public HTTP
+exposes bearer credentials in transit; use TLS or an SSH tunnel.
+
+MCP HTTP accepts coordinator client grants directly as bearer credentials and
+forwards each client's identity independently. Coordinator authorization remains
+authoritative for each operation; tool annotations are advisory metadata only.
+The separately configured listener credential is a trusted gateway credential
+using the configured upstream identity, so protect it like that identity. File-based
+`build` and `test` are restricted to local stdio MCP because they access the MCP
+host outside coordinator authorization. HTTP clients can validate inline JSON
+using `check_plan` without reading files or executing source on the MCP host.
 
 ### Advertising available isolation backends
 

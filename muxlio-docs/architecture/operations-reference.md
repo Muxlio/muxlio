@@ -42,7 +42,9 @@ choosing whether to retry or start a run.
 
 The new global management endpoints use the coordinator's existing authorization
 middleware; explicit run-scoped and worker credentials do not authorize them.
-The trusted-network UI access policy is unchanged.
+Automatic UI operator access is limited to loopback peers using a loopback Host.
+Remote browsers require an authenticated gateway and scoped credentials; see
+[remote web access](execution-security.md#remote-web-and-mcp-access).
 
 New recovery attempts emit `run.recovered` with preserved, requeued, and uncertain
 activation counts, or `run.recovery_blocked` with the recorded reason. Existing

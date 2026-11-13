@@ -1,7 +1,8 @@
 # Follow your workflows
 
 Open **http://localhost:7600** after starting the Muxlio service. If Muxlio runs
-on another machine, use the address configured for that service.
+on another machine, use SSH port forwarding to its loopback address, or the
+HTTPS address of its authenticated browser gateway.
 
 ## Find a run
 
@@ -28,9 +29,10 @@ and resolve it with evidence before retrying.
 manages schedules and webhooks. **Retention** controls which execution data stays
 protected from cleanup.
 
-The UI is intended for a trusted network. Read the
-[execution security guide](architecture/execution-security.md) before exposing it
-beyond that environment. API fields and operational details are in the
+The UI defaults to local operator access. Remote browser hosting requires HTTPS
+and an authenticated gateway that supplies each user's scoped credential. Read
+the [execution security guide](architecture/execution-security.md#remote-web-and-mcp-access)
+before exposing it remotely. API fields and operational details are in the
 [operations reference](architecture/operations-reference.md).
 
 ## Browser links and analytics

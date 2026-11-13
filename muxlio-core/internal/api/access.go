@@ -32,7 +32,7 @@ func (g AccessGrant) permits(permission string) bool {
 	return false
 }
 
-func (g AccessGrant) authorize(r *http.Request) bool {
+func (g AccessGrant) active() bool {
 	if g.Revoked {
 		return false
 	}
@@ -41,6 +41,16 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 		if err != nil || !time.Now().Before(expires) {
 			return false
 		}
+	}
+	return true
+}
+
+func (g AccessGrant) authorize(r *http.Request) bool {
+	if !g.active() {
+		return false
+	}
+	if r.Method == http.MethodPost && (r.URL.Path == "/v1/runs" || r.URL.Path == "/v1/runs/preflight") {
+		return g.permits("submit")
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
 	if len(parts) < 2 {

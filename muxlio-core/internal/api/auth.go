@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -92,37 +93,55 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 			handler.ServeHTTP(w, r)
 			return
 		}
+		if !BrowserRequestAllowed(r) {
+			writeError(w, http.StatusForbidden, CodeUnauthorized, "cross-origin browser request denied")
+			return
+		}
+		// Authentication probes are authorized by identity, not resource scope.
+		downstream := handler
+		if r.URL.Path == "/v1/auth" && r.Method == http.MethodGet {
+			downstream = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(http.StatusNoContent)
+			})
+		}
 		tok := bearerCredential(r)
+		// An explicit but malformed credential must never fall back to the
+		// credential-free local operator. Reject ambiguous headers as well.
+		if auth := r.Header.Values("Authorization"); len(auth) > 1 || (len(auth) == 1 && tok == "") {
+			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "invalid authorization header")
+			return
+		}
 		identity := fmt.Sprintf("credential:%x", sha256.Sum256([]byte(tok)))
 		loopback := requestFromLoopback(r)
 		for _, grant := range grants {
 			if tokenMatches(tok, grant.Token) {
-				if grant.authorize(r) {
-					handler.ServeHTTP(w, withCaller(r, Caller{ID: identity, Permissions: grant.Permissions}))
+				if grant.active() && ((r.URL.Path == "/v1/auth" && r.Method == http.MethodGet) || grant.authorize(r)) {
+					downstream.ServeHTTP(w, withCaller(r, Caller{ID: identity, Permissions: grant.Permissions}))
 				} else {
 					writeError(w, http.StatusForbidden, CodeUnauthorized, "credential does not authorize this resource or operation")
 				}
 				return
 			}
 		}
-		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback {
-			handler.ServeHTTP(w, withCaller(r, Caller{ID: "local-operator", IsAdmin: true}))
+		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback && LocalCredentialRequest(r) && tok == "" {
+			downstream.ServeHTTP(w, withCaller(r, Caller{ID: "local-operator", IsAdmin: true}))
 			return
 		}
 		switch {
 		case isWorkerProtocolPath(r.URL.Path, r.Method):
 			if authorizeWorkerProtocol(tok, clientToken, workerToken, loopback) {
-				handler.ServeHTTP(w, withCaller(r, Caller{IsAdmin: loopback && tokenMatches(tok, clientToken)}))
+				downstream.ServeHTTP(w, withCaller(r, Caller{IsAdmin: loopback && tokenMatches(tok, clientToken)}))
 				return
 			}
 		case strings.HasPrefix(r.URL.Path, "/v1/artifacts/"):
 			if authorizeArtifacts(tok, clientToken, workerToken, r.Method, r.URL.Path) {
-				handler.ServeHTTP(w, withCaller(r, Caller{IsAdmin: tokenMatches(tok, clientToken)}))
+				downstream.ServeHTTP(w, withCaller(r, Caller{IsAdmin: tokenMatches(tok, clientToken)}))
 				return
 			}
 		default:
 			if tokenMatches(tok, clientToken) {
-				handler.ServeHTTP(w, withCaller(r, Caller{ID: identity, IsAdmin: true}))
+				downstream.ServeHTTP(w, withCaller(r, Caller{ID: identity, IsAdmin: true}))
 				return
 			}
 			if workerToken != "" && tokenMatches(tok, workerToken) {
@@ -206,4 +225,40 @@ func isWorkerProtocolPath(path, method string) bool {
 		}
 	}
 	return false
+}
+
+// BrowserRequestAllowed rejects cross-site requests before any credentials are
+// supplied or evaluated. Forwarded headers are deliberately not trusted.
+func BrowserRequestAllowed(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return false
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return true
+	}
+	if len(origins) != 1 {
+		return false
+	}
+	origin, err := url.Parse(origins[0])
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return err == nil && origin.Scheme == scheme && origin.Host == r.Host && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == ""
+}
+
+// LocalCredentialRequest limits automatic operator access to loopback peers
+// using a loopback Host, protecting against remote browsers and DNS rebinding.
+func LocalCredentialRequest(r *http.Request) bool {
+	if !requestFromLoopback(r) || !BrowserRequestAllowed(r) {
+		return false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
 }

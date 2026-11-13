@@ -1,8 +1,10 @@
 import { createServer, request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, resolve, extname, sep } from "node:path";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,20 +47,60 @@ export function createUIServer({
 } = {}) {
   const target =
     coordinatorURL instanceof URL ? coordinatorURL : new URL(coordinatorURL);
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "same-origin");
     const apiRequest = req.url?.startsWith("/v1/");
     if (apiRequest || req.url === "/v1" || req.url === "/healthz") {
-      // UI clients on the trusted local network do not need credentials.
-      // The coordinator may create or rotate credentials while the UI stays up.
+      // Reject browser CSRF before considering automatic local credentials.
+      const origins = req.headersDistinct.origin || [];
+      const credentials = req.headersDistinct.authorization || [];
+      const site = req.headers["sec-fetch-site"];
+      if (
+        (site && site !== "same-origin" && site !== "none") ||
+        (origins.length > 0 &&
+          (origins.length !== 1 || origins[0] !== `http://${req.headers.host}`))
+      ) {
+        res.writeHead(403).end("Cross-origin browser request denied");
+        return;
+      }
+      if (
+        credentials.length > 1 ||
+        (credentials.length === 1 && !credentials[0].trim())
+      ) {
+        res.writeHead(401).end("Invalid authorization header");
+        return;
+      }
+      const address = server.address();
+      let localHost = false;
+      try {
+        localHost = isLoopback(new URL(`http://${req.headers.host}`).hostname);
+      } catch {}
+      const local =
+        address &&
+        typeof address !== "string" &&
+        isLoopback(address.address) &&
+        isLoopback(req.socket.remoteAddress || "") &&
+        localHost;
+      if (!req.headers.authorization && !local && apiRequest) {
+        res.writeHead(401).end("Remote UI access requires a bearer credential");
+        return;
+      }
       const apiToken =
-        apiRequest && !req.headers.authorization ? configuredToken() : "";
-      const proxy = httpRequest(
+        apiRequest && local && !req.headers.authorization
+          ? configuredToken()
+          : "";
+      const headers = { ...req.headers, host: target.host };
+      // The browser Origin was validated against this UI above. It is not the
+      // coordinator's origin when the UI is hosted on a separate port.
+      delete headers.origin;
+      const proxy = (target.protocol === "https:" ? httpsRequest : httpRequest)(
         new URL(req.url, target),
         {
           method: req.method,
           headers: {
-            ...req.headers,
-            host: target.host,
+            ...headers,
             ...(apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
           },
         },
@@ -80,7 +122,13 @@ export function createUIServer({
       res.writeHead(405, { allow: "GET, HEAD" }).end();
       return;
     }
-    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    let pathname: string;
+    try {
+      pathname = new URL(req.url || "/", "http://localhost").pathname;
+    } catch {
+      res.writeHead(400).end("Invalid request URL");
+      return;
+    }
     let assetName;
     try {
       assetName = decodeURIComponent(pathname);
@@ -139,6 +187,14 @@ export function createUIServer({
       res.writeHead(500).end("Observability UI unavailable");
     }
   });
+  return server;
+}
+
+function isLoopback(host: string) {
+  host = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host === "::1") return true;
+  if (host.startsWith("::ffff:")) host = host.slice(7);
+  return isIP(host) === 4 && host.startsWith("127.");
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

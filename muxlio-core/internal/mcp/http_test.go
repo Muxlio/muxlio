@@ -361,3 +361,103 @@ func TestHTTPTLSListener(t *testing.T) {
 		t.Fatal("TLS MCP request failed")
 	}
 }
+
+func TestHTTPClientCredentialsAreIndependent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("Authorization")
+		if r.URL.Path == "/v1/auth" {
+			if token == "Bearer reader" || token == "Bearer controller" {
+				w.WriteHeader(204)
+			} else {
+				w.WriteHeader(401)
+			}
+			return
+		}
+		// Generic coordinator fixture: scopes are enforced at the API boundary.
+		if r.URL.Path == "/v1/runs/own" && token == "Bearer reader" {
+			w.Write([]byte(`{"id":"own"}`))
+			return
+		}
+		if r.URL.Path == "/v1/runs/own/cancel" && token == "Bearer controller" {
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(403)
+	}))
+	t.Cleanup(upstream.Close)
+	handler, err := newHTTPHandler(&server{api: newAPIClient(upstream.URL, "admin")}, "listener", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		token, tool string
+		denied      bool
+	}{
+		{"reader", "get_run", false}, {"reader", "cancel_run", true},
+		{"controller", "cancel_run", false}, {"controller", "get_run", true},
+	} {
+		t.Run(tc.token+tc.tool, func(t *testing.T) {
+			t.Parallel()
+			w := httpMCPRequest(handler, "POST", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+tc.tool+`","arguments":{"runId":"own"}}}`, map[string]string{"Authorization": "Bearer " + tc.token})
+			if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) != tc.denied {
+				t.Fatalf("%d %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestHTTPListenerCredentialRotation(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "token")
+	write := func(token string) {
+		t.Helper()
+		if err := os.WriteFile(file, []byte(token), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("old")
+	handler, err := NewHTTPHandler("http://127.0.0.1:1", "", file, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(token string, want int) {
+		t.Helper()
+		w := httpMCPRequest(handler, "POST", `{"jsonrpc":"2.0","id":1,"method":"ping"}`, map[string]string{"Authorization": "Bearer " + token})
+		if w.Code != want {
+			t.Fatalf("got %d want %d: %s", w.Code, want, w.Body)
+		}
+	}
+	check("old", 200)
+	write("new")
+	check("old", 401)
+	check("new", 200)
+	write("")
+	check("new", 503)
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	check("new", 503)
+}
+
+func TestHTTPRejectsLocalFileAuthoring(t *testing.T) {
+	handler, _ := httpMCPFixture(t)
+	for _, name := range []string{"build", "test"} {
+		for _, args := range []string{`{"trustedSource":true,"path":"/tmp/remote.ts"}`, `{"path":"/tmp/private.json"}`} {
+			w := httpMCPRequest(handler, "POST", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+name+`","arguments":`+args+`}}`, nil)
+			if w.Code != 403 {
+				t.Fatalf("%s: %d %s", name, w.Code, w.Body)
+			}
+		}
+	}
+}
+
+func TestHTTPRejectsAmbiguousCredentials(t *testing.T) {
+	handler, _ := httpMCPFixture(t)
+	r := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	r.Header.Add("Authorization", "Bearer listener-token")
+	r.Header.Add("Authorization", "Bearer reader")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("ambiguous credentials accepted: %d %s", w.Code, w.Body)
+	}
+}

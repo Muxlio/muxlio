@@ -67,7 +67,19 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 			}
 		}
 		auth := strings.Fields(r.Header.Get("Authorization"))
-		if len(auth) != 2 || !strings.EqualFold(auth[0], "Bearer") || subtle.ConstantTimeCompare([]byte(auth[1]), []byte(token)) != 1 {
+		requestTools := tools
+		authenticated := len(r.Header.Values("Authorization")) == 1 && len(auth) == 2 && strings.EqualFold(auth[0], "Bearer")
+		if authenticated && subtle.ConstantTimeCompare([]byte(auth[1]), []byte(token)) != 1 {
+			// A client may authenticate directly with its coordinator grant.
+			// Each request gets an independent client; never mutate shared state
+			// or authorize an operation using MCP tool annotations.
+			client := newAPIClient(tools.api.base, auth[1])
+			client.client = tools.api.client
+			probe, err := client.get("/v1/auth", nil)
+			authenticated = err == nil && probe.statusCode == http.StatusNoContent
+			requestTools = &server{api: client}
+		}
+		if !authenticated {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="muxlio-mcp"`)
 			http.Error(w, "invalid or missing bearer token", http.StatusUnauthorized)
 			return
@@ -144,8 +156,20 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 				return
 			}
 		}
+		// File-based authoring reads and executes on this host, outside
+		// coordinator authorization. HTTP clients must send plans to check_plan.
+		if message.Method == "tools/call" {
+			var call struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(message.Params, &call)
+			if call.Name == "build" || call.Name == "test" {
+				writeHTTPRPCError(w, http.StatusForbidden, message.ID, -32602, "file-based build and test require local stdio transport; use check_plan for inline JSON")
+				return
+			}
+		}
 		var out bytes.Buffer
-		rpc := &mcpServer{tools: tools, enc: json.NewEncoder(&out), transportVersion: version}
+		rpc := &mcpServer{tools: requestTools, enc: json.NewEncoder(&out), transportVersion: version}
 		rpc.handle(message)
 		w.Header().Set("Content-Type", "application/json")
 		responseVersion := version
@@ -287,11 +311,7 @@ func httpListenerToken(file, coordinatorToken string) (string, error) {
 }
 
 func runHTTP(tools *server, addr, tokenFile, coordinatorToken, cert, key string, origins []string) error {
-	token, err := httpListenerToken(tokenFile, coordinatorToken)
-	if err != nil {
-		return err
-	}
-	handler, err := newHTTPHandler(tools, token, origins)
+	handler, err := reloadingHTTPHandler(tools, tokenFile, coordinatorToken, origins)
 	if err != nil {
 		return err
 	}
@@ -356,11 +376,7 @@ func serveMCPHTTP(ctx context.Context, listener net.Listener, handler http.Handl
 // NewHTTPHandler constructs an authenticated MCP endpoint with explicit upstream
 // credentials. It does not resolve client profiles or infer a coordinator.
 func NewHTTPHandler(coordinatorURL, coordinatorToken, tokenFile string, origins []string) (http.Handler, error) {
-	token, err := httpListenerToken(tokenFile, coordinatorToken)
-	if err != nil {
-		return nil, err
-	}
-	return newHTTPHandler(&server{api: newAPIClient(coordinatorURL, coordinatorToken)}, token, origins)
+	return reloadingHTTPHandler(&server{api: newAPIClient(coordinatorURL, coordinatorToken)}, tokenFile, coordinatorToken, origins)
 }
 
 // ListenHTTP binds the MCP endpoint and validates its optional TLS identity.
@@ -371,4 +387,28 @@ func ListenHTTP(addr, cert, key string) (net.Listener, error) {
 // NewHTTPServer provides the same transport limits in standalone and service mode.
 func NewHTTPServer(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+}
+
+// Re-read listener credentials on every request. Failed or empty reloads fail
+// closed, so atomic replacement revokes old credentials without a restart.
+func reloadingHTTPHandler(tools *server, file, coordinatorToken string, origins []string) (http.Handler, error) {
+	load := func() (http.Handler, error) {
+		token, err := httpListenerToken(file, coordinatorToken)
+		if err != nil {
+			return nil, err
+		}
+		return newHTTPHandler(tools, token, origins)
+	}
+	if _, err := load(); err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler, err := load()
+		if err != nil {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "credential configuration unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}), nil
 }

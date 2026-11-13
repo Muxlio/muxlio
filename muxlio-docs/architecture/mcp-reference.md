@@ -196,12 +196,27 @@ For the standalone command, use
 `--http-token-file /absolute/path/to/token` or `MUXLIO_MCP_HTTP_TOKEN`. The file
 wins over the environment, which wins over the coordinator token. An empty
 listener token is rejected at startup. The listener token never replaces the
-upstream coordinator credential.
+upstream coordinator credential. Protect this listener credential as carefully as
+that upstream identity: it is a trusted gateway credential, not a restricted role.
+Listener token files reload on every request; replacing the file revokes the old
+listener credential, and unreadable or empty files fail closed. A credential that
+is independently valid at the coordinator remains usable as a coordinator identity.
+
+For multiple remote clients, give each client its own coordinator `accessGrants`
+credential and send it directly as the MCP bearer token. MCP checks the current
+credential at `/v1/auth` and forwards that same identity for the operation, rather
+than substituting the configured upstream token. Run-scoped `read`, `control`,
+`signals`, `inputs` and `steer`, submission-only `submit`, and worker identities
+remain distinct. Rotation, revocation and expiry apply on subsequent requests.
+Tool annotations never authorize an operation. See [scoped API credentials](execution-security.md#scoped-api-credentials).
+File-based `build` and `test` require local stdio; HTTP clients use `check_plan`
+for inline JSON validation. Remote clients cannot read workflow files or execute
+source on the MCP host.
 
 For service HTTPS, set `mcp.tlsCert` and `mcp.tlsKey`. The standalone equivalent
 is `--tls-cert /absolute/path/to/cert.pem --tls-key /absolute/path/to/key.pem`.
-Alternatively, terminate TLS at a trusted reverse proxy. Plain HTTP is intended
-for trusted networks; its bearer token travels without encryption. The same
+Alternatively, terminate TLS at a trusted reverse proxy. Prefer loopback with SSH forwarding. Plain HTTP is intended
+only for loopback or a protected TLS gateway hop; its bearer token travels without encryption. The same
 flags work with a specific interface address instead of `0.0.0.0`.
 
 Browser requests containing an `Origin` header are rejected by default. To

@@ -783,17 +783,19 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	return code
 }
 
-func serviceUI(api http.Handler, directory, token string) http.Handler {
+func serviceUI(next http.Handler, directory, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
-			// UI access is trusted on this deployment's local network. The
-			// browser does not need credentials; worker/client tokens supplied
-			// explicitly retain their scopes.
+			// Only loopback browsers receive automatic operator credentials.
+			// Explicit client and worker credentials retain their scopes.
 			r = r.Clone(r.Context())
-			if token != "" && r.Header.Get("Authorization") == "" {
+			if token != "" && len(r.Header.Values("Authorization")) == 0 && api.LocalCredentialRequest(r) {
 				r.Header.Set("Authorization", "Bearer "+token)
 			}
-			api.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		name, ok := "", false
@@ -809,7 +811,7 @@ func serviceUI(api http.Handler, directory, token string) http.Handler {
 			name, ok = "index.html", true
 		}
 		if !ok {
-			api.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

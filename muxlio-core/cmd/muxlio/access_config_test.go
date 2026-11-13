@@ -78,25 +78,28 @@ func TestWorkerCredentialFilesReloadWithoutCoordinatorRestart(t *testing.T) {
 	check("new", 503)
 }
 
-func TestServiceUIAllowsNetworkAccessAndRespectsExplicitScopes(t *testing.T) {
+func TestServiceUILimitsAutomaticCredentialsAndRespectsExplicitScopes(t *testing.T) {
 	for _, tc := range []struct {
 		name, peer, host, token, origin, site, path string
+		emptyAuth                                   bool
 		want                                        int
 	}{
-		{name: "network UI without credentials", peer: "192.168.1.2:9", host: "192.168.1.1:7600", want: 204},
+		{name: "network UI without credentials", peer: "192.168.1.2:9", host: "192.168.1.1:7600", want: 401},
 		{name: "remote scoped cancel another run", peer: "203.0.113.1:9", token: "scoped", want: 403},
 		{name: "local scoped cancel another run", peer: "127.0.0.1:9", token: "scoped", want: 403},
 		{name: "remote scoped answer another run", peer: "203.0.113.1:9", token: "scoped", path: "/runs/other/signals/answer", want: 403},
 		{name: "worker cannot control", peer: "127.0.0.1:9", token: "worker", want: 403},
 		{name: "invalid local credential", peer: "127.0.0.1:9", token: "invalid", want: 401},
+		{name: "empty explicit local credential", peer: "127.0.0.1:9", emptyAuth: true, want: 401},
+		{name: "malformed local credential", peer: "127.0.0.1:9", token: " ", want: 401},
 		{name: "scoped own cancel", peer: "203.0.113.1:9", token: "scoped", path: "/runs/own/cancel", want: 204},
 		{name: "remote administrator", peer: "203.0.113.1:9", token: "admin", want: 204},
 		{name: "local anonymous UI", peer: "127.0.0.1:9", want: 204},
 		{name: "local same origin UI", peer: "127.0.0.1:9", origin: "http://localhost", want: 204},
-		{name: "cross origin UI", peer: "127.0.0.1:9", origin: "https://evil.example", want: 204},
-		{name: "null origin UI", peer: "127.0.0.1:9", origin: "null", want: 204},
-		{name: "cross site UI", peer: "127.0.0.1:9", site: "cross-site", want: 204},
-		{name: "untrusted host", peer: "127.0.0.1:9", host: "evil.example", want: 204},
+		{name: "cross origin UI", peer: "127.0.0.1:9", origin: "https://evil.example", want: 403},
+		{name: "null origin UI", peer: "127.0.0.1:9", origin: "null", want: 403},
+		{name: "cross site UI", peer: "127.0.0.1:9", site: "cross-site", want: 403},
+		{name: "untrusted host", peer: "127.0.0.1:9", host: "evil.example", want: 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := serviceUI(api.WithAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +120,18 @@ func TestServiceUIAllowsNetworkAccessAndRespectsExplicitScopes(t *testing.T) {
 			if tc.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.token)
 			}
-			req.Header.Set("Origin", tc.origin)
+			if tc.emptyAuth {
+				req.Header.Set("Authorization", "")
+			}
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
 			req.Header.Set("Sec-Fetch-Site", tc.site)
 			resp := httptest.NewRecorder()
 			h.ServeHTTP(resp, req)
+			if resp.Header().Get("X-Frame-Options") != "DENY" {
+				t.Error("UI can be framed")
+			}
 			if resp.Code != tc.want {
 				t.Fatalf("status=%d want=%d", resp.Code, tc.want)
 			}
