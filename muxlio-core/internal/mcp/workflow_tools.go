@@ -20,6 +20,7 @@ type toolAnnotations struct {
 
 func init() {
 	tools = append(tools, workflowCatalogTools()...)
+	tools = append(tools, executorDiscoveryTools()...)
 	tools = append(tools,
 		toolDef{
 			Name: "retry_run", Description: "Retry a failed run after its cause has been fixed. Completed steps and outputs are preserved. The original compiled plan is retained. This is not resume_run, which resumes a paused run.",
@@ -49,7 +50,7 @@ func init() {
 	for i := range tools {
 		name := tools[i].Name
 		catalog := name == "list_workflow_templates" || name == "get_workflow_template" || name == "instantiate_workflow_template"
-		readOnly := catalog || strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "check_plan" || name == "workflow_template" || name == "list_runs" || name == "server_health"
+		readOnly := name == "list_executors" || name == "explain_capability" || catalog || strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "check_plan" || name == "workflow_template" || name == "list_runs" || name == "server_health"
 		tools[i].Annotations = &toolAnnotations{
 			ReadOnly: readOnly, Destructive: !readOnly, Idempotent: readOnly || name == "respond_input_request",
 			OpenWorld: !catalog && name != "check_plan" && name != "workflow_template",

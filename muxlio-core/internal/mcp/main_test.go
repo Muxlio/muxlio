@@ -628,6 +628,8 @@ func TestMCPToolsList(t *testing.T) {
 		"resume_run":            false,
 		"send_signal":           false,
 		"get_workers":           false,
+		"list_executors":        false,
+		"explain_capability":    false,
 		"server_health":         false,
 	}
 	for _, item := range toolsList {
@@ -645,7 +647,7 @@ func TestMCPToolsList(t *testing.T) {
 				t.Errorf("tool %s incorrectly marked read-only or idempotent", name)
 			}
 		}
-		if name == "get_attempts" || name == "read_artifact" {
+		if name == "get_attempts" || name == "read_artifact" || name == "list_executors" || name == "explain_capability" {
 			if annotations["readOnlyHint"] != true {
 				t.Errorf("tool %s not marked read-only", name)
 			}

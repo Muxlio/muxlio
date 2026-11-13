@@ -618,6 +618,73 @@ Deliver a typed signal to a run that is waiting for it (a `wait` node with
 
 ---
 
+### `list_executors` and `explain_capability`
+
+Start with `list_executors({})` to choose from live registered executors. These
+read-only tools aggregate the existing `get_workers` snapshot without launching
+adapters or contacting providers. Executor names, protocol capabilities, and
+versions come from worker registrations and adapter-owned descriptors. There are
+no built-in assumptions that a CLI, ACP, A2A, or command executor supports sessions,
+remote tasks, typed results, or usage.
+
+Both tools accept an optional `request` containing shared execute-envelope
+constraints. `explain_capability` requires the exact `executor` name:
+
+```json
+{
+  "executor": "generic/task",
+  "request": {
+    "contractVersion": "1",
+    "requiredCapabilities": {"session": "2", "usage": "1"},
+    "session": {"mode": "create"},
+    "placementLabels": {"region": "local"}
+  }
+}
+```
+
+Each `executors` entry includes:
+
+- `variants`: separate executor version and descriptor combinations, with the
+  original `contract` (including environment pins and `requiresHostExecution`),
+  normalized declared `capabilityVersions`, shared-contract `operations`, worker
+  counts, and `isolationWorkerCounts` for operator-enabled worker backends.
+  Capabilities from different variants are never combined. Missing descriptors
+  provide baseline execution only; absent or false optional features are unsupported.
+- `eligibleWorkerCount`: workers passing the same dispatch matcher, including
+  readiness, exact versions, environment, placement, workspace and session ownership,
+  and isolation, with positive capacity and no draining flag.
+- `availableWorkerCount`: estimated eligible workers with headroom, assuming
+  one slot per active assignment and one slot for the requested executor.
+  `queueReason` is `no_eligible_workers`, `worker_full`, or the empty string.
+  The response's `capacityEstimate` identifies this assumption and marks weighted
+  admission as unverified: the worker snapshot contains neither reserved slot
+  weights nor executor slot costs. A worker counted as available can still be
+  blocked by weighted worker capacity. These estimates also do not predict
+  global, run, key, rate, fairness, or resource admission queues.
+- `blockingReasons`: stable reason codes when no worker is eligible.
+  `explain_capability` also returns sorted `workers` with cached readiness,
+  placement/isolation labels, eligibility, availability, and a `reason` containing
+  a machine-readable `code` and actionable `message`. Each worker reports its first
+  blocking constraint; correcting it may reveal another. Unknown executors return
+  `executor_not_registered` rather than an inferred implementation.
+
+Operations describe contract support: `execute`, `session.legacy`,
+`session.create`, `session.resume`, `session.steer`, `remote.submit`, `remote.poll`,
+and `reconcile` appear only when their complete capability set and revisions are
+advertised. For example, `remoteTask` alone does not establish remote submission
+or polling support without `reconcile`. Actual operations still require valid
+request fields, provider state, and authorization.
+
+The response includes the worker snapshot's `serverTime`, heartbeat window, and
+`unverified` limits. An advertised `usage` capability does not establish that a
+particular run will report usage; missing readings remain unavailable. Cached
+readiness does not establish current authentication, provider/model functionality,
+quota, or tool permissions, and discovery reserves no capacity. Use
+`preflight_run` for whole-plan validation and workspace authorization, and inspect
+activation queue reasons after submission for actual admission status.
+
+---
+
 ### `get_workers`
 
 List currently connected workers and their active assignments.

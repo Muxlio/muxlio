@@ -26,6 +26,8 @@
 //	resume_run      Resume a paused run.
 //	retry_run       Retry a failed run, preserving completed work.
 //	send_signal     Deliver a typed signal to a waiting run.
+//	list_executors  Discover eligible executors and declared capabilities.
+//	explain_capability Explain per-worker executor eligibility and blocking reasons.
 //	get_workers     List live registered workers and active assignments.
 //	server_health   Check coordinator liveness.
 //
@@ -158,7 +160,7 @@ type contentBlock struct {
 var tools = []toolDef{
 	{
 		Name:        "workflow_template",
-		Description: "Get a built-in version-matched Plan IR JSON template without a checkout, Node, or downloads. echo returns its input without an executor; task illustrates a generic executor (replace generic/task using get_workers). Save the returned plan as JSON, edit it, validate with build or check_plan, then start_run.",
+		Description: "Get a built-in version-matched Plan IR JSON template without a checkout, Node, or downloads. echo returns its input without an executor; task illustrates a generic executor (replace generic/task using list_executors). Save the returned plan as JSON, edit it, validate with build or check_plan, then start_run.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{"echo", "task"}}}, "required": []string{"name"}},
 	},
 	{
@@ -711,6 +713,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolInputRequest(name, args)
 	case "preflight_run":
 		return s.toolPreflightRun(args)
+	case "list_executors", "explain_capability":
+		return s.toolExecutorDiscovery(name, args)
 	case "get_workers":
 		return s.toolGetWorkers()
 	case "server_health":
@@ -1431,7 +1435,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
+				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
 			},
 		})
 

@@ -199,3 +199,28 @@ func (m *AdapterManifest) Check(executor, executorVersion, contractVersion strin
 	}
 	return nil
 }
+
+// SupportedOperations reports shared contract operations, not provider guarantees.
+// Optional operations require their complete capability set at exact revisions.
+func (m *AdapterManifest) SupportedOperations(executor string) []string {
+	operations := []string{}
+	candidates := []struct {
+		name     string
+		required map[string]string
+	}{
+		{"execute", nil},
+		{"session.legacy", map[string]string{CapabilitySession: Version}},
+		{"session.create", map[string]string{CapabilitySession: SessionVersion}},
+		{"session.resume", map[string]string{CapabilitySession: SessionVersion}},
+		{"remote.submit", map[string]string{CapabilityRemoteTask: Version, CapabilityReconcile: Version}},
+		{"remote.poll", map[string]string{CapabilityRemoteTask: Version, CapabilityReconcile: Version}},
+		{"reconcile", map[string]string{CapabilityReconcile: Version}},
+		{"session.steer", map[string]string{CapabilitySession: SessionVersion, CapabilitySessionInput: SessionInputVersion, CapabilityLiveInput: SessionInputVersion}},
+	}
+	for _, candidate := range candidates {
+		if (&Request{Executor: executor, RequiredCapabilities: candidate.required}).Check(m) == nil {
+			operations = append(operations, candidate.name)
+		}
+	}
+	return operations
+}

@@ -221,20 +221,25 @@ func ExclusiveDispatchKeys(req ExecuteRequest) []string {
 
 // MatchWorkerDispatch adds nonportable session ownership to generic matching.
 func MatchWorkerDispatch(workerID, executor string, raw []byte, caps []state.WorkerCapability, labels map[string]string) bool {
+	return ExplainWorkerDispatch(workerID, executor, raw, caps, labels) == nil
+}
+
+// ExplainWorkerDispatch includes workspace and nonportable session ownership.
+func ExplainWorkerDispatch(workerID, executor string, raw []byte, caps []state.WorkerCapability, labels map[string]string) *DispatchMismatch {
 	var req ExecuteRequest
 	if contract.DecodeJSON(raw, &req) != nil {
-		return false
+		return mismatch("invalid_execution_request", "Invalid execution request.")
 	}
 	if req.WorkspaceID != "" && req.WorkspaceMode != "empty" && req.Action != "poll" && req.Action != "reconcile" {
 		if req.WorkspaceWorkerID != workerID || labels[WorkspaceIdentityLabelPrefix+req.WorkspaceID] != "true" {
-			return false
+			return mismatch("workspace_owner_mismatch", "Select the worker that owns and advertises this workspace.")
 		}
 	}
 	if req.Session != nil && req.Session.Mode == "resume" {
 		h := req.Session.Handle
 		if h == nil || h.OwnerWorker != workerID || h.OwnerEnvironment != labels[SessionEnvironmentLabel] {
-			return false
+			return mismatch("session_owner_mismatch", "Resume on the original worker and session environment.")
 		}
 	}
-	return MatchDispatch(executor, raw, caps, labels)
+	return ExplainDispatch(executor, raw, caps, labels)
 }
