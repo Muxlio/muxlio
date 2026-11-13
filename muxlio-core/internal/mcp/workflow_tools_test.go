@@ -164,7 +164,7 @@ func TestCoordinatorProfilesAndCredentialRouting(t *testing.T) {
 	for _, tc := range []struct{ target, url, token string }{
 		{"", "https://remote.example", "remote-token"}, {"remote", "https://remote.example", "remote-token"},
 		{"https://remote.example", "https://remote.example", ""}, {"file", "https://file.example", "file-token"},
-		{"legacy", "https://legacy.example", "legacy-token"}, {"string", "https://string.example", "local-token"},
+		{"legacy", "https://legacy.example", "legacy-token"}, {"string", "https://string.example", ""},
 		{"http://127.0.0.1:7600", "http://127.0.0.1:7600", ""},
 		{"https://unrelated.example", "https://unrelated.example", ""}, {"http://127.0.0.1:9999", "http://127.0.0.1:9999", ""},
 	} {
@@ -215,7 +215,7 @@ func TestCoordinatorRequiresConfigurationWithoutLocalInference(t *testing.T) {
 		raw, _ := json.Marshal(map[string]string{"defaultServer": target, "token": "saved-token"})
 		write(string(raw))
 		gotURL, token, err := resolveCoordinator("")
-		if err != nil || gotURL != target || token != "saved-token" {
+		if err != nil || gotURL != target || token != "" {
 			t.Fatalf("configured URL not used: %s token present=%v err=%v", gotURL, token != "", err)
 		}
 	}

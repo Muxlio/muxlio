@@ -64,13 +64,14 @@ func TestInitClientAndAgentAliasRegisterAuthoringClient(t *testing.T) {
 			var config struct {
 				Servers map[string]struct {
 					Command string
+					Args    []string
 					Env     map[string]string
 				} `json:"mcpServers"`
 			}
 			if err := json.Unmarshal(raw, &config); err != nil {
 				t.Fatal(err)
 			}
-			if config.Servers["muxlio"].Command != binary || config.Servers["muxlio"].Env["MUXLIO_CONFIG"] != filepath.Join(root, "config.json") {
+			if len(config.Servers["muxlio"].Args) != 2 || config.Servers["muxlio"].Args[1] != "local" || config.Servers["muxlio"].Command != binary || config.Servers["muxlio"].Env["MUXLIO_CONFIG"] != filepath.Join(root, "config.json") {
 				t.Fatalf("wrong registration: %s", raw)
 			}
 			if code := cmdInit(args, "", true); code != 0 {
@@ -85,7 +86,7 @@ func TestInitClientAndAgentAliasRegisterAuthoringClient(t *testing.T) {
 			if err := json.Unmarshal(cfgRaw, &runtime); err != nil {
 				t.Fatal(err)
 			}
-			if runtime["defaultServer"] != "http://127.0.0.1:7600" {
+			if runtime["defaultServer"] != "local" {
 				t.Fatal("stdio cannot resolve local credentials through saved default")
 			}
 		})
@@ -132,11 +133,14 @@ func TestInitStdioDefaultUsesCoordinatorTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config struct{ DefaultServer string }
+	var config struct {
+		DefaultServer string
+		Servers       map[string]struct{ URL, CredentialRef string }
+	}
 	if err := json.Unmarshal(raw, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.DefaultServer != "https://127.0.0.1:7600" {
+	if config.DefaultServer != "local" || config.Servers["local"].URL != "https://127.0.0.1:7600" {
 		t.Fatalf("stdio points at the wrong coordinator transport: %s", config.DefaultServer)
 	}
 }

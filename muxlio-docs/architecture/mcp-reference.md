@@ -35,11 +35,27 @@ HTTP(S) URLs and saved `servers` / `profiles` names are supported:
 muxlio-mcp --server coordinator
 ```
 
+`muxlio init` creates a `servers.local` profile and selects it when no default
+is set. Its loopback URL uses `credentialRef: "root"` to read the configured
+top-level `token` / `tokenFile`. Repeat init migrates existing local installations
+and preserves existing defaults and profiles. It does not start the service;
+run `muxlio service start` before using MCP.
+
 Profiles may be URL strings or objects with `url`, `token`, and/or `tokenFile`.
-`MUXLIO_TOKEN` overrides configured tokens. A selected profile uses its `token`
-or `tokenFile`, falling back to top-level credentials if omitted. When
-`defaultServer` is a URL, it uses top-level `token` / `tokenFile`. Relative token
+`MUXLIO_TOKEN` overrides configured tokens. Profiles never inherit top-level
+credentials implicitly. The `root` credential reference is restricted to loopback;
+remote profiles require their own scoped credentials and HTTPS. Relative token
 file paths resolve against the config directory.
+
+Run `muxlio integrations doctor` to diagnose coordinator configuration,
+connectivity, TLS, authentication and workers read permission. Use `--server NAME`
+to check a particular profile. `--config-only` checks resolution and credential
+availability without connecting. For a registered authoring client, supply
+`--client NAME --scope project|user`; doctor checks its saved stdio endpoint
+before asking the client to invoke `server_health` and `get_workers`.
+For old local installs, rerun `muxlio init`; use `integrations repair` with the
+client, scope and `--profile local` (or the selected saved profile name) to update
+an unchanged managed registration to a profile name.
 
 An explicit URL supplied through `--server` or `MUXLIO_SERVER` uses
 `MUXLIO_TOKEN` for authentication. It does not search profiles by URL or infer

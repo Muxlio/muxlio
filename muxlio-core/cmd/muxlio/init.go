@@ -135,38 +135,6 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 	configChanged := false
-	// The stdio bridge resolves this default and its credentials from the saved
-	// config, keeping credentials out of client settings and process arguments.
-	if _, exists := config["defaultServer"]; !exists {
-		addr := "127.0.0.1:7600"
-		if raw := config["addr"]; len(raw) > 0 {
-			if err := json.Unmarshal(raw, &addr); err != nil {
-				fmt.Fprintln(os.Stderr, "error: addr must be host:port")
-				return 1
-			}
-		}
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error: addr must be host:port")
-			return 1
-		}
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = "127.0.0.1"
-		}
-		scheme := "http"
-		var tlsCert string
-		if raw := config["tlsCert"]; len(raw) > 0 {
-			if err := json.Unmarshal(raw, &tlsCert); err != nil {
-				fmt.Fprintln(os.Stderr, "error: tlsCert must be a string")
-				return 1
-			}
-		}
-		if tlsCert != "" {
-			scheme = "https"
-		}
-		config["defaultServer"], _ = json.Marshal(scheme + "://" + net.JoinHostPort(host, port))
-		configChanged = true
-	}
 	if *allowCommand {
 		executors := map[string]json.RawMessage{}
 		if raw := config["executors"]; len(raw) > 0 {
@@ -276,10 +244,16 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		return 1
 	}
 
+	profile, err := ensureLocalCoordinatorProfile(configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: configuring coordinator profile:", err)
+		return 1
+	}
+
 	var registration *integrations.Status
 	if *agent != "" && *agent != "antigravity" {
 		home, _ := os.UserHomeDir()
-		status, err := integrations.Apply(integrations.Options{Client: *agent, Scope: *scope, Home: home, Workspace: ws, Transport: "stdio", Binary: *mcpBinary, Config: configPath}, "add")
+		status, err := integrations.Apply(integrations.Options{Client: *agent, Scope: *scope, Home: home, Workspace: ws, Transport: "stdio", Server: profile, Binary: *mcpBinary, Config: configPath}, "repair")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error: client registration:", err)
 			return 1

@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/coordinatorconfig"
 	"github.com/muxlio/muxlio-core/internal/integrations"
 )
 
@@ -109,6 +111,45 @@ func cmdIntegrations(args []string, dataDir string, globalJSON bool) int {
 			o.Server = *profile
 		}
 	}
+	if (action == "add" || action == "repair") && o.Transport == "stdio" && o.Server == "" {
+		var cfg struct{ DefaultServer string }
+		raw, err := os.ReadFile(o.Config)
+		if err != nil || json.Unmarshal(raw, &cfg) != nil || cfg.DefaultServer == "" || strings.Contains(cfg.DefaultServer, "://") {
+			fmt.Fprintln(os.Stderr, "stdio setup requires a saved profile; run muxlio init or specify --profile NAME")
+			return 1
+		}
+		o.Server = cfg.DefaultServer
+	}
+	if (action == "add" || action == "repair") && o.Transport == "stdio" {
+		if strings.Contains(o.Server, "://") {
+			fmt.Fprintln(os.Stderr, "stdio registrations require a saved profile name; configure scoped credentials in servers and use --profile NAME")
+			return 1
+		}
+		if _, _, err := coordinatorconfig.ResolveFile(o.Config, o.Server, "", ""); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+	}
+	if action == "doctor" && o.Client == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		endpoint, err := integrations.CheckCoordinator(ctx, o.Config, o.Server, os.Getenv("MUXLIO_SERVER"), os.Getenv("MUXLIO_TOKEN"), !*configOnly)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		if *jsonOut {
+			raw, _ := json.Marshal(map[string]string{"endpoint": endpoint, "status": "ok"})
+			fmt.Println(string(raw))
+		} else {
+			if *configOnly {
+				fmt.Printf("Coordinator %s: endpoint configured and credential available (connection not checked).\n", endpoint)
+			} else {
+				fmt.Printf("Coordinator %s: connection and authenticated workers access verified.\n", endpoint)
+			}
+		}
+		return 0
+	}
 	clients := []string{o.Client}
 	if o.Client == "" && action == "list" {
 		clients = integrations.Clients
@@ -131,9 +172,16 @@ func cmdIntegrations(args []string, dataDir string, globalJSON bool) int {
 				fmt.Fprintln(os.Stderr, "Muxlio entry is custom or edited; inspect the selected config before repair")
 				return 1
 			}
+			ctx, cancelEndpoint := context.WithTimeout(context.Background(), 10*time.Second)
+			err := integrations.VerifyEndpoint(ctx, o, !*configOnly)
+			cancelEndpoint()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
 			if !*configOnly {
 				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-				err := integrations.VerifyClient(ctx, o)
+				err = integrations.VerifyClient(ctx, o)
 				cancel()
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)

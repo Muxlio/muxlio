@@ -61,7 +61,7 @@ func TestInstalledConfigurationsConnectToMuxlio(t *testing.T) {
 						t.Fatal(err)
 					}
 					o.URL = endpoint.URL + "/mcp"
-					config, _ := json.Marshal(map[string]any{"defaultServer": upstream.URL, "token": "fixture-credential"})
+					config, _ := json.Marshal(map[string]any{"defaultServer": "local", "servers": map[string]any{"local": map[string]string{"url": upstream.URL, "credentialRef": "root"}}, "token": "fixture-credential"})
 					writeFixture(t, o.Config, config)
 					s, err := Apply(o, "add")
 					if err != nil {

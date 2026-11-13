@@ -92,7 +92,9 @@ func VerifyClient(ctx context.Context, o Options) error {
 	if err != nil {
 		return fmt.Errorf("cannot capture client verification")
 	}
-	cmd.Stderr = io.Discard
+	// A nil Stderr connects directly to the null device. Using io.Discard
+	// creates a copy goroutine that inherited child descriptors can keep alive
+	// after cancellation, delaying doctor beyond its deadline.
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("cannot start %s verification", binary)
 	}
