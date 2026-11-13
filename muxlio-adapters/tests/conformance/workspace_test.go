@@ -21,11 +21,11 @@ func TestAgentSnapshotWorkspaces(t *testing.T) {
 		flags      []string
 		outputFlag string
 	}{
-		"agent/codex":  {[]string{"--json", "--skip-git-repo-check"}, "--add-dir"},
-		"agent/claude": {[]string{"--print", "--verbose"}, "--add-dir"},
-		"agent/cursor": {[]string{"--print", "--trust"}, "--add-dir"},
+		"agent/codex":       {[]string{"--json", "--skip-git-repo-check"}, "--add-dir"},
+		"agent/claude":      {[]string{"--print", "--verbose"}, "--add-dir"},
+		"agent/cursor":      {[]string{"--print", "--trust"}, "--add-dir"},
 		"agent/antigravity": {[]string{"--dangerously-skip-permissions"}, "--add-dir"},
-		"agent/kiro":   {[]string{"--no-interactive", "--trust-workspace", "--trust-all-tools"}, ""},
+		"agent/kiro":        {[]string{"--no-interactive", "--trust-workspace", "--trust-all-tools"}, ""},
 	}
 	for _, fixture := range bundledAdapters {
 		policy, ok := launch[fixture.Executor]
@@ -61,7 +61,7 @@ func TestAgentSnapshotWorkspaces(t *testing.T) {
 						t.Fatal(err)
 					}
 					quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-					script := "#!/bin/sh\nset -eu\n"
+					script := "#!/bin/sh\nset -eu\nif [ \"$1\" = --version ]; then echo '" + fixture.RunnerVersion + "'; exit 0; fi\n"
 					script += "[ \"$PWD\" = " + quote(selected) + " ] || { echo 'wrong working directory' >&2; exit 1; }\n"
 					script += "[ ! -e .git ] || exit 1\n"
 					for _, flag := range policy.flags {
@@ -80,7 +80,7 @@ func TestAgentSnapshotWorkspaces(t *testing.T) {
 					if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
 						t.Fatal(err)
 					}
-					req := adapter.Request{Workspace: workspace, WorkDir: scratch, Executor: fixture.Executor, Task: "check snapshot", HostExecutionAllowed: true,
+					req := adapter.Request{Authorization: fixture.Authorization, Workspace: workspace, WorkDir: scratch, Executor: fixture.Executor, Task: "check snapshot", HostExecutionAllowed: true,
 						Outputs: map[string]adapter.OutputDecl{"report": {Path: "report.txt", Mime: "text/plain"}, "passed": {Mime: "application/json"}}}
 					if selection == "input-string" {
 						req.Inputs = map[string]any{"workspace": selected}

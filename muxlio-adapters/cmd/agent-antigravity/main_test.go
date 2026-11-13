@@ -107,15 +107,16 @@ func TestAgentAntigravityAdapterCLIError(t *testing.T) {
 		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"AuthError\",\"message\":\"auth failed\"}}'\n" +
 		"echo 'provider error' >&2\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -148,15 +149,16 @@ func TestAgentAntigravityAdapterAntigravityResultErrorStatus(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"echo '{\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"QuotaError\",\"message\":\"quota exceeded\"}}'\n" +
 		"exit 0\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -185,15 +187,16 @@ func TestAgentAntigravityAdapterCollectsOutputs(t *testing.T) {
 		"echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}'\n" +
 		"echo '{\"type\":\"result\",\"result\":\"done\"}'\n" +
 		"printf '%s' '# notes' > '" + outFile + "'\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "write notes",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "write notes",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 		"outputs": map[string]any{
 			"notes": map[string]any{"mime": "text/markdown", "path": "notes.md"},
 		},
@@ -231,10 +234,10 @@ func TestAgentAntigravityAdapterCapturesResultResponseField(t *testing.T) {
 	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"event":"result","result":{"status":"SUCCESS","response":"only in response field","usage":{"input_tokens":5,"output_tokens":6}}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -265,10 +268,10 @@ func TestAgentAntigravityAdapterMessageEventUsesNestedMessage(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"event":"message","role":"assistant","message":{"content":"from nested message"}}'` + "\n" +
 		`echo '{"type":"result","status":"success"}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -300,10 +303,10 @@ func TestAgentAntigravityAdapterAggregatesInterruptedStepUsage(t *testing.T) {
 		`echo '{"event":"init","conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a"}'` + "\n" +
 		`echo '{"event":"step_update","step_update":{"conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a","step_index":3,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":10302,"output_tokens":582,"thinking_tokens":551,"cache_read_tokens":8113,"total_tokens":10884}}}'` + "\n" +
 		`echo '{"event":"step_update","step_update":{"conversation_id":"c3b66b04-872b-4fbe-a3a4-058a026ef20a","step_index":4,"state":"DONE","step_type":"checkpoint","usage":{"input_tokens":116,"output_tokens":7,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":123}}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -334,10 +337,10 @@ func TestAgentAntigravityAdapterStepUsageUsesTerminalResultTotals(t *testing.T) 
 		`echo '{"event":"step_update","step_update":{"conversation_id":"c1","step_index":3,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":10302,"output_tokens":582,"cache_read_tokens":8113}}}'` + "\n" +
 		`echo '{"event":"step_update","step_update":{"conversation_id":"c1","step_index":4,"state":"DONE","step_type":"checkpoint","usage":{"input_tokens":116,"output_tokens":7,"cache_read_tokens":0}}}'` + "\n" +
 		`echo '{"event":"result","result":{"status":"SUCCESS","response":"ok","usage":{"input_tokens":10418,"output_tokens":589,"cache_read_tokens":8113}}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "t", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -368,10 +371,10 @@ func TestAgentAntigravityAdapterParsesDocumentedStreamEvents(t *testing.T) {
 		`echo '{"event":"init","conversation_id":"c1"}'` + "\n" +
 		`echo '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"hello from agy"}}'` + "\n" +
 		`echo '{"event":"result","result":{"status":"SUCCESS","response":"hello from agy","usage":{"input_tokens":12,"output_tokens":3}}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "say hello", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -405,10 +408,10 @@ func TestAgentAntigravityAdapterReportsUsageWhenThinkingTokensNull(t *testing.T)
 	fakeCLI := filepath.Join(t.TempDir(), "agy")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"thinking_tokens":null,"cached":30}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/antigravity", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))
@@ -444,15 +447,16 @@ func TestAgentAntigravityAdapterReportsUsageFromResultStats(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"result","status":"success","stats":{"input_tokens":100,"output_tokens":50,"cached":30,"input":70}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -490,15 +494,16 @@ func TestAgentAntigravityAdapterReportsUsageFromUsageEvent(t *testing.T) {
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"usage","model":"antigravity-pro","inputTokens":200,"outputTokens":80,"cachedTokens":15}'` + "\n" +
 		`echo '{"type":"result","status":"success","result":"done"}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -537,15 +542,16 @@ func TestAgentAntigravityAdapterPreservesUsageOnFailure(t *testing.T) {
 		`echo '{"type":"result","status":"error","error":{"type":"QuotaError","message":"quota exceeded"},"stats":{"input_tokens":7,"output_tokens":3,"cached_content_token_count":2}}'` + "\n" +
 		"echo 'provider error' >&2\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -585,15 +591,16 @@ func TestAgentAntigravityAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"result","status":"success","result":"done"}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -622,15 +629,16 @@ func TestAgentAntigravityAdapterUsageAbsentOnFailureWhenNotReported(t *testing.T
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","status":"error","error":{"type":"AuthError","message":"auth failed"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/antigravity",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/antigravity",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
@@ -667,11 +675,11 @@ done
 if [ -n "$EXPECTED_MODEL" ]; then $found || exit 1; else $found && exit 1; fi
 echo '{"type":"result","status":"success","result":"done"}'
 `
-			if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+			if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			params, _ := json.Marshal(map[string]string{"model": model})
-			req := adapter.Request{Executor: "agent/antigravity", Workspace: workspace, WorkDir: workspace, Params: params, Task: "do nothing"}
+			req := adapter.Request{Authorization: fixtureAuthorization(), Executor: "agent/antigravity", Workspace: workspace, WorkDir: workspace, Params: params, Task: "do nothing"}
 			input, _ := json.Marshal(req)
 			cmd := exec.Command(bin)
 			cmd.Env = []string{"PATH=/bin:/usr/bin", "HOME=" + workspace, "ANTIGRAVITY_CLI=" + cli, "EXPECTED_MODEL=" + model}

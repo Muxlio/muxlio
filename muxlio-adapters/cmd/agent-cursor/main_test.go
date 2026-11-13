@@ -56,16 +56,17 @@ func TestCursorAdapterChildUsesFileCredentialsWithoutSecurity(t *testing.T) {
 		"fi\n" +
 		"echo '{\"type\":\"result\",\"result\":\"ok\"}'\n"
 	agentPath := filepath.Join(binDir, "agent")
-	if err := os.WriteFile(agentPath, []byte(fakeAgent), 0o755); err != nil {
+	if err := os.WriteFile(agentPath, []byte(versionedFixture(fakeAgent)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/cursor",
-		"task":      "noop",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/cursor",
+		"task":          "noop",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = []string{
@@ -227,10 +228,10 @@ func runCursorFixture(t *testing.T, script string) adapter.Response {
 	bin := buildAgentCursor(t)
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "agent")
-	if err := os.WriteFile(fakeCLI, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture("#!/bin/sh\n"+script+"\n")), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"workspace": workDir, "executor": "agent/cursor", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/cursor", "task": "do nothing", "workDir": workDir, "nodeId": "n1"})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CURSOR_AGENT="+fakeCLI)
 	cmd.Stdin = strings.NewReader(string(stdin))

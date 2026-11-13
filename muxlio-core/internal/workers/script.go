@@ -196,8 +196,9 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 
 	// Use the shared wire envelope; worker scheduling and policy stay local.
 	stdin, err := json.Marshal(contract.Request{
-		TraceContext: telemetry.Inject(req.Context),
-		Executor:     req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
+		Authorization: s.Executors[req.Executor].Authorization,
+		TraceContext:  telemetry.Inject(req.Context),
+		Executor:      req.Executor, ExecutorVersion: req.ExecutorVersion, Environment: req.Environment,
 		ContractVersion: req.ContractVersion, RequiredCapabilities: req.RequiredCapabilities,
 		Action: req.Action, OperationAttemptID: req.OperationAttemptID, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey,
 		SessionInputs: req.SessionInputs, Session: req.Session, SessionID: req.SessionID, RemoteTask: req.RemoteTask,
@@ -369,6 +370,13 @@ func (s *ScriptExecutor) launch(req ExecuteRequest, script, workDir string, argu
 	policy := isolationPolicy{Mode: "trusted-native"}
 	if params.Isolation != nil {
 		policy = *params.Isolation
+	}
+	authorization := s.Executors[req.Executor].Authorization
+	if err := authorization.Validate(); err != nil {
+		return sandbox.Launch{}, err
+	}
+	if authorization != nil && authorization.Isolation == "required" && policy.Mode != "required" {
+		return sandbox.Launch{}, fmt.Errorf("operator authorization requires enforced isolation")
 	}
 	env, err := s.environment(workDir, policy.Mode == "required", req.Executor)
 	if err != nil {

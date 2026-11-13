@@ -186,10 +186,10 @@ printf '%s' "$KIRO_DUMP_REQUESTS_DIR" > capture-path
 EOF
 printf '%s\n' '{"type":"text","data":{"content":"world"}}' '{"type":"runError","data":{"message":"fixture failure"}}'
 `
-	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0700); err != nil {
 		t.Fatal(err)
 	}
-	req, _ := json.Marshal(map[string]any{"contractVersion": "1", "workspace": workDir, "workDir": workDir, "executor": "agent/kiro", "task": "estimate", "hostExecutionAllowed": true})
+	req, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "contractVersion": "1", "workspace": workDir, "workDir": workDir, "executor": "agent/kiro", "task": "estimate", "hostExecutionAllowed": true})
 	cmd := exec.Command(bin)
 	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli, "KIRO_DUMP_REQUESTS_DIR=/unrelated/path", "KIRO_DUMP_REQUESTS=0"}
 	cmd.Stdin = strings.NewReader(string(req))

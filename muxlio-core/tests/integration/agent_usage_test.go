@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
@@ -38,20 +39,20 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 	cursorReported := &[3]string{"160", "30", "40"}
 	kiroCredit := "0.18065595854063016"
 	for _, tc := range []struct {
-		executor, cli, events string
-		wantUsage             *[3]string
-		wantCredit            *string
-		wantEstimatedCostUSD  *string
+		executor, cli, version, events string
+		wantUsage                      *[3]string
+		wantCredit                     *string
+		wantEstimatedCostUSD           *string
 	}{
-		{"agent/antigravity", "agy", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
+		{"agent/antigravity", "agy", "1.5.8", `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0}}
 		{"type":"result","status":"success"}`, reported, nil, nil},
-		{"agent/claude", "claude", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812}
+		{"agent/claude", "claude", "2.1.319", `{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":40,"cache_creation_input_tokens":0},"total_cost_usd":0.0812}
 {"type":"result","usage":null}`, &[3]string{"160", "30", "40"}, nil, amountPtr("0.0812")},
-		{"agent/codex", "codex", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
+		{"agent/codex", "codex", "0.167.0", `{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}
 		{"type":"turn.completed","usage":null}`, reported, nil, nil},
-		{"agent/cursor", "agent", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
+		{"agent/cursor", "agent", "2026.11.11-b912975", `{"type":"result","usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":40}}
 		{"type":"result"}`, cursorReported, nil, nil},
-		{"agent/kiro", "kiro-cli", string(kiroEvents), nil, &kiroCredit, nil},
+		{"agent/kiro", "kiro-cli", "2.37.0", string(kiroEvents), nil, &kiroCredit, nil},
 	} {
 		for _, fail := range []bool{false, true} {
 			name := tc.executor + "/success"
@@ -60,7 +61,7 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				binDir, workspace := t.TempDir(), t.TempDir()
-				script := "#!/bin/sh\n/bin/cat <<'MUXLIO_EVENTS'\n" + tc.events + "\nMUXLIO_EVENTS\n"
+				script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '" + tc.version + "'; exit 0; fi\n/bin/cat <<'MUXLIO_EVENTS'\n" + tc.events + "\nMUXLIO_EVENTS\n"
 				if fail {
 					script += "exit 1\n"
 				}
@@ -71,6 +72,13 @@ func TestAgentUsageAdaptersToAttemptsAPI(t *testing.T) {
 				executor := workers.NewScriptExecutor(adapters, filepath.Join(t.TempDir(), "work"))
 				executor.Workspace = workspace
 				executor.AgentHome = t.TempDir() // Resolve only the fixture CLI on PATH.
+				allow := true
+				executor.Executors = map[string]workers.ExecutorConfig{
+					tc.executor: {Allow: &allow, Authorization: &contract.AuthorizationPolicy{
+						Mode: "trusted", AllowedTools: []string{"*"}, AllowedCommands: []string{"*"},
+						WorkspaceWrite: true, Network: "allowed", Isolation: "native",
+					}},
+				}
 				p := &plan.Plan{IRVersion: "1.0", Name: "agent-usage", Root: "root", Subgraphs: map[string]plan.Subgraph{
 					"root": {Nodes: []plan.Node{{ID: "agent", Kind: plan.KindExecute, Executor: tc.executor}}},
 				}}

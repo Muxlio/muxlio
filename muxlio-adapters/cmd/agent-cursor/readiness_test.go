@@ -17,7 +17,7 @@ func TestCursorProbeUsesExecutionCredentials(t *testing.T) {
 	cli := filepath.Join(t.TempDir(), "agent")
 	script := `#!/bin/sh
 case "$1" in
- --version) echo '2026.11.01'; exit 0 ;;
+ --version) echo '2026.11.11-b912975'; exit 0 ;;
  status) [ "$AGENT_CLI_CREDENTIAL_STORE" = file ] || { echo 'not logged in'; exit 1; }; echo 'logged in'; exit 0 ;;
 esac
 [ "$AGENT_CLI_CREDENTIAL_STORE" = file ] || exit 1
@@ -27,7 +27,7 @@ echo '{"type":"result","result":"ok"}'
 		t.Fatal(err)
 	}
 	environment := []string{"PATH=/bin:/usr/bin", "HOME=" + home, "CURSOR_AGENT=" + cli}
-	input, _ := json.Marshal(adapter.Request{Executor: "agent/cursor", Workspace: home, WorkDir: home, Task: "noop"})
+	input, _ := json.Marshal(adapter.Request{Authorization: fixtureAuthorization(), Executor: "agent/cursor", Workspace: home, WorkDir: home, Task: "noop"})
 	invocation := exec.Command(binary)
 	invocation.Env = environment
 	invocation.Stdin = strings.NewReader(string(input))

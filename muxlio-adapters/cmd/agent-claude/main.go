@@ -72,15 +72,20 @@ func main() {
 	// --model          selects the model
 	// --verbose        required by stream-json in print mode
 	// --add-dir        allow declared outputs in the separate scratch directory
+	policyArgs, err := adapter.AuthorizeRunner(req, claudeCLI, permissionArgs)
+	if err != nil {
+		adapter.Fail("agent-claude: %v", err)
+	}
 	args := []string{
 		"--add-dir", req.WorkDir,
 		"--print",
 		"--verbose",
 		"--output-format", "stream-json",
 		"--model", model,
-		prompt,
+		"--", prompt,
 	}
 
+	args = append(policyArgs, args...)
 	cmd := exec.Command(claudeCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}

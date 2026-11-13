@@ -150,15 +150,16 @@ func runCodexAdapter(t *testing.T, fakeScript string) ([]byte, *os.ProcessState)
 	workDir := t.TempDir()
 	fakeDir := t.TempDir()
 	fakeCodex := filepath.Join(fakeDir, "codex")
-	if err := os.WriteFile(fakeCodex, []byte(fakeScript), 0o755); err != nil {
+	if err := os.WriteFile(fakeCodex, []byte(versionedFixture(fakeScript)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/codex",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/codex",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	// Minimal env so the adapter finds the fake codex on PATH and does not
@@ -278,15 +279,16 @@ func TestAgentCodexAdapterCollectsOutputs(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"turn.completed"}'` + "\n" +
 		"printf '%s' '# notes' > '" + outFile + "'\n"
-	if err := os.WriteFile(fakeCodex, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCodex, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/codex",
-		"task":      "write notes",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/codex",
+		"task":          "write notes",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 		"outputs": map[string]any{
 			"notes": map[string]any{"mime": "text/markdown", "path": "notes.md"},
 		},
@@ -421,7 +423,7 @@ case "$1" in
  *) echo 'probe attempted task execution' >&2; exit 99 ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(versionedFixture(script)), 0700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, adapter.ProbeFlag)

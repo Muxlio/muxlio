@@ -68,7 +68,12 @@ func main() {
 		adapter.Fail("agent-cursor: finding working directory: %v", err)
 	}
 
-	cmd := exec.Command(cli, "--print", "--yolo", "--trust", "--add-dir", req.WorkDir, "--output-format", "stream-json", "--model", model, adapter.ComposePrompt(req))
+	policyArgs, err := adapter.AuthorizeRunner(req, cli, permissionArgs)
+	if err != nil {
+		adapter.Fail("agent-cursor: %v", err)
+	}
+	args := append(policyArgs, "--print", "--add-dir", req.WorkDir, "--output-format", "stream-json", "--model", model, "--", adapter.ComposePrompt(req))
+	cmd := exec.Command(cli, args...)
 	cmd.Dir = workDir
 	var diagnostics adapter.BoundedBuffer
 	cmd.Stderr = &diagnostics

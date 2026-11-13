@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/muxlio/muxlio-adapters/conformancetest"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 var bundledAdapters = []conformancetest.Fixture{
 	a2aFixture(),
 	acpFixture(),
 	{
+		Authorization: trustedFixturePolicy(), RunnerVersion: "2.1.319",
 		Executor: "agent/claude",
 		Binary:   "agent-claude",
 		CLIName:  "claude",
@@ -22,6 +24,7 @@ var bundledAdapters = []conformancetest.Fixture{
 		ExpectedCostBasis: "unspecified",
 	},
 	{
+		Authorization: trustedFixturePolicy(), RunnerVersion: "0.167.0",
 		Executor: "agent/codex",
 		Binary:   "agent-codex",
 		CLIName:  "codex",
@@ -30,6 +33,7 @@ var bundledAdapters = []conformancetest.Fixture{
 {"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30,"cached_input_tokens":40}}`,
 	},
 	{
+		Authorization: trustedFixturePolicy(), RunnerVersion: "2026.11.11-b912975",
 		Executor: "agent/cursor",
 		Binary:   "agent-cursor",
 		CLIName:  "agent",
@@ -38,6 +42,7 @@ var bundledAdapters = []conformancetest.Fixture{
 		ExpectedTokens: &[3]string{"160", "30", "40"},
 	},
 	{
+		Authorization: trustedFixturePolicy(), RunnerVersion: "1.5.8",
 		Executor: "agent/antigravity",
 		Binary:   "agent-antigravity",
 		CLIName:  "agy",
@@ -45,6 +50,7 @@ var bundledAdapters = []conformancetest.Fixture{
 		SuccessStream: `{"type":"result","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":40,"input":80,"duration_ms":200,"tool_calls":0},"result":"Antigravity done."}`,
 	},
 	{
+		Authorization: trustedFixturePolicy(), RunnerVersion: "2.37.0",
 		Executor: "agent/kiro",
 		Binary:   "agent-kiro",
 		CLIName:  "kiro-cli",
@@ -86,4 +92,8 @@ func TestBundledConformance(t *testing.T) {
 		}
 	}
 	conformancetest.Run(t, root, bundledAdapters)
+}
+
+func trustedFixturePolicy() *contract.AuthorizationPolicy {
+	return &contract.AuthorizationPolicy{Mode: "trusted", AllowedTools: []string{"*"}, AllowedCommands: []string{"*"}, WorkspaceWrite: true, Network: "allowed", Isolation: "native"}
 }

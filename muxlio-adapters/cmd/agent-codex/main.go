@@ -1,7 +1,7 @@
 // agent-codex adapter for muxlio.
 //
 // Reads an adapter.Request from stdin, builds a prompt from the task and
-// any "feature" input, runs `codex exec --json --approve-for-me --ephemeral`,
+// any "feature" input, runs `codex exec --json --ephemeral` with operator authorization,
 // parses the JSONL event stream to collect assistant text and provider-reported
 // token usage, collects declared output files from workDir, and writes an
 // adapter.Response to stdout.
@@ -54,18 +54,22 @@ func main() {
 	// capture assistant text and provider-reported token usage. --ephemeral
 	// keeps each run on a fresh thread, so the turn.completed usage total is
 	// this run's usage rather than a resumed thread's running total.
+	policyArgs, err := adapter.AuthorizeRunner(req, "codex", permissionArgs)
+	if err != nil {
+		adapter.Fail("agent-codex: %v", err)
+	}
 	args := []string{"exec",
 		"--json",
-		"--approve-for-me",
 		"--ephemeral",
 		"--skip-git-repo-check",
 		"--add-dir", req.WorkDir,
-		"-c", "shell_environment_policy.inherit=all",
+		"-c", "shell_environment_policy.inherit=none",
 	}
 	if params.Model != "" {
 		args = append(args, "--model", params.Model)
 	}
-	args = append(args, prompt)
+	args = append(args, policyArgs...)
+	args = append(args, "--", prompt)
 	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, "codex", "--version").Version
 	cmd := exec.Command("codex", args...)
 	cmd.Dir = workDir

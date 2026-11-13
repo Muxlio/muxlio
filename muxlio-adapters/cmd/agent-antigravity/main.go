@@ -73,10 +73,13 @@ func main() {
 	// --dangerously-skip-permissions  allow tool execution without per-tool confirmation
 	// --add-dir                       grant access to per-attempt scratch directory for outputs
 	// --model                         selects the model
+	policyArgs, err := adapter.AuthorizeRunner(req, antigravityCLI, permissionArgs)
+	if err != nil {
+		adapter.Fail("agent-antigravity: %v", err)
+	}
 	args := []string{
 		"--prompt", prompt,
 		"--output-format", "stream-json",
-		"--dangerously-skip-permissions",
 		"--add-dir", req.WorkDir,
 	}
 	if model != "" {
@@ -84,6 +87,7 @@ func main() {
 	}
 
 	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, antigravityCLI, "--version").Version
+	args = append(args, policyArgs...)
 	cmd := exec.Command(antigravityCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}

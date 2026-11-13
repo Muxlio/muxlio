@@ -108,10 +108,11 @@ func TestKiroStreamMergesPartialSessionUsage(t *testing.T) {
 `
 	cli := filepath.Join(binDir, "kiro-cli")
 	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
-	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req, err := json.Marshal(map[string]any{
+		"authorization":        fixtureAuthorization(),
 		"contractVersion":      "1",
 		"workspace":            workDir,
 		"workDir":              workDir,
@@ -156,10 +157,11 @@ func TestKiroStreamReportsCreditsWithEstimatedOutput(t *testing.T) {
 	}
 	cli := filepath.Join(binDir, "kiro-cli")
 	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + string(stream) + "EOF\n"
-	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req, err := json.Marshal(map[string]any{
+		"authorization":        fixtureAuthorization(),
 		"contractVersion":      "1",
 		"workspace":            workDir,
 		"workDir":              workDir,
@@ -265,10 +267,11 @@ func TestKiroStreamCapturesFlatSessionUpdateText(t *testing.T) {
 `
 	cli := filepath.Join(binDir, "kiro-cli")
 	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
-	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req, err := json.Marshal(map[string]any{
+		"authorization":        fixtureAuthorization(),
 		"contractVersion":      "1",
 		"workspace":            workDir,
 		"workDir":              workDir,
@@ -309,10 +312,11 @@ func TestKiroStreamReportsModelFromFlatConfigUpdate(t *testing.T) {
 `
 	cli := filepath.Join(binDir, "kiro-cli")
 	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
-	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req, err := json.Marshal(map[string]any{
+		"authorization":        fixtureAuthorization(),
 		"contractVersion":      "1",
 		"workspace":            workDir,
 		"workDir":              workDir,
@@ -354,10 +358,11 @@ func TestKiroAdapterTreatsRunErrorAsTerminalEvent(t *testing.T) {
 	stream := `{"type":"runError","data":{"stage":"interrupted","message":"run was interrupted"}}` + "\n"
 	cli := filepath.Join(binDir, "kiro-cli")
 	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
-	if err := os.WriteFile(cli, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req, err := json.Marshal(map[string]any{
+		"authorization":        fixtureAuthorization(),
 		"contractVersion":      "1",
 		"workspace":            workDir,
 		"workDir":              workDir,

@@ -75,16 +75,19 @@ func main() {
 
 	prompt := adapter.ComposePrompt(req)
 
+	policyArgs, err := adapter.AuthorizeRunner(req, kiroCLI, permissionArgs)
+	if err != nil {
+		adapter.Fail("agent-kiro: %v", err)
+	}
 	args := []string{
 		"chat",
 		"--no-interactive",
-		"--trust-all-tools",
-		"--trust-workspace",
 		"--output-format", "stream-json",
 		"--model", model,
-		prompt,
+		"--", prompt,
 	}
 
+	args = append(args[:1], append(policyArgs, args[1:]...)...)
 	cmd := exec.Command(kiroCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}

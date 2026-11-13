@@ -106,15 +106,16 @@ func TestAgentClaudeAdapterCLIError(t *testing.T) {
 		"echo '{\"type\":\"result\",\"is_error\":true,\"error\":\"auth failed\"}'\n" +
 		"echo 'provider error' >&2\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -147,15 +148,16 @@ func TestAgentClaudeAdapterAcceptsDoneTerminalEvent(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"done"}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -185,15 +187,16 @@ func TestAgentClaudeAdapterRejectsStreamWithoutResult(t *testing.T) {
 	workDir := t.TempDir()
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\necho '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"partial\"}]}}'\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -222,15 +225,16 @@ func TestAgentClaudeAdapterCollectsOutputs(t *testing.T) {
 		"echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}'\n" +
 		"echo '{\"type\":\"result\",\"result\":\"done\"}'\n" +
 		"printf '%s' '# notes' > '" + outFile + "'\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "write notes",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "write notes",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 		"outputs": map[string]any{
 			"notes": map[string]any{"mime": "text/markdown", "path": "notes.md"},
 		},
@@ -273,15 +277,16 @@ func TestAgentClaudeAdapterReportsUsageOnSuccess(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'` + "\n" +
 		`echo '{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30,"cache_creation_input_tokens":0}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -315,15 +320,16 @@ func TestAgentClaudeAdapterPreservesUsageOnFailure(t *testing.T) {
 		`echo '{"type":"result","is_error":true,"error":"model overloaded","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":2,"cache_creation_input_tokens":0}}'` + "\n" +
 		"echo 'provider error' >&2\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -354,15 +360,16 @@ func TestAgentClaudeAdapterReportsInclusiveUsageWithCacheCreation(t *testing.T) 
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","result":"done","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40}}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -390,15 +397,16 @@ func TestAgentClaudeAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","result":"done"}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir,
-		"executor":  "agent/claude",
-		"task":      "do nothing",
-		"workDir":   workDir,
-		"nodeId":    "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir,
+		"executor":      "agent/claude",
+		"task":          "do nothing",
+		"workDir":       workDir,
+		"nodeId":        "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -424,11 +432,12 @@ func TestAgentClaudeAdapterReportsEstimatedCostOnSuccess(t *testing.T) {
 	fakeCLI := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","result":"done","total_cost_usd":0.0812}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -453,11 +462,12 @@ func TestAgentClaudeAdapterPreservesEstimatedCostOnFailure(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","is_error":true,"error":"overloaded","total_cost_usd":0.05}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)
@@ -486,11 +496,12 @@ func TestAgentClaudeAdapterLatestResultCostWins(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		`echo '{"type":"result","total_cost_usd":0.9}'` + "\n" +
 		`echo '{"type":"result","result":"done","total_cost_usd":0.1}'` + "\n"
-	if err := os.WriteFile(fakeCLI, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
-		"workspace": workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
+		"authorization": fixtureAuthorization(),
+		"workspace":     workDir, "executor": "agent/claude", "task": "do nothing", "workDir": workDir, "nodeId": "n1",
 	})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "CLAUDE_CLI="+fakeCLI)

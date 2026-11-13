@@ -1,8 +1,9 @@
 # Execution credentials and trust boundaries
 
-Commands and agents execute arbitrary code. Existing requests without security
-declarations retain trusted native execution: host network, host filesystem and
-the configured agent HOME. Worker logs identify native versus isolated execution.
+Commands and agents execute arbitrary code. Native agent adapters require an
+explicit operator authorization policy, described below. Other executors without
+security declarations retain trusted native execution: host network, host
+filesystem and the configured agent HOME. Worker logs identify native versus isolated execution.
 Native execution is not a filesystem sandbox. Adapters that require host execution
 also require the operator's existing executor `allow` permission.
 
@@ -166,3 +167,105 @@ advertising `muxlio.dev/isolation/<backend>=true`. Missing launchers fail startu
 execution still validates the daemon, image and boundaries for each attempt.
 VM tasks also require the existing task-level `enabled: true` opt-in. Installing
 a launcher alone does not enable a backend.
+
+## Unattended native agent authorization
+
+`executors.<capability>.authorization` in the worker's local operator config is
+independent of the submitting client's API credential and task `executionPolicy`.
+The worker copies this typed policy into the adapter request immediately before
+launch. Coordinator state, workflow task text, inputs, params, model output and
+client setup never grant or replace it. Client permission to submit work and the
+worker's permission to perform it are separate grants. Direct adapter callers
+are trusted execution hosts and must protect their stdin envelope accordingly.
+The existing executor `allow` host-execution gate remains an independent check.
+
+Missing authorization denies generation in all five bundled native agents. A
+restricted policy defaults to no tools or commands and no writes. Both `network`
+and `isolation` must be explicit. Tool names are generic: `read-file`,
+`write-file`, `shell`, `network`, or `*`. `allowedCommands` describes allowed
+commands; an empty list denies commands. A mapping must reject any command or
+tool scope it cannot enforce; this implementation does not translate command
+strings into permissive shell prefix patterns. Network `none` refers to tool
+traffic; connecting to the model API is still required. `isolation: required`
+requires an enforced worker backend even if a task requests trusted native
+execution. It never silently falls back. Native CLI permissions alone are not
+OS isolation, and cannot contain malicious runner software.
+
+For explicitly trusted high-autonomy jobs, configure each capability separately:
+
+```json
+{
+  "executors": {
+    "agent/claude": {
+      "allow": true,
+      "authorization": {
+        "mode": "trusted",
+        "allowedTools": ["*"],
+        "allowedCommands": ["*"],
+        "workspaceWrite": true,
+        "network": "allowed",
+        "isolation": "native"
+      }
+    }
+  }
+}
+```
+
+Trusted mode requires all unrestricted grants explicitly. `compatibility` is an
+operator-approved migration mode with the same explicit grants. For Codex it
+retains `--approve-for-me` auto-review; trusted mode selects the explicit bypass
+flag. Compatibility never restores automatic policy defaults, version fallback,
+or broad shell environment inheritance. Codex uses
+`shell_environment_policy.inherit=none` in both modes. Supply necessary tool
+credentials through the existing explicit secret contract, rather than ambient
+shell inheritance. For the other native agents compatibility uses the same
+explicit bypass mapping as trusted mode. These modes trust workspace hooks,
+plugins and tools with the execution host's accessible credentials and files.
+
+Current adapter argument mappings accept these exact builds:
+
+| Native agent | Runner versions | Restricted policy | Trusted / compatibility |
+| --- | --- | --- | --- |
+| Claude | 2.1.319 | Restricted and safe modes, empty MCP configuration, explicit file tools, `dontAsk`, no permission prompts; no shell/network tools | Explicit bypass permission mode |
+| Codex | 0.167.0, 0.167.2 | Rejected: full tool/MCP/hook enforcement is unqualified | Bypass / automatic approval review |
+| Cursor | 2026.11.05-86047df, 2026.11.11-b912975 | Rejected: full restrictive enforcement is unqualified | Explicit run-all and workspace trust |
+| Kiro | 2.37.0 | Rejected: selective tool trust does not prove workspace hook or network containment | Explicit all-tools and workspace trust |
+| Antigravity | 1.5.5, 1.5.6, 1.5.8 | Rejected: sandbox/plan flags do not prove the full contract | Explicit skip-permissions |
+
+For Claude file-only execution, use `mode: restricted`, `allowedTools:
+["read-file", "write-file"]`, empty `allowedCommands`, `workspaceWrite: true`,
+`network: none`, and an explicit isolation choice. File tools are confined by
+restricted mode to the working roots, including the declared output scratch.
+No tool is exposed by default. An unknown mode, field, build, unavailable
+version probe or unsupported restriction fails before generation. CLI upgrades
+require updating the adapter-owned mapping and fixtures and rerunning live
+qualification; shared worker and coordinator code must never select CLI flags.
+The policy log records accepted and denied attempts with a valid policy (including
+missing-policy denials). It records the SHA-256 digest, mode, tool/command counts, writes,
+network and isolation requirements, without command strings or environment
+values. Registration readiness probes remain read-only and do not qualify
+permission enforcement.
+
+Run the deterministic adapter, worker and cross-adapter conformance tests first.
+Live qualification is opt-in because it starts billable generations with the
+operator's existing login:
+
+```sh
+cd muxlio-adapters
+MUXLIO_LIVE_AUTHORIZATION=all go test ./tests/conformance -run '^TestNativeAuthorizationLive$' -v -count=1
+# Or select one or more agents, e.g. MUXLIO_LIVE_AUTHORIZATION=claude,codex
+```
+
+The probe verifies an edit and shell content test under the trusted policy and a
+denied shell operation under restricted policy, including prompt-based elevation
+attempts. Claude also must copy an unpredictable fixture through its restricted
+file tools; trusted-mode success alone does not qualify those grants.
+Unsupported restrictive mappings must reject before generation. All
+runs are noninteractive with deadlines and Unix process-group cleanup of the
+adapter, runner and child tools. Explicit live selection on other platforms fails
+until equivalent process containment is implemented. An explicitly selected missing CLI,
+authentication failure, backend failure or timeout fails the probe; it is never
+counted as successful denial. Run live qualification on the actual execution host before enabling a mapping;
+argument fixtures alone do not prove successful live enforcement. ACP/A2A
+transport adapters retain their separate protocol trust contracts and are not
+native CLI mappings.
