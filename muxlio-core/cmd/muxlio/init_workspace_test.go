@@ -7,7 +7,98 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/muxlio/muxlio-core/internal/integrations"
 )
+
+func TestSkillSourcePrefersDistributionOverWorkspace(t *testing.T) {
+	root, ws := t.TempDir(), t.TempDir()
+	distributed := filepath.Join(root, "share", "muxlio", "skills")
+	for _, dir := range []string{distributed, filepath.Join(ws, "muxlio-skills"), filepath.Join(ws, "muxlio-core")} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{filepath.Join(distributed, "SKILL.md"), filepath.Join(ws, "muxlio-skills", "SKILL.md")} {
+		if err := os.WriteFile(path, []byte("---\nname: muxlio\ndescription: test\n---\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Even a checkout-shaped target must not shadow the installed distribution.
+	if err := os.WriteFile(filepath.Join(ws, "muxlio-core", "go.mod"), []byte("module github.com/muxlio/muxlio-core\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(ws)
+	if got := getSkillDir(root); got != distributed {
+		t.Fatalf("workspace shadowed distributed skill: %s", got)
+	}
+	if err := os.Remove(filepath.Join(distributed, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if got := getSkillDir(root); got != filepath.Join(ws, "muxlio-skills") {
+		t.Fatalf("development checkout lookup broken: %s", got)
+	}
+	if err := os.Remove(filepath.Join(ws, "muxlio-core", "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	if got := getSkillDir(root); got != "" {
+		t.Fatalf("unrelated workspace accepted as a distribution: %s", got)
+	}
+}
+
+func TestInitInstallsDistributedSkillOutsideCheckout(t *testing.T) {
+	source, err := filepath.Abs("../../../muxlio-skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, client := range []string{"claude", "codex", "kiro", "cursor"} {
+		for _, scope := range []string{"project", "user"} {
+			t.Run(client+"/"+scope, func(t *testing.T) {
+				root, ws, home := t.TempDir(), t.TempDir(), t.TempDir()
+				if _, err := integrations.InstallSkill(source, filepath.Join(root, "share", "muxlio", "skills")); err != nil {
+					t.Fatal(err)
+				}
+				bin := t.TempDir()
+				bridge := filepath.Join(bin, "muxlio-mcp")
+				if err := os.WriteFile(bridge, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(bin, "cursor"), []byte("#!/bin/sh\necho 2.4.0\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				call := func() {
+					t.Helper()
+					args := []string{"-test.run=^TestCLIProcess$", "--", "init", "--data-dir", root, "--workspace", ws, "--client", client, "--scope", scope, "--mcp-binary", bridge, "--json"}
+					cmd := exec.Command(os.Args[0], args...)
+					cmd.Env = append(os.Environ(), "MUXLIO_TEST_CLI=1", "HOME="+home, "CODEX_HOME=", "PATH="+bin)
+					cmd.Dir = ws
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						t.Fatalf("init: %v\n%s", err, out)
+					}
+					var result struct{ Skills []string }
+					if err := json.Unmarshal(out, &result); err != nil || len(result.Skills) < 8 {
+						t.Fatalf("skill bundle not reported: %s %v", out, err)
+					}
+				}
+				call()
+				call()
+				base := ws
+				if scope == "user" {
+					base = home
+				}
+				dir := map[string]string{"claude": ".claude", "codex": ".agents", "kiro": ".kiro", "cursor": ".cursor"}[client]
+				for _, file := range []string{"SKILL.md", "references/authoring.md", "references/operations.md", "references/security.md"} {
+					got, err := os.ReadFile(filepath.Join(base, dir, "skills", "muxlio", file))
+					want, readErr := os.ReadFile(filepath.Join(source, file))
+					if err != nil || readErr != nil || string(got) != string(want) {
+						t.Fatalf("installed bundle differs for %s: %v %v", file, err, readErr)
+					}
+				}
+			})
+		}
+	}
+}
 
 func readInitWorkspace(t *testing.T, root string) string {
 	t.Helper()

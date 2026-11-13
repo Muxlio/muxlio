@@ -85,7 +85,7 @@ muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent a
 # Creates ~/.muxlio/{data,logs,work,artifacts,bin,skills,libexec/muxlio/adapters,share/muxlio/ui}
 # and ~/.muxlio/config.json (workspace, capabilities, addr, attemptTimeoutSeconds)
 # A coordinator bearer token is generated and stored in config.json.
-# --starter writes a sample workflow into the workspace; --agent installs muxlio-skills/SKILL.md for that agent.
+# --starter writes a sample workflow; --client (or --agent) installs the complete skill bundle for that client.
 ```
 
 For workflows that run checks or local Git commands, use `muxlio init --agent kiro --allow-command`

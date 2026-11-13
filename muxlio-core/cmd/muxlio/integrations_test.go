@@ -93,6 +93,11 @@ func TestInitClientAndAgentAliasRegisterAuthoringClient(t *testing.T) {
 }
 
 func TestInitUserScopeDoesNotWriteProjectInstructionsOrConfig(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "cursor"), []byte("#!/bin/sh\necho 2.4.0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
 	home, workspace, root := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	binary, err := os.Executable()

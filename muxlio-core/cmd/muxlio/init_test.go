@@ -59,7 +59,7 @@ func TestInitAgentAntigravityInstallsWorkspaceSkill(t *testing.T) {
 	if err := os.MkdirAll(skillsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte("# muxlio test skill\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte("---\nname: muxlio\ndescription: Muxlio test skill\n---\n# Muxlio\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code := cmdInit([]string{"--data-dir", root, "--workspace", ws, "--agent", "antigravity", "--json"}, "", true); code != 0 {

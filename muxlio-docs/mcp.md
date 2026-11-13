@@ -90,6 +90,55 @@ alias; it does not select an execution adapter. Init defaults to project scope.
 Antigravity currently receives instructions only: no installed CLI contract was
 available to verify MCP registration, so `integrations` rejects it explicitly.
 
+### Install and invoke the Muxlio skill
+
+Run `muxlio init --client NAME --scope project --workspace /absolute/project`
+to install the complete skill bundle in a target project, including a repository
+unrelated to Muxlio. Use `--scope user` for discovery across projects. Skill
+locations are separate from MCP configuration:
+
+| Client | Project skill | User skill |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/muxlio/SKILL.md` | `~/.claude/skills/muxlio/SKILL.md` |
+| Codex | `.agents/skills/muxlio/SKILL.md` | `~/.agents/skills/muxlio/SKILL.md` |
+| Kiro | `.kiro/skills/muxlio/SKILL.md` | `~/.kiro/skills/muxlio/SKILL.md` |
+| Cursor 2.4+ | `.cursor/skills/muxlio/SKILL.md` | `~/.cursor/skills/muxlio/SKILL.md` |
+
+Codex's skill location is independent of `CODEX_HOME`. Cursor setup checks
+`cursor --version`. Older or unrecognized versions receive a manual project rule
+at `.cursor/rules/muxlio.mdc`, with its bundle under `.cursor/muxlio`. Global
+filesystem rules are unsupported: for user scope, make Cursor 2.4+ available on
+PATH or use project scope. An existing project rule keeps its complete activation
+frontmatter, including descriptions, globs and `alwaysApply`, rather than being
+converted to a skill with different activation behavior.
+
+Setup archives legacy `.skills/muxlio` and Codex `.codex/skills/muxlio` directories
+(also `$CODEX_HOME/skills/muxlio` for user scope) under
+`.muxlio-skill-backups/legacy-*/muxlio` in the selected scope. Relative resources
+and user edits remain together, outside discovery. Changed destination files,
+including customized Cursor rule bodies, are saved beside the file with a
+`.muxlio-backup-<content hash>` suffix before the canonical content is installed.
+Unrelated files are retained. Review and reapply custom guidance as needed.
+Init reports these paths in text or JSON `skillsPreserved`; repeated setup leaves
+identical files alone. Write failures and invalid skill metadata fail setup.
+
+Restart the client in the target project. Invoke `/muxlio` in Claude Code or
+Cursor's skill menu, `$muxlio` in Codex, or explicitly ask Kiro to use the Muxlio
+skill (custom Kiro agents must include `skill://.kiro/skills/**/SKILL.md` in their
+resources). For Cursor's manual rule, attach `@muxlio`.
+Ask it to use Muxlio to draft a workflow summarizing supplied documents, without
+starting it. Confirm the skill loads and its authoring reference is readable.
+Then start a fresh chat and ask a trivial unrelated question, such as "What is
+2 + 2?"; it should answer directly without invoking Muxlio. The skill description
+targets Muxlio plans and runs; it does not require coding tasks or particular
+workers. Existing custom rule activation settings remain the user's choice.
+
+Skill discovery contracts: [Claude Code](https://code.claude.com/docs/en/skills),
+[Codex](https://developers.openai.com/codex/skills/),
+[Kiro](https://kiro.dev/docs/skills/),
+[Cursor skills](https://cursor.com/docs/skills), and
+[Cursor rule activation](https://cursor.com/docs/rules).
+
 Client config contracts: [Claude Code](https://code.claude.com/docs/en/mcp),
 [Codex](https://developers.openai.com/codex/mcp/),
 [Cursor](https://cursor.com/docs/context/mcp), and

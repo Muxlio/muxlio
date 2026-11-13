@@ -112,6 +112,11 @@ and [CLI, SDK, and configuration reference](muxlio-docs/architecture/developer-r
 The [example recipe](recipes/implement-features/workflow.ts) and
 [authoring guide](muxlio-skills/SKILL.md) show how workflows are put together.
 
+`muxlio init --client NAME --scope project --workspace /absolute/project` installs
+the discoverable Muxlio skill and its references in that project. Use `--scope user`
+for discovery across projects. See [client skill setup and invocation](muxlio-docs/mcp.md#install-and-invoke-the-muxlio-skill)
+for supported paths, Cursor version handling, and preservation of existing edits.
+
 ## License
 
 [Apache License 2.0](LICENSE).

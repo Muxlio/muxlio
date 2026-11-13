@@ -30,8 +30,8 @@ mkdir -p "$destination/share/muxlio/ui/dist"
 cp "$repo/muxlio-ui/dist/server.mjs" "$repo/muxlio-ui/dist/app.js" "$repo/muxlio-ui/dist/app.js.map" "$repo/muxlio-ui/dist/app.css" "$destination/share/muxlio/ui/dist/"
 cp "$repo/LICENSE" "$destination/share/muxlio/LICENSE"
 if [ -f "$repo/muxlio-skills/SKILL.md" ]; then
-  cp "$repo/muxlio-skills/SKILL.md" "$destination/share/muxlio/skills/SKILL.md"
-  cp "$repo/muxlio-skills/SKILL.md" "$destination/skills/SKILL.md"
+  cp -R "$repo/muxlio-skills/." "$destination/share/muxlio/skills/"
+  cp -R "$repo/muxlio-skills/." "$destination/skills/"
 fi
 
 # Write environment file for shell sourcing

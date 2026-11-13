@@ -307,50 +307,26 @@ esac
 			return 1
 		}
 	}
-	skillInstalledPaths := make([]string, 0)
-	skillContent := getSkillContent(root)
-	if len(skillContent) > 0 {
-		globalSkill := filepath.Join(root, "skills", "SKILL.md")
-		if err := os.WriteFile(globalSkill, skillContent, 0o600); err == nil {
-			skillInstalledPaths = append(skillInstalledPaths, globalSkill)
+	skillInstalledPaths := []string{}
+	skillPreservedPaths := []string{}
+	if source := getSkillDir(root); source != "" {
+		result, err := integrations.InstallSkill(source, filepath.Join(root, "skills"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: runtime skill:", err)
+			return 1
 		}
-
-		// Workspace standard skill locations
-		workspaceSkillsDir := filepath.Join(instructionBase, ".skills", "muxlio")
-		_ = os.MkdirAll(workspaceSkillsDir, 0o755)
-		wsSkill := filepath.Join(workspaceSkillsDir, "SKILL.md")
-		if err := os.WriteFile(wsSkill, skillContent, 0o644); err == nil {
-			skillInstalledPaths = append(skillInstalledPaths, wsSkill)
+		skillInstalledPaths = append(skillInstalledPaths, result.Installed...)
+		skillPreservedPaths = append(skillPreservedPaths, result.Preserved...)
+		result, err = integrations.InstallClientSkill(source, instructionBase, *agent, *scope)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: client skill:", err)
+			return 1
 		}
-
-		// Agent-specific locations
-		switch *agent {
-		case "codex":
-			codexDir := filepath.Join(instructionBase, ".codex", "skills", "muxlio")
-			_ = os.MkdirAll(codexDir, 0o755)
-			codexSkill := filepath.Join(codexDir, "SKILL.md")
-			_ = os.WriteFile(codexSkill, skillContent, 0o644)
-			skillInstalledPaths = append(skillInstalledPaths, codexSkill)
-		case "cursor":
-			cursorDir := filepath.Join(instructionBase, ".cursor", "rules")
-			_ = os.MkdirAll(cursorDir, 0o755)
-			cursorRule := filepath.Join(cursorDir, "muxlio.mdc")
-			ruleContent := fmt.Sprintf("---\ndescription: Muxlio workflow authoring rules and conventions\nglobs: workflows/**,*.plan.json\n---\n\n%s", string(skillContent))
-			_ = os.WriteFile(cursorRule, []byte(ruleContent), 0o644)
-			skillInstalledPaths = append(skillInstalledPaths, cursorRule)
-		case "claude":
-			claudeDir := filepath.Join(instructionBase, ".claude", "skills", "muxlio")
-			_ = os.MkdirAll(claudeDir, 0o755)
-			claudeSkill := filepath.Join(claudeDir, "SKILL.md")
-			_ = os.WriteFile(claudeSkill, skillContent, 0o644)
-			skillInstalledPaths = append(skillInstalledPaths, claudeSkill)
-		case "antigravity":
-			antigravityDir := filepath.Join(instructionBase, ".agents", "skills", "muxlio")
-			_ = os.MkdirAll(antigravityDir, 0o755)
-			antigravitySkill := filepath.Join(antigravityDir, "SKILL.md")
-			_ = os.WriteFile(antigravitySkill, skillContent, 0o644)
-			skillInstalledPaths = append(skillInstalledPaths, antigravitySkill)
-		}
+		skillInstalledPaths = append(skillInstalledPaths, result.Installed...)
+		skillPreservedPaths = append(skillPreservedPaths, result.Preserved...)
+	} else if *agent != "" {
+		fmt.Fprintln(os.Stderr, "error: Muxlio skill bundle unavailable; reinstall the Muxlio distribution")
+		return 1
 	}
 
 	// 5. Create starter sample workflow if requested
@@ -390,14 +366,15 @@ esac
 
 	if *jsonOut {
 		res := map[string]any{
-			"initialized":   true,
-			"runtimeDir":    root,
-			"workspace":     ws,
-			"configPath":    configPath,
-			"configCreated": configCreated,
-			"mcpEndpoint":   mcpEndpoint,
-			"envScript":     envScriptPath,
-			"skills":        skillInstalledPaths,
+			"initialized":     true,
+			"runtimeDir":      root,
+			"workspace":       ws,
+			"configPath":      configPath,
+			"configCreated":   configCreated,
+			"mcpEndpoint":     mcpEndpoint,
+			"envScript":       envScriptPath,
+			"skills":          skillInstalledPaths,
+			"skillsPreserved": skillPreservedPaths,
 		}
 		if registration != nil {
 			res["integration"] = registration
@@ -427,6 +404,9 @@ esac
 		for _, p := range skillInstalledPaths {
 			fmt.Printf("    • %s\n", p)
 		}
+	}
+	for _, p := range skillPreservedPaths {
+		fmt.Printf("  Preserved skill material: %s\n", p)
 	}
 	if starterPlanPath != "" {
 		fmt.Printf("  Starter:     %s\n", starterPlanPath)
@@ -459,36 +439,33 @@ func writeInitConfig(path string, raw []byte) error {
 	return os.Rename(file.Name(), path)
 }
 
-func getSkillContent(root string) []byte {
-	// 1. Try canonical repo checkout: muxlio-skills/SKILL.md
-	if repo := findRepoDir(); repo != "" {
-		p := filepath.Join(repo, "muxlio-skills", "SKILL.md")
-		if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
-			return data
-		}
-	}
-	// 2. Try installed prefix relative to the executable: <prefix>/share/muxlio/skills/SKILL.md
-	// This resolves the SKILL.md shipped alongside the binary (e.g. a Homebrew
-	// install) in the same way adapters and UI assets are located.
+// Locate the whole bundle so relative references work outside a source checkout.
+func getSkillDir(root string) string {
+	candidates := []string{}
+	// Prefer distributed assets: an unrelated target repository must not replace
+	// installed instructions (including user-scope instructions) with its files.
 	if exe, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = resolved
 		}
-		prefix := filepath.Dir(filepath.Dir(exe))
-		p := filepath.Join(prefix, "share", "muxlio", "skills", "SKILL.md")
-		if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
-			return data
+		candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(exe)), "share", "muxlio", "skills"))
+	}
+	candidates = append(candidates, filepath.Join(root, "share", "muxlio", "skills"))
+	// Source checkouts need not contain the historical DESIGN.md marker used
+	// by the upgrade command's repository lookup.
+	if cwd, err := os.Getwd(); err == nil {
+		for dir, depth := cwd, 0; depth < 5; dir, depth = filepath.Dir(dir), depth+1 {
+			module, err := os.ReadFile(filepath.Join(dir, "muxlio-core", "go.mod"))
+			if err == nil && bytes.HasPrefix(module, []byte("module github.com/muxlio/muxlio-core\n")) {
+				candidates = append(candidates, filepath.Join(dir, "muxlio-skills"))
+			}
 		}
 	}
-	// 3. Try runtime share: <root>/share/muxlio/skills/SKILL.md
-	shareSkill := filepath.Join(root, "share", "muxlio", "skills", "SKILL.md")
-	if data, err := os.ReadFile(shareSkill); err == nil && len(data) > 0 {
-		return data
+	candidates = append(candidates, filepath.Join(root, "skills"))
+	for _, dir := range candidates {
+		if raw, err := os.ReadFile(filepath.Join(dir, "SKILL.md")); err == nil && len(raw) > 0 {
+			return dir
+		}
 	}
-	// 4. Try runtime skills: <root>/skills/SKILL.md
-	runtimeSkill := filepath.Join(root, "skills", "SKILL.md")
-	if data, err := os.ReadFile(runtimeSkill); err == nil && len(data) > 0 {
-		return data
-	}
-	return nil
+	return ""
 }
