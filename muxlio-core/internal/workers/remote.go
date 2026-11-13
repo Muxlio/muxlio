@@ -208,7 +208,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	for key, value := range cfg.Labels {
 		labels[key] = value
 	}
-	for id := range localBindings {
+	for id, binding := range localBindings {
+		if binding.Digest != "" {
+			labels[WorkspaceDigestLabelPrefix+id] = binding.Digest
+		}
 		labels[WorkspaceIdentityLabelPrefix+id] = "true"
 	}
 	cfg.Labels = labels

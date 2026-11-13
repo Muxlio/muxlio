@@ -141,6 +141,11 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 				return req, err
 			}
 		}
+		if req.WorkspaceMode != "empty" {
+			if err := checkPreparedWorkspace(dst, req.WorkspaceDigest); err != nil {
+				return req, err
+			}
+		}
 		req.Workspace, req.WorkspaceMode = dst, "snapshot"
 		// Adapters may consume the workspace input directly. Rebind a copy so
 		// no input can redirect them back into the shared source tree.
@@ -173,6 +178,12 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 // ValidateDispatchWorkspace requires resolved operator authority before durable
 // admission. Explicit keys cannot substitute for the implicit workspace lock.
 func ValidateDispatchWorkspace(req ExecuteRequest) error {
+	if err := ValidateWorkspaceDigest(req.WorkspaceDigest); err != nil {
+		return err
+	}
+	if req.WorkspaceDigest != "" && req.WorkspaceID == "" {
+		return fmt.Errorf("workspaceDigest requires an explicit workspaceId")
+	}
 	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
 		return err
 	}

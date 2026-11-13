@@ -66,6 +66,12 @@ worktrees fail closed; another checkout is never substituted. Client current
 directories do not select worker directories. Prefer IDs without a `workspace`
 input; if supplied, that input must match the authorized binding.
 
+For reproducible handoff across machines, configure a binding `digest` and pin
+the same `workspaceDigest` in the plan. `muxlio workspace digest <directory>`
+computes the content identity for prepared files, including non-code workspaces.
+See [prepared workspace handoff](architecture/workspace-handoff.md) for laptop
+to remote worker provisioning and revision checks.
+
 Workspace selection is independent of mode: `snapshot` copies the selected
 source into attempt scratch, `empty` starts without a source, `read-only` requires
 enforced isolation, and `shared-write` automatically acquires an exclusive lock

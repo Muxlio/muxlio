@@ -383,6 +383,8 @@ class IRBuilder implements BuildContext {
 
 export interface WorkflowDefinition {
   workspaceId?: string;
+  /** SHA-256 identity of an operator-prepared workspace tree. */
+  workspaceDigest?: string;
   limits?: Plan['limits'];
   deadlineSeconds?: number;
   name: string;
@@ -406,6 +408,7 @@ export function defineWorkflow(def: WorkflowDefinition): CompiledWorkflow {
     irVersion: '1.0',
     name: def.name,
     workspaceId: def.workspaceId,
+    workspaceDigest: def.workspaceDigest,
     deadlineSeconds: def.deadlineSeconds,
     limits: def.limits,
     root: 'root',

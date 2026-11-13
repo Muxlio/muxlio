@@ -4,6 +4,10 @@ Reproducibility records the software and permissions used for a plan. It does
 not promise deterministic model output. Existing unpinned plans continue to use
 the baseline executor contract.
 
+Workspace contents are pinned separately through
+[prepared workspace handoff](workspace-handoff.md). Environment manifests do not
+identify or provision the files a workflow processes.
+
 An execute node can set `environment` to a version 1 environment manifest. The
 same manifest must be present in the worker's adapter descriptor
 (`<binary>.json`, under `environment`). The manifest is part of the plan digest

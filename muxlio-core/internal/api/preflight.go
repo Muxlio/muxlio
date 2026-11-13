@@ -304,6 +304,7 @@ func preflightRun(p *plan.Plan, input json.RawMessage, store any, coordinator *C
 	allExecutorsSatisfiable := true
 	for _, req := range execReqs {
 		req.request.WorkspaceID, req.request.WorkspaceWorkerID = resp.WorkspaceID, resp.WorkspaceWorkerID
+		req.request.WorkspaceDigest = p.WorkspaceDigest
 		ep := buildExecutorPreflight(req.request.Executor, req, liveWorkers)
 		resp.Executors = append(resp.Executors, ep)
 		if !ep.Satisfiable {
@@ -377,6 +378,9 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 			if guarded.WorkspaceID != "" && guarded.WorkspaceMode != "empty" && (guarded.WorkspaceWorkerID != w.ID || w.Labels[workers.WorkspaceIdentityLabelPrefix+guarded.WorkspaceID] != "true") {
 				reasons["workspace_owner_mismatch"] = struct{}{}
 			}
+			if guarded.WorkspaceDigest != "" && guarded.WorkspaceMode != "empty" && w.Labels[workers.WorkspaceDigestLabelPrefix+guarded.WorkspaceID] != guarded.WorkspaceDigest {
+				reasons["workspace_revision_mismatch"] = struct{}{}
+			}
 			reasons["dispatch_constraints_unsatisfied"] = struct{}{}
 		}
 	}
@@ -410,6 +414,8 @@ func preflightReasonMessage(reason string) string {
 		return "Enable the required isolation runtime on an eligible worker."
 	case "placement_label_mismatch":
 		return "Register a worker with the required placement labels or adjust the node's placement."
+	case "workspace_revision_mismatch":
+		return "Provision and advertise the prepared workspace content revision pinned by the plan."
 	case "workspace_owner_mismatch":
 		return "The eligible worker must own and advertise the selected workspace identity."
 	case "worker_draining":

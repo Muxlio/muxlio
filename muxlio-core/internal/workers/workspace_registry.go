@@ -10,6 +10,8 @@ import (
 // WorkspaceBinding is operator authority, never a client-supplied path. A
 // workspace has one owner; other machines must not substitute their checkout.
 type WorkspaceBinding struct {
+	// Digest pins prepared contents, independent of the worker-local path.
+	Digest   string   `json:"digest,omitempty"`
 	WorkerID string   `json:"workerId"`
 	Path     string   `json:"path"`
 	Aliases  []string `json:"aliases,omitempty"`
@@ -48,6 +50,9 @@ func CheckWorkspaceInput(inputs map[string]any, authorized string, local bool) e
 func (r WorkspaceRegistry) Validate() error {
 	names := map[string]bool{}
 	for id, binding := range r {
+		if err := ValidateWorkspaceDigest(binding.Digest); err != nil {
+			return err
+		}
 		for _, name := range append([]string{id}, binding.Aliases...) {
 			if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "/\\") || names[name] {
 				return fmt.Errorf("invalid or duplicate workspace identity %q", name)
@@ -113,6 +118,9 @@ func (r WorkspaceRegistry) LocalBindings(workerID string) (WorkspaceRegistry, er
 		if err != nil {
 			return nil, fmt.Errorf("workspace %q: %w", id, err)
 		}
+		if err := checkPreparedWorkspace(path, binding.Digest); err != nil {
+			return nil, fmt.Errorf("workspace %q: %w", id, err)
+		}
 		binding.Path = path
 		info, err := os.Stat(path)
 		if err != nil {
@@ -136,6 +144,9 @@ func ApplyAuthorizedWorkspace(req ExecuteRequest, workerID string, registry Work
 		req.Workspace = ""
 		return req, nil
 	}
+	if req.WorkspaceDigest != "" && req.WorkspaceID == "" {
+		return req, fmt.Errorf("workspaceDigest requires an explicit workspaceId")
+	}
 	if req.WorkspaceID == "" {
 		// Compatibility for the operator's single-workspace flag. This is
 		// still an exact allowlist; an input cannot select another checkout.
@@ -155,6 +166,9 @@ func ApplyAuthorizedWorkspace(req ExecuteRequest, workerID string, registry Work
 	if binding.WorkerID != workerID || req.WorkspaceWorkerID != workerID {
 		return req, fmt.Errorf("workspace %q is not owned by worker %q", id, workerID)
 	}
+	if req.WorkspaceDigest != binding.Digest {
+		return req, fmt.Errorf("workspace %q prepared digest does not match the execution request", id)
+	}
 	path, err := CanonicalWorkspace(binding.Path)
 	if err != nil {
 		return req, err
@@ -168,6 +182,9 @@ func ApplyAuthorizedWorkspace(req ExecuteRequest, workerID string, registry Work
 	}
 	if binding.directoryInfo != nil && !os.SameFile(binding.directoryInfo, info) {
 		return req, fmt.Errorf("workspace %q binding changed", id)
+	}
+	if err := checkPreparedWorkspace(path, req.WorkspaceDigest); err != nil {
+		return req, err
 	}
 	if err := CheckWorkspaceInput(req.Inputs, path, true); err != nil {
 		return req, err

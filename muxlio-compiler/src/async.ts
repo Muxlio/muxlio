@@ -347,6 +347,8 @@ class RecordingContext {
 
 export interface AsyncWorkflowDefinition {
   name: string;
+  workspaceId?: string;
+  workspaceDigest?: string;
   input?: JSONSchema;
   output?: JSONSchema;
   run: (ctx: RecordingContext, input: any) => unknown | Promise<unknown>;
@@ -377,6 +379,8 @@ export async function defineAsyncWorkflow(
   const plan: Plan = {
     irVersion: '1.0',
     name: def.name,
+    workspaceId: def.workspaceId,
+    workspaceDigest: def.workspaceDigest,
     root: 'root',
     inputSchema: def.input,
     outputSchema: def.output,

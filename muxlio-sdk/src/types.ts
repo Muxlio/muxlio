@@ -184,6 +184,8 @@ export interface RunLimits {
 export interface Plan {
   /** Operator-authorized workspace identity, independent of the client directory. */
   workspaceId?: string;
+  /** SHA-256 identity of an operator-prepared workspace tree. */
+  workspaceDigest?: string;
   limits?: RunLimits;
   /** Wall-clock limit from persisted run creation, including queueing and pauses. */
   deadlineSeconds?: number;

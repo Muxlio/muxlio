@@ -63,7 +63,7 @@ func (c *Coordinator) AuthorizePlanWorkspace(p *plan.Plan, input json.RawMessage
 	}
 	var inputs map[string]any
 	_ = json.Unmarshal(input, &inputs)
-	req, err := c.authorizeWorkspace(workers.ExecuteRequest{WorkspaceID: id, Inputs: inputs})
+	req, err := c.authorizeWorkspace(workers.ExecuteRequest{WorkspaceID: id, WorkspaceDigest: p.WorkspaceDigest, Inputs: inputs})
 	if err != nil {
 		return WorkspaceAuthorizationError{err.Error()}
 	}
@@ -79,7 +79,7 @@ func (c *Coordinator) AuthorizePlanWorkspace(p *plan.Plan, input json.RawMessage
 			if resolveErr != nil {
 				continue
 			}
-			if _, err := c.authorizeWorkspace(workers.ExecuteRequest{WorkspaceID: req.WorkspaceID, Inputs: map[string]any{"workspace": value}}); err != nil {
+			if _, err := c.authorizeWorkspace(workers.ExecuteRequest{WorkspaceID: req.WorkspaceID, WorkspaceDigest: p.WorkspaceDigest, Inputs: map[string]any{"workspace": value}}); err != nil {
 				return WorkspaceAuthorizationError{err.Error()}
 			}
 		}
@@ -99,12 +99,21 @@ func (c *Coordinator) authorizeWorkspace(req workers.ExecuteRequest) (workers.Ex
 	if req.WorkspaceMode == "empty" || req.Action == "poll" || req.Action == "reconcile" {
 		return req, nil
 	}
+	if req.WorkspaceDigest != "" && req.WorkspaceID == "" {
+		return req, fmt.Errorf("workspaceDigest requires an explicit workspaceId")
+	}
 	if req.WorkspaceID == "" && len(registry) == 0 {
 		return req, workers.CheckWorkspaceInput(req.Inputs, "", false)
 	}
 	id, binding, err := registry.Resolve(req.WorkspaceID)
 	if err != nil {
 		return req, err
+	}
+	if err := workers.ValidateWorkspaceDigest(req.WorkspaceDigest); err != nil {
+		return req, err
+	}
+	if req.WorkspaceDigest != binding.Digest {
+		return req, fmt.Errorf("workspace %q prepared digest does not match the plan; pin workspaceDigest and provision matching contents", id)
 	}
 	req.WorkspaceID, req.WorkspaceWorkerID = id, binding.WorkerID
 	if binding.WorkerID == "local" {
@@ -124,12 +133,12 @@ func (c *Coordinator) authorizeWorkspace(req workers.ExecuteRequest) (workers.Ex
 			return req, err
 		}
 		for _, worker := range available {
-			if worker.ID == binding.WorkerID && worker.Labels[workers.WorkspaceIdentityLabelPrefix+id] == "true" {
+			if worker.ID == binding.WorkerID && worker.Labels[workers.WorkspaceIdentityLabelPrefix+id] == "true" && (req.WorkspaceDigest == "" || worker.Labels[workers.WorkspaceDigestLabelPrefix+id] == req.WorkspaceDigest) {
 				return req, nil
 			}
 		}
 	}
-	return req, fmt.Errorf("workspace %q has no available owning worker %q; no checkout substitution is allowed", id, binding.WorkerID)
+	return req, fmt.Errorf("workspace %q has no available owning worker %q advertising the requested content revision; no checkout substitution is allowed", id, binding.WorkerID)
 }
 
 // ResolveRunWorkspaceID resolves current aliases for discovery. Unknown selectors

@@ -24,6 +24,12 @@ func hasErrors(errs []ValidationError) bool {
 // of errors; if the slice is empty the plan is valid.
 func Validate(p *Plan) (errs []ValidationError) {
 	defer func() { errs = finalizeDiagnostics(p, errs) }()
+	if err := workers.ValidateWorkspaceDigest(p.WorkspaceDigest); err != nil {
+		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_WORKSPACE_DIGEST", Severity: "error", Phase: "plan", Message: err.Error()})
+	}
+	if p.WorkspaceDigest != "" && p.WorkspaceID == "" {
+		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_WORKSPACE_DIGEST", Severity: "error", Phase: "plan", Message: "workspaceDigest requires an explicit workspaceId"})
+	}
 	if err := p.Limits.validate(); err != nil {
 		errs = append(errs, ValidationError{Code: "MUXLIO_BAD_RUN_LIMITS", Severity: "error", Phase: "plan", Message: err.Error()})
 	}

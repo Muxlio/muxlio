@@ -17,6 +17,8 @@ import (
 
 // Plan is an immutable compiled workflow definition.
 type Plan struct {
+	// WorkspaceDigest pins prepared input contents independently of host paths.
+	WorkspaceDigest string `json:"workspaceDigest,omitempty"`
 	// WorkspaceID selects operator authority; paths in inputs never grant authority.
 	WorkspaceID string     `json:"workspaceId,omitempty"`
 	Limits      *RunLimits `json:"limits,omitempty"`

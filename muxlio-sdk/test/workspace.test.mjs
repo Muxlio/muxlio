@@ -31,3 +31,14 @@ test('both authoring APIs preserve an explicitly empty workspace', () => {
     assert.equal(plan.subgraphs.root.nodes[0].workspaceMode, 'empty');
   }
 });
+
+test('both authoring APIs preserve the immutable prepared workspace content pin', () => {
+  const workspaceDigest = `sha256:${'a'.repeat(64)}`;
+  const options = { workspaceId: 'prepared', workspaceDigest };
+  const symbolic = workflow('prepared', { ...options, build: ({ step }) => { step('work', task({ executor: 'generic' }), {}); } });
+  const builder = defineWorkflow({ name: 'prepared', ...options, build: (g) => { g.execute('work', { executor: 'generic' }); } });
+  for (const { plan } of [symbolic, builder]) {
+    assert.equal(plan.workspaceDigest, workspaceDigest);
+    assert.equal(plan.workspaceId, 'prepared');
+  }
+});

@@ -70,8 +70,9 @@ func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NewCoordinator(store)
-	c.Workspaces = workers.WorkspaceRegistry{"project": {WorkerID: "worker", Path: "/coordinator/authorized"}}
-	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Labels: map[string]string{workers.WorkspaceIdentityLabelPrefix + "project": "true"}, Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	c.Workspaces = workers.WorkspaceRegistry{"project": {WorkerID: "worker", Path: "/coordinator/authorized", Digest: digest}}
+	if _, err := c.Register(WorkerRegistration{WorkerID: "worker", Labels: map[string]string{workers.WorkspaceIdentityLabelPrefix + "project": "true", workers.WorkspaceDigestLabelPrefix + "project": digest}, Capacity: 1, Capabilities: []WorkerCapability{{Name: "test"}}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,7 +80,7 @@ func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	go func() {
 		defer close(done)
-		_, _ = c.Execute(workers.ExecuteRequest{WorkspaceID: "project", Context: ctx, RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test"})
+		_, _ = c.Execute(workers.ExecuteRequest{WorkspaceID: "project", WorkspaceDigest: digest, Context: ctx, RunID: "run", ActivationID: "activation", AttemptID: "attempt", Executor: "test"})
 	}()
 	var assignment *WorkerAssignment
 	deadline := time.Now().Add(time.Second)
@@ -98,6 +99,9 @@ func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 	var payload workers.ExecuteRequest
 	if err := json.Unmarshal(assignment.Request, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if payload.WorkspaceDigest != digest || payload.WorkspaceWorkerID != "worker" {
+		t.Fatal("durable dispatch lost content revision or worker placement")
 	}
 	if payload.Workspace != "" {
 		t.Fatalf("dispatch included workspace %q", payload.Workspace)
@@ -124,5 +128,35 @@ func TestWorkspaceWriteIdentityAcrossClients(t *testing.T) {
 	}
 	if keys[0] != keys[1] || keys[0] == keys[2] {
 		t.Fatalf("workspace keys do not follow resolved authority: %v", keys)
+	}
+}
+
+func TestPreparedWorkspaceSubmissionRevision(t *testing.T) {
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	c := NewCoordinator(store)
+	c.Workspaces = workers.WorkspaceRegistry{"prepared": {WorkerID: "mini", Path: "/only/on/mini", Digest: digest}}
+	labels := map[string]string{workers.WorkspaceIdentityLabelPrefix + "prepared": "true"}
+	for _, advertised := range []string{"", "sha256:wrong", digest} {
+		labels[workers.WorkspaceDigestLabelPrefix+"prepared"] = advertised
+		if _, err := c.Register(WorkerRegistration{WorkerID: "mini", Capacity: 1, Labels: labels}); err != nil {
+			t.Fatal(err)
+		}
+		for _, required := range []string{"", "bad", digest} {
+			p := &plan.Plan{WorkspaceID: "prepared", WorkspaceDigest: required, Subgraphs: map[string]plan.Subgraph{"root": {Nodes: []plan.Node{{ID: "work", Kind: "execute", Executor: "generic"}}}}}
+			_, _ = p.ComputeDigest()
+			err := c.AuthorizePlanWorkspace(p, json.RawMessage(`{}`))
+			wantOK := advertised == digest && required == digest
+			if (err == nil) != wantOK {
+				t.Fatalf("advertised=%q required=%q error=%v", advertised, required, err)
+			}
+			if err == nil && p.VerifyDigest() != nil {
+				t.Fatal("authorization invalidated pinned plan")
+			}
+		}
 	}
 }

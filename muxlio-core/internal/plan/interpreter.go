@@ -729,6 +729,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	}
 	req := workers.ExecuteRequest{
 		WorkspaceID:          workspaceID,
+		WorkspaceDigest:      e.plan.WorkspaceDigest,
 		Context:              parent,
 		LifetimeContext:      e.Context,
 		Executor:             node.Executor,

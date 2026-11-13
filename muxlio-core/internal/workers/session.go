@@ -235,6 +235,9 @@ func ExplainWorkerDispatch(workerID, executor string, raw []byte, caps []state.W
 			return mismatch("workspace_owner_mismatch", "Select the worker that owns and advertises this workspace.")
 		}
 	}
+	if req.WorkspaceDigest != "" && req.WorkspaceMode != "empty" && req.Action != "poll" && req.Action != "reconcile" && labels[WorkspaceDigestLabelPrefix+req.WorkspaceID] != req.WorkspaceDigest {
+		return mismatch("workspace_revision_mismatch", "Provision and advertise the matching prepared workspace content revision.")
+	}
 	if req.Session != nil && req.Session.Mode == "resume" {
 		h := req.Session.Handle
 		if h == nil || h.OwnerWorker != workerID || h.OwnerEnvironment != labels[SessionEnvironmentLabel] {
