@@ -122,3 +122,19 @@ for supported paths, Cursor version handling, and preservation of existing edits
 ## License
 
 [Apache License 2.0](LICENSE).
+
+### Author a workflow without a checkout
+
+Installed releases support offline JSON authoring: run
+`muxlio template echo > workflow.json`, then `muxlio check workflow.json`.
+The `echo` template needs no executor; `muxlio template task` shows a generic
+task with input and output bindings. Templates are embedded in the binaries
+and shipped in `share/muxlio/templates`. With MCP, use `workflow_template`,
+then `check_plan` and `start_run`. No Node packages or registry access are
+needed for JSON authoring, validation, fake testing, or submission.
+
+See [the installed authoring guide](muxlio-skills/references/authoring.md) for
+an empty-workspace example and submission instructions. Optional TypeScript/
+JavaScript compilation executes arbitrary code, requires explicit
+`MUXLIO_TRUST_WORKFLOW_CODE=1` and project-local dependencies installed from
+your pinned lockfile, and never implicitly downloads packages.

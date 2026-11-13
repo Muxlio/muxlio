@@ -19,7 +19,15 @@ class Muxlio < Formula
       assert_path_exists libexec/"muxlio/adapters"/"#{adapter}.json"
     end
     assert_path_exists share/"muxlio/ui/index.html"
-    assert_path_exists share/"muxlio/ui/operations.css"
+    assert_path_exists share/"muxlio/ui/dist/app.css"
     assert_path_exists share/"muxlio/skills/SKILL.md"
+    %w[echo task].each do |name|
+      assert_path_exists share/"muxlio/templates/#{name}.json"
+      (testpath/"#{name}.json").write shell_output("#{bin}/muxlio template #{name}")
+      assert_match '"valid":true', shell_output("#{bin}/muxlio check #{name}.json --json")
+    end
+    (testpath/"input.json").write '{"message":"hello"}'
+    assert_match '"succeeded"', shell_output("#{bin}/muxlio test echo.json --input input.json --json")
+    assert_match '"succeeded"', shell_output("#{bin}/muxlio test task.json --input input.json --json")
   end
 end

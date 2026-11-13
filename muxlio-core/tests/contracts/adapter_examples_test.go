@@ -11,6 +11,8 @@ import (
 )
 
 func TestAdapterExampleWorkflowsFakeDryRun(t *testing.T) {
+	// Opt in only for these known repository source fixtures.
+	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)

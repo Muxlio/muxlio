@@ -17,6 +17,8 @@ import (
 // Exercise the public authoring/operations loop without provider credentials or
 // paid calls. This integration belongs outside coordinator and worker internals.
 func TestLocalAuthoringLoop(t *testing.T) {
+	// Repository fixtures are trusted executable definitions, unlike JSON authoring.
+	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)

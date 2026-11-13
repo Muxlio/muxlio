@@ -614,6 +614,7 @@ func TestMCPToolsList(t *testing.T) {
 		"build":                 false,
 		"test":                  false,
 		"get_artifact_metadata": false,
+		"workflow_template":     false,
 		"check_plan":            false,
 		"start_run":             false,
 		"list_runs":             false,

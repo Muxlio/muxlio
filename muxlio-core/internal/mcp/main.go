@@ -7,6 +7,7 @@
 //
 // # Tools
 //
+//	workflow_template Get a built-in offline JSON workflow template.
 //	check_plan      Validate a compiled Plan IR JSON document.
 //	build           Compile a local workflow file.
 //	test            Test a local workflow with fake executors.
@@ -58,12 +59,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/muxlio/muxlio-core/internal/authoring"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -156,6 +157,11 @@ type contentBlock struct {
 
 var tools = []toolDef{
 	{
+		Name:        "workflow_template",
+		Description: "Get a built-in version-matched Plan IR JSON template without a checkout, Node, or downloads. echo returns its input without an executor; task illustrates a generic executor (replace generic/task using get_workers). Save the returned plan as JSON, edit it, validate with build or check_plan, then start_run.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{"echo", "task"}}}, "required": []string{"name"}},
+	},
+	{
 		Name: "check_plan",
 		Description: "Validate a compiled Muxlio Plan IR JSON document. " +
 			"Returns a list of validation errors (empty when the plan is valid).",
@@ -172,10 +178,10 @@ var tools = []toolDef{
 	},
 	{
 		Name: "build",
-		Description: "Compile a Muxlio workflow TypeScript file into a canonical Plan IR JSON document. " +
+		Description: "Validate a JSON workflow or compile a trusted local TypeScript/JavaScript definition into Plan IR JSON. " +
 			"Returns the compiled plan with its digest and any validation errors. " +
 			"The workflow source must be accessible from the filesystem path provided. " +
-			"Use this before start_run when the agent has authored or modified a workflow file.",
+			"JSON requires no dependencies or code execution. Source compilation requires MUXLIO_TRUST_WORKFLOW_CODE=1 and project-local locked dependencies; it executes arbitrary code. Use workflow_template for checkout-independent authoring.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -190,7 +196,7 @@ var tools = []toolDef{
 	{
 		Name: "test",
 		Description: "Dry-run a Muxlio workflow locally using the fake executor and a fake-results configuration. " +
-			"No coordinator or real adapters are required. " +
+			"No coordinator or real adapters are required. JSON runs offline; source compilation executes arbitrary code and requires MUXLIO_TRUST_WORKFLOW_CODE=1 and project-local dependencies. " +
 			"Returns the run outcome, events, and activation states. " +
 			"Use this to verify workflow logic before deploying to a coordinator.",
 		InputSchema: map[string]any{
@@ -639,6 +645,18 @@ type server struct {
 
 func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult {
 	switch name {
+	case "workflow_template":
+		var params struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(args, &params); err != nil {
+			return errResult("invalid arguments: " + err.Error())
+		}
+		raw, err := authoring.Template(params.Name)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(raw)}}}
 	case "retry_run":
 		return s.toolControlRun(args, "retry")
 	case "get_attempts":
@@ -854,34 +872,9 @@ func (s *server) toolBuild(args json.RawMessage) toolCallResult {
 	}
 }
 
-// compilePlanFromFile invokes npx tsx (or node) to execute the TypeScript
-// workflow file and extract the Plan IR, mirroring the logic in the CLI's
-// build command.
+// compilePlanFromFile executes only explicitly trusted definitions, without downloads.
 func compilePlanFromFile(filePath string) ([]byte, error) {
-	dir := filepath.Dir(filePath)
-	// Try extracting the exported plan from the module.
-	runnerSnippet := fmt.Sprintf(`
-import { pathToFileURL } from 'node:url';
-const target = %q;
-import(pathToFileURL(target).href).then((mod) => {
-  const def = mod.default || mod;
-  const p = def?.plan;
-  if (!p || !p.subgraphs) process.exit(1);
-  process.stdout.write(JSON.stringify(p));
-  process.exit(0);
-}).catch(() => process.exit(1));
-`, filePath)
-
-	cmd := exec.Command("npx", "tsx", "-e", runnerSnippet)
-	cmd.Dir = dir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err == nil && stdout.Len() > 0 {
-		return stdout.Bytes(), nil
-	}
-
-	return nil, fmt.Errorf("could not compile workflow %s (stderr: %s)", filePath, stderr.String())
+	return authoring.Compile(filePath)
 }
 
 func (s *server) toolTest(args json.RawMessage) toolCallResult {
@@ -1433,7 +1426,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Validate it with check_plan and start it with start_run. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. build and test read local files and may execute workflow source code.",
+				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Validate it with check_plan and start it with start_run. Inspect get_workers first. Starting a run returns immediately; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON authoring. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
 			},
 		})
 

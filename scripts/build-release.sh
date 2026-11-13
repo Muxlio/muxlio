@@ -34,6 +34,11 @@ if [ -f "$repo/muxlio-skills/SKILL.md" ]; then
   cp -R "$repo/muxlio-skills/." "$destination/skills/"
 fi
 
+# Ship the same data-only templates embedded in the binaries. No npm packages
+# are needed to author, validate, test, or submit JSON workflows.
+mkdir -p "$destination/share/muxlio/templates"
+cp "$repo/muxlio-core/internal/authoring/templates/"*.json "$destination/share/muxlio/templates/"
+
 # Write environment file for shell sourcing
 cat > "$destination/env" <<EOF
 # Muxlio environment configuration

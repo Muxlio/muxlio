@@ -61,6 +61,16 @@ exit 1
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("install %d: %v\n%s", i, err, output)
 		}
+		for _, name := range []string{"echo", "task"} {
+			installed, err := os.ReadFile(filepath.Join(prefix, "share", "muxlio", "templates", name+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.ReadFile(filepath.Join(repoRoot, "muxlio-core", "internal", "authoring", "templates", name+".json"))
+			if err != nil || string(installed) != string(source) {
+				t.Fatalf("installed template %s differs: %v", name, err)
+			}
+		}
 		if _, err := os.Lstat(obsolete); !os.IsNotExist(err) {
 			t.Fatalf("obsolete adapter still installed: %v", err)
 		}

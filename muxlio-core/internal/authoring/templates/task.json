@@ -1,0 +1,20 @@
+{
+  "irVersion": "1.0",
+  "name": "task",
+  "root": "root",
+  "inputSchema": {"type": "object"},
+  "requiredExecutors": ["generic/task"],
+  "subgraphs": {
+    "root": {
+      "nodes": [{
+        "id": "work",
+        "kind": "execute",
+        "executor": "generic/task",
+        "task": "Summarize the supplied input in result.md.",
+        "inputs": {"request": {"expr": {"op": "input"}}},
+        "outputs": {"result": {"mime": "text/markdown", "path": "result.md"}}
+      }],
+      "output": {"result": {"ref": {"node": "work", "port": "result"}}}
+    }
+  }
+}

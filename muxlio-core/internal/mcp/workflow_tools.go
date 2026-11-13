@@ -47,10 +47,10 @@ func init() {
 	)
 	for i := range tools {
 		name := tools[i].Name
-		readOnly := strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "check_plan" || name == "list_runs" || name == "server_health"
+		readOnly := strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "check_plan" || name == "workflow_template" || name == "list_runs" || name == "server_health"
 		tools[i].Annotations = &toolAnnotations{
 			ReadOnly: readOnly, Destructive: !readOnly, Idempotent: readOnly || name == "respond_input_request",
-			OpenWorld: name != "check_plan",
+			OpenWorld: name != "check_plan" && name != "workflow_template",
 		}
 	}
 }

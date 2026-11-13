@@ -4,10 +4,49 @@ Muxlio executes Plan IR JSON. You can construct that plan directly with MCP or
 compile a TypeScript definition using the SDK. The coordinator interprets the
 plan; JavaScript runs at compile time only.
 
+## Offline authoring from an installed release
+
+Homebrew and release installs include version-matched JSON workflow templates
+inside the binaries and at `share/muxlio/templates` under the install prefix.
+No source checkout, Node, npm workspace, registry access, or SDK is needed for
+this supported simple-workflow path. In an empty workspace:
+
+```sh
+muxlio template echo > workflow.json
+printf '{"message":"hello"}\n' > input.json
+muxlio check workflow.json
+muxlio build workflow.json --out plan.json
+muxlio test plan.json --input input.json
+muxlio submit --server http://127.0.0.1:7600 plan.json input.json
+```
+
+Submission needs a configured, reachable coordinator and its authorization.
+The `echo` template returns the input without needing any worker. For real work,
+start with `muxlio template task > workflow.json`: replace `generic/task` in both
+`executor` and `requiredExecutors` with a capability advertised by your workers,
+then edit the task, input bindings, and declared output files. Bindings use
+`{"expr":{"op":"input"}}` for run input and
+`{"ref":{"node":"work","port":"result"}}` for a step output. Give each step a
+unique ID; bindings establish dependencies between steps.
+
+With MCP, call `workflow_template` with `{"name":"echo"}` or
+`{"name":"task"}`. Save and edit the returned Plan IR JSON, call `build` with
+its path (or `check_plan` with the JSON object), then pass the validated plan
+and input to `start_run`. JSON validation and fake testing never execute
+definition source code or download dependencies.
+
+## Trusted source definitions
+
 Developers can author TypeScript workflows using the SDK and compile them with
-`muxlio build`. Compilation runs source code locally and requires Node, tsx, and
-its dependencies. An existing JSON plan skips that compilation step. Use
-`muxlio test` with fake outputs to check dataflow before real execution.
+`muxlio build`. Compilation executes arbitrary code with your local permissions.
+Only enable it for definitions you trust, by setting `MUXLIO_TRUST_WORKFLOW_CODE=1` in the CLI
+or MCP process environment. It requires Node and explicitly installed
+project-local tsx, SDK, and other dependencies. Pin those dependencies and use
+your project's lockfile with `npm ci` during explicit setup; compilation never
+invokes npm/npx, downloads packages, or falls back to global tools. This optional
+developer path is not the standalone authoring distribution. An existing JSON
+plan skips that compilation step. Use `muxlio test` with fake outputs to check
+dataflow before real execution.
 
 The repository's `recipes/implement-features` workflow is an example used to
 develop Muxlio. It implements, reviews, checks, repairs, and commits features

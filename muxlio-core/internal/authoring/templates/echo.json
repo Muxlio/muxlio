@@ -1,0 +1,12 @@
+{
+  "irVersion": "1.0",
+  "name": "echo",
+  "root": "root",
+  "inputSchema": {"type": "object"},
+  "subgraphs": {
+    "root": {
+      "nodes": [{"id": "echo", "kind": "project", "inputs": {"value": {"expr": {"op": "input"}}}}],
+      "output": {"result": {"ref": {"node": "echo", "port": "value"}}}
+    }
+  }
+}

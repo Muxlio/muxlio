@@ -33,6 +33,7 @@ const usage = `muxlio — workflow execution engine
 Usage:
   muxlio init [--client name] [--scope project|user]  Initialize Muxlio and register authoring-client MCP (--agent is an alias)
   muxlio integrations add|list|doctor|repair|remove   Register and verify authoring-client MCP setup (--client NAME --scope project|user)
+  muxlio template echo|task                          Print a built-in offline JSON workflow template
   muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
   muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
   muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
@@ -243,6 +244,9 @@ func main() {
 		os.Exit(cmdIntegrations(args[1:], dataDir, jsonOut))
 	case "init":
 		os.Exit(cmdInit(args[1:], dataDir, jsonOut))
+
+	case "template":
+		os.Exit(cmdTemplate(args[1:]))
 
 	case "build":
 		os.Exit(cmdBuild(args[1:], jsonOut))

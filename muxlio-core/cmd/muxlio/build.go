@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/muxlio/muxlio-core/internal/authoring"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/plan"
 )
@@ -183,50 +184,5 @@ func cmdBuild(args []string, globalJSON bool) int {
 }
 
 func compileTypeScriptWorkflow(filePath string) ([]byte, error) {
-	// 1. Try finding tsx or node
-	dir := filepath.Dir(filePath)
-	runnerSnippet := fmt.Sprintf(`
-import { pathToFileURL } from 'node:url';
-
-const target = %q;
-import(pathToFileURL(target).href).then((mod) => {
-  // tsx wraps default exports of TS/JS in CommonJS packages one level deeper.
-  const def = mod.default?.default || mod.default || mod;
-  const plan = def?.plan || (def?.subgraphs ? def : null);
-  if (!plan || !plan.subgraphs) {
-    process.exit(1);
-  }
-  process.stdout.write(JSON.stringify(plan, null, 2));
-  process.exit(0);
-}).catch(() => process.exit(1));
-`, filePath)
-
-	cmd := exec.Command("npx", "tsx", "-e", runnerSnippet)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "MUXLIO_COMPILE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	runErr := cmd.Run()
-	if runErr == nil && stdout.Len() > 0 {
-		return stdout.Bytes(), nil
-	}
-
-	stderrText := strings.TrimSpace(stderr.String())
-	if stderrText == "" && runErr != nil {
-		stderrText = runErr.Error()
-	}
-	hint := ""
-	if _, lookErr := exec.LookPath("tsx"); lookErr != nil {
-		if _, npxErr := exec.LookPath("npx"); npxErr != nil {
-			hint = " Install Node.js, then run: npm install -g tsx (or use npx tsx from a project with tsx installed)."
-		} else {
-			hint = " Install tsx in this project (npm install tsx) or globally (npm install -g tsx)."
-		}
-	}
-	return nil, fmt.Errorf(
-		"could not compile workflow %s (export default workflow(...) with a plan; stderr: %s).%s",
-		filePath, stderrText, hint,
-	)
+	return authoring.Compile(filePath)
 }
