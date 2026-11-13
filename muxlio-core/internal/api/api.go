@@ -303,6 +303,10 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	})
 
 	mux.HandleFunc("/v1/outputs", func(w http.ResponseWriter, r *http.Request) { handleRunOutputs(w, r, store, "") })
+	mux.HandleFunc("/v1/runs/preflight", func(w http.ResponseWriter, r *http.Request) {
+		handlePreflightRun(w, r, store, runner)
+	})
+
 	mux.HandleFunc("/v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handleCreateRun(w, r, runner, store)
@@ -648,6 +652,10 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, stor
 	if err := decoder.Decode(&extra); err != io.EOF {
 		writeError(w, http.StatusBadRequest, CodeInvalidJSON, "request body must contain one JSON object")
 		return
+	}
+	// Match preflight and MCP submission defaults on every submission path.
+	if len(request.Input) == 0 {
+		request.Input = json.RawMessage(`{}`)
 	}
 	if errs := plan.Validate(&request.Plan); plan.HasErrors(errs) {
 		writeValidationErrors(w, plan.ErrorsOnly(errs))

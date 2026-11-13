@@ -391,6 +391,38 @@ Validate a compiled Plan IR JSON document locally. No coordinator required.
 
 ---
 
+### `preflight_run`
+
+Validate feasibility against the coordinator without creating a run, reserving
+capacity, invoking tools, or starting executors. The equivalent HTTP endpoint is
+`POST /v1/runs/preflight`.
+
+Supply `plan` (compiled Plan IR), optional `workspaceId` (an operator-registered
+project identity or alias), and `input` (defaults to `{}`). Use the same values
+when subsequently calling `start_run`.
+
+The response includes `feasible`, resolved `workspaceId` and
+`workspaceWorkerId`, `inputSchema`, plan/input/workspace diagnostics, and an
+`executors` entry for each execute node, identified by `subgraph` and `nodeIds`.
+Each entry includes required capabilities, isolation and placement constraints,
+declared `executionPolicy`, compatible `matchingWorkers`, and `workerEvidence`
+containing advertised executor contracts and cached installation/authentication
+probe checks. Failed checks retain the worker's diagnostic messages, including
+missing executables or companion dependencies.
+
+`verified` names validations performed; consult the diagnostics for failures.
+`unverified` and `deferred` explicitly identify checks this response cannot prove.
+Worker operator tool policies, current tool grants, authentication, quota,
+dynamic input bindings, secret resolution, and actual workspace/environment
+compatibility remain subject to execution-time checks. Missing probe categories
+are unverified. A passing probe is only a snapshot, and positive feasibility
+does not guarantee successful execution or reserve worker capacity.
+
+`isError` is set when `feasible` is false. Fix the reported issues and repeat
+preflight before calling `start_run`; preflight never submits automatically.
+
+---
+
 ### `start_run`
 
 Submit a compiled Plan IR to the coordinator and start a workflow run.

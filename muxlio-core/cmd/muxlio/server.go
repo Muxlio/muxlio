@@ -39,6 +39,19 @@ type serverRunner struct {
 	wg        sync.WaitGroup
 }
 
+// PreflightRun validates against the coordinator used for actual submission.
+func (r *serverRunner) PreflightRun(req api.PreflightRequest) api.PreflightResponse {
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		return c.PreflightRun(req)
+	}
+	resp := api.PreflightRun(&req.Plan, req.Input, r.store)
+	if req.WorkspaceID != "" || req.Plan.WorkspaceID != "" {
+		resp.Feasible = false
+		resp.WorkspaceError = "workspace validation requires a coordinator"
+	}
+	return resp
+}
+
 func (r *serverRunner) CreateRun(input json.RawMessage) (string, error) {
 	return "", errors.New("a plan is required to create a run")
 }

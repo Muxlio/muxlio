@@ -456,6 +456,33 @@ var tools = []toolDef{
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"runId": map[string]any{"type": "string"}, "requestId": map[string]any{"type": "string"}, "idempotencyKey": map[string]any{"type": "string"}, "response": map[string]any{}}, "required": []string{"runId", "requestId", "idempotencyKey", "response"}},
 	},
 	{
+		Name: "preflight_run",
+		Description: "Validate run feasibility before submission. " +
+			"Checks plan structure, input-schema conformance, workspace authorization, execution policy, and worker availability for every " +
+			"executor referenced in the plan. Returns a structured report with feasible=true only when " +
+			"static checks pass. Reports cached readiness and unverified or deferred checks; execution can still fail. No run is created and no work is dispatched. " +
+			"Use this to surface actionable diagnostics — missing executors, version pins, isolation " +
+			"requirements, placement labels — before committing to start_run.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan": map[string]any{
+					"description": "The compiled Plan IR document as a JSON object.",
+					"type":        "object",
+				},
+				"input": map[string]any{
+					"description": "JSON input to validate against the plan's inputSchema. Defaults to {} when omitted.",
+					"type":        "object",
+				},
+				"workspaceId": map[string]any{
+					"type":        "string",
+					"description": "Optional workspace identity, forwarded to the coordinator for workspace-aware validation.",
+				},
+			},
+			"required": []string{"plan"},
+		},
+	},
+	{
 		Name:        "get_workers",
 		Description: "List live registered workers (heartbeat window) and their active assignments.",
 		InputSchema: map[string]any{
@@ -660,6 +687,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolSendSignal(args)
 	case "get_input_requests", "respond_input_request":
 		return s.toolInputRequest(name, args)
+	case "preflight_run":
+		return s.toolPreflightRun(args)
 	case "get_workers":
 		return s.toolGetWorkers()
 	case "server_health":
@@ -1230,6 +1259,55 @@ func (s *server) toolSendSignal(args json.RawMessage) toolCallResult {
 		return errResult("coordinator request failed: " + err.Error())
 	}
 	return apiResultOrError(resp)
+}
+
+func (s *server) toolPreflightRun(args json.RawMessage) toolCallResult {
+	var params struct {
+		WorkspaceID string          `json:"workspaceId,omitempty"`
+		Plan        json.RawMessage `json:"plan"`
+		Input       json.RawMessage `json:"input,omitempty"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return errResult("invalid arguments: " + err.Error())
+	}
+	if len(params.Plan) == 0 {
+		return errResult("plan is required")
+	}
+
+	body := map[string]json.RawMessage{
+		"plan": params.Plan,
+	}
+	if len(params.Input) > 0 {
+		body["input"] = params.Input
+	}
+	if params.WorkspaceID != "" {
+		body["workspaceId"], _ = json.Marshal(params.WorkspaceID)
+	}
+
+	resp, err := s.api.post("/v1/runs/preflight", body)
+	if err != nil {
+		return errResult("coordinator request failed: " + err.Error())
+	}
+	// preflight always returns 200; surface as error when feasible=false.
+	text := resp.asText()
+	if resp.isError() {
+		return toolCallResult{
+			Content: []contentBlock{{Type: "text", Text: text}},
+			IsError: true,
+		}
+	}
+	var result struct {
+		Feasible bool `json:"feasible"`
+	}
+	if jsonErr := json.Unmarshal(resp.body, &result); jsonErr == nil && !result.Feasible {
+		return toolCallResult{
+			Content: []contentBlock{{Type: "text", Text: text}},
+			IsError: true,
+		}
+	}
+	return toolCallResult{
+		Content: []contentBlock{{Type: "text", Text: text}},
+	}
 }
 
 func (s *server) toolGetWorkers() toolCallResult {
