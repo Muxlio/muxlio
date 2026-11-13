@@ -72,10 +72,15 @@ func (d *Dispatcher) Tick(ctx context.Context, now time.Time) error {
 				return err
 			}
 			for _, event := range events {
-				if sub.Matches(event.Type) {
+				payload := event.Payload
+				notify := true
+				if sub.PayloadMode == "notification" {
+					payload, notify = notificationPayload(run.ID, event.Type)
+				}
+				if notify && sub.Matches(event.Type) {
 					// Redact before persistence as well as before transport. Never store an
 					// outbound copy of unredacted workflow inputs or worker output.
-					record := Delivery{ID: DeliveryID(sub.ID, run.ID, event.Seq), SubscriptionID: sub.ID, RunID: run.ID, EventSeq: event.Seq, EventID: EventID(run.ID, event.Seq), EventType: event.Type, SubjectID: event.SubjectID, Timestamp: event.Timestamp, Payload: RedactPayload(event.Payload, sub.RedactFields), State: StatePending, MaxRetries: sub.MaxRetries, CreatedAt: now}
+					record := Delivery{ID: DeliveryID(sub.ID, run.ID, event.Seq), SubscriptionID: sub.ID, RunID: run.ID, EventSeq: event.Seq, EventID: EventID(run.ID, event.Seq), EventType: event.Type, SubjectID: event.SubjectID, Timestamp: event.Timestamp, Payload: RedactPayload(payload, sub.RedactFields), State: StatePending, MaxRetries: sub.MaxRetries, CreatedAt: now}
 					if err := d.Store.EnqueueDelivery(record); err != nil {
 						return err
 					}

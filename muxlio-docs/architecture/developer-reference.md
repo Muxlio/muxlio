@@ -778,6 +778,62 @@ credential using `POST /v1/subscriptions`:
 }
 ```
 
+For metadata-only run notifications, add `"payloadMode": "notification"` and
+select the events you want, for example:
+
+```json
+{
+  "id": "run-notifications",
+  "target": "https://receiver.example.com/muxlio",
+  "secret": "replace-with-at-least-16-secret-bytes",
+  "payloadMode": "notification",
+  "eventTypes": ["run.succeeded", "run.failed", "input.required", "execution.reconciliation_required"],
+  "maxRetries": 5
+}
+```
+
+Notification mode emits only these four event types, plus `run.cancelled` when
+selected (including through `*` or `run.*`). Success and cancellation have kind
+`completion`; failure has kind `failure`. The two attention events have kinds
+`input_required` and `reconciliation_required`. Input events are committed with
+each newly pending request, including requests renewed by explicit retry;
+recreating the same request emits nothing. Reconciliation events are committed
+when an attempt first enters reconciliation or acquires an unresolved reason; repeated
+updates during that wait emit nothing. Each distinct wait has its own source
+event ID. These events do not depend on a connected MCP client.
+
+The usual signed envelope retains the source event's `eventId`, `eventType`,
+`runId`, `seq`, `timestamp`, and `subjectId`. Its payload is exactly:
+
+```json
+{
+  "version": 1,
+  "source": "muxlio.run-event",
+  "kind": "completion",
+  "links": {
+    "run": "/runs/<escaped-run-id>",
+    "status": "/v1/runs/<escaped-run-id>/summary"
+  }
+}
+```
+
+Links are relative to the coordinator, use normal authentication, and contain
+no bearer tokens. The run link opens the web UI; the status link returns the
+same summary exposed by MCP `get_run_summary`. Notification payloads exclude
+workflow names, prompts, transcripts, input schemas/answers, outputs, failure
+text, and external operation references **before persistence**, without relying
+on configured redaction. Additional `redactFields` still apply. Omitting
+`payloadMode` (or choosing `event`) preserves the lifecycle event payload behavior
+below. Unknown modes are rejected.
+
+Notifications describe durable past transitions, not a fresh assertion that all
+work or external effects have finished. Follow the status link for the current
+canonical outcome, unresolved input/reconciliation, and further inspection links.
+A receiver may display that link, send an alert, or use a host-supported client
+integration. Muxlio cannot generally resume a disconnected client conversation
+or reopen a closed chat. Delivery is optional; later MCP status retrieval works
+without a subscription or a live original client.
+
 Filters accept exact event names, category prefixes such as `run.*`, or `*`.
 `worker.activity` reports worker assignment lifecycle activity; execution attempt
 outcomes can also be selected with `execution.attempt`. New subscriptions replay

@@ -990,6 +990,11 @@ func (s *Store) CreateInputRequest(req *state.InputRequest) error {
 	if req.CreatedAt.IsZero() {
 		req.CreatedAt = time.Now()
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	permJSON, _ := json.Marshal(req.Permissions)
 	var expiresAt any
 	if req.ExpiresAt != nil {
@@ -997,9 +1002,25 @@ func (s *Store) CreateInputRequest(req *state.InputRequest) error {
 	}
 	// Fence late creation in the INSERT itself, including across connections.
 	// Retain a cancelled identity for explicit retry to renew.
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,response_json,responder_id,created_at,fulfilled_at,idempotency_key) VALUES(?,?,?,?,?,?,?,CASE WHEN ?='pending' AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state='cancelled') THEN 'cancelled' ELSE ? END,?,?,?,NULL,?)`,
+	result, err := tx.Exec(`INSERT OR IGNORE INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,response_json,responder_id,created_at,fulfilled_at,idempotency_key) VALUES(?,?,?,?,?,?,?,CASE WHEN ?='pending' AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state='cancelled') THEN 'cancelled' ELSE ? END,?,?,?,NULL,?)`,
 		req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permJSON), req.State, req.RunID, req.State, nullableJSON(nil), req.ResponderID, rfc3339(req.CreatedAt), req.IdempotencyKey)
-	return err
+	if err != nil {
+		return err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	var actualState string
+	if err := tx.QueryRow(`SELECT state FROM input_requests WHERE run_id=? AND request_id=?`, req.RunID, req.RequestID).Scan(&actualState); err != nil {
+		return err
+	}
+	if inserted > 0 && actualState == state.InputRequestPending {
+		if err := appendEvent(tx, req.RunID, state.EventInputRequired, req.ActivationID, map[string]any{"requestId": req.RequestID}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func nullableJSON(raw json.RawMessage) any {
@@ -1224,7 +1245,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	var priorHash sql.NullString
 	var prior state.ExecutionAttempt
 	var priorRef sql.NullString
-	readErr := tx.QueryRow(`SELECT accounting_revision,accounting_final,accounting_hash,run_id,activation_id,executor,operation_attempt_id,operation_action,operation_ref_json FROM execution_attempts WHERE id=?`, a.ID).Scan(&priorRevision, &priorFinal, &priorHash, &prior.RunID, &prior.ActivationID, &prior.Executor, &prior.OperationAttemptID, &prior.OperationAction, &priorRef)
+	readErr := tx.QueryRow(`SELECT accounting_revision,accounting_final,accounting_hash,run_id,activation_id,executor,operation_attempt_id,operation_action,operation_ref_json,await_reconciliation_reason,state FROM execution_attempts WHERE id=?`, a.ID).Scan(&priorRevision, &priorFinal, &priorHash, &prior.RunID, &prior.ActivationID, &prior.Executor, &prior.OperationAttemptID, &prior.OperationAction, &priorRef, &prior.AwaitReconciliationReason, &prior.State)
 	if readErr != nil && readErr != sql.ErrNoRows {
 		return readErr
 	}
@@ -1318,6 +1339,11 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 	}
 	if err := appendEvent(tx, a.RunID, state.EventExecutionAttempt, a.ActivationID, payload); err != nil {
 		return err
+	}
+	if prior.AwaitReconciliationReason == "" && prior.State != "awaiting_reconciliation" && (a.AwaitReconciliationReason != "" || a.State == "awaiting_reconciliation") {
+		if err := appendEvent(tx, a.RunID, state.EventReconciliationRequired, a.ActivationID, map[string]any{"attemptId": a.ID}); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -1817,6 +1843,9 @@ func (s *Store) RetryRun(id string) error {
 			expiresAt = rfc3339(*req.ExpiresAt)
 		}
 		if _, err := tx.Exec(`INSERT INTO input_requests(run_id,request_id,activation_id,name,schema_json,expires_at,permissions_json,state,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, req.RunID, req.RequestID, req.ActivationID, req.Name, nullableJSON(req.Schema), expiresAt, string(permissions), req.State, rfc3339(req.CreatedAt)); err != nil {
+			return err
+		}
+		if err := appendEvent(tx, req.RunID, state.EventInputRequired, req.ActivationID, map[string]any{"requestId": req.RequestID}); err != nil {
 			return err
 		}
 	}

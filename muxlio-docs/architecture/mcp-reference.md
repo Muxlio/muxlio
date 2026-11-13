@@ -296,6 +296,16 @@ pollIntervalMs}` result after the coordinator commits the run and read-back
 succeeds. The opaque handle identifies a run invocation, not a Muxlio task
 definition. It survives MCP restarts while the run remains retained.
 
+Task polling and `get_run_summary` remain available from a later authenticated
+MCP connection while the run is retained. Muxlio does not promise to reopen a
+closed chat or inject results into a disconnected client UI. Optional
+[run notifications](developer-reference.md#outbound-lifecycle-subscriptions)
+use the existing administrator-configured subscription API with
+`payloadMode: "notification"`: signed, durable metadata events for completion,
+failure, input required and reconciliation required, with relative run/status
+links and bounded retries. Client-specific notification surfaces require support
+from that client's host. No subscription is required for status retrieval.
+
 Poll `tasks/get` with `{taskId, _meta}`. It returns `resultType: "complete"`
 and task state. A successful or failed workflow becomes `completed` with a
 final tool `result`; failed workflows have `result.isError: true`. Cancelled

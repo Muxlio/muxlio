@@ -228,6 +228,7 @@ func (s *Memory) RetryRun(id string) error {
 	}
 	for _, req := range RenewCancelledInputs(requests, incomplete, time.Now()) {
 		s.inputRequests[inputRequestKey(id, req.RequestID)] = &req
+		s.appendEventLocked(req.RunID, EventInputRequired, req.ActivationID, map[string]any{"requestId": req.RequestID})
 	}
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
@@ -588,6 +589,9 @@ func (s *Memory) CreateInputRequest(req *InputRequest) error {
 		clone.State = InputRequestCancelled
 	}
 	s.inputRequests[key] = &clone
+	if clone.State == InputRequestPending {
+		s.appendEventLocked(req.RunID, EventInputRequired, req.ActivationID, map[string]any{"requestId": req.RequestID})
+	}
 	return nil
 }
 
@@ -827,8 +831,10 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 		a.WorkspaceID = run.WorkspaceID
 	}
 	found := false
+	wasAwaitingReconciliation := false
 	for i := range s.attempts {
 		if s.attempts[i].ID == a.ID {
+			wasAwaitingReconciliation = s.attempts[i].AwaitReconciliationReason != "" || s.attempts[i].State == "awaiting_reconciliation"
 			if err := ValidateAttemptOwnership(s.attempts[i], a); err != nil {
 				return err
 			}
@@ -913,6 +919,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 	payload["operationRef"] = a.OperationRef
 	payload["awaitReconciliationReason"] = a.AwaitReconciliationReason
 	s.appendEventLocked(a.RunID, EventExecutionAttempt, a.ActivationID, payload)
+	if !wasAwaitingReconciliation && (a.AwaitReconciliationReason != "" || a.State == "awaiting_reconciliation") {
+		s.appendEventLocked(a.RunID, EventReconciliationRequired, a.ActivationID, map[string]any{"attemptId": a.ID})
+	}
 	return nil
 }
 

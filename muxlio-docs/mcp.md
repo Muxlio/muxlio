@@ -183,6 +183,22 @@ Ask your assistant to check the run, read logs and reports, or explain a failure
 You can also use the [web UI](ui-operations.md). Closing the client leaves the run
 on the coordinator. Your execution machine still needs to stay running.
 
+Use `get_run_summary` with the saved `runId` from any MCP client connected to the
+same coordinator to retrieve the current outcome and links later. `get_run`,
+`get_input_requests`, `get_attempts`, `get_logs`, and artifact tools provide the
+full retained details, subject to the client's normal permissions. Task handles
+can also be polled while retained; a live original conversation is unnecessary.
+
+Operators can optionally configure [signed run notifications](architecture/developer-reference.md#outbound-lifecycle-subscriptions)
+through `POST /v1/subscriptions`, using `payloadMode: "notification"` and event
+filters for completion, failure, input required, and reconciliation required.
+Receivers get metadata and visible run/status links, with durable event IDs and
+bounded retries. No prompt, transcript, answer, or failure text is included in
+this mode. The receiver decides how to surface the alert; a client integration
+can opt in if its host supports notifications. Muxlio cannot generally resume a
+disconnected conversation or reopen a closed chat. Notifications are optional
+and do not replace later status retrieval.
+
 For client configuration examples, tool arguments, authentication, and protocol
 behavior, see the [MCP reference](architecture/mcp-reference.md).
 

@@ -78,6 +78,8 @@ var (
 // The Secret signs outbound deliveries and is the only field never serialized to
 // API responses (json:"-"); the store retains it so the dispatcher can sign.
 type Subscription struct {
+	// PayloadMode opts into metadata-only run notifications; empty preserves lifecycle payloads.
+	PayloadMode       string   `json:"payloadMode,omitempty"`
 	ID                string   `json:"id"`
 	EventTypes        []string `json:"eventTypes"`
 	Target            string   `json:"target"`
@@ -201,6 +203,12 @@ func (s *Subscription) Normalize() error {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
 			return errors.New("muxlio: id must use letters, digits, - or _")
 		}
+	}
+	switch s.PayloadMode {
+	case "", "event":
+	case "notification":
+	default:
+		return errors.New("muxlio: payloadMode must be event or notification")
 	}
 	if len(s.EventTypes) == 0 {
 		return errors.New("muxlio: at least one event type filter is required")
