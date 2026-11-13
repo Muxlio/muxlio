@@ -73,7 +73,14 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 	mcpAddr := mcpPort.Addr().String()
 	mcpPort.Close()
 	write(filepath.Join(root, "mcp-token"), "listener-secret", 0600)
-	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout"}, WorkerEnv: map[string]string{"PATH": tools + ":/usr/bin:/bin"}, AttemptTimeoutSeconds: 5, MCP: &serviceMCPConfig{Listen: mcpAddr, TokenFile: "mcp-token"}}
+	config := serviceConfig{WorkerCapacity: 2, RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow", "fake/timeout", "fake/barrier"}, WorkerEnv: map[string]string{"PATH": tools + ":/usr/bin:/bin"}, AttemptTimeoutSeconds: 15, MCP: &serviceMCPConfig{Listen: mcpAddr, TokenFile: "mcp-token"}}
+	// Each admitted adapter records a start and waits for an explicit release.
+	// No duration comparison is needed to prove that executions overlap.
+	barrierDir := filepath.Join(root, "barrier")
+	if err := os.MkdirAll(barrierDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(adapters, "fake-barrier"), fmt.Sprintf("#!/bin/sh\nmktemp '%s/started.XXXXXX' >/dev/null\nwhile [ ! -f '%s/release' ]; do sleep 0.05; done\nfixture-result\n", barrierDir, barrierDir), 0700)
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
 	write(configPath, string(raw), 0600)
@@ -255,6 +262,49 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 		t.Fatalf("task did not succeed: %s", check(id))
 	}
 	waitSuccess(id)
+	for _, mode := range []string{"empty", "shared-write"} {
+		t.Run(mode, func(t *testing.T) {
+			barrierPlan := strings.Replace(p, `"executor":"fake/slow"`, `"executor":"fake/barrier","workspaceMode":"`+mode+`"`, 1)
+			write(planPath, barrierPlan, 0600)
+			first, second := submit(), submit()
+			want := 2
+			if mode == "shared-write" {
+				want = 1
+			}
+			deadline := time.Now().Add(8 * time.Second)
+			for {
+				files, err := filepath.Glob(filepath.Join(barrierDir, "started.*"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(files) == want {
+					break
+				}
+				if time.Now().After(deadline) || len(files) > want {
+					t.Fatalf("%s: started %d adapters, want %d", mode, len(files), want)
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if mode == "shared-write" {
+				// Leave multiple poll opportunities while the first write holds its lock.
+				time.Sleep(1500 * time.Millisecond)
+				files, _ := filepath.Glob(filepath.Join(barrierDir, "started.*"))
+				if len(files) != 1 {
+					t.Fatal("shared workspace writers overlapped")
+				}
+			}
+			write(filepath.Join(barrierDir, "release"), "", 0600)
+			waitSuccess(first)
+			waitSuccess(second)
+			files, _ := filepath.Glob(filepath.Join(barrierDir, "*"))
+			for _, file := range files {
+				if err := os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+	write(planPath, p, 0600)
 	stop(cmd, logs)
 	cmd, logs = start()
 	checkMCP()
@@ -281,6 +331,12 @@ func TestServiceRemoteLifecycle(t *testing.T) {
 }
 
 func TestServiceRestart(t *testing.T) {
+	for _, capacity := range []int{0, 3} {
+		t.Run(fmt.Sprint(capacity), func(t *testing.T) { testServiceRestartCapacity(t, capacity) })
+	}
+}
+
+func testServiceRestartCapacity(t *testing.T, capacity int) {
 	root := t.TempDir()
 	adapters := filepath.Join(root, "installed", "libexec", "muxlio", "adapters")
 	workspace := filepath.Join(root, "authorized-workspace")
@@ -300,7 +356,8 @@ func TestServiceRestart(t *testing.T) {
 		}
 	}
 	write(filepath.Join(ui, "index.html"), "<html>UI</html>", 0600)
-	write(filepath.Join(adapters, "fake-slow"), "#!/bin/sh\nprintf '%s' '{\"outputs\":{\"result\":\"ok\"}}'\n", 0700)
+	startedPath := filepath.Join(root, "adapter-started")
+	write(filepath.Join(adapters, "fake-slow"), fmt.Sprintf("#!/bin/sh\ntouch %q\nprintf '%%s' '{\"outputs\":{\"result\":\"ok\"}}'\n", startedPath), 0700)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +371,7 @@ func TestServiceRestart(t *testing.T) {
 	}
 	mcpAddr := mcpPort.Addr().String()
 	mcpPort.Close()
-	config := serviceConfig{RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow"}, MCP: &serviceMCPConfig{Listen: mcpAddr}}
+	config := serviceConfig{WorkerCapacity: capacity, RuntimeDir: runtimeDir, Addr: addr, Adapters: adapters, UI: ui, Workspace: workspace, Capabilities: []string{"fake/slow"}, MCP: &serviceMCPConfig{Listen: mcpAddr}}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
 	write(configPath, string(raw), 0600)
@@ -348,7 +405,22 @@ func TestServiceRestart(t *testing.T) {
 					if err == nil {
 						mcpResp.Body.Close()
 						if mcpResp.StatusCode == 200 {
-							return
+							req, _ := http.NewRequest(http.MethodGet, base+"/v1/workers", nil)
+							req.Header.Set("Authorization", "Bearer "+readConfiguredAuthToken(configPath))
+							roster, err := client.Do(req)
+							if err == nil {
+								var data struct {
+									Workers []struct {
+										ID       string `json:"workerId"`
+										Capacity int    `json:"capacity"`
+									} `json:"registeredWorkers"`
+								}
+								err = json.NewDecoder(roster.Body).Decode(&data)
+								roster.Body.Close()
+								if err == nil && len(data.Workers) == 1 && data.Workers[0].ID == "local" && data.Workers[0].Capacity == capacity {
+									return
+								}
+							}
 						}
 					}
 				}
@@ -399,6 +471,70 @@ func TestServiceRestart(t *testing.T) {
 	}
 	if newPID == oldPID {
 		t.Fatalf("restart should start a new process (old=%d new=%d)", oldPID, newPID)
+	}
+	if capacity == 0 {
+		// A drained service must retain submitted work until capacity is raised.
+		planPath, inputPath := filepath.Join(root, "plan.json"), filepath.Join(root, "input.json")
+		write(planPath, `{"irVersion":"1.0","name":"drained","root":"root","subgraphs":{"root":{"nodes":[{"id":"work","kind":"execute","executor":"fake/slow","workspaceMode":"empty","outputs":{"result":{}}}]}}}`, 0600)
+		write(inputPath, `{}`, 0600)
+		submit := exec.Command(os.Args[0], "-test.run=TestCLIProcess", "--", "submit", "--server", base, planPath, inputPath)
+		submit.Dir, submit.Env = root, env
+		out, err := submit.CombinedOutput()
+		if err != nil {
+			t.Fatalf("submit while drained: %v: %s", err, out)
+		}
+		var result struct {
+			RunID string `json:"runId"`
+		}
+		if err := json.Unmarshal(out, &result); err != nil || result.RunID == "" {
+			t.Fatalf("submit output: %s (%v)", out, err)
+		}
+		attempts := func() []byte {
+			t.Helper()
+			req, _ := http.NewRequest(http.MethodGet, base+"/v1/runs/"+result.RunID+"/attempts", nil)
+			req.Header.Set("Authorization", "Bearer "+readConfiguredAuthToken(configPath))
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				t.Fatalf("attempts: status=%d body=%s err=%v", resp.StatusCode, body, err)
+			}
+			return body
+		}
+		time.Sleep(1500 * time.Millisecond) // Multiple assignment poll opportunities.
+		if _, err := os.Stat(startedPath); !os.IsNotExist(err) {
+			t.Fatalf("drained worker started an adapter: %v", err)
+		}
+		// Preserve generated credentials when changing the operator's setting.
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		capacity = 3
+		fields["workerCapacity"] = json.RawMessage(`3`)
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(configPath, string(raw), 0600)
+		if out, err := runCLI("restart"); err != nil {
+			t.Fatalf("restart after raising capacity: %v: %s", err, out)
+		}
+		waitHealthy()
+		deadline := time.Now().Add(8 * time.Second)
+		for !bytes.Contains(attempts(), []byte(`"state":"succeeded"`)) {
+			if time.Now().After(deadline) {
+				t.Fatal("queued work did not finish after raising capacity")
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
 	}
 	oldProc, _ := os.FindProcess(oldPID)
 	if oldProc != nil && oldProc.Signal(syscall.Signal(0)) == nil {

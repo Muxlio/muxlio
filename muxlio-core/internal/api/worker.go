@@ -169,8 +169,8 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, CodeUnsupportedProtocol, "protocolVersion must be v1")
 			return
 		}
-		if req.WorkerID == "" || req.Capacity < 1 {
-			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, "workerId and positive capacity are required")
+		if req.WorkerID == "" || req.Capacity < 0 {
+			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, "workerId and nonnegative capacity are required (0 drains)")
 			return
 		}
 		if err := validateCapabilities(req.Capabilities); err != nil {

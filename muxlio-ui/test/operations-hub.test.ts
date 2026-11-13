@@ -62,6 +62,63 @@ test("cancelled attempts with unresolved effects can be resolved", () => {
   );
 });
 
+test("worker operations show configured slots and zero capacity as draining", async () => {
+  const elements = Object.fromEntries(
+    ["workerRoster", "workerCapacitySummary", "workerList"].map((id) => [
+      id,
+      { innerHTML: "" },
+    ]),
+  );
+  const context = vm.createContext({
+    document: {
+      addEventListener() {},
+      getElementById: (id) => elements[id],
+    },
+    loadWorkers() {},
+    attemptRowMarkup() {},
+    renderRunOperations() {},
+    showWbTab() {},
+    api: async () => ({
+      serverTime: "2026-01-01T00:00:00Z",
+      registeredWorkers: [
+        {
+          workerId: "accepting",
+          capacity: 4,
+          lastSeen: "2026-01-01T00:00:00Z",
+        },
+        { workerId: "paused", capacity: 0, lastSeen: "2026-01-01T00:00:00Z" },
+      ],
+      workers: [
+        {
+          workerId: "paused",
+          runId: "finishing",
+          activationId: "work",
+          leaseUntil: "2026-01-01T00:01:00Z",
+          generation: 1,
+          state: "active",
+        },
+      ],
+    }),
+    replaceHTMLPreservingDetails: (el, html) => (el.innerHTML = html),
+    stateClass: String,
+    esc: String,
+    date: String,
+    fmtDuration: String,
+  });
+  vm.runInContext(hub, context);
+  await vm.runInContext("loadWorkers()", context);
+  assert.match(elements.workerRoster.innerHTML, /Occupied \/ configured slots/);
+  assert.match(
+    elements.workerRoster.innerHTML,
+    /accepting.*state idle.*0 \/ 4/,
+  );
+  assert.match(
+    elements.workerRoster.innerHTML,
+    /paused.*state draining.*1 \/ 0/,
+  );
+  assert.match(elements.workerCapacitySummary.innerHTML, /0 \/ 4/);
+});
+
 test("evidence import recognizes actual evaluation and raw benchmark bundles", () => {
   const report = { manifest: { datasetId: "typed" }, results: [] };
   assert.equal(helpers.evidenceDocument([report]).kind, "evaluation");

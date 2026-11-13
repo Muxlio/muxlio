@@ -230,6 +230,18 @@ func TestErrorEnvelopeShape_WorkerProtocol_Codes(t *testing.T) {
 	env = decodeError(t, resp)
 	assertErrorEnvelope(t, env, CodeInvalidRegistration)
 
+	// Zero capacity registers a drained worker; negative capacity stays invalid.
+	resp = request(http.MethodPost, "/v1/workers/register", `{"protocolVersion":"v1","workerId":"w","capacity":0,"capabilities":[]}`)
+	if resp.Code != http.StatusOK || !backend.registered {
+		t.Fatalf("zero-capacity registration: status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	backend.registered = false
+	resp = request(http.MethodPost, "/v1/workers/register", `{"protocolVersion":"v1","workerId":"w","capacity":-1,"capabilities":[]}`)
+	if resp.Code != http.StatusBadRequest || backend.registered {
+		t.Fatalf("negative-capacity registration: status=%d registered=%v", resp.Code, backend.registered)
+	}
+	assertErrorEnvelope(t, decodeError(t, resp), CodeInvalidRegistration)
+
 	// Invalid completion missing fields → MUXLIO_INVALID_COMPLETION
 	resp = request(http.MethodPost, "/v1/workers/worker-a/assignments/complete", `{"assignmentId":"","generation":0}`)
 	if resp.Code != http.StatusBadRequest {

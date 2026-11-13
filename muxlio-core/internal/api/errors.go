@@ -72,7 +72,7 @@ var codeFix = map[string]string{
 	CodeInvalidJSON:                           "Ensure the request body is a single, valid JSON object.",
 	CodeMissingRunID:                          "Include a run ID in the URL path, e.g. /v1/runs/<runId>.",
 	CodeUnsupportedProtocol:                   "Set protocolVersion to \"v1\" in the worker registration payload.",
-	CodeInvalidRegistration:                   "Provide a non-empty workerId, a positive capacity, and trimmed unique capability names.",
+	CodeInvalidRegistration:                   "Provide a non-empty workerId, a nonnegative capacity (0 drains), and trimmed unique capability names.",
 	CodeInvalidCompletion:                     "Supply assignment identity fields, a positive coordinatorEpoch, positive generation, and a terminal state (succeeded|failed|cancelled).",
 	CodeInvalidArtifactDigest:                 "Use a well-formed digest in the URL, e.g. sha256:<64 hex chars>.",
 	CodeBadEventCursor:                        "Set the after query parameter to a non-negative integer sequence number.",

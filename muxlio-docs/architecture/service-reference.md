@@ -52,6 +52,7 @@ cat > "$HOME/.muxlio/config.json" <<EOF
   "workspace": "$HOME/.muxlio/workspaces/overnight",
   "capabilities": ["agent/a2a", "agent/acp", "agent/antigravity", "agent/claude", "agent/codex", "agent/cursor", "agent/kiro", "command"],
   "attemptTimeoutSeconds": 600,
+  "workerCapacity": 1,
   "executors": {"agent/kiro": {"timeoutSeconds": 3600}},
   "mcp": {"listen": "127.0.0.1:7602"}
 }
@@ -70,6 +71,23 @@ that capability; explicit workflow timeouts can still impose a shorter limit.
 Set `mcp` to `null` to disable it. See [MCP configuration](mcp-reference.md#network-transport-streamable-http)
 for TLS, separate listener credentials, and client setup. Treat plain HTTP as
 trusted-network access; use MCP TLS or a trusted TLS proxy for encrypted access.
+
+### Service worker capacity
+
+Set `workerCapacity` in the operator's service `config.json` to the maximum
+number of simultaneous local worker assignments. It defaults to **1** when
+omitted. Use a nonnegative integer; **0** drains admission without starting new
+assignments. For example, `"workerCapacity": 4` allows four independent tasks
+to execute concurrently. Restart with `muxlio service restart --config /path/to/config.json`
+after editing; the selected file preserves the setting across restarts.
+
+Capacity is an upper bound. Global, per-run, executor, provider, and resource
+limits still apply. Shared writes to the same workspace remain serialized;
+independent workspaces and eligible snapshot or empty tasks can run concurrently.
+`muxlio doctor` reports the configured value (use `MUXLIO_CONFIG` for a custom
+file). The operations UI's Workers view shows occupied / configured slots and
+marks a zero-capacity worker as draining. The UI reflects the running worker;
+doctor reads the configuration for its next start.
 
 Native adapters run with `HOME` set to the operator's real home directory by
 default, so provider CLIs reuse existing login state already present there

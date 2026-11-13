@@ -227,6 +227,11 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		cfg.Labels = labels
 	}
 	registration := remoteRegistration{InstanceID: fmt.Sprintf("%x", instance), ProtocolVersion: remoteProtocolVersion, WorkerID: cfg.WorkerID, OS: runtime.GOOS, Architecture: runtime.GOARCH, Capacity: cfg.Capacity, Capabilities: cfg.Capabilities, Labels: cfg.Labels}
+	// Register the effective limit, including an operator's initial zero, before
+	// any heartbeat or assignment poll can occur.
+	if cfg.CapacityLimit != nil {
+		registration.Capacity = max(0, cfg.CapacityLimit())
+	}
 	registration.SupportedProtocolVersions = []string{remoteProtocolVersion}
 	var registered remoteRegistrationResult
 
@@ -328,11 +333,15 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		id      string
 		receipt remoteInputReceipt
 	}
-	inputResults := make(chan inputResult, cfg.Capacity)
+	// Capacity controls admission, not eager memory allocation. Result senders
+	// can wait for the supervisor (or cancellation), so bound their buffers even
+	// when an operator configures a very large number of slots.
+	resultBuffer := min(cfg.Capacity, 64)
+	inputResults := make(chan inputResult, resultBuffer)
 	inputBusy := make(map[string]bool)
 	pendingInputReceipts := []remoteInputReceipt{}
-	done := make(chan execution, cfg.Capacity)
-	receipts := make(chan receipt, cfg.Capacity)
+	done := make(chan execution, resultBuffer)
+	receipts := make(chan receipt, resultBuffer)
 	polled := make(chan pollResult, 1)
 	polling := false
 	limit := cfg.Capacity

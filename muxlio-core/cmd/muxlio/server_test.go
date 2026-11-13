@@ -72,12 +72,13 @@ print(json.dumps({"outputs":{"value":"checkpoint-value"}}))
 
 	runtimeDir := filepath.Join(root, "runtime")
 	config := serviceConfig{
-		RuntimeDir:   runtimeDir,
-		Addr:         addr,
-		Adapters:     adapters,
-		UI:           ui,
-		Workspace:    workspace,
-		Capabilities: []string{"fake/fail-once", "fake/echo"},
+		WorkerCapacity: 1,
+		RuntimeDir:     runtimeDir,
+		Addr:           addr,
+		Adapters:       adapters,
+		UI:             ui,
+		Workspace:      workspace,
+		Capabilities:   []string{"fake/fail-once", "fake/echo"},
 	}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")
@@ -295,12 +296,13 @@ print(json.dumps({"outputs":{"echoed": secret}}))
 
 	runtimeDir := filepath.Join(root, "runtime")
 	config := serviceConfig{
-		RuntimeDir:   runtimeDir,
-		Addr:         addr,
-		Adapters:     adapters,
-		UI:           ui,
-		Workspace:    workspace,
-		Capabilities: []string{"fake/echo"},
+		WorkerCapacity: 1,
+		RuntimeDir:     runtimeDir,
+		Addr:           addr,
+		Adapters:       adapters,
+		UI:             ui,
+		Workspace:      workspace,
+		Capabilities:   []string{"fake/echo"},
 	}
 	raw, _ := json.Marshal(config)
 	configPath := filepath.Join(root, "config.json")

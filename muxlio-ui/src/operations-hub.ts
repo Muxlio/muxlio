@@ -43,12 +43,13 @@ loadWorkers=async function(){
  return hubRead('workerRoster',async()=>{
   const data=await api('/v1/workers?includeStale=true'),workers=data.registeredWorkers||[],assignments=data.workers||[],now=Date.parse(data.serverTime)||Date.now(),windowMs=(data.heartbeatWindowSeconds||90)*1000;
   const live=w=>now-Date.parse(w.lastSeen)<=windowMs;
+  const accepting=w=>live(w)&&!w.draining&&w.capacity>0;
   const active=assignments.filter(a=>Date.parse(a.leaseUntil)>now);
-  const slots=workers.filter(w=>live(w)&&!w.draining).reduce((n,w)=>n+w.capacity,0),occupied=active.filter(a=>workers.some(w=>w.workerId===a.workerId&&live(w)&&!w.draining)).length;
+  const slots=workers.filter(accepting).reduce((n,w)=>n+w.capacity,0),occupied=active.filter(a=>workers.some(w=>w.workerId===a.workerId&&accepting(w))).length;
   hubSet('workerCapacitySummary',hubMetric('Live workers',workers.filter(live).length)+hubMetric('Occupied / available capacity',`${occupied} / ${slots}`,`${Math.max(0,slots-occupied)} unoccupied slots on accepting workers`)+hubMetric('Stale workers',workers.filter(w=>!live(w)).length)+hubMetric('Expired active leases',assignments.length-active.length));
   hubSet('workerList',hubTable(['Worker','Run','Activation','Lease','Generation','State'],assignments.map(a=>renderViewTemplate("operations-hub/load-workers-ops-id", [viewValue(esc(a.workerId)), viewValue(esc(a.workerId)), viewValue(hubRun(a.runId)), viewValue(esc(a.activationId)), viewValue(esc(date(a.leaseUntil))), viewValue(Date.parse(a.leaseUntil)>now?`${esc(fmtDuration(Date.parse(a.leaseUntil)-now))} remaining`:'Expired'), viewValue(esc(a.generation)), viewValue(hubStatus(a.state))])),'No active assignments'));
-  return hubTable(['Worker','Health','Slots','Readiness and compatibility','Last heartbeat'],workers.map(w=>{
-   const count=active.filter(a=>a.workerId===w.workerId).length,status=!live(w)?'stale':w.draining?'draining':count?'busy':'idle';
+  return hubTable(['Worker','Health','Occupied / configured slots','Readiness and compatibility','Last heartbeat'],workers.map(w=>{
+   const count=active.filter(a=>a.workerId===w.workerId).length,status=!live(w)?'stale':w.draining||w.capacity===0?'draining':count?'busy':'idle';
    return renderViewTemplate("operations-hub/load-workers-worker-capabilities-cell", [viewValue(hubID(w.workerId)), viewValue(esc(w.workerId)), viewValue(hubStatus(status)), viewValue(esc(count)), viewValue(esc(w.capacity)), viewValue(live(w)?renderViewTemplate("operations-hub/load-workers-meter", [viewValue(esc(Math.max(1,w.capacity))), viewValue(esc(count))]):renderViewTemplate("operations-hub/load-workers-small")), viewValue((w.capabilities||[]).map(cap=>workerCapabilityMarkup(cap,w.workerId)).join('')||'Capabilities unavailable'), viewValue(esc(date(w.lastSeen))), viewValue(esc(fmtDuration(Math.max(0,now-Date.parse(w.lastSeen)))))]);
   }),'No registered workers');
  });

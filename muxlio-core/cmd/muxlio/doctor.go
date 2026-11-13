@@ -43,6 +43,11 @@ func cmdDoctor(args []string, globalDataDir string, globalJSON bool) int {
 
 	checks := make([]doctorCheck, 0)
 	allPassed := true
+	capacityCheck := serviceWorkerCapacityCheck(authConfigPath(root))
+	checks = append(checks, capacityCheck)
+	if !capacityCheck.Passed {
+		allPassed = false
+	}
 
 	// 1. Check runtime dir
 	info, err := os.Stat(root)
@@ -250,4 +255,21 @@ func cmdDoctor(args []string, globalDataDir string, globalJSON bool) int {
 	}
 	fmt.Println("\n✗ Some checks require attention (see fixes above).")
 	return 1
+}
+
+func serviceWorkerCapacityCheck(path string) doctorCheck {
+	c, err := loadServiceConfig(path)
+	// Doctor supplies the runtime's default path explicitly. Its absence uses
+	// service defaults, while a missing MUXLIO_CONFIG remains a configuration error.
+	if os.IsNotExist(err) && os.Getenv("MUXLIO_CONFIG") == "" {
+		err = nil
+	}
+	if err != nil {
+		return doctorCheck{Name: "Service worker capacity", Message: fmt.Sprintf("Unable to load service configuration: %v", err), Fix: "Set workerCapacity to a nonnegative integer (default 1; 0 drains), then restart the service"}
+	}
+	message := fmt.Sprintf("workerCapacity=%d concurrent slots (default 1); admission limits and workspace locks still apply; restart to apply changes", c.WorkerCapacity)
+	if c.WorkerCapacity == 0 {
+		message = "workerCapacity=0: draining; no new work admitted; restart to apply changes"
+	}
+	return doctorCheck{Name: "Service worker capacity", Passed: true, Message: message}
 }

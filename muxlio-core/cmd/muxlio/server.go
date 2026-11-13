@@ -701,7 +701,7 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 				if ctx.Err() != nil {
 					return
 				}
-				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Labels: isolationLabels, Capacity: 1, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace, Workspaces: config.Workspaces}, executor)
+				err := workers.RunRemoteWorker(ctx, workers.RemoteWorkerConfig{CoordinatorURL: workerURL, WorkerID: "local", Labels: isolationLabels, Capacity: config.WorkerCapacity, CapacityLimit: func() int { return config.WorkerCapacity }, Capabilities: caps, Token: workerToken, WorkBase: filepath.Join(dataDir, "work"), Workspace: config.Workspace, Workspaces: config.Workspaces}, executor)
 				if err == nil || ctx.Err() != nil {
 					return
 				}

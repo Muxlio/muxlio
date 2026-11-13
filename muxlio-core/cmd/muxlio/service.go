@@ -38,6 +38,7 @@ type serviceConfig struct {
 	Capabilities          []string                          `json:"capabilities"`
 	Executors             map[string]workers.ExecutorConfig `json:"executors,omitempty"`
 	WorkerEnv             map[string]string                 `json:"workerEnv,omitempty"`
+	WorkerCapacity        int                               `json:"workerCapacity"`
 	AttemptTimeoutSeconds int                               `json:"attemptTimeoutSeconds"`
 	// Token is an optional bearer token that the coordinator will require on all
 	// API requests (except /healthz). Can also be set via MUXLIO_TOKEN env.
@@ -75,7 +76,7 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 		exe = resolved
 	}
 	prefix := filepath.Dir(filepath.Dir(exe))
-	c := serviceConfig{RuntimeDir: root, Addr: "127.0.0.1:7600", Adapters: filepath.Join(prefix, "libexec", "muxlio", "adapters"), UI: filepath.Join(prefix, "share", "muxlio", "ui")}
+	c := serviceConfig{WorkerCapacity: 1, RuntimeDir: root, Addr: "127.0.0.1:7600", Adapters: filepath.Join(prefix, "libexec", "muxlio", "adapters"), UI: filepath.Join(prefix, "share", "muxlio", "ui")}
 	if path == "" {
 		path = os.Getenv("MUXLIO_CONFIG")
 	}
@@ -86,6 +87,19 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	raw, err := os.ReadFile(path)
 	configDir := filepath.Dir(path)
 	if err == nil {
+		// RawMessage distinguishes omission (default one) from null, which must
+		// not silently turn an intended drain into an accepting worker.
+		var capacity struct {
+			Value json.RawMessage `json:"workerCapacity"`
+		}
+		if err = json.Unmarshal(raw, &capacity); err != nil {
+			return c, fmt.Errorf("config: %w", err)
+		}
+		if len(capacity.Value) != 0 {
+			if string(capacity.Value) == "null" || json.Unmarshal(capacity.Value, &c.WorkerCapacity) != nil || c.WorkerCapacity < 0 {
+				return c, fmt.Errorf("workerCapacity must be a nonnegative integer (0 drains, default 1)")
+			}
+		}
 		if err = json.Unmarshal(raw, &c); err != nil {
 			return c, fmt.Errorf("config: %w", err)
 		}
