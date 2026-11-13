@@ -70,6 +70,7 @@ func inputRequestID(actID, name string) string {
 // Engine interprets a Plan IR against a Store. The default store is
 // in-memory; pass a SQLite store for durable runs.
 type Engine struct {
+	workspaceID     string // Authorized run target; kept separate from the immutable plan.
 	traceContext    context.Context
 	budgetMu        sync.Mutex
 	Context         context.Context
@@ -133,6 +134,32 @@ func (e *Engine) CreateRunIdempotent(input json.RawMessage, idempotencyKey, inpu
 	if err != nil {
 		return "", false, err
 	}
+	return e.persistIdempotentRun(input, idempotencyKey, inputDigest, pinned, e.plan.WorkspaceID)
+}
+
+// CreateRegisteredRun pins the exact registered bytes while keeping the
+// authorized target workspace as run metadata, independent of the definition.
+func (e *Engine) CreateRegisteredRun(pinned []byte, input json.RawMessage, workspaceID, idempotencyKey, inputDigest string) (string, bool, error) {
+	var p Plan
+	if err := json.Unmarshal(pinned, &p); err != nil {
+		return "", false, err
+	}
+	if errs := Validate(&p); HasErrors(errs) {
+		return "", false, fmt.Errorf("muxlio: invalid plan: %s", ErrorsOnly(errs)[0].Message)
+	}
+	if err := p.VerifyDigest(); err != nil {
+		return "", false, err
+	}
+	if p.Digest == "" {
+		return "", false, fmt.Errorf("muxlio: registered plan requires a digest")
+	}
+	if err := ValidateInput(&p, input); err != nil {
+		return "", false, err
+	}
+	return e.persistIdempotentRun(input, idempotencyKey, inputDigest, pinned, workspaceID)
+}
+
+func (e *Engine) persistIdempotentRun(input json.RawMessage, idempotencyKey, inputDigest string, pinned []byte, workspaceID string) (string, bool, error) {
 	var snapshot Plan
 	if err := json.Unmarshal(pinned, &snapshot); err != nil {
 		return "", false, err
@@ -144,7 +171,7 @@ func (e *Engine) CreateRunIdempotent(input json.RawMessage, idempotencyKey, inpu
 	}
 	runIDNew := generateRunID()
 	run := &state.Run{
-		WorkspaceID:  snapshot.WorkspaceID,
+		WorkspaceID:  workspaceID,
 		PlanJSON:     pinned,
 		PlanDigest:   snapshot.Digest,
 		ID:           runIDNew,
@@ -310,6 +337,7 @@ func (e *Engine) Run(runID string) (runErr error) {
 		}
 		e.plan = &pinned
 	}
+	e.workspaceID = run.WorkspaceID
 	acts, err := e.store.ListActivations(runID)
 	if err != nil {
 		return fmt.Errorf("muxlio: run: listing activations: %w", err)
@@ -692,8 +720,12 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	if parent == nil {
 		parent = e.telemetryContext()
 	}
+	workspaceID := e.workspaceID
+	if workspaceID == "" {
+		workspaceID = e.plan.WorkspaceID
+	}
 	req := workers.ExecuteRequest{
-		WorkspaceID:          e.plan.WorkspaceID,
+		WorkspaceID:          workspaceID,
 		Context:              parent,
 		LifetimeContext:      e.Context,
 		Executor:             node.Executor,
@@ -717,7 +749,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	if node.Retry != nil {
 		req.Effect = node.Retry.Effect
 	}
-	if ws := workspaceFromInputs(inputs); ws != "" && node.WorkspaceMode != "empty" && e.plan.WorkspaceID == "" {
+	if ws := workspaceFromInputs(inputs); ws != "" && node.WorkspaceMode != "empty" && req.WorkspaceID == "" {
 		req.Workspace = ws
 		if req.PlacementLabels == nil {
 			req.PlacementLabels = make(map[string]string)

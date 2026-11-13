@@ -21,6 +21,14 @@ import (
 const submissionPlan = `{"irVersion":"1.0","name":"submit","root":"root","subgraphs":{"root":{"nodes":[{"id":"effect","kind":"execute","executor":"test","workspaceMode":"empty"}]}}}`
 
 func TestIdempotentSubmissionHTTPConcurrentRestart(t *testing.T) {
+	for _, mode := range []string{"full-plan", "registered"} {
+		t.Run(mode, func(t *testing.T) {
+			testIdempotentSubmissionHTTPConcurrentRestart(t, mode == "registered")
+		})
+	}
+}
+
+func testIdempotentSubmissionHTTPConcurrentRestart(t *testing.T, registered bool) {
 	path := filepath.Join(t.TempDir(), "runs.db")
 	st, err := sqlite.Open(path)
 	if err != nil {
@@ -30,6 +38,17 @@ func TestIdempotentSubmissionHTTPConcurrentRestart(t *testing.T) {
 	runner := &serverRunner{store: st, exec: exec, ctx: context.Background(), engines: map[string]*plan.Engine{}, workers: map[string]chan struct{}{}}
 	handler := api.NewRouter(st, runner)
 	body := `{"plan":` + submissionPlan + `,"input":{"n":9007199254740993}}`
+	if registered {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("POST", "/v1/workflow-versions", strings.NewReader(submissionPlan)))
+		if w.Code != 201 {
+			t.Fatalf("register: %d %s", w.Code, w.Body.String())
+		}
+		var version map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &version)
+		body = `{"planDigest":"` + version["digest"] + `","input":{"n":9007199254740993}}`
+	}
+
 	submit := func(h http.Handler, payload string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/v1/runs", strings.NewReader(payload))
 		req.Header.Set("Idempotency-Key", "invocation")

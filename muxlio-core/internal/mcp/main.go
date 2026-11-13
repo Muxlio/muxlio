@@ -11,7 +11,7 @@
 //	check_plan      Validate a compiled Plan IR JSON document.
 //	build           Compile a local workflow file.
 //	test            Test a local workflow with fake executors.
-//	start_run       Submit and start a workflow run from a Plan IR document.
+//	start_run       Submit and start a workflow run from Plan IR or a registered digest.
 //	list_runs       List all runs on the coordinator.
 //	get_run         Get the current state of a single run.
 //	get_graph       Get the materialised execution graph for a run.
@@ -248,7 +248,7 @@ var tools = []toolDef{
 	},
 	{
 		Name: "start_run",
-		Description: "Submit a compiled Plan IR to the coordinator and start a workflow run. " +
+		Description: "Submit a compiled Plan IR or a registered planDigest to the coordinator and start a workflow run. " +
 			"Returns the new run ID and initial state. " +
 			"Uses the configured coordinator, which may run on another machine; no local service is required. " +
 			"Supply idempotencyKey on every attempt for the same submission; the coordinator returns the " +
@@ -257,6 +257,7 @@ var tools = []toolDef{
 			"type": "object",
 			"properties": map[string]any{
 				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory."},
+				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by register_workflow_version or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
 				"plan": map[string]any{
 					"description": "The Plan IR document as a JSON object.",
 					"type":        "object",
@@ -270,7 +271,8 @@ var tools = []toolDef{
 					"description": "Stable caller-generated key for this submission. Reuse on retries to prevent duplicate runs; a different plan or input with the same key returns a conflict error.",
 				},
 			},
-			"required": []string{"plan", "input"},
+			"required": []string{"input"},
+			"oneOf":    []any{map[string]any{"required": []string{"plan"}, "not": map[string]any{"required": []string{"planDigest"}}}, map[string]any{"required": []string{"planDigest"}, "not": map[string]any{"required": []string{"plan"}}}},
 		},
 	},
 	{
@@ -1050,11 +1052,7 @@ func (s *server) toolRegisterWorkflowVersion(args json.RawMessage) toolCallResul
 		text, _ := json.MarshalIndent(map[string]any{"code": "MUXLIO_PLAN_INVALID", "message": "plan failed local validation", "errors": errs}, "", "  ")
 		return toolCallResult{Content: []contentBlock{{Type: "text", Text: string(text)}}, IsError: true}
 	}
-	var planValue any
-	if err := json.Unmarshal(params.Plan, &planValue); err != nil {
-		return errResult("invalid plan JSON: " + err.Error())
-	}
-	resp, err := s.api.post("/v1/workflow-versions", map[string]any{"plan": planValue})
+	resp, err := s.api.post("/v1/workflow-versions", params.Plan)
 	if err != nil {
 		return errResult("coordinator request failed: " + err.Error())
 	}
@@ -1065,37 +1063,42 @@ func (s *server) toolStartRun(args json.RawMessage) toolCallResult {
 	var params struct {
 		WorkspaceID    string          `json:"workspaceId,omitempty"`
 		Plan           json.RawMessage `json:"plan"`
+		PlanDigest     string          `json:"planDigest,omitempty"`
 		Input          json.RawMessage `json:"input"`
 		IdempotencyKey string          `json:"idempotencyKey,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
 	}
-	if len(params.Plan) == 0 {
-		return errResult("plan is required")
+	hasPlan := len(params.Plan) > 0 && string(params.Plan) != "null"
+	if hasPlan == (params.PlanDigest != "") {
+		return errResult("select exactly one of plan or planDigest")
 	}
 	if len(params.Input) == 0 {
 		params.Input = json.RawMessage(`{}`)
 	}
 
-	// Local pre-flight validation before touching the coordinator.
-	errs, _ := validatePlanLocally(params.Plan)
-	errs, _ = splitValidationIssues(errs)
-	if len(errs) > 0 {
-		text, _ := json.MarshalIndent(map[string]any{
-			"code":    "MUXLIO_PLAN_INVALID",
-			"message": "plan failed local validation; fix errors before submitting",
-			"errors":  errs,
-		}, "", "  ")
-		return toolCallResult{
-			Content: []contentBlock{{Type: "text", Text: string(text)}},
-			IsError: true,
+	// Referenced definitions are resolved and validated by the coordinator.
+	if hasPlan {
+		errs, _ := validatePlanLocally(params.Plan)
+		errs, _ = splitValidationIssues(errs)
+		if len(errs) > 0 {
+			text, _ := json.MarshalIndent(map[string]any{
+				"code":    "MUXLIO_PLAN_INVALID",
+				"message": "plan failed local validation; fix errors before submitting",
+				"errors":  errs,
+			}, "", "  ")
+			return toolCallResult{
+				Content: []contentBlock{{Type: "text", Text: string(text)}},
+				IsError: true,
+			}
 		}
 	}
-
-	body := map[string]json.RawMessage{
-		"plan":  params.Plan,
-		"input": params.Input,
+	body := map[string]json.RawMessage{"input": params.Input}
+	if hasPlan {
+		body["plan"] = params.Plan
+	} else {
+		body["planDigest"], _ = json.Marshal(params.PlanDigest)
 	}
 	if params.WorkspaceID != "" {
 		body["workspaceId"], _ = json.Marshal(params.WorkspaceID)

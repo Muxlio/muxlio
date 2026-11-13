@@ -56,7 +56,13 @@ func TestCatalogDiscoveryInstantiationAndSubmission(t *testing.T) {
 					Plan  plan.Plan      `json:"plan"`
 					Input map[string]any `json:"input"`
 				}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				var err error
+				if r.URL.Path == "/v1/workflow-versions" {
+					err = json.NewDecoder(r.Body).Decode(&body.Plan)
+				} else {
+					err = json.NewDecoder(r.Body).Decode(&body)
+				}
+				if err != nil {
 					t.Error(err)
 				}
 				if body.Plan.Digest != instance.Digest || body.Plan.VerifyDigest() != nil {

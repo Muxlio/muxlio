@@ -16,8 +16,12 @@ var ErrInputRequestNotAccepting = errors.New("muxlio: input request is not accep
 // was already used with a different plan digest, input, or workspace identity.
 var ErrIdempotencyKeyConflict = errors.New("muxlio: idempotency key reused with different payload")
 
+// ErrWorkflowVersionRetired prevents new submissions of a retired definition.
+var ErrWorkflowVersionRetired = errors.New("muxlio: workflow version is retired")
+
 // WorkflowVersionSummary provides metadata for a registered immutable workflow version.
 type WorkflowVersionSummary struct {
+	Retired   bool   `json:"retired,omitempty"`
 	Digest    string `json:"digest"`
 	Name      string `json:"name"`
 	CreatedAt string `json:"createdAt"`
@@ -101,6 +105,7 @@ type Store interface {
 	// Workflow versions: immutable compiled Plan IR registry.
 	SaveWorkflowVersion(digest string, planJSON []byte) error
 	GetWorkflowVersion(digest string) ([]byte, error)
+	RetireWorkflowVersion(digest string) error
 	ListWorkflowVersions() ([]WorkflowVersionSummary, error)
 
 	// Chunked logs: bounded append-only worker output.

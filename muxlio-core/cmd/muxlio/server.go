@@ -184,6 +184,58 @@ func (r *serverRunner) CreateIdempotentRun(p *plan.Plan, input json.RawMessage, 
 	return runID, false, nil
 }
 
+// CreateRegisteredRun authorizes a separate workspace selector without rewriting
+// the immutable definition. Execution and restart read the workspace from the run.
+func (r *serverRunner) CreateRegisteredRun(raw []byte, input json.RawMessage, workspaceID, key string) (string, bool, error) {
+	var p plan.Plan
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return "", false, err
+	}
+	if err := p.VerifyDigest(); err != nil {
+		return "", false, err
+	}
+	selected := p
+	if workspaceID != "" {
+		selected.WorkspaceID = workspaceID
+		if _, err := selected.ComputeDigest(); err != nil {
+			return "", false, err
+		}
+	}
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		if err := c.AuthorizePlanWorkspace(&selected, input); err != nil {
+			return "", false, err
+		}
+		if p.WorkspaceID != "" {
+			original := p
+			if err := c.AuthorizePlanWorkspace(&original, input); err != nil {
+				return "", false, err
+			}
+			if original.WorkspaceID != selected.WorkspaceID {
+				return "", false, api.WorkspaceAuthorizationError{Message: "submission and plan workspace IDs disagree"}
+			}
+		}
+	} else if selected.WorkspaceID != "" {
+		return "", false, api.WorkspaceAuthorizationError{Message: "workspace validation requires a coordinator"}
+	}
+	if len(input) == 0 {
+		input = json.RawMessage(`{}`)
+	}
+	h := sha256.Sum256(input)
+	engine := plan.NewEngineWithStore(&p, r.exec, r.store)
+	engine.Context = r.ctx
+	id, duplicate, err := engine.CreateRegisteredRun(raw, input, selected.WorkspaceID, key, hex.EncodeToString(h[:]))
+	if err != nil || duplicate {
+		return id, duplicate, err
+	}
+	r.mu.Lock()
+	r.engines[id] = engine
+	r.workers[id] = make(chan struct{})
+	r.wg.Add(1)
+	r.mu.Unlock()
+	coordinatorlog.RunAccepted(id, p.Name)
+	return id, false, nil
+}
+
 // StartPersistedRun attaches an engine to an already atomically persisted run.
 func (r *serverRunner) StartPersistedRun(id string) error {
 	r.mu.Lock()

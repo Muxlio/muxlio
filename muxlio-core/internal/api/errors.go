@@ -45,7 +45,8 @@ const (
 	CodeIdempotencyKeyConflict = "MUXLIO_IDEMPOTENCY_KEY_CONFLICT"
 
 	// 410 – intentionally removed by retention
-	CodeArtifactExpired = "MUXLIO_ARTIFACT_EXPIRED"
+	CodeWorkflowVersionRetired = "MUXLIO_WORKFLOW_VERSION_RETIRED"
+	CodeArtifactExpired        = "MUXLIO_ARTIFACT_EXPIRED"
 
 	// 422 – semantic / validation failures
 	CodeValidationError   = "MUXLIO_VALIDATION_ERROR"
@@ -66,6 +67,7 @@ const (
 
 // fix messages paired with their codes.
 var codeFix = map[string]string{
+	CodeWorkflowVersionRetired:                "Register a new workflow version and submit its digest.",
 	CodeBadRequest:                            "Check the request body and URL parameters; resend a well-formed request.",
 	CodeInvalidJSON:                           "Ensure the request body is a single, valid JSON object.",
 	CodeMissingRunID:                          "Include a run ID in the URL path, e.g. /v1/runs/<runId>.",

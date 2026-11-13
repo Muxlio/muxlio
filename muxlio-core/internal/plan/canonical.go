@@ -3,6 +3,7 @@ package plan
 import (
 	"bytes"
 	"encoding/json"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// Canonical JSON uses sorted keys, UTF-8 strings and ECMAScript number spelling.
+// Canonical JSON uses sorted keys, UTF-8 strings and lossless ECMAScript number spelling.
 // The TypeScript compiler implements the same encoding before SHA-256 hashing.
 func canonicalJSON(value any) ([]byte, error) {
 	var b bytes.Buffer
@@ -105,6 +106,23 @@ func canonicalJSON(value any) ([]byte, error) {
 			encoded = strings.ReplaceAll(encoded, `\u2028`, "\u2028")
 			encoded = strings.ReplaceAll(encoded, `\u2029`, "\u2029")
 			b.WriteString(encoded)
+		case json.Number:
+			// Keep the SDK's ECMAScript spelling when it preserves the value.
+			// HTTP clients can supply more precise numbers than JavaScript can;
+			// rounding those here would let different definitions share a digest.
+			f, err := x.Float64()
+			if err != nil {
+				return err
+			}
+			encoded, err := canonicalJSON(f)
+			if err != nil {
+				return err
+			}
+			if decimalIdentity(string(x)) == decimalIdentity(string(encoded)) {
+				b.Write(encoded)
+				break
+			}
+			b.WriteString(string(x))
 		case float64:
 			if x == 0 {
 				b.WriteByte('0')
@@ -135,4 +153,30 @@ func canonicalJSON(value any) ([]byte, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+// decimalIdentity compares JSON decimal values without floating point rounding
+// or expanding exponents (which may be arbitrarily large in untrusted JSON).
+func decimalIdentity(s string) string {
+	negative := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	var exponent big.Int
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		exponent.SetString(strings.TrimPrefix(s[i+1:], "+"), 10)
+		s = s[:i]
+	}
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		exponent.Sub(&exponent, big.NewInt(int64(len(s)-i-1)))
+		s = s[:i] + s[i+1:]
+	}
+	s = strings.TrimLeft(s, "0")
+	if s == "" {
+		return "0"
+	}
+	digits := strings.TrimRight(s, "0")
+	exponent.Add(&exponent, big.NewInt(int64(len(s)-len(digits))))
+	if negative {
+		digits = "-" + digits
+	}
+	return digits + "e" + exponent.String()
 }

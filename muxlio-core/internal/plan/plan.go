@@ -7,6 +7,7 @@
 package plan
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -303,7 +304,9 @@ func (p *Plan) ComputeDigest() (string, error) {
 		return "", fmt.Errorf("muxlio: marshal plan: %w", err)
 	}
 	var value map[string]any
-	if err := json.Unmarshal(data, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return "", err
 	}
 	delete(value, "digest")

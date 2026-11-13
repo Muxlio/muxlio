@@ -16,21 +16,22 @@ var _ Store = (*Memory)(nil)
 
 // Memory is the in-memory Store used when no data directory is configured.
 type Memory struct {
-	sessionQueues    map[string]*SessionQueue
-	workflowVersions map[string][]byte
-	mu               sync.RWMutex
-	runs             map[string]*Run
-	activations      map[string]*Activation
-	events           map[string][]Event
-	eventSeq         map[string]int
-	timers           []*Timer
-	signals          []*Signal
-	signalSeq        map[string]int
-	inputRequests    map[string]*InputRequest // keyed by runID + "\x00" + requestID
-	logChunks        []LogChunk
-	assignments      map[string]*Assignment
-	attempts         []ExecutionAttempt
-	outbox           []*OutboxRecord
+	sessionQueues           map[string]*SessionQueue
+	workflowVersions        map[string][]byte
+	retiredWorkflowVersions map[string]bool
+	mu                      sync.RWMutex
+	runs                    map[string]*Run
+	activations             map[string]*Activation
+	events                  map[string][]Event
+	eventSeq                map[string]int
+	timers                  []*Timer
+	signals                 []*Signal
+	signalSeq               map[string]int
+	inputRequests           map[string]*InputRequest // keyed by runID + "\x00" + requestID
+	logChunks               []LogChunk
+	assignments             map[string]*Assignment
+	attempts                []ExecutionAttempt
+	outbox                  []*OutboxRecord
 	// idempotencyKeys tracks run creation idempotency for in-process callers.
 	idempotencyKeys map[[2]string]*memIdempotencyEntry // key → entry
 }
@@ -45,16 +46,17 @@ type memIdempotencyEntry struct {
 // New returns an in-memory store.
 func New() *Memory {
 	return &Memory{
-		workflowVersions: make(map[string][]byte),
-		sessionQueues:    make(map[string]*SessionQueue),
-		runs:             make(map[string]*Run),
-		activations:      make(map[string]*Activation),
-		events:           make(map[string][]Event),
-		eventSeq:         make(map[string]int),
-		signalSeq:        make(map[string]int),
-		inputRequests:    make(map[string]*InputRequest),
-		assignments:      make(map[string]*Assignment),
-		idempotencyKeys:  make(map[[2]string]*memIdempotencyEntry),
+		workflowVersions:        make(map[string][]byte),
+		retiredWorkflowVersions: make(map[string]bool),
+		sessionQueues:           make(map[string]*SessionQueue),
+		runs:                    make(map[string]*Run),
+		activations:             make(map[string]*Activation),
+		events:                  make(map[string][]Event),
+		eventSeq:                make(map[string]int),
+		signalSeq:               make(map[string]int),
+		inputRequests:           make(map[string]*InputRequest),
+		assignments:             make(map[string]*Assignment),
+		idempotencyKeys:         make(map[[2]string]*memIdempotencyEntry),
 	}
 }
 
@@ -1074,9 +1076,22 @@ func (s *Memory) SaveWorkflowVersion(digest string, planJSON []byte) error {
 	return nil
 }
 
+func (s *Memory) RetireWorkflowVersion(digest string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workflowVersions[digest]; !ok {
+		return fmt.Errorf("workflow version %q not found", digest)
+	}
+	s.retiredWorkflowVersions[digest] = true
+	return nil
+}
+
 func (s *Memory) GetWorkflowVersion(digest string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.retiredWorkflowVersions[digest] {
+		return nil, ErrWorkflowVersionRetired
+	}
 	raw, ok := s.workflowVersions[digest]
 	if !ok {
 		return nil, fmt.Errorf("workflow version %q not found", digest)
@@ -1096,6 +1111,7 @@ func (s *Memory) ListWorkflowVersions() ([]WorkflowVersionSummary, error) {
 		}
 		_ = json.Unmarshal(raw, &p)
 		summaries = append(summaries, WorkflowVersionSummary{
+			Retired:   s.retiredWorkflowVersions[digest],
 			Digest:    digest,
 			Name:      p.Name,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -1112,6 +1128,15 @@ func cloneRun(run *Run) (*Run, error) {
 	}
 	var snapshot Run
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, err
+	}
+	// Preserve exact numbers in typed input without changing the existing
+	// representation of run outputs.
+	input, err := json.Marshal(run.Input)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.DecodeJSON(input, &snapshot.Input); err != nil {
 		return nil, err
 	}
 	snapshot.PlanJSON = append(json.RawMessage(nil), run.PlanJSON...)

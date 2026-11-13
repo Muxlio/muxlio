@@ -173,3 +173,41 @@ on the coordinator. Your execution machine still needs to stay running.
 
 For client configuration examples, tool arguments, authentication, and protocol
 behavior, see the [MCP reference](architecture/mcp-reference.md).
+
+## Start a registered workflow
+
+Call `register_workflow_version` once with `{"plan": <compiled Plan IR>}`.
+The coordinator validates and stores an immutable definition and returns its
+`digest`. Any authenticated client of that coordinator can reuse it:
+
+```json
+{
+  "planDigest": "sha256:<digest returned by registration>",
+  "workspaceId": "project",
+  "input": {"request": "Generate the weekly report"},
+  "idempotencyKey": "weekly-report-2026-11-13"
+}
+```
+
+Pass these arguments to `start_run`. Supply exactly one of `planDigest` or
+`plan`; the existing full-plan form remains supported. Inputs must match the
+registered plan's `inputSchema`. The coordinator loads the definition, validates
+input, authorizes the target workspace, and pins the registered bytes and digest
+without rewriting them. Workspace aliases resolve to a canonical run workspace,
+stored separately from the definition. A workspace fixed in the plan cannot be
+overridden with a different workspace.
+
+Reuse the same idempotency key on retries. The same authenticated caller,
+definition, exact input bytes, and canonical workspace return the original run;
+changed inputs or a changed definition require a new key. Omit `workspaceId`
+to use the plan's workspace or the coordinator's configured default.
+
+The HTTP equivalent is `POST /v1/runs` with the same body fields except that
+`idempotencyKey` is sent as the `Idempotency-Key` header. Register through
+`POST /v1/workflow-versions` with the Plan IR itself as the body.
+`list_workflow_versions` lists registered digests and their retirement state.
+Unknown digests return 404. Operators can retire a definition with authenticated
+`DELETE /v1/workflow-versions/<digest>`; future reference submissions return 410
+(`MUXLIO_WORKFLOW_VERSION_RETIRED`). Retirement persists across restart and
+does not change existing runs. Uploading identical content does not reactivate a
+retired version. Change the definition and register its new digest.

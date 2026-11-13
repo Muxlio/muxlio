@@ -434,19 +434,42 @@ preflight before calling `start_run`; preflight never submits automatically.
 
 ### `start_run`
 
-Submit a compiled Plan IR to the coordinator and start a workflow run.
+Submit a compiled Plan IR or an immutable registered version to the coordinator
+and start a workflow run.
 
 **Input:**
 
 | Field | Type   | Required | Description                                                    |
 |-------|--------|----------|----------------------------------------------------------------|
-| plan  | object | ✓        | The Plan IR document.                                          |
+| plan  | object | Either this or `planDigest` | The Plan IR document. |
+| planDigest | string | Either this or `plan` | Content digest returned by `register_workflow_version` or `list_workflow_versions`. The coordinator loads the stored definition. |
 | input | object | ✓        | Typed JSON input matching the plan's `inputSchema`. Use `{}` when the plan requires no input. |
+| workspaceId | string | | Operator-authorized target workspace. Defaults to the plan's workspace or the configured coordinator default. |
+| idempotencyKey | string | | Stable caller-generated submission key; reuse it on retries. |
 
 **Output:** `{runId, state}` — the new run ID and initial state (`running`).
 
-The tool performs local validation before submitting; `isError` is set if
-the plan is invalid or the coordinator rejects the request.
+Supply exactly one of `plan` or `planDigest`. Full plans are validated locally;
+registered versions are fetched and validated inside the coordinator. A reference
+submission pins exactly the registered bytes and digest, with the authorized
+workspace stored separately. A workspace fixed in the plan cannot be overridden.
+Missing versions return 404, retired versions return 410, and inputs that do not
+match the stored input schema are rejected before creating a run. `isError` is set
+if validation fails or the coordinator rejects the request.
+
+Register once, then submit from any authenticated client without resending the
+definition:
+
+```json
+{"planDigest":"sha256:<registered digest>","workspaceId":"project","input":{"request":"Weekly report"},"idempotencyKey":"weekly-report-1"}
+```
+
+Retries with the same key and matching definition, exact input bytes, caller,
+and authorized workspace return the original run ID. Changed bindings within
+that scope return a conflict. The HTTP equivalent is `POST /v1/runs` with
+`Idempotency-Key` as a header instead of a body field. See
+[registered workflows](../mcp.md#start-a-registered-workflow) for registration
+and retirement details.
 
 ---
 

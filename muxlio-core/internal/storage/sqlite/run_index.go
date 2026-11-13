@@ -39,7 +39,7 @@ func (s *Store) ListRunPage(offset, limit int, search, status, order string) ([]
 	if order == "workflow" {
 		sortOrder = "workflow_name,id"
 	}
-	query := `SELECT id,workflow_name,state,NULL,NULL,error,created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json FROM runs` + where + ` ORDER BY ` + sortOrder + ` LIMIT ? OFFSET ?`
+	query := `SELECT id,workflow_name,state,NULL,NULL,error,created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json,COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),'') FROM runs` + where + ` ORDER BY ` + sortOrder + ` LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err = s.db.Query(query, args...)
 	if err != nil {

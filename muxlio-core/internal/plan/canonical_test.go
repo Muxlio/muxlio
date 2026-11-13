@@ -10,6 +10,24 @@ import (
 	"testing"
 )
 
+func TestCanonicalNumbersPreservePrecision(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"1.0", "1"}, {"-0.0", "0"}, {"1e20", "100000000000000000000"},
+		{"1e21", "1e+21"}, {"0.0000001", "1e-7"},
+		{"9007199254740993", "9007199254740993"},
+		{"0.10000000000000001", "0.10000000000000001"},
+		{"1e-1000000000", "1e-1000000000"},
+	} {
+		got, err := canonicalJSON(json.Number(tc.input))
+		if err != nil || string(got) != tc.want {
+			t.Errorf("canonical %s = %s, %v; want %s", tc.input, got, err, tc.want)
+		}
+	}
+	if _, err := canonicalJSON(json.Number("1e400")); err == nil {
+		t.Fatal("accepted a number outside the supported range")
+	}
+}
+
 // Exercise the real SDK hasher and Go verifier, not parallel test-only hashers.
 func TestTypeScriptDigestRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {

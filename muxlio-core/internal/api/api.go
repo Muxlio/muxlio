@@ -50,6 +50,13 @@ type idempotentRunner interface {
 	CreateIdempotentRun(p *plan.Plan, input json.RawMessage, workspaceID, idempotencyKey string) (runID string, duplicate bool, err error)
 }
 
+// registeredRunner accepts verified registry bytes without rewriting the plan.
+// The authorized workspace is separate run metadata; an empty idempotency key
+// creates an independent run on every submission.
+type registeredRunner interface {
+	CreateRegisteredRun(pinned []byte, input json.RawMessage, workspaceID, idempotencyKey string) (runID string, duplicate bool, err error)
+}
+
 type runController interface {
 	ControlRun(runID, action string) error
 }
@@ -283,8 +290,8 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	})
 
 	mux.HandleFunc("/v1/workflow-versions/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET")
+		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET or DELETE")
 			return
 		}
 		digest := strings.TrimPrefix(r.URL.Path, "/v1/workflow-versions/")
@@ -292,9 +299,21 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeError(w, http.StatusBadRequest, CodeInvalidJSON, "missing digest")
 			return
 		}
+		if r.Method == http.MethodDelete {
+			if err := store.RetireWorkflowVersion(digest); err != nil {
+				writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"digest": digest, "retired": true})
+			return
+		}
 		raw, err := store.GetWorkflowVersion(digest)
 		if err != nil {
-			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			if errors.Is(err, state.ErrWorkflowVersionRetired) {
+				writeError(w, http.StatusGone, CodeWorkflowVersionRetired, err.Error())
+			} else {
+				writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -640,7 +659,8 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, store state.Store) {
 	var request struct {
 		WorkspaceID string          `json:"workspaceId,omitempty"`
-		Plan        plan.Plan       `json:"plan"`
+		Plan        *plan.Plan      `json:"plan"`
+		PlanDigest  string          `json:"planDigest,omitempty"`
 		Input       json.RawMessage `json:"input"`
 	}
 	decoder := json.NewDecoder(r.Body)
@@ -653,12 +673,42 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, stor
 		writeError(w, http.StatusBadRequest, CodeInvalidJSON, "request body must contain one JSON object")
 		return
 	}
+	if (request.Plan == nil) == (request.PlanDigest == "") {
+		writeError(w, http.StatusBadRequest, CodeInvalidJSON, "select exactly one of plan or planDigest")
+		return
+	}
+	var registered []byte
+	if request.PlanDigest != "" {
+		var err error
+		registered, err = store.GetWorkflowVersion(request.PlanDigest)
+		if err != nil {
+			if errors.Is(err, state.ErrWorkflowVersionRetired) {
+				writeError(w, http.StatusGone, CodeWorkflowVersionRetired, err.Error())
+			} else {
+				writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			}
+			return
+		}
+		request.Plan = &plan.Plan{}
+		if err := json.Unmarshal(registered, request.Plan); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+			return
+		}
+		if err := request.Plan.VerifyDigest(); err != nil || request.Plan.Digest != request.PlanDigest {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, "registered workflow digest mismatch")
+			return
+		}
+	}
 	// Match preflight and MCP submission defaults on every submission path.
 	if len(request.Input) == 0 {
 		request.Input = json.RawMessage(`{}`)
 	}
-	if errs := plan.Validate(&request.Plan); plan.HasErrors(errs) {
+	if errs := plan.Validate(request.Plan); plan.HasErrors(errs) {
 		writeValidationErrors(w, plan.ErrorsOnly(errs))
+		return
+	}
+	if err := plan.ValidateInput(request.Plan, request.Input); err != nil {
+		writeError(w, http.StatusBadRequest, string(plan.InputValidationFailed), err.Error())
 		return
 	}
 	if runner == nil {
@@ -667,57 +717,39 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, stor
 	}
 
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-
-	var runID string
-	var err error
-	if idempotencyKey != "" {
-		if ir, ok := runner.(idempotentRunner); ok {
-			if err := request.Plan.VerifyDigest(); err != nil {
-				writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
-				return
-			}
-			if _, err = request.Plan.ComputeDigest(); err != nil {
-				writeError(w, http.StatusBadRequest, CodeInvalidJSON, "computing plan digest: "+err.Error())
-				return
-			}
-			// Separate authenticated callers as well as authorized workspaces.
-			if caller := CallerFromRequest(r); caller.ID != "" {
-				scope, _ := json.Marshal([]string{caller.ID, idempotencyKey})
-				idempotencyKey = fmt.Sprintf("sha256:%x", sha256.Sum256(scope))
-			}
-			var duplicate bool
-			runID, duplicate, err = ir.CreateIdempotentRun(&request.Plan, request.Input, request.WorkspaceID, idempotencyKey)
-			if err != nil {
-				if errors.Is(err, state.ErrIdempotencyKeyConflict) {
-					writeError(w, http.StatusConflict, CodeIdempotencyKeyConflict, err.Error())
-					return
-				}
-				if e, ok := err.(interface{ ProtocolError() (int, string, string) }); ok {
-					status, code, message := e.ProtocolError()
-					writeError(w, status, code, message)
-					return
-				}
-				writeError(w, http.StatusInternalServerError, CodeRunError, err.Error())
-				return
-			}
-			if duplicate {
-				// Return the original run with 200 instead of 201 to signal replay.
-				response := map[string]string{"runId": runID}
-				if run, err := runHeader(store, runID); err == nil {
-					response["state"] = run.State
-				}
-				writeJSON(w, http.StatusOK, response)
-				return
-			}
-			go func() { _ = runner.Run(runID) }()
-			writeJSON(w, http.StatusCreated, map[string]string{"runId": runID, "state": plan.RunRunning})
-			return
-		}
-		writeError(w, http.StatusServiceUnavailable, CodeRunnerUnavailable, "runner does not support idempotent submission")
-		return
+	// Separate authenticated callers as well as authorized workspaces.
+	if caller := CallerFromRequest(r); caller.ID != "" && idempotencyKey != "" {
+		scope, _ := json.Marshal([]string{caller.ID, idempotencyKey})
+		idempotencyKey = fmt.Sprintf("sha256:%x", sha256.Sum256(scope))
 	}
 
-	if request.WorkspaceID != "" {
+	var runID string
+	var duplicate bool
+	var err error
+	switch {
+	case registered != nil:
+		rr, ok := runner.(registeredRunner)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, CodeRunnerUnavailable, "runner does not support registered workflow submission")
+			return
+		}
+		runID, duplicate, err = rr.CreateRegisteredRun(registered, request.Input, request.WorkspaceID, idempotencyKey)
+	case idempotencyKey != "":
+		ir, ok := runner.(idempotentRunner)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, CodeRunnerUnavailable, "runner does not support idempotent submission")
+			return
+		}
+		if err := request.Plan.VerifyDigest(); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
+			return
+		}
+		if _, err = request.Plan.ComputeDigest(); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidJSON, "computing plan digest: "+err.Error())
+			return
+		}
+		runID, duplicate, err = ir.CreateIdempotentRun(request.Plan, request.Input, request.WorkspaceID, idempotencyKey)
+	case request.WorkspaceID != "":
 		targeted, ok := runner.(interface {
 			CreateWorkspacePlanRun(*plan.Plan, json.RawMessage, string) (string, error)
 		})
@@ -725,19 +757,33 @@ func handleCreateRun(w http.ResponseWriter, r *http.Request, runner Runner, stor
 			writeError(w, 400, "MUXLIO_WORKSPACE_UNAUTHORIZED", "runner does not support workspace selection")
 			return
 		}
-		runID, err = targeted.CreateWorkspacePlanRun(&request.Plan, request.Input, request.WorkspaceID)
-	} else if planRunner, ok := runner.(planRunner); ok {
-		runID, err = planRunner.CreatePlanRun(&request.Plan, request.Input)
-	} else {
-		runID, err = runner.CreateRun(request.Input)
+		runID, err = targeted.CreateWorkspacePlanRun(request.Plan, request.Input, request.WorkspaceID)
+	default:
+		if planRunner, ok := runner.(planRunner); ok {
+			runID, err = planRunner.CreatePlanRun(request.Plan, request.Input)
+		} else {
+			runID, err = runner.CreateRun(request.Input)
+		}
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrIdempotencyKeyConflict) {
+			writeError(w, http.StatusConflict, CodeIdempotencyKeyConflict, err.Error())
+			return
+		}
 		if e, ok := err.(interface{ ProtocolError() (int, string, string) }); ok {
 			status, code, message := e.ProtocolError()
 			writeError(w, status, code, message)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeRunError, err.Error())
+		return
+	}
+	if duplicate {
+		response := map[string]string{"runId": runID}
+		if run, err := runHeader(store, runID); err == nil {
+			response["state"] = run.State
+		}
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	go func() { _ = runner.Run(runID) }()
