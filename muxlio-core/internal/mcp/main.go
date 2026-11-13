@@ -166,7 +166,7 @@ var tools = []toolDef{
 	{
 		Name: "check_plan",
 		Description: "Validate a compiled Muxlio Plan IR JSON document. " +
-			"Returns a list of validation errors (empty when the plan is valid).",
+			"Executes no source code. Recommended for untrusted submissions. Returns a list of validation errors (empty when the plan is valid).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -183,10 +183,11 @@ var tools = []toolDef{
 		Description: "Validate a JSON workflow or compile a trusted local TypeScript/JavaScript definition into Plan IR JSON. " +
 			"Returns the compiled plan with its digest and any validation errors. " +
 			"The workflow source must be accessible from the filesystem path provided. " +
-			"JSON requires no dependencies or code execution. Source compilation requires MUXLIO_TRUST_WORKFLOW_CODE=1 and project-local locked dependencies; it executes arbitrary code. Use workflow_template for checkout-independent authoring.",
+			"JSON requires no dependencies or code execution. Source compilation requires trustedSource=true, MUXLIO_TRUST_WORKFLOW_CODE=1 and pinned local tsx; it executes arbitrary code with host filesystem and network access. Use check_plan for untrusted submissions. Use workflow_template for checkout-independent authoring.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"trustedSource": map[string]any{"type": "boolean", "description": "Explicitly acknowledge arbitrary source execution with host filesystem and network access. Only for reviewed, trusted source and dependencies; JSON does not require this."},
 				"path": map[string]any{
 					"description": "Absolute or relative filesystem path to the .ts, .js, or .json workflow file.",
 					"type":        "string",
@@ -197,13 +198,14 @@ var tools = []toolDef{
 	},
 	{
 		Name: "test",
-		Description: "Dry-run a Muxlio workflow locally using the fake executor and a fake-results configuration. " +
-			"No coordinator or real adapters are required. JSON runs offline; source compilation executes arbitrary code and requires MUXLIO_TRUST_WORKFLOW_CODE=1 and project-local dependencies. " +
+		Description: "Test Plan IR locally using the fake executor and a fake-results configuration. " +
+			"No coordinator or real adapters are required. JSON runs offline; source compilation is not a dry run: it executes arbitrary code with host filesystem and network access and requires trustedSource=true, MUXLIO_TRUST_WORKFLOW_CODE=1 and pinned local tsx. Use check_plan for untrusted submissions. " +
 			"Returns the run outcome, events, and activation states. " +
 			"Use this to verify workflow logic before deploying to a coordinator.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"trustedSource": map[string]any{"type": "boolean", "description": "Explicitly acknowledge arbitrary source execution with host filesystem and network access. Only for reviewed, trusted source and dependencies; JSON does not require this."},
 				"path": map[string]any{
 					"description": "Absolute or relative filesystem path to the .ts, .js, or .json workflow file.",
 					"type":        "string",
@@ -827,7 +829,8 @@ func newFakeExecutorFromJSON(raw json.RawMessage) *workers.FakeExecutor {
 
 func (s *server) toolBuild(args json.RawMessage) toolCallResult {
 	var params struct {
-		Path string `json:"path"`
+		Path          string `json:"path"`
+		TrustedSource bool   `json:"trustedSource"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
@@ -851,6 +854,9 @@ func (s *server) toolBuild(args json.RawMessage) toolCallResult {
 			return errResult("reading file: " + err.Error())
 		}
 	case ".ts", ".js", ".mjs":
+		if !params.TrustedSource {
+			return errResult("source compilation executes arbitrary code with host filesystem and network access; use check_plan or JSON for untrusted submissions. Reviewed source requires trustedSource=true and operator opt-in MUXLIO_TRUST_WORKFLOW_CODE=1")
+		}
 		rawPlan, err = compilePlanFromFile(absPath)
 		if err != nil {
 			return errResult("compiling workflow: " + err.Error())
@@ -912,9 +918,10 @@ func compilePlanFromFile(filePath string) ([]byte, error) {
 
 func (s *server) toolTest(args json.RawMessage) toolCallResult {
 	var params struct {
-		Path        string          `json:"path"`
-		Input       json.RawMessage `json:"input"`
-		FakeResults json.RawMessage `json:"fakeResults"`
+		Path          string          `json:"path"`
+		TrustedSource bool            `json:"trustedSource"`
+		Input         json.RawMessage `json:"input"`
+		FakeResults   json.RawMessage `json:"fakeResults"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errResult("invalid arguments: " + err.Error())
@@ -940,6 +947,9 @@ func (s *server) toolTest(args json.RawMessage) toolCallResult {
 			return errResult("reading file: " + err.Error())
 		}
 	case ".ts", ".js", ".mjs":
+		if !params.TrustedSource {
+			return errResult("source compilation executes arbitrary code with host filesystem and network access; use check_plan or JSON for untrusted submissions. Reviewed source requires trustedSource=true and operator opt-in MUXLIO_TRUST_WORKFLOW_CODE=1")
+		}
 		rawPlan, err = compilePlanFromFile(absPath)
 		if err != nil {
 			return errResult("compiling workflow: " + err.Error())
@@ -1494,7 +1504,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run_summary for the canonical outcome and next action; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with MUXLIO_TRUST_WORKFLOW_CODE=1; trust definitions before enabling it.",
+				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run_summary for the canonical outcome and next action; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with trustedSource=true and MUXLIO_TRUST_WORKFLOW_CODE=1; this permits host filesystem and network access. Use check_plan or JSON for untrusted submissions.",
 			},
 		})
 

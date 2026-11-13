@@ -20,6 +20,6 @@
     "restart:ui": "bash scripts/start.sh restart ui"
   },
   "devDependencies": {
-    "tsx": "^4.23.15"
+    "tsx": "4.23.15"
   }
 }

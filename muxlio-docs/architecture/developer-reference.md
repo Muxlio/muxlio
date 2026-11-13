@@ -162,7 +162,7 @@ muxlio build examples/batch.workflow.ts --out examples/batch.plan.json
 muxlio check examples/batch.workflow.ts
 ```
 
-`muxlio build`, `check`, `test`, and `run` use the same workflow loading path for `.ts`, `.js`, and `.mjs` files. The CLI executes the module with `npx tsx` from the workflow file's directory, so workflow code and its side effects run during compilation. The module must default-export an object with a `plan` property or a plan-shaped object. Pass an existing `.json` file to skip workflow execution. `muxlio build` validates and prints canonical Plan IR on stdout by default; use `--out` to write it and `--json` for a structured summary. You can also run `npx tsx examples/batch.workflow.ts` directly when iterating on the SDK.
+`muxlio build`, `check`, `test`, and `run` use the same workflow loading path for `.ts`, `.js`, and `.mjs` files. Source loading requires the operator to set `MUXLIO_TRUST_WORKFLOW_CODE=1`. The CLI executes the module with explicitly installed, project-local tsx 4.23.15 from the workflow file's directory; it never invokes npx or downloads dependencies. All workflow code and its side effects run during compilation with host filesystem and network access. Use JSON Plan IR for untrusted or agent-generated submissions; see [compilation security](execution-security.md#workflow-compilation). The module must default-export an object with a `plan` property or a plan-shaped object. Pass an existing `.json` file to skip workflow execution. `muxlio build` validates and prints canonical Plan IR on stdout by default; use `--out` to write it and `--json` for a structured summary. For reviewed source, install the pinned dependencies with `npm ci` in a trusted environment before compiling.
 
 ### Validate and fake-run
 

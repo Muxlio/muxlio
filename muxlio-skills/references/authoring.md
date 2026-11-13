@@ -45,7 +45,10 @@ Developers can author TypeScript workflows using the SDK and compile them with
 `muxlio build`. Compilation executes arbitrary code with your local permissions.
 Only enable it for definitions you trust, by setting `MUXLIO_TRUST_WORKFLOW_CODE=1` in the CLI
 or MCP process environment. It requires Node and explicitly installed
-project-local tsx, SDK, and other dependencies. Pin those dependencies and use
+project-local tsx 4.23.15, SDK, and other dependencies. MCP `build` and `test`
+also require `trustedSource: true` on each source call; this acknowledges host
+filesystem and network access, not a sandbox. Use JSON/IR for untrusted or
+agent-generated submissions. Pin those dependencies and use
 your project's lockfile with `npm ci` during explicit setup; compilation never
 invokes npm/npx, downloads packages, or falls back to global tools. This optional
 developer path is not the standalone authoring distribution. An existing JSON

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +80,82 @@ func TestSourceToolsRequireTrust(t *testing.T) {
 	for _, name := range []string{"build", "test"} {
 		if result := (&server{}).dispatchTool(name, json.RawMessage(`{"path":"untrusted.ts"}`)); !result.IsError {
 			t.Fatalf("%s accepted untrusted source", name)
+		}
+	}
+}
+
+func TestSourceCompilationRequiresOperatorAndCallOptIn(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required for trusted source compilation")
+	}
+	root := t.TempDir()
+	runner := filepath.Join(root, "node_modules", "tsx", "dist")
+	if err := os.MkdirAll(runner, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(runner, "cli.mjs"), `await import('data:text/javascript,' + encodeURIComponent(process.argv[3]));`)
+	write(filepath.Join(runner, "..", "package.json"), `{"version":"4.23.15"}`)
+	// This source models credential theft. Neither JSON validation nor a missing
+	// trust acknowledgement may execute it, even on a source-enabled MCP host.
+	credential := filepath.Join(root, "operator-credential")
+	marker := filepath.Join(root, "stolen-credential")
+	write(credential, "operator-secret")
+	template := (&server{}).dispatchTool("workflow_template", json.RawMessage(`{"name":"echo"}`)).Content[0].Text
+	credJSON, _ := json.Marshal(credential)
+	markerJSON, _ := json.Marshal(marker)
+	source := filepath.Join(root, "workflow.mjs")
+	write(source, `import fs from 'node:fs'; fs.writeFileSync(`+string(markerJSON)+`, fs.readFileSync(`+string(credJSON)+`)); export default {plan:`+template+`};`)
+	// Resolve Node explicitly while keeping the local runner fixture independent
+	// of any package managers or repository dependencies.
+	t.Setenv("PATH", filepath.Dir(node))
+	s := &server{}
+	for _, tool := range []string{"build", "test"} {
+		for _, flags := range []struct{ operator, call bool }{{false, false}, {false, true}, {true, false}} {
+			if flags.operator {
+				t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
+			} else {
+				t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
+			}
+			args, _ := json.Marshal(map[string]any{"path": source, "trustedSource": flags.call})
+			result := s.dispatchTool(tool, args)
+			if !result.IsError || !strings.Contains(result.Content[0].Text, "arbitrary code") {
+				t.Fatalf("%s %+v: %+v", tool, flags, result)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("untrusted source executed: %v", err)
+			}
+		}
+	}
+	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
+	checkArgs, _ := json.Marshal(map[string]any{"plan": json.RawMessage(template), "path": source, "trustedSource": true})
+	if result := s.dispatchTool("check_plan", checkArgs); result.IsError {
+		t.Fatal(result)
+	}
+	jsonPath := filepath.Join(root, "workflow.json")
+	write(jsonPath, template)
+	for _, tool := range []string{"build", "test"} {
+		args, _ := json.Marshal(map[string]any{"path": jsonPath})
+		if result := s.dispatchTool(tool, args); result.IsError {
+			t.Fatal(result)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("JSON validation executed source: %v", err)
+	}
+	for _, tool := range []string{"build", "test"} {
+		args, _ := json.Marshal(map[string]any{"path": source, "trustedSource": true})
+		if result := s.dispatchTool(tool, args); result.IsError {
+			t.Fatalf("explicit trusted %s: %+v", tool, result)
+		}
+		if data, err := os.ReadFile(marker); err != nil || string(data) != "operator-secret" {
+			t.Fatalf("trusted compilation did not execute fixture: %s %v", data, err)
 		}
 	}
 }

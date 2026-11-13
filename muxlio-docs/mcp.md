@@ -171,7 +171,11 @@ you need. For example:
 The assistant authors the workflow. It can construct Plan IR directly, validate
 it with `check_plan`, and start it with `start_run`. This does not require downloading
 Muxlio's repository. Developers can also author workflow source and use `build`
-and `test` when the required authoring tools are installed.
+and `test` for reviewed, trusted definitions. Source compilation executes arbitrary
+code with host filesystem and network access. It requires operator opt-in
+(`MUXLIO_TRUST_WORKFLOW_CODE=1`) and `trustedSource: true` on the MCP call.
+Prefer `check_plan` or JSON files for untrusted submissions; see the
+[compilation security guide](architecture/execution-security.md#workflow-compilation).
 
 ## Follow the work
 

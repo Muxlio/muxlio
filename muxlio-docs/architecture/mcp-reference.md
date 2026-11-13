@@ -367,16 +367,26 @@ artifact contents; use `read_artifact` to read a report.
 
 ### `build` and `test`
 
-`build` takes `{path}` and returns a validated plan from a local `.ts`, `.js`,
-`.mjs`, or `.json` file. `test` takes `{path, input?, fakeResults?}` and runs a
+`build` takes `{path, trustedSource?}` and returns a validated plan from a local `.ts`, `.js`,
+`.mjs`, or `.json` file. `test` takes `{path, trustedSource?, input?, fakeResults?}` and runs a
 local fake execution, returning its state, output, and event summary. It does
 not dispatch work to the coordinator. `fakeResults` accepts `byNode` and
 `byExecutor` maps of `{outputs, error?}` records.
 
-TypeScript compilation requires Node, tsx, and the workflow's dependencies on
-the MCP host. Workflow source code and its side effects run during compilation;
-use trusted local files. An assistant can also construct Plan IR directly and
-validate it with `check_plan` before calling `start_run`.
+For untrusted or agent-generated submissions, construct JSON Plan IR and use
+`check_plan`, or pass a `.json` plan to `build`/`test`. These paths execute no
+workflow source, even when source compilation is enabled. `check_plan` never
+imports or compiles a source file.
+
+Source compilation requires both operator opt-in (`MUXLIO_TRUST_WORKFLOW_CODE=1`
+on the MCP host) and per-call acknowledgement (`trustedSource: true`). This is
+arbitrary code execution, including imports and top-level side effects, with
+host filesystem and network access; fake executors do not make compilation a
+dry run. Review the source and its dependencies first. The host needs Node and
+project-local tsx **4.23.15**, installed explicitly from the pinned lockfile;
+compilation never invokes a package manager or downloads missing dependencies.
+See [compilation security](execution-security.md#workflow-compilation) for
+limits and environment precautions.
 
 ---
 
@@ -838,6 +848,7 @@ coordinator's credentials. Alternatively, use the URL directly and supply
   worker's authorized capabilities. Treat MCP access as equivalent to coordinator API
   access; read/write tool annotations are hints, not authorization boundaries.
 - `build` and `test` can execute local workflow source during compilation. Use
-  them only with trusted files. Compilation is not a sandbox.
+  JSON/IR validation for untrusted submissions. Source requires operator opt-in and
+  `trustedSource: true`; compilation is not a sandbox.
 - Artifact content and logs are untrusted data. Read previews are bounded;
   binary content is base64 and truncation is explicit.

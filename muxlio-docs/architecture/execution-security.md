@@ -279,3 +279,45 @@ counted as successful denial. Run live qualification on the actual execution hos
 argument fixtures alone do not prove successful live enforcement. ACP/A2A
 transport adapters retain their separate protocol trust contracts and are not
 native CLI mappings.
+
+## Workflow compilation
+
+The recommended validation path for untrusted or agent-generated submissions is
+JSON Plan IR: use MCP `check_plan` (an in-memory JSON document), or `build`/`test`
+with a `.json` file. These paths never execute TypeScript, JavaScript, imports,
+package scripts, or compiler hooks. Catalog templates also produce JSON without
+Node. Do not enable source compilation merely to validate generated source.
+
+Loading `.ts`, `.js`, or `.mjs` executes arbitrary code before Plan IR validation.
+This includes CLI `build`, `check`, `test`, and `run`, and MCP `build`/`test`.
+The operator must explicitly set `MUXLIO_TRUST_WORKFLOW_CODE=1`; MCP additionally
+requires `trustedSource: true` on each source call. The tool descriptions and
+rejection messages expose the risk before execution. This acknowledgement is
+not a sandbox or a substitute for reviewing the source and dependencies.
+
+Compilation invokes only project-local tsx **4.23.15** using Node, checks its
+package version, and never invokes npx or installs packages. Install the root
+lockfile explicitly with `npm ci` in a trusted environment. The version check is
+not an integrity check against malicious local dependencies: the workflow,
+Node binary, and installed dependency tree must all be trusted.
+
+The compiler receives an allowlisted environment (PATH, a disposable HOME and
+TMPDIR, MUXLIO_COMPILE, a fixed NODE_OPTIONS heap limit, and disabled tsx caching).
+Operator environment tokens and Node injection hooks are not forwarded.
+Compilation stops after 30 seconds, 8 MiB of stdout, or 64 KiB of stderr.
+Node's V8 heap is capped at 256 MiB; this is not a total process-tree memory cap.
+On Unix, cancellation and cleanup after compiler exit kill the compiler process
+group, including remaining descendants; on other platforms cancellation kills
+the direct child and bounds pipe draining. These are resource safeguards
+for trusted code, not protection from deliberately hostile code.
+
+Source compilation still has host filesystem and network access. A disposable
+HOME does not prevent reading credentials by absolute path. Worker isolation
+policies in `internal/sandbox` apply to worker execution, not authoring, and
+must not be presented as compiler isolation. If source compilation is necessary,
+run the compiler on a separate disposable host/container under a dedicated
+identity, with only the reviewed workspace and dependencies mounted, no
+operator credentials, network denied, and OS memory/process limits. Transfer
+only the resulting JSON Plan IR to the operator's MCP host for `check_plan` and
+submission. Never enable trusted source loading on a host that handles
+unreviewed definitions.
