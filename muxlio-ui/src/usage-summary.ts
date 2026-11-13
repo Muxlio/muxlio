@@ -38,7 +38,7 @@ function buildUsagePresentation(accounting: AccountingSummary | null,options: Us
  const primary=[],details=[];
  for(const item of accountingMeasures(accounting)){
   const row=item.row,value=row.effectiveTotal??row.knownSubtotal;
-  if(value!=null)primary.push({key:item.key,label:item.label,value,format:accountingExact,coverage:row.effectiveTotal==null?' · incomplete':row.estimatedFallbackSubtotal!=null?' · includes estimates':''});
+  if(value!=null)primary.push({key:item.key,label:item.label,value,format:accountingExact,isSubtotal:row.effectiveTotal==null,coverage:row.effectiveTotal==null?' · incomplete':row.estimatedFallbackSubtotal!=null?' · includes estimates':''});
   if(row.collectedSubtotal!=null)details.push({key:item.key+':collected',label:item.label+' · '+accountingCollectedLabel(row).toLowerCase(),value:row.collectedSubtotal,format:accountingExact});
   if(row.estimatedFallbackSubtotal!=null)details.push({key:item.key+':estimated',label:item.label+' · estimated fallback',value:row.estimatedFallbackSubtotal,format:accountingExact});
   details.push({key:item.key+':coverage',label:item.label+' coverage',value:accountingStatus(row),format:accountingExact});
@@ -95,7 +95,7 @@ function buildWorkbenchUsageMarkup(presentation){
   }
   const headline=workbenchUsageHeadlineMeasure(primary);
   const headlineVal=headline.key==='tokens'?`${fmtTokens(headline.value)} tokens`:usageMeasureValue(headline);
-  const label=headline.key==='tokens'?'Accounting':headline.label;
+  const label=(headline.key==='tokens'?'Accounting':headline.label)+(headline.isSubtotal?' · subtotal':'');
   const accessibleLabel=`${headline.label}${headline.coverage||''}`;
   return renderViewTemplate("usage-summary/build-workbench-usage-markup-stat-4", [viewValue(esc(status)), viewValue(esc(accessibleLabel)), viewValue(esc(headlineVal)), viewValue(esc(label))]);
 }

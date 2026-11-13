@@ -363,7 +363,10 @@ const ui = createUIServer({
 });
 ui.listen(0, "127.0.0.1");
 await once(ui, "listening");
-const browser = await chromium.launch({ headless: true, channel: "chrome" });
+const browser = await chromium.launch({
+  headless: true,
+  channel: process.env.MUXLIO_BROWSER_CHANNEL || "chrome",
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.on("pageerror", (error) => errors.push(error.message));
 const goto = async (hash) => {
@@ -388,7 +391,7 @@ try {
   });
   assert.deepEqual(duplicateIds, []);
   await page.screenshot({
-    path: "/private/tmp/muxlio-ui-browser-check/operations-desktop.png",
+    path: `${process.env.MUXLIO_BROWSER_ARTIFACT_DIR || "/private/tmp/muxlio-ui-browser-check"}/operations-desktop.png`,
     fullPage: true,
   });
   await waitText("#operationsList", "Verify remote outcome");
@@ -533,7 +536,7 @@ try {
     ),
   );
   await page.screenshot({
-    path: "/private/tmp/muxlio-ui-browser-check/operations-mobile.png",
+    path: `${process.env.MUXLIO_BROWSER_ARTIFACT_DIR || "/private/tmp/muxlio-ui-browser-check"}/operations-mobile.png`,
     fullPage: true,
   });
   assert.equal(
