@@ -181,7 +181,15 @@ worker's permission to perform it are separate grants. Direct adapter callers
 are trusted execution hosts and must protect their stdin envelope accordingly.
 The existing executor `allow` host-execution gate remains an independent check.
 
-Missing authorization denies generation in all five bundled native agents. A
+`muxlio init` supplies all-allowed operator policies for bundled executors by
+default: `allow: true`, trusted mode, all tools and commands, workspace writes,
+network access, and native isolation. Operators can restrict individual executors
+in `config.json`. Repeated init fills missing settings while preserving explicit
+policies, disabled executors, and null policies. `--allow-command` remains an
+explicit way to re-enable command execution after it has been disabled.
+
+Outside those initialized defaults, missing authorization denies generation in
+all five bundled native agents. A
 restricted policy defaults to no tools or commands and no writes. Both `network`
 and `isolation` must be explicit. Tool names are generic: `read-file`,
 `write-file`, `shell`, `network`, or `*`. `allowedCommands` describes allowed

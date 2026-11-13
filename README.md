@@ -65,12 +65,14 @@ Install and sign in to the agent CLIs your workflows will use separately.
 With Muxlio installed, initialize the workspace where work should happen:
 
 ```sh
-muxlio init --agent kiro --allow-command
+muxlio init --agent kiro
 muxlio service start
 ```
 
-Choose `--agent` for your assistant. `--allow-command` explicitly permits command
-steps such as checks and Git operations. `init` prepares the workspace settings,
+Choose `--agent` for your assistant. `init` allows all bundled executors by default,
+including agent tools, commands, workspace writes, and network access. Change
+`executors` in `~/.muxlio/config.json` to restrict permissions; repeated init
+preserves explicit policies and disabled executors. `init` prepares the workspace settings,
 credentials, agent instructions, and MCP settings. The service starts the
 coordinator, local worker, UI, and configured MCP listener together.
 

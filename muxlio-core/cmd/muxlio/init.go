@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/integrations"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
@@ -24,7 +25,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	workerPath := fs.String("worker-path", "", "persist this absolute executable search path (default: preserve saved workerEnv.PATH, otherwise capture PATH)")
 	mcpListen := fs.String("mcp-listen", "127.0.0.1:7602", "MCP HTTP listen address for setup (existing setting preserved unless this flag is supplied)")
 	starter := fs.Bool("starter", false, "create a starter workflow in the workspace")
-	allowCommand := fs.Bool("allow-command", false, "authorize command execution for workflow checks and local commits")
+	allowCommand := fs.Bool("allow-command", false, "re-enable command execution when an existing configuration disables it")
 	jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON output")
 
 	if err := fs.Parse(reorderArgs(args)); err != nil {
@@ -134,7 +135,11 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 		fmt.Fprintln(os.Stderr, "error: config must be a JSON object")
 		return 1
 	}
-	configChanged := false
+	configChanged, err := initializeExecutorPolicies(config)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: configuring executor defaults:", err)
+		return 1
+	}
 	if *allowCommand {
 		executors := map[string]json.RawMessage{}
 		if raw := config["executors"]; len(raw) > 0 {
@@ -442,4 +447,70 @@ func getSkillDir(root string) string {
 		}
 	}
 	return ""
+}
+
+// initializeExecutorPolicies supplies the same permissive operator defaults to
+// every bundled capability. Explicit fields (including false and null) remain
+// user-owned, so rerunning init cannot undo restrictions or executor overrides.
+func initializeExecutorPolicies(config map[string]json.RawMessage) (bool, error) {
+	executors := map[string]json.RawMessage{}
+	if raw := config["executors"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &executors); err != nil {
+			return false, fmt.Errorf("executors must be an object: %w", err)
+		}
+	}
+	if executors == nil {
+		executors = map[string]json.RawMessage{}
+	}
+	policy, err := json.Marshal(contract.AuthorizationPolicy{
+		Mode: "trusted", AllowedTools: []string{"*"}, AllowedCommands: []string{"*"},
+		WorkspaceWrite: true, Network: "allowed", Isolation: "native",
+	})
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, capability := range BundledExecutorCapabilities {
+		settings := map[string]json.RawMessage{}
+		if raw, exists := executors[capability]; exists {
+			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+				continue
+			}
+			if err := json.Unmarshal(raw, &settings); err != nil || settings == nil {
+				return false, fmt.Errorf("executor %q must be an object or null", capability)
+			}
+		}
+		entryChanged := false
+		if _, exists := settings["allow"]; !exists {
+			settings["allow"] = json.RawMessage("true")
+			entryChanged = true
+		}
+		if _, exists := settings["authorization"]; !exists {
+			settings["authorization"] = policy
+			entryChanged = true
+		}
+		if entryChanged {
+			executors[capability], err = json.Marshal(settings)
+			if err != nil {
+				return false, err
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	raw, err := json.Marshal(executors)
+	if err != nil {
+		return false, err
+	}
+	var typed map[string]workers.ExecutorConfig
+	if err := json.Unmarshal(raw, &typed); err != nil {
+		return false, err
+	}
+	if err := workers.ValidateExecutorConfigs(typed); err != nil {
+		return false, err
+	}
+	config["executors"] = raw
+	return true, nil
 }

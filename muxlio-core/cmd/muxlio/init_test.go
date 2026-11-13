@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 func TestInitCommandAuthorizationPreservesExecutorConfiguration(t *testing.T) {
@@ -230,5 +233,99 @@ func TestInitPersistsWorkerPathAndPreservesOverrides(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatal("invalid PATH changed existing config")
+	}
+}
+
+func TestInitDefaultsAllowBundledExecutorsAndPreserveUserPolicies(t *testing.T) {
+	root, ws := t.TempDir(), t.TempDir()
+	args := []string{"--data-dir", root, "--workspace", ws, "--json"}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	path := filepath.Join(root, "config.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg serviceConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range BundledExecutorCapabilities {
+		c := cfg.Executors[capability]
+		if !c.ExplicitlyAllowed() || c.Authorization == nil {
+			t.Fatalf("%s not authorized: %+v", capability, c)
+		}
+		p := c.Authorization
+		if p.Mode != "trusted" || !p.WorkspaceWrite || p.Network != "allowed" || p.Isolation != "native" || !slices.Equal(p.AllowedTools, []string{"*"}) || !slices.Equal(p.AllowedCommands, []string{"*"}) {
+			t.Fatalf("%s defaults: %+v", capability, p)
+		}
+		if err := p.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Apply operator restrictions to one capability, an explicit absent policy
+	// to another, and retain custom executors and fields verbatim.
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	executors := map[string]json.RawMessage{
+		BundledExecutorCapabilities[0]: json.RawMessage(`{"allow":false,"authorization":{"mode":"restricted","network":"none","isolation":"required"},"env":{"EXAMPLE":"value"},"timeoutSeconds":120,"custom":true}`),
+		BundledExecutorCapabilities[1]: json.RawMessage(`{"allow":false,"authorization":null}`),
+		BundledExecutorCapabilities[2]: json.RawMessage(`null`),
+		"custom/tool":                  json.RawMessage(`{"allow":false,"custom":"keep"}`),
+	}
+	config["executors"], _ = json.Marshal(executors)
+	before, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(after, &config); err != nil {
+		t.Fatal(err)
+	}
+	var next map[string]json.RawMessage
+	if err := json.Unmarshal(config["executors"], &next); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range executors {
+		var gotValue, wantValue any
+		_ = json.Unmarshal(next[key], &gotValue)
+		_ = json.Unmarshal(want, &wantValue)
+		if !reflect.DeepEqual(gotValue, wantValue) {
+			t.Fatalf("init changed explicit %s policy: %s != %s", key, next[key], want)
+		}
+	}
+	if code := cmdInit(args, "", true); code != 0 {
+		t.Fatal(code)
+	}
+	repeated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(repeated) {
+		t.Fatal("repeated init changed configuration")
+	}
+}
+
+func TestInitUpgradesMissingPoliciesWithoutReplacingExecutorOverrides(t *testing.T) {
+	config := map[string]json.RawMessage{"executors": json.RawMessage(`{"agent/kiro":{"timeoutSeconds":1800},"command":{"allow":true}}`)}
+	changed, err := initializeExecutorPolicies(config)
+	if err != nil || !changed {
+		t.Fatalf("initialize: changed=%v %v", changed, err)
+	}
+	var cfg map[string]workers.ExecutorConfig
+	if err := json.Unmarshal(config["executors"], &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["agent/kiro"].TimeoutSeconds != 1800 || cfg["agent/kiro"].Authorization == nil {
+		t.Fatalf("override lost or policy missing: %+v", cfg["agent/kiro"])
 	}
 }
