@@ -200,11 +200,17 @@ func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, erro
 	return result, nil
 }
 
-// ExclusiveDispatchKeys includes implicit session reservations. The coordinator
-// conservatively serializes even multiplex-capable adapters; local workers can
-// use shared session locks only with an explicit adapter declaration.
+// ExclusiveDispatchKeys includes implicit workspace and session reservations.
+// The coordinator conservatively serializes even multiplex-capable adapters;
+// local workers can use shared session locks only with an explicit adapter declaration.
 func ExclusiveDispatchKeys(req ExecuteRequest) []string {
 	keys := append([]string(nil), req.ConcurrencyKeys...)
+	if req.WorkspaceMode == "shared-write" && req.Action != "poll" && req.Action != "reconcile" {
+		// Workspace IDs are canonicalized by operator authorization, including
+		// aliases. The owner scopes identities to independent worker worktrees.
+		raw, _ := json.Marshal([]string{req.WorkspaceWorkerID, req.WorkspaceID})
+		keys = append(keys, fmt.Sprintf("muxlio:workspace:%x", sha256.Sum256(raw)))
+	}
 	if req.Session != nil && req.Session.Mode == "resume" && req.Session.Handle != nil {
 		h := req.Session.Handle
 		raw, _ := json.Marshal([]string{h.Executor, h.OwnerWorker, h.OwnerEnvironment, h.ID})

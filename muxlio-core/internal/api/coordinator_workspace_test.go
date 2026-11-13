@@ -104,3 +104,25 @@ func TestRemoteDispatchOmitsCoordinatorWorkspace(t *testing.T) {
 	}
 	cancel()
 }
+
+func TestWorkspaceWriteIdentityAcrossClients(t *testing.T) {
+	root := t.TempDir()
+	c := &Coordinator{Workspaces: workers.WorkspaceRegistry{
+		"project":     {WorkerID: "local", Path: root, Aliases: []string{"client-one", "client-two"}},
+		"independent": {WorkerID: "local", Path: t.TempDir()},
+	}}
+	var keys []string
+	for _, id := range []string{"client-one", "client-two", "independent"} {
+		req, err := c.authorizeWorkspace(workers.ExecuteRequest{WorkspaceID: id, WorkspaceMode: "shared-write"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := workers.ValidateDispatchWorkspace(req); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, workers.ExclusiveDispatchKeys(req)[0])
+	}
+	if keys[0] != keys[1] || keys[0] == keys[2] {
+		t.Fatalf("workspace keys do not follow resolved authority: %v", keys)
+	}
+}

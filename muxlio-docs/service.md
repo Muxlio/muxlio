@@ -68,7 +68,11 @@ input; if supplied, that input must match the authorized binding.
 
 Workspace selection is independent of mode: `snapshot` copies the selected
 source into attempt scratch, `empty` starts without a source, `read-only` requires
-enforced isolation, and `shared-write` requires an exclusive concurrency key.
+enforced isolation, and `shared-write` automatically acquires an exclusive lock
+on the resolved workspace identity. Explicit `concurrencyKeys` remain available
+for external resources. Workspace locks survive coordinator restart and worker
+loss; uncertain writers hold their locks until completion or safe reconciliation.
+Independent worktrees remain eligible to execute in parallel.
 
 ## Connect and run
 

@@ -76,7 +76,6 @@ import { z } from 'zod';
 const command = (args, extra = {}) => task({
   executor: 'command',
   workspaceMode: 'shared-write',
-  concurrencyKeys: ['command-verification-workspace'],
   params: { program: process.execPath, args, cwd: '.', onNonZero: 'return', ...extra },
 });
 const verify = command(['-e', "if(process.env.EXAMPLE_EXECUTOR_SETTING!=='configured-value'||process.env.EXAMPLE_UNCONFIGURED_SETTING!==undefined)process.exit(2);console.log('verification');process.exit(require('fs').existsSync('ready') ? 0 : 1)"]);
@@ -148,6 +147,13 @@ console.log(JSON.stringify(compiled.plan));`)
 			}
 			defer store.Close()
 			coordinator := api.NewCoordinator(store)
+			coordinator.Workspaces = workers.WorkspaceRegistry{
+				"default": {WorkerID: "command-worker", Path: workspace},
+			}
+			p.WorkspaceID = "default"
+			if _, err := p.ComputeDigest(); err != nil {
+				t.Fatal(err)
+			}
 			server := httptest.NewServer(api.NewWorkerProtocolHandler(coordinator))
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -166,6 +172,21 @@ console.log(JSON.stringify(compiled.plan));`)
 					t.Errorf("worker stopped: %v", err)
 				}
 			}()
+			// Workspace authorization requires the owning worker to be available.
+			for {
+				registered, err := store.ListWorkers(time.Now().Add(-time.Minute))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(registered) > 0 {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("owning worker did not register")
+				case <-time.After(time.Millisecond):
+				}
+			}
 			engine := plan.NewEngineWithStore(&p, coordinator, store)
 			engine.Context = ctx
 			input, _ := json.Marshal(map[string]bool{"repair": tc.repair})

@@ -29,7 +29,9 @@ unsupported platforms and native fallbacks fail closed. The current Linux bwrap
 and OCI drivers disable network access and expose writable attempt scratch.
 Host workspace access must be declared separately using `workspace-read-only`
 with `workspaceMode: "read-only"`, or `workspace-write` with
-`workspaceMode: "shared-write"` and exclusive concurrency keys. An omitted
+`workspaceMode: "shared-write"`. Shared writes acquire an implicit exclusive
+workspace reservation through durable coordinator admission; explicit concurrency
+keys can additionally protect external resources. An omitted
 filesystem declaration on a restricted attempt grants scratch access only.
 OCI also requires an operator-approved Linux image. macOS can opt into Docker
 Desktop with `{"mode":"required","runtime":"docker-vm","enabled":true,

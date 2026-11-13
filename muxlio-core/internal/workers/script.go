@@ -115,7 +115,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
 	}
-	if len(req.ConcurrencyKeys) > 0 && !req.resourcesAdmitted {
+	if (len(req.ConcurrencyKeys) > 0 || req.WorkspaceMode == "shared-write") && !req.resourcesAdmitted {
 		return ExecuteResult{Error: "exclusive concurrency keys require coordinator worker admission; submit this task to a coordinator"}, nil
 	}
 	var workspaceErr error
@@ -284,7 +284,7 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	}
 	result.Logs = boundedLog(RedactSecrets(result.Logs+stderr.String(), executionSecrets(req)))
 	if req.WorkspaceMode == "shared-write" {
-		result.Logs = "[muxlio shared writable workspace: exclusive resource keys required]\n" + result.Logs
+		result.Logs = "[muxlio shared writable workspace: exclusive workspace reservation admitted]\n" + result.Logs
 	}
 	boundaries, _ := json.Marshal(launch.Capabilities)
 	result.Logs = "[muxlio sandbox boundaries: " + string(boundaries) + "]\n" + result.Logs

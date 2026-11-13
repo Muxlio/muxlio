@@ -130,31 +130,41 @@ func TestLostExclusiveHolderRequiresReconciliation(t *testing.T) {
 }
 
 func TestCancelledExclusiveHolderRetainsResourceUntilCompletion(t *testing.T) {
-	s := openTemp(t)
-	admissionWorker(t, s, "worker", 10)
-	admissionRun(t, s, "run", 2)
-	if _, err := s.db.Exec(`UPDATE dispatches SET request_json='{"concurrencyKeys":["mutable"]}'`); err != nil {
-		t.Fatal(err)
-	}
-	d, _ := admissionClaim(t, s, "worker")
-	if err := s.CancelAttemptWork(d.AttemptID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`UPDATE assignments SET lease_until=? WHERE attempt_id=?`, rfc3339(time.Now().Add(-time.Hour)), d.AttemptID); err != nil {
-		t.Fatal(err)
-	}
-	if next, _ := admissionClaim(t, s, "worker"); next != nil {
-		t.Fatal("cancelled resource holder overlapped after lease expiry")
-	}
-	a, err := s.LookupWorkerAssignment("worker", d.AssignmentID)
-	if err != nil || a == nil {
-		t.Fatalf("assignment: %v %v", a, err)
-	}
-	if ok, err := s.AckWorkerCompletionWithoutResult(*a, "cancelled", a.Generation-1); err != nil || !ok {
-		t.Fatalf("completion: %v %v", ok, err)
-	}
-	if next, _ := admissionClaim(t, s, "worker"); next == nil {
-		t.Fatal("confirmed completion did not release resource")
+	for name, raw := range map[string]string{
+		"explicit":  `{"concurrencyKeys":["mutable"]}`,
+		"workspace": `{"workspaceMode":"shared-write","workspaceId":"project","workspaceWorkerId":"worker"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openTemp(t)
+			admissionWorker(t, s, "worker", 10)
+			admissionRun(t, s, "run", 2)
+			if _, err := s.db.Exec(`UPDATE workers SET labels_json=?`, `{"muxlio.dev/workspace-id/project":"true"}`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`UPDATE dispatches SET request_json=?`, raw); err != nil {
+				t.Fatal(err)
+			}
+			d, _ := admissionClaim(t, s, "worker")
+			if err := s.CancelAttemptWork(d.AttemptID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`UPDATE assignments SET lease_until=? WHERE attempt_id=?`, rfc3339(time.Now().Add(-time.Hour)), d.AttemptID); err != nil {
+				t.Fatal(err)
+			}
+			if next, _ := admissionClaim(t, s, "worker"); next != nil {
+				t.Fatal("cancelled resource holder overlapped after lease expiry")
+			}
+			a, err := s.LookupWorkerAssignment("worker", d.AssignmentID)
+			if err != nil || a == nil {
+				t.Fatalf("assignment: %v %v", a, err)
+			}
+			if ok, err := s.AckWorkerCompletionWithoutResult(*a, "cancelled", a.Generation-1); err != nil || !ok {
+				t.Fatalf("completion: %v %v", ok, err)
+			}
+			if next, _ := admissionClaim(t, s, "worker"); next == nil {
+				t.Fatal("confirmed completion did not release resource")
+			}
+		})
 	}
 }
 
@@ -231,5 +241,149 @@ func TestExclusiveKeysReserveTogetherWithoutBlockingUnrelatedResources(t *testin
 	admissionComplete(t, s, "worker", unrelated, otherGeneration)
 	if next, _ := admissionClaim(t, s, "worker"); next == nil || next.AttemptID != "run-1" {
 		t.Fatalf("released keys unavailable: %+v", next)
+	}
+}
+
+func TestWorkspaceWritesSurviveLossAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workspace.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admissionWorker(t, s, "worker", 10)
+	for i, raw := range []string{
+		`{"workspaceMode":"shared-write","workspaceId":"project","workspaceWorkerId":"worker","effect":"pure"}`,
+		`{"workspaceMode":"shared-write","workspaceId":"project","workspaceWorkerId":"worker","effect":"pure","concurrencyKeys":["client-two"]}`,
+		`{"workspaceMode":"shared-write","workspaceId":"independent","workspaceWorkerId":"worker"}`,
+		`{"workspaceMode":"snapshot","workspaceId":"project","workspaceWorkerId":"worker"}`,
+		`{"workspaceMode":"empty","workspaceId":"project","workspaceWorkerId":"worker"}`,
+	} {
+		id := fmt.Sprint(i)
+		admissionRun(t, s, id, 1)
+		if _, err := s.db.Exec(`UPDATE dispatches SET request_json=? WHERE run_id=?`, raw, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Advertise both authorized worktrees for generic placement matching.
+	if _, err := s.db.Exec(`UPDATE workers SET labels_json=?`, `{"muxlio.dev/workspace-id/project":"true","muxlio.dev/workspace-id/independent":"true"}`); err != nil {
+		t.Fatal(err)
+	}
+	holder, _, err := s.ClaimDispatch("worker", time.Now().Add(-time.Second))
+	if err != nil || holder == nil || holder.RunID != "0" {
+		t.Fatalf("initial claim: %+v %v", holder, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, want := range []string{"2", "3", "4"} {
+		d, g := admissionClaim(t, s, "worker")
+		if d == nil || d.RunID != want {
+			t.Fatalf("safe independent dispatch %s blocked: %+v", want, d)
+		}
+		admissionComplete(t, s, "worker", d, g)
+	}
+	if d, _ := admissionClaim(t, s, "worker"); d != nil {
+		t.Fatalf("lost writer replayed or overlapped: %+v", d)
+	}
+	// A fresh attempt for the same activation cannot bypass an uncertain holder.
+	retry := *holder
+	retry.AttemptID, retry.AssignmentID = "retry", "retry"
+	if err := s.EnqueueDispatch(retry); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := admissionClaim(t, s, "worker"); d != nil {
+		t.Fatalf("retry bypassed uncertain workspace reservation: %+v", d)
+	}
+	var status, reason string
+	if err := s.db.QueryRow(`SELECT state FROM assignments WHERE attempt_id=?`, holder.AttemptID).Scan(&status); err != nil || status != "uncertain" {
+		t.Fatalf("lost writer status: %s %v", status, err)
+	}
+	if err := s.db.QueryRow(`SELECT reason FROM admission_queue WHERE activation_id='1-0'`).Scan(&reason); err != nil || reason != "Waiting for exclusive resource key" {
+		t.Fatalf("generic admission reason: %q %v", reason, err)
+	}
+	// Only a confirmed terminal assignment permits explicit reconciliation.
+	if err := s.ReconcileUncertainDispatch(holder.ActivationID); err == nil {
+		t.Fatal("accepted reconciliation of nonterminal writer")
+	}
+	if d, _ := admissionClaim(t, s, "worker"); d != nil {
+		t.Fatal("reconciliation released a nonterminal writer")
+	}
+	if _, err := s.db.Exec(`UPDATE assignments SET state='failed' WHERE activation_id=?`, holder.ActivationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileUncertainDispatch(holder.ActivationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelAttemptWork(holder.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := admissionClaim(t, s, "worker"); d == nil || d.RunID != "1" {
+		t.Fatalf("safe reconciliation did not release workspace: %+v", d)
+	}
+}
+
+func TestWorkspaceWritesAtomicAcrossConnections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workspace.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	admissionWorker(t, first, "worker", 10)
+	if _, err := first.db.Exec(`UPDATE workers SET labels_json=?`, `{"muxlio.dev/workspace-id/project":"true"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"client-one", "client-two"} {
+		if err := first.CreateRun(&state.Run{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		raw := fmt.Sprintf(`{"workspaceMode":"shared-write","workspaceId":"project","workspaceWorkerId":"worker","concurrencyKeys":[%q]}`, id)
+		if err := first.EnqueueDispatch(state.Dispatch{AssignmentID: id, ActivationID: id, AttemptID: id, RunID: id, Executor: "test", Request: []byte(raw)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type claim struct {
+		d   *state.Dispatch
+		g   int64
+		err error
+	}
+	results := make(chan claim, 2)
+	start := make(chan struct{})
+	for _, store := range []*Store{first, second} {
+		go func() {
+			<-start
+			d, g, err := store.ClaimDispatch("worker", time.Now().Add(time.Hour))
+			results <- claim{d, g, err}
+		}()
+	}
+	close(start)
+	var holder claim
+	count := 0
+	for range 2 {
+		c := <-results
+		if c.err != nil {
+			t.Fatal(c.err)
+		}
+		if c.d != nil {
+			count++
+			holder = c
+		}
+	}
+	if count != 1 {
+		t.Fatalf("overlapping workspace writers: %d", count)
+	}
+	admissionComplete(t, first, "worker", holder.d, holder.g)
+	if d, _ := admissionClaim(t, second, "worker"); d == nil {
+		t.Fatal("completion did not release workspace")
 	}
 }

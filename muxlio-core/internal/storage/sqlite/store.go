@@ -495,7 +495,7 @@ func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 	if err := decodePersistedValue(string(d.Request), &request); err != nil {
 		return err
 	}
-	if err := workers.ValidateWorkspaceContract(request.WorkspaceMode, request.ConcurrencyKeys); err != nil {
+	if err := workers.ValidateDispatchWorkspace(request); err != nil {
 		return err
 	}
 	s.mu.Lock()

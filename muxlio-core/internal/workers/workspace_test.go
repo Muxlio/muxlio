@@ -246,3 +246,26 @@ func TestReadOnlyWorkspaceRequiresIsolationAtAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceResources(t *testing.T) {
+	for _, mode := range []string{"", "read-only", "snapshot", "empty", "shared-write"} {
+		req := ExecuteRequest{WorkspaceID: "project", WorkspaceWorkerID: "worker", WorkspaceMode: mode}
+		keys := ExclusiveDispatchKeys(req)
+		if (len(keys) == 1) != (mode == "shared-write") {
+			t.Fatalf("workspace mode %q resources: %v", mode, keys)
+		}
+		if err := ValidateDispatchWorkspace(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ValidateWorkspaceContract("shared-write", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDispatchWorkspace(ExecuteRequest{WorkspaceMode: "shared-write", ConcurrencyKeys: []string{"external"}}); err == nil {
+		t.Fatal("explicit resource substituted for missing workspace authority")
+	}
+	s := testScript(t, `printf '{}'`)
+	if result, err := s.Execute(ExecuteRequest{Executor: "test", WorkspaceMode: "shared-write"}); err != nil || !strings.Contains(result.Error, "coordinator worker admission") {
+		t.Fatalf("direct unkeyed writer executed: %+v %v", result, err)
+	}
+}

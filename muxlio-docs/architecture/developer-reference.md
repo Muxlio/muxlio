@@ -274,8 +274,9 @@ and `MUXLIO_OUTPUT_DIR`.
 `recipes/implement-features/workflow.ts` is a ready-to-use recipe: in the current git workspace, each feature runs implement → review → a verify/fix loop (`repeatUntil`, `maxAttempts: 10`, `onExhausted: 'pause'`) → commit. Features run serially (`concurrency: 1`); the commit step is gated on a passed verification via `{ requiresPassed }`. The recipe finishes with verified local commits; it does not push or require Git remote authentication.
 
 Start the coordinator and a worker authorized for the target checkout before
-submitting this recipe. Its shared-write concurrency keys require coordinator
-admission; direct `--adapters` execution cannot enforce them.
+submitting this recipe. Shared writes require durable coordinator admission,
+which automatically serializes writes to the resolved workspace; direct
+`--adapters` execution cannot enforce these reservations.
 
 Review the commits in the worker's workspace and push manually when ready.
 Commits stay on that worker until you push them.

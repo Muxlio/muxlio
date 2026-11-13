@@ -37,11 +37,7 @@ func ValidateWorkspaceContract(mode string, keys []string) error {
 		}
 	}
 	switch mode {
-	case "", "snapshot", "empty", "read-only":
-	case "shared-write":
-		if len(keys) == 0 {
-			return fmt.Errorf("shared-write workspace requires an exclusive concurrency key")
-		}
+	case "", "snapshot", "empty", "read-only", "shared-write":
 	default:
 		return fmt.Errorf("unknown workspace mode %q", mode)
 	}
@@ -165,11 +161,23 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 			return req, fmt.Errorf("read-only workspace requires enforced isolation")
 		}
 	case "shared-write":
-		if len(req.ConcurrencyKeys) == 0 {
-			return req, fmt.Errorf("shared-write workspace requires an exclusive concurrency key")
+		if req.Workspace == "" {
+			return req, fmt.Errorf("shared-write workspace requires an authorized workspace")
 		}
 	default:
 		return req, fmt.Errorf("unknown workspace mode %q", req.WorkspaceMode)
 	}
 	return req, nil
+}
+
+// ValidateDispatchWorkspace requires resolved operator authority before durable
+// admission. Explicit keys cannot substitute for the implicit workspace lock.
+func ValidateDispatchWorkspace(req ExecuteRequest) error {
+	if err := ValidateWorkspaceContract(req.WorkspaceMode, req.ConcurrencyKeys); err != nil {
+		return err
+	}
+	if req.WorkspaceMode == "shared-write" && req.Action != "poll" && req.Action != "reconcile" && (req.WorkspaceID == "" || req.WorkspaceWorkerID == "") {
+		return fmt.Errorf("shared-write workspace requires a resolved workspace identity and owner")
+	}
+	return nil
 }

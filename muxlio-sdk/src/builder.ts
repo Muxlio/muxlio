@@ -64,9 +64,9 @@ export interface ProjectResult {
 export interface ExecuteOptions extends ExecutorRequirements {
   executor: string;
   fallbackExecutors?: string[];
-  /** Private snapshot by default; shared writes require exclusive keys. */
+  /** Private snapshot by default; shared writes are serialized by workspace. */
   workspaceMode?: 'snapshot' | 'empty' | 'read-only' | 'shared-write';
-  /** All keys are acquired atomically with a concurrency limit of one. */
+  /** Optional external resource keys, acquired atomically with a concurrency limit of one. */
   concurrencyKeys?: string[];
   task?: string;
   params?: unknown;

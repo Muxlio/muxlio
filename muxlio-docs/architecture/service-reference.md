@@ -297,7 +297,8 @@ leave an external effect uncertain. The configured effect policy determines safe
 replay, adapter reconciliation, or an operator hold. The `command` executor starts
 in the selected attempt workspace; set `params.cwd` for a nested module. The default
 workspace mode is a private snapshot; edits to the source require explicit
-`shared-write` mode with coordinator-managed concurrency keys.
+`shared-write` mode with an automatically derived, coordinator-managed workspace
+reservation. Explicit concurrency keys add reservations for external resources.
 
 ## Session input delivery
 
