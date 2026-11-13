@@ -110,6 +110,18 @@ snapshot replacement; they do not substitute for the live acceptance gate.
 
 ## Antigravity
 
+An isolated CLI **1.5.7** terminal/write/read probe confirmed that native
+`input_tokens` excludes `cache_read_tokens`, and `total_tokens` is uncached
+input plus output. A warm step reported 2,373 input, 6,149 cache reads, 120
+output and 2,493 total. The adapter adds cache reads to input and total before
+publishing the shared inclusive token contract. Thinking remains a subset of
+output. This normalization applies to streamed steps and terminal replacement;
+legacy `cached`/`cachedTokens` shapes retain their existing interpretation.
+The sanitized counters are retained in
+`muxlio-adapters/cmd/agent-antigravity/testdata/1.5.7-cached-success.jsonl`.
+Replay tests verify valid progress accounting before completion and that the
+terminal aggregate replaces, rather than adds to, the same consumption.
+
 The official [status-line contract](https://antigravity.google/docs/cli/statusline/)
 defines `cost.total_usd` as a list-price estimate, including subagents. It is
 not billed cash, even when `cost.estimated` is false. The documentation alone

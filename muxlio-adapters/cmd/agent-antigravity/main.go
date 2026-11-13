@@ -111,6 +111,15 @@ func main() {
 	conversationID := ""
 	conversationConflict := false
 	accountingRecorder := adapter.NewTokenRecorder("antigravity-stream")
+	accountingRejectionLogged := false
+	reportAccountingRejection := func(err error) {
+		if err == nil || accountingRejectionLogged {
+			return
+		}
+		accountingRejectionLogged = true
+		adapter.AppendLogChunk("stderr", "accounting-observation-rejected: "+err.Error()+"\n")
+	}
+
 	if model != "" {
 		_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
 	}
@@ -185,14 +194,14 @@ func main() {
 					}
 				}
 			}
-			var reported *adapter.TokenCounters
-			if u := antigravityTokenCounters(ev["usage"]); u != nil {
-				reported = u
-			} else if u := antigravityTokenCounters(ev["stats"]); u != nil {
-				reported = u
+			reported, usageErr := antigravityTokenCounters(ev["usage"])
+			if usageErr == nil && reported == nil {
+				reported, usageErr = antigravityTokenCounters(ev["stats"])
 			}
+			reportAccountingRejection(usageErr)
+
 			if err := accountingRecorder.Replace(reported); err != nil {
-				adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+				reportAccountingRejection(err)
 			}
 			// Collect final text if not already streamed.
 			for _, key := range []string{"result", "response", "text", "content"} {
@@ -254,17 +263,22 @@ func main() {
 				if strings.EqualFold(strings.TrimSpace(update.State), "DONE") && update.ConversationID != "" && (usageSource == "" || usageSource == "steps") {
 					usageSource = "steps"
 					if err := observeStepUsage(accountingRecorder, update); err != nil {
-						adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+						reportAccountingRejection(err)
 					}
 				}
 			}
 		case "usage":
-			if u := antigravityTokenCounters(json.RawMessage(line)); u != nil {
+			u, err := antigravityTokenCounters(json.RawMessage(line))
+			if err != nil {
+				reportAccountingRejection(err)
+				continue
+			}
+			if u != nil {
 				if usageSource == "" || usageSource == "usage" {
 					usageSource = "usage"
 					usageSequence++
 					if err := accountingRecorder.Delta(fmt.Sprintf("usage-%d", usageSequence), u); err != nil {
-						adapter.AppendLogChunk("stderr", "accounting-observation-rejected")
+						reportAccountingRejection(err)
 					}
 				}
 			}

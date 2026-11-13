@@ -324,8 +324,8 @@ func TestAgentAntigravityAdapterAggregatesInterruptedStepUsage(t *testing.T) {
 	if resp.Error == "" || !strings.Contains(resp.Error, "stream ended without a completion event") {
 		t.Fatalf("expected interrupted stream error, got %q", resp.Error)
 	}
-	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 10418 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
-		t.Fatalf("usage = %+v, want input=10418 output=589 cached=8113", fixtureTokens(t, resp.Accounting))
+	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 18531 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
+		t.Fatalf("usage = %+v, want inclusive input=18531 output=589 cached=8113", fixtureTokens(t, resp.Accounting))
 	}
 }
 
@@ -358,7 +358,7 @@ func TestAgentAntigravityAdapterStepUsageUsesTerminalResultTotals(t *testing.T) 
 	if resp.Error != "" {
 		t.Fatalf("unexpected adapter error: %q", resp.Error)
 	}
-	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 10418 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
+	if fixtureTokens(t, resp.Accounting) == nil || fixtureTokens(t, resp.Accounting).Input != 18531 || fixtureTokens(t, resp.Accounting).Output != 589 || fixtureTokens(t, resp.Accounting).Cached != 8113 {
 		t.Fatalf("usage = %+v, want terminal cumulative totals", fixtureTokens(t, resp.Accounting))
 	}
 }
@@ -739,4 +739,78 @@ func fixtureTokens(t *testing.T, a *contract.Accounting) *fixtureTokenValues {
 		return &fixtureTokenValues{Input: read(e.Tokens.Input), Output: read(e.Tokens.Output), Cached: read(e.Tokens.CacheRead)}
 	}
 	return nil
+}
+
+// Replay captured native events through the executable's actual progress
+// channel. A cached step must publish valid accounting before terminal output.
+func TestAgentAntigravityStreamsCachedUsage(t *testing.T) {
+	bin := buildAgentAntigravity(t)
+	raw, err := os.ReadFile("testdata/1.5.7-cached-success.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\n")
+	for i, line := range lines {
+		if i == len(lines)-1 {
+			script.WriteString("sleep 3\n")
+		}
+		script.WriteString("printf '%s\\n' '" + line + "'\n")
+	}
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script.String())), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := os.CreateTemp(t.TempDir(), "progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progress.Close()
+	stdin, _ := json.Marshal(map[string]any{"authorization": fixtureAuthorization(), "workspace": workDir, "executor": "agent/antigravity", "task": "fixture replay", "workDir": workDir, "nodeId": "n1"})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI, "MUXLIO_LOG_FD=3")
+	cmd.ExtraFiles = []*os.File{progress}
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter: %v %s", err, out)
+	}
+	var response adapter.Response
+	if err := json.Unmarshal(out, &response); err != nil || response.Error != "" {
+		t.Fatalf("response: %v %+v", err, response)
+	}
+	progressRaw, err := os.ReadFile(progress.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(progressRaw), "accounting-observation-rejected") {
+		t.Fatalf("valid live usage rejected: %s", progressRaw)
+	}
+	streamedCachedUsage := false
+	for _, line := range strings.Split(strings.TrimSpace(string(progressRaw)), "\n") {
+		var frame contract.Progress
+		if err := json.Unmarshal([]byte(line), &frame); err != nil {
+			t.Fatal(err)
+		}
+		if frame.Accounting == nil || frame.Accounting.Final {
+			continue
+		}
+		if err := frame.Accounting.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range frame.Accounting.Entries {
+			if entry.Tokens != nil && entry.Tokens.CacheRead.Collected != nil && entry.Tokens.CacheRead.Collected.Value == "19314" {
+				streamedCachedUsage = true
+			}
+		}
+	}
+	if !streamedCachedUsage {
+		t.Fatalf("no cached accounting before final: %s", progressRaw)
+	}
+	values := fixtureTokens(t, response.Accounting)
+	if values.Input != 34255 || values.Output != 643 || values.Cached != 19314 {
+		t.Fatalf("final usage: %+v", values)
+	}
 }
