@@ -368,6 +368,11 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			return
 		}
 
+		if len(parts) == 2 && parts[1] == "summary" {
+			handleRunOutcome(w, r, store, runID)
+			return
+		}
+
 		if len(parts) == 2 && parts[1] == "start" && r.Method == http.MethodPost {
 			handleStartRun(w, r, store, runner, runID)
 			return

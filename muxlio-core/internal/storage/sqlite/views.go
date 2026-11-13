@@ -17,6 +17,14 @@ func (s *Store) ActivationCounts(runID string) (total, completed int, err error)
 }
 
 func (s *Store) ListOutputPage(runID string, offset, limit int, search string) ([]state.OutputEntry, error) {
+	return s.listOutputPage(runID, offset, limit, search, false)
+}
+
+func (s *Store) ListArtifactReferencePage(runID string, offset, limit int) ([]state.OutputEntry, error) {
+	return s.listOutputPage(runID, offset, limit, "", true)
+}
+
+func (s *Store) listOutputPage(runID string, offset, limit int, search string, referencesOnly bool) ([]state.OutputEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`WITH completions AS (SELECT run_id,subject_id,max(seq) AS seq FROM events WHERE type='activation.succeeded' AND (?='' OR run_id=?) GROUP BY run_id,subject_id),
@@ -26,7 +34,7 @@ func (s *Store) ListOutputPage(runID string, offset, limit int, search string) (
  coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.path'),'') AS path,
  coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.size'),0) AS size
  FROM activations a LEFT JOIN completions c ON c.run_id=a.run_id AND c.subject_id=a.id,json_each(a.outputs_json) j WHERE (?='' OR a.run_id=?))
- SELECT id,run_id,node_id,key,digest,mime,path,size FROM ports WHERE (?<>'' OR digest LIKE 'sha256:%') AND instr(lower(run_id||' '||node_id||' '||key||' '||digest||' '||path||' '||mime),lower(?))>0 ORDER BY completed DESC,position DESC,key LIMIT ? OFFSET ?`, runID, runID, runID, runID, runID, search, limit, offset)
+ SELECT id,run_id,node_id,key,digest,mime,path,size FROM ports WHERE (?<>'' OR digest LIKE 'sha256:%') AND (NOT ? OR substr(digest,1,7)='sha256:') AND instr(lower(run_id||' '||node_id||' '||key||' '||digest||' '||path||' '||mime),lower(?))>0 ORDER BY completed DESC,position DESC,key LIMIT ? OFFSET ?`, runID, runID, runID, runID, runID, referencesOnly, search, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -147,4 +155,34 @@ func (s *Store) EventsBefore(id string, before, limit int) ([]state.Event, error
 		items = append(items, event)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) RunLifecycleTimes(id string) (*time.Time, *time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT type,timestamp FROM events WHERE run_id=? AND type IN ('run.running','run.succeeded','run.failed','run.cancelled') ORDER BY seq`, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var start, finish *time.Time
+	for rows.Next() {
+		var kind string
+		var raw string
+		if err := rows.Scan(&kind, &raw); err != nil {
+			return nil, nil, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		if kind == state.EventRunRunning {
+			if start == nil {
+				start = &t
+			}
+		} else {
+			finish = &t
+		}
+	}
+	return start, finish, rows.Err()
 }

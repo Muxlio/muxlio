@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // OutputEntry lists a port without loading its contents. Open its activation to
@@ -22,6 +23,7 @@ type OutputEntry struct {
 // RunViewStore supports bounded reads without decoding the entire run history.
 // Existing execution methods retain their full-history semantics.
 type RunViewStore interface {
+	RunLifecycleTimes(string) (*time.Time, *time.Time, error)
 	EventsBefore(string, int, int) ([]Event, error)
 	RecentEvents(string, int) ([]Event, error)
 	GetRunHeader(string) (*Run, error)
@@ -32,6 +34,7 @@ type RunViewStore interface {
 	ListExecutionAttemptPage(string, string, int, int, bool) ([]ExecutionAttempt, error)
 	GetLogChunkPage(string, string, int, int) ([]LogChunk, error)
 	ListOutputPage(string, int, int, string) ([]OutputEntry, error)
+	ListArtifactReferencePage(string, int, int) ([]OutputEntry, error)
 	ActivationCounts(string) (int, int, error)
 	SnapshotPage(string, string, string, int, int, bool) ([]Event, error)
 }
@@ -104,6 +107,16 @@ func (s *Memory) GetLogChunkPage(id, act string, offset, limit int) ([]LogChunk,
 	return pageSlice(items, offset, limit), err
 }
 func (s *Memory) ListOutputPage(id string, offset, limit int, search string) ([]OutputEntry, error) {
+	return s.listOutputPage(id, offset, limit, search, false)
+}
+
+// ListArtifactReferencePage filters on the digest before pagination. Metadata
+// containing "sha256:" does not make an inline output an artifact reference.
+func (s *Memory) ListArtifactReferencePage(id string, offset, limit int) ([]OutputEntry, error) {
+	return s.listOutputPage(id, offset, limit, "", true)
+}
+
+func (s *Memory) listOutputPage(id string, offset, limit int, search string, referencesOnly bool) ([]OutputEntry, error) {
 	var acts []Activation
 	if id != "" {
 		var err error
@@ -169,7 +182,7 @@ func (s *Memory) ListOutputPage(id string, offset, limit int, search string) ([]
 					e.Size = int64(size)
 				}
 			}
-			if id == "" && !strings.HasPrefix(e.Digest, "sha256:") {
+			if (id == "" || referencesOnly) && !strings.HasPrefix(e.Digest, "sha256:") {
 				continue
 			}
 			if !strings.Contains(strings.ToLower(e.RunID+" "+e.NodeID+" "+e.Name+" "+e.Digest+" "+e.Path+" "+e.Mime), strings.ToLower(search)) {
@@ -321,4 +334,22 @@ func (s *Memory) EventsBefore(id string, before, limit int) ([]Event, error) {
 		}
 	}
 	return items, err
+}
+
+// RunLifecycleTimes returns observed transitions, never inferred completion times.
+func (s *Memory) RunLifecycleTimes(id string) (*time.Time, *time.Time, error) {
+	events, err := s.GetEvents(id, 0, 0)
+	var start, finish *time.Time
+	for _, e := range events {
+		if e.Type == EventRunRunning && start == nil {
+			t := e.Timestamp
+			start = &t
+		}
+		switch e.Type {
+		case EventRunSucceeded, EventRunFailed, EventRunCancelled:
+			t := e.Timestamp
+			finish = &t
+		}
+	}
+	return start, finish, err
 }
