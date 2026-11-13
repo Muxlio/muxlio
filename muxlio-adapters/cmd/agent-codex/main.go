@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if adapter.ProbeRequested(os.Args) {
-		adapter.RunProbe(adapter.RunnerChecks("codex", "login", "status")...)
+		adapter.RunProbe(runnerChecks("codex", "login", "status")...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
@@ -54,22 +54,12 @@ func main() {
 	// capture assistant text and provider-reported token usage. --ephemeral
 	// keeps each run on a fresh thread, so the turn.completed usage total is
 	// this run's usage rather than a resumed thread's running total.
-	policyArgs, err := adapter.AuthorizeRunner(req, "codex", permissionArgs)
+	args, err := adapter.AuthorizeRunner(req, "codex", func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
+		return invocationArgs(p, version, params.Model, req.WorkDir, prompt)
+	})
 	if err != nil {
 		adapter.Fail("agent-codex: %v", err)
 	}
-	args := []string{"exec",
-		"--json",
-		"--ephemeral",
-		"--skip-git-repo-check",
-		"--add-dir", req.WorkDir,
-		"-c", "shell_environment_policy.inherit=none",
-	}
-	if params.Model != "" {
-		args = append(args, "--model", params.Model)
-	}
-	args = append(args, policyArgs...)
-	args = append(args, "--", prompt)
 	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, "codex", "--version").Version
 	cmd := exec.Command("codex", args...)
 	cmd.Dir = workDir
@@ -208,6 +198,7 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
+		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "codex login")
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from turn.completed so failed
 		// attempts that still returned usage are recorded, not estimated

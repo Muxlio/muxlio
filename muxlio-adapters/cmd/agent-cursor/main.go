@@ -33,7 +33,7 @@ func main() {
 	}
 	if adapter.ProbeRequested(os.Args) {
 		cli, _ := resolveCursorAgent()
-		adapter.RunProbe(adapter.RunnerChecks(cli, "status")...)
+		adapter.RunProbe(runnerChecks(cli, "status")...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
@@ -41,7 +41,7 @@ func main() {
 		adapter.Fail("agent-cursor: %v", err)
 	}
 
-	model := "composer-2.5"
+	model := ""
 	var billing cursorBillingConfig
 	if req.Params != nil {
 		var params struct {
@@ -68,11 +68,12 @@ func main() {
 		adapter.Fail("agent-cursor: finding working directory: %v", err)
 	}
 
-	policyArgs, err := adapter.AuthorizeRunner(req, cli, permissionArgs)
+	args, err := adapter.AuthorizeRunner(req, cli, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
+		return invocationArgs(p, version, model, req.WorkDir, adapter.ComposePrompt(req))
+	})
 	if err != nil {
 		adapter.Fail("agent-cursor: %v", err)
 	}
-	args := append(policyArgs, "--print", "--add-dir", req.WorkDir, "--output-format", "stream-json", "--model", model, "--", adapter.ComposePrompt(req))
 	cmd := exec.Command(cli, args...)
 	cmd.Dir = workDir
 	var diagnostics adapter.BoundedBuffer
@@ -95,11 +96,16 @@ func main() {
 	conversationID := ""
 	conversationConflict := false
 	accountingRecorder := adapter.NewTokenRecorder("cursor-stream")
-	_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
+	if model != "" {
+		_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
+	}
+	var stdoutDiagnostics adapter.BoundedBuffer
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		_, _ = stdoutDiagnostics.Write(line)
+		_, _ = stdoutDiagnostics.WriteString("\n")
 		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
@@ -124,6 +130,13 @@ func main() {
 				_ = accountingRecorder.ReportModel(selected, "selected", "cursor-init")
 			}
 		case "assistant":
+			var message struct {
+				Model string `json:"model"`
+			}
+			if json.Unmarshal(event["message"], &message) == nil && message.Model != "" {
+				served := message.Model
+				_ = accountingRecorder.ReportModel(served, "served", "cursor-assistant")
+			}
 			for _, text := range assistantText(event["message"]) {
 				adapter.CaptureAgentText(&textChunks, text)
 			}
@@ -181,7 +194,7 @@ func main() {
 	finalAccounting := accountingRecorder.Finish()
 	adapter.AppendLogChunk("stderr", diagnostics.String())
 	fail := func(format string, args ...any) {
-		_ = adapter.WriteResponse(adapter.Response{Error: fmt.Sprintf(format, args...), Logs: diagnostics.String(), Accounting: finalAccounting})
+		_ = adapter.WriteResponse(adapter.Response{Error: adapter.RunnerFailure(fmt.Sprintf(format, args...), diagnostics.String()+"\n"+stdoutDiagnostics.String(), "agent login"), Logs: diagnostics.String(), Accounting: finalAccounting})
 	}
 	if readErr != nil {
 		fail("agent-cursor: reading stream: %v", readErr)

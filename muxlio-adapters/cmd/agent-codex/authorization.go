@@ -14,11 +14,10 @@ func permissionArgs(p *contract.AuthorizationPolicy, version string) ([]string, 
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	switch version {
-	case "0.167.0", "0.167.2":
-	default:
-		return nil, fmt.Errorf("execution authorization unsupported runner version %q", version)
+	if err := supportedVersion(version); err != nil {
+		return nil, err
 	}
+
 	if p.Mode == "restricted" {
 		return nil, fmt.Errorf("execution authorization: restrictive tool, MCP and hook enforcement is not qualified for this runner; no generation started")
 	}
@@ -27,4 +26,14 @@ func permissionArgs(p *contract.AuthorizationPolicy, version string) ([]string, 
 		return []string{"--approve-for-me"}, nil
 	}
 	return []string{"--dangerously-bypass-approvals-and-sandbox"}, nil
+}
+
+// Headless, output, workspace and permission arguments are qualified together.
+func supportedVersion(version string) error {
+	switch version {
+	case "0.167.0", "0.167.2":
+		return nil
+	default:
+		return fmt.Errorf("unsupported runner version %q: headless and permission flags are qualified for 0.167.0,0.167.2; install a qualified CLI build or update the adapter", version)
+	}
 }

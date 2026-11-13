@@ -14,14 +14,23 @@ func permissionArgs(p *contract.AuthorizationPolicy, version string) ([]string, 
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	switch version {
-	case "1.5.5", "1.5.6", "1.5.8":
-	default:
-		return nil, fmt.Errorf("execution authorization unsupported runner version %q", version)
+	if err := supportedVersion(version); err != nil {
+		return nil, err
 	}
+
 	if p.Mode == "restricted" {
 		return nil, fmt.Errorf("execution authorization: restrictive policy enforcement is not qualified for this runner; no generation started")
 	}
 
 	return []string{"--dangerously-skip-permissions"}, nil
+}
+
+// Headless, output, workspace and permission arguments are qualified together.
+func supportedVersion(version string) error {
+	switch version {
+	case "1.5.5", "1.5.6", "1.5.8":
+		return nil
+	default:
+		return fmt.Errorf("unsupported runner version %q: headless and permission flags are qualified for 1.5.5,1.5.6,1.5.8; install a qualified CLI build or update the adapter", version)
+	}
 }

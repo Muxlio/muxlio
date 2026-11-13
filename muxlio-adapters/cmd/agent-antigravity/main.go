@@ -37,7 +37,7 @@ import (
 
 func main() {
 	if adapter.ProbeRequested(os.Args) {
-		checks := adapter.RunnerChecks(resolveAntigravityCLI(), "--version")
+		checks := runnerChecks(resolveAntigravityCLI(), "--version")
 		checks[2] = antigravityAuthenticationCheck()
 		adapter.RunProbe(checks...)
 		return
@@ -73,21 +73,13 @@ func main() {
 	// --dangerously-skip-permissions  allow tool execution without per-tool confirmation
 	// --add-dir                       grant access to per-attempt scratch directory for outputs
 	// --model                         selects the model
-	policyArgs, err := adapter.AuthorizeRunner(req, antigravityCLI, permissionArgs)
+	args, err := adapter.AuthorizeRunner(req, antigravityCLI, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
+		return invocationArgs(p, version, model, req.WorkDir, prompt)
+	})
 	if err != nil {
 		adapter.Fail("agent-antigravity: %v", err)
 	}
-	args := []string{
-		"--prompt", prompt,
-		"--output-format", "stream-json",
-		"--add-dir", req.WorkDir,
-	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-
 	runnerVersion := adapter.CommandCheck(contract.ProbeVersion, antigravityCLI, "--version").Version
-	args = append(args, policyArgs...)
 	cmd := exec.Command(antigravityCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
@@ -124,10 +116,12 @@ func main() {
 		_ = accountingRecorder.ReportModel(model, "requested", "adapter-params")
 	}
 
+	stdoutTail := &tailBuffer{limit: 32 * 1024}
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		_, _ = stdoutTail.Write([]byte(line + "\n"))
 		if !strings.HasPrefix(line, "{") {
 			continue
 		}
@@ -146,6 +140,10 @@ func main() {
 		_ = json.Unmarshal(typeRaw, &evType)
 
 		if evType == "init" {
+			var selected string
+			if json.Unmarshal(ev["model"], &selected) == nil && selected != "" {
+				_ = accountingRecorder.ReportModel(selected, "selected", "antigravity-init")
+			}
 			var id string
 			_ = json.Unmarshal(ev["conversation_id"], &id)
 			if id != "" {
@@ -170,6 +168,13 @@ func main() {
 		//   result     — terminal event, carries result/text/is_error/error
 		//   completion, done — alternative terminal signals
 		case "assistant":
+			var message struct {
+				Model string `json:"model"`
+			}
+			if json.Unmarshal(ev["message"], &message) == nil && message.Model != "" {
+				served := message.Model
+				_ = accountingRecorder.ReportModel(served, "served", "antigravity-assistant")
+			}
 			for _, chunk := range extractAssistantText(ev["message"]) {
 				adapter.CaptureAgentText(&textChunks, chunk)
 			}
@@ -311,6 +316,7 @@ func main() {
 	_ = accountingRecorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "unspecified"}, "unknown", reason)
 	finalAccounting := accountingRecorder.Finish()
 	if runErr != "" {
+		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "agy (sign in interactively or configure ANTIGRAVITY_API_KEY)")
 		adapter.FailWithAccounting(finalAccounting, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
 	}
 

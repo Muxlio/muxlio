@@ -6,7 +6,7 @@
 //
 // Params (via node.params JSON):
 //
-//	model   string   Claude model name, e.g. "claude-opus-4-5", "claude-sonnet-4-5" (default)
+//	model   string   Claude model name, e.g. "sonnet"; omitted uses the CLI default
 //
 // Special input port:
 //
@@ -38,7 +38,7 @@ import (
 
 func main() {
 	if adapter.ProbeRequested(os.Args) {
-		adapter.RunProbe(adapter.RunnerChecks(resolveClaudeCLI(), "auth", "status")...)
+		adapter.RunProbe(runnerChecks(resolveClaudeCLI(), "auth", "status")...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
@@ -49,7 +49,7 @@ func main() {
 		adapter.Fail("agent-claude: %v", err)
 	}
 
-	model := "claude-sonnet-4-5"
+	model := ""
 	if req.Params != nil {
 		var p struct {
 			Model string `json:"model"`
@@ -72,20 +72,12 @@ func main() {
 	// --model          selects the model
 	// --verbose        required by stream-json in print mode
 	// --add-dir        allow declared outputs in the separate scratch directory
-	policyArgs, err := adapter.AuthorizeRunner(req, claudeCLI, permissionArgs)
+	args, err := adapter.AuthorizeRunner(req, claudeCLI, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
+		return invocationArgs(p, version, model, req.WorkDir, prompt)
+	})
 	if err != nil {
 		adapter.Fail("agent-claude: %v", err)
 	}
-	args := []string{
-		"--add-dir", req.WorkDir,
-		"--print",
-		"--verbose",
-		"--output-format", "stream-json",
-		"--model", model,
-		"--", prompt,
-	}
-
-	args = append(policyArgs, args...)
 	cmd := exec.Command(claudeCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
@@ -107,7 +99,9 @@ func main() {
 	var confirmedTokens *contract.TokenMeasures
 	var confirmedCosts []contract.CostMeasure
 	recorder := accounting.NewRecorder()
-	_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	if model != "" {
+		_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	}
 	publisher := adapter.NewAccountingPublisher()
 	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
@@ -143,6 +137,13 @@ func main() {
 		//   result     — terminal event, carries result/text/is_error/error
 		//   completion, done — alternative terminal signals
 		case "assistant":
+			var message struct {
+				Model string `json:"model"`
+			}
+			if json.Unmarshal(ev["message"], &message) == nil && message.Model != "" {
+				served := message.Model
+				_ = recorder.ReportModel(contract.AccountingModel{ID: served, Role: "served", Source: "claude-assistant"})
+			}
 			for _, chunk := range extractAssistantText(ev["message"]) {
 				adapter.CaptureAgentText(&textChunks, chunk)
 			}
@@ -244,6 +245,7 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
+		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "claude auth login")
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from the terminal result event so
 		// failed attempts that still returned usage are recorded, not estimated

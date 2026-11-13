@@ -14,10 +14,11 @@ is not required. Declared outputs use the separate request scratch directory.
 The current invocation is:
 
 ```text
-agent --print --yolo --trust --add-dir <scratch> --output-format stream-json --model <model> <prompt>
+agent --yolo --trust --print --add-dir <scratch> --output-format stream-json [--model <model>] -- <prompt>
 ```
 
-The default model is `composer-2.5`; `params.model` overrides it. The adapter
+Without `params.model`, model selection uses the CLI configuration and native default.
+An explicit `params.model` is passed unchanged. The adapter
 builds the prompt with `adapter.ComposePrompt`, including the task, inputs,
 output instructions, and node identity. It sets `AGENT_CLI_CREDENTIAL_STORE=file`
 for both readiness checks and execution. Configure credentials through the

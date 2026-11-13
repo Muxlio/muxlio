@@ -5,7 +5,7 @@
 //
 // Params (via node.params JSON):
 //
-//	model   string   kiro model name, e.g. "claude-sonnet-4.5", "auto" (default)
+//	model   string   kiro model name, e.g. "auto"; omitted uses the CLI default
 //	creditPricingContext string  verified "commercial-paid-usd" tariff; omitted by default
 //
 // Special input port:
@@ -40,7 +40,7 @@ import (
 
 func main() {
 	if adapter.ProbeRequested(os.Args) {
-		adapter.RunProbe(adapter.RunnerChecks(resolveKiroCLI(), "whoami")...)
+		adapter.RunProbe(runnerChecks(resolveKiroCLI(), "whoami")...)
 		return
 	}
 	req, err := adapter.ReadRequestWithManifest(manifest)
@@ -51,7 +51,7 @@ func main() {
 		adapter.Fail("agent-kiro: %v", err)
 	}
 
-	model := "auto"
+	model := ""
 	pricingContext := ""
 	usageAt := time.Now().UTC()
 	if req.Params != nil {
@@ -75,19 +75,12 @@ func main() {
 
 	prompt := adapter.ComposePrompt(req)
 
-	policyArgs, err := adapter.AuthorizeRunner(req, kiroCLI, permissionArgs)
+	args, err := adapter.AuthorizeRunner(req, kiroCLI, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
+		return invocationArgs(p, version, model, req.WorkDir, prompt)
+	})
 	if err != nil {
 		adapter.Fail("agent-kiro: %v", err)
 	}
-	args := []string{
-		"chat",
-		"--no-interactive",
-		"--output-format", "stream-json",
-		"--model", model,
-		"--", prompt,
-	}
-
-	args = append(args[:1], append(policyArgs, args[1:]...)...)
 	cmd := exec.Command(kiroCLI, args...)
 	cmd.Dir = workDir
 	stderr := &tailBuffer{limit: 8 * 1024}
@@ -129,7 +122,9 @@ func main() {
 	var usage *adapter.TokenCounters
 	var estimate kiroOutputEstimator
 	recorder := accounting.NewRecorder()
-	_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	if model != "" {
+		_ = recorder.ReportModel(contract.AccountingModel{ID: model, Role: "requested", Source: "adapter-params"})
+	}
 	publisher := adapter.NewAccountingPublisher()
 	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "no-confirmed-report")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
@@ -269,6 +264,7 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
+		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "kiro-cli login")
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(stdoutTail.String()), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
