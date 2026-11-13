@@ -1,6 +1,11 @@
 # Operating Muxlio
 
-With MCP, construct Plan IR and call `check_plan`, then `start_run`. Use
+Follow the shared decision guide in [the skill](../SKILL.md) before delegating.
+With MCP, construct Plan IR, call `check_plan`, and require a feasible
+`preflight_run` for the intended plan, input, and workspace before `start_run`.
+Resolve missing workers, workspace access, or authorization first, and surface
+any unverified or deferred readiness checks. Wait if the user requested plan
+approval. A returned run ID confirms submission only. Use
 `get_run`, `get_activations`, `get_attempts`, `get_logs`, and `read_artifact` to
 follow execution. The runtime does not contain a feature-specific submission
 command. The installed service and MCP tools do not require a Muxlio source

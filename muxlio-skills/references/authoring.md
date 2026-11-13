@@ -17,6 +17,7 @@ printf '{"message":"hello"}\n' > input.json
 muxlio check workflow.json
 muxlio build workflow.json --out plan.json
 muxlio test plan.json --input input.json
+# Optional live submission: first require feasible MCP preflight_run and any requested approval.
 muxlio submit --server http://127.0.0.1:7600 plan.json input.json
 ```
 
@@ -29,11 +30,14 @@ then edit the task, input bindings, and declared output files. Bindings use
 `{"ref":{"node":"work","port":"result"}}` for a step output. Give each step a
 unique ID; bindings establish dependencies between steps.
 
+The test command simulates execution. Follow the shared skill's worker/workspace
+preflight and any requested approval before the optional live submission.
+
 With MCP, call `workflow_template` with `{"name":"echo"}` or
 `{"name":"task"}`. Save and edit the returned Plan IR JSON, call `build` with
 its path (or `check_plan` with the JSON object), then pass the validated plan
-and input to `start_run`. JSON validation and fake testing never execute
-definition source code or download dependencies.
+and input through `preflight_run` before `start_run`. JSON validation and fake
+testing never execute definition source code or download dependencies.
 
 ## Trusted source definitions
 
@@ -65,7 +69,7 @@ import { z } from 'zod';
 import { fakeExecutor, testWorkflow } from '@muxlio/testing';
 
 const summarize = task({
-  executor: 'agent/codex',
+  executor: 'generic/summarize',
   task: 'Summarize the input.',
   outputs: { summary: artifact.markdown('summary.md') },
 });
@@ -87,6 +91,8 @@ const result = await testWorkflow(compiled, {
 if (result.state !== 'succeeded') throw new Error(`Run state: ${result.state}`);
 ```
 
+The example executor is a fake capability. For live work, replace it with an
+advertised executor contract; the authoring client's name does not select it.
 Use `dryRun: true` to validate and return the plan without calling the CLI. The harness creates temporary plan/input/fake-config files and invokes `muxlio run --json` otherwise.
 
 ## Authoring rules and common validation errors

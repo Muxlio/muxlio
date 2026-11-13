@@ -129,9 +129,17 @@ resources). For Cursor's manual rule, attach `@muxlio`.
 Ask it to use Muxlio to draft a workflow summarizing supplied documents, without
 starting it. Confirm the skill loads and its authoring reference is readable.
 Then start a fresh chat and ask a trivial unrelated question, such as "What is
-2 + 2?"; it should answer directly without invoking Muxlio. The skill description
-targets Muxlio plans and runs; it does not require coding tasks or particular
-workers. Existing custom rule activation settings remain the user's choice.
+2 + 2?"; it should answer directly without invoking Muxlio. The shared skill
+also covers when durable, multi-step, scheduled, independently verifiable, or
+multi-executor work benefits from orchestration. Small interactive tasks stay
+in the client unless Muxlio is explicitly requested. Every client uses the same
+decision guide, preflight, approval, and completion evidence rules; native skill
+syntax does not select an execution adapter. Existing custom rule activation
+settings remain the user's choice.
+
+The [delegation acceptance harness](https://github.com/Muxlio/muxlio/blob/main/muxlio-testing/test/delegation-acceptance.md)
+compares the same prompts and workflow semantics across authoring clients,
+including local-only work, plan approval, preflight blockers, and run evidence.
 
 Skill discovery contracts: [Claude Code](https://code.claude.com/docs/en/skills),
 [Codex](https://developers.openai.com/codex/skills/),

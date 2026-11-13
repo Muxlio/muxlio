@@ -31,6 +31,10 @@ func cursorVersionFixture(t *testing.T, version string) {
 
 func TestClientSkillDiscoveryAndReferences(t *testing.T) {
 	cursorVersionFixture(t, "2.4.1")
+	canonical, err := os.ReadFile(filepath.Join(skillSource(t), "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, client := range Clients {
 		for _, scope := range []string{"project", "user"} {
 			t.Run(client+"/"+scope, func(t *testing.T) {
@@ -45,6 +49,9 @@ func TestClientSkillDiscoveryAndReferences(t *testing.T) {
 				raw, err := os.ReadFile(entry)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if !bytes.Equal(raw, canonical) {
+					t.Fatal("client skill changed shared delegation semantics")
 				}
 				metadata, _, err := skillFrontmatter(raw)
 				var header struct{ Name, Description string }
@@ -112,6 +119,15 @@ func TestSkillMigrationPreservesEditedFilesAndLegacyResources(t *testing.T) {
 }
 
 func TestCursorRulesPreserveActivation(t *testing.T) {
+	canonical, err := os.ReadFile(filepath.Join(skillSource(t), "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sharedBody, err := skillFrontmatter(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBody := strings.ReplaceAll(string(sharedBody), "(references/", "(../muxlio/references/")
 	for _, header := range []string{"alwaysApply: false", "description: Muxlio workflows\nglobs: workflows/**,*.plan.json", "alwaysApply: true", "description: Custom Muxlio guidance\nalwaysApply: false"} {
 		t.Run(header, func(t *testing.T) {
 			cursorVersionFixture(t, "2.4.1")
@@ -130,6 +146,9 @@ func TestCursorRulesPreserveActivation(t *testing.T) {
 			}
 			if !bytes.Contains(body, []byte("../muxlio/references/operations.md")) {
 				t.Fatal("rule references are not relative to rule location")
+			}
+			if string(body) != wantBody {
+				t.Fatal("Cursor rule changed shared delegation semantics")
 			}
 			backup, _ := os.ReadFile(result.Preserved[0])
 			if !bytes.Equal(backup, before) {
