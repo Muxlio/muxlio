@@ -149,11 +149,6 @@
     return renderViewTemplate("json/json-tree-markup-json-row-5", [viewValue(label), viewValue(esc(cls)), viewValue(esc(scalarText(value))), viewValue(esc(type))]);
   }
 
-  function jsonToolsMarkup(copyLabel, copyMode, copyTarget, escape) {
-    const esc = escape;
-    return renderViewTemplate("json/json-tools-markup-json-tools", [viewValue(esc(copyMode)), viewValue(copyTarget ? renderViewTemplate("json/json-tools-markup-fragment", [viewValue(esc(copyTarget))]) : ''), viewValue(esc(copyLabel))]);
-  }
-
   function jsonStatusMarkup(note, role = 'note') {
     if (!note) return '';
     return renderViewTemplate("json/json-status-markup-json-status", [viewValue(role), viewValue(note)]);
@@ -171,7 +166,7 @@
     return renderViewTemplate("json/json-raw-markup-pre", [viewValue(banner), viewValue(cls), viewValue(escape(text))]);
   }
 
-  function jsonPanelFromDocument(doc, escape, { title = 'Value', statePath = 'json', copyMode = 'full', copyLabel = 'Copy JSON' } = {}) {
+  function jsonPanelFromDocument(doc, escape, { title = 'Value', statePath = 'json' } = {}) {
     if (doc.kind === 'unavailable') {
       return `${jsonStatusMarkup('Output unavailable.', 'status')}`;
     }
@@ -179,9 +174,9 @@
       return `${jsonStatusMarkup('Empty document.', 'status')}${jsonRawMarkup('', escape)}`;
     }
     if (doc.kind === 'error') {
-      return `${jsonToolsMarkup('Copy text', 'full', statePath, escape)}${jsonRawMarkup(doc.raw, escape, { error: true, note: doc.message })}`;
+      return `${jsonRawMarkup(doc.raw, escape, { error: true, note: doc.message })}`;
     }
-    return renderViewTemplate("json/json-panel-from-document-json-tree", [viewValue(jsonToolsMarkup(copyLabel, copyMode, statePath, escape)), viewValue(escape(statePath)), viewValue(jsonTreeMarkup(doc.value, title, 0, statePath, escape))]);
+    return renderViewTemplate("json/json-panel-from-document-json-tree", [viewValue(escape(statePath)), viewValue(jsonTreeMarkup(doc.value, title, 0, statePath, escape))]);
   }
 
   function jsonPanelFromText(text, escape, opts: Record<string, any> = {}) {
@@ -209,26 +204,14 @@
     const doc = parseJsonDocument(previewText);
     const target = `artifact-preview:${ref.path || 'json'}`;
     let body;
-    let copyNote;
     if (truncated && doc.kind === 'error') {
       body = jsonRawMarkup(previewText, escape, { truncated: true });
-      copyNote = 'preview';
     } else if (doc.kind === 'error') {
       body = jsonRawMarkup(previewText, escape, { error: true, note: doc.message });
-      copyNote = 'preview';
     } else {
       body = renderViewTemplate("json/body-json-tree", [viewValue(jsonTreeMarkup(doc.value, 'Value', 0, target, escape, { openDepth: 1 }))]);
-      copyNote = truncated ? 'preview' : 'full';
     }
-    const copyLabel = copyNote === 'preview' ? 'Copy preview' : 'Copy JSON';
-    return renderViewTemplate("json/json-artifact-preview-artifact-preview", [viewValue(truncated ? 'JSON preview (truncated)' : 'JSON preview'), viewValue(truncated ? jsonStatusMarkup('Preview shows the first 4096 bytes only.', 'status') : ''), viewValue(jsonToolsMarkup(copyLabel, copyNote, target, escape)), viewValue(body)]);
-  }
-
-  function jsonPreviewPayload(ref) {
-    if (ref?.data == null) return null;
-    const raw = typeof ref.data === 'string' ? ref.data : JSON.stringify(ref.data, null, 2);
-    const truncated = raw.length > PREVIEW_BYTES;
-    return { raw, preview: truncated ? raw.slice(0, PREVIEW_BYTES) : raw, truncated };
+    return renderViewTemplate("json/json-artifact-preview-artifact-preview", [viewValue(truncated ? 'JSON preview (truncated)' : 'JSON preview'), viewValue(truncated ? jsonStatusMarkup('Preview shows the first 4096 bytes only.', 'status') : ''), viewValue(body)]);
   }
 
   function stringifyForCopy(value, rawText) {
@@ -254,7 +237,6 @@
     jsonPanelFromValue,
     jsonPanelFromDocument,
     jsonArtifactPreview,
-    jsonPreviewPayload,
     jsonRawMarkup,
     stringifyForCopy,
     scalarText,

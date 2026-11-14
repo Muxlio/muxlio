@@ -98,7 +98,6 @@ regression("json output regression", async () => {
     esc,
   );
   assert.match(truncated, /truncated/i);
-  assert.match(truncated, /Copy preview/);
 
   const nested = ctx.outputMarkup({
     config: {
@@ -124,20 +123,6 @@ regression("json output regression", async () => {
   });
   assert.match(empty, /JSON preview/);
 
-  ctx.rememberJsonCopy("copy-fixture", '{"a":1,"preview-only":true}');
-  const full = ctx.resolveJsonCopy("copy-fixture", "full");
-  const preview = ctx.resolveJsonCopy("copy-fixture", "preview");
-  assert.equal(full.text.length, preview.text.length);
-  assert.match(preview.label, /JSON copied/);
-
-  ctx.rememberJsonCopy(
-    "copy-long",
-    `${'{"x":'.repeat(500)}${"y".repeat(5000)}"}`,
-  );
-  const previewLong = ctx.resolveJsonCopy("copy-long", "preview");
-  assert.equal(previewLong.text.length, 4096);
-  assert.match(previewLong.label, /Preview copied/);
-
   const scalar = ctx.inputMarkup({
     ready: true,
     count: 0,
@@ -147,6 +132,49 @@ regression("json output regression", async () => {
   assert.match(scalar, /json-value boolean.*true/);
   assert.match(scalar, /json-value number.*0\.25/);
   assert.match(scalar, /json-null/);
+
+  const modalBody = { innerHTML: "", classList: { add() {}, remove() {} } };
+  const modalElements = {
+    "#outputModal": { hidden: true },
+    "#outputModalBody": modalBody,
+    "#outputModalTitle": { textContent: "" },
+    "#closeOutputModal": { focus() {} },
+  };
+  ctx.$ = (selector) => modalElements[selector];
+  ctx.Blob = Blob;
+  await ctx.showArtifactOutput(
+    { mime: "application/json", data: '{"modal":true}' },
+    "result.json",
+  );
+  assert.match(modalBody.innerHTML, /json-value boolean.*true/);
+  assert.equal(modalElements["#outputModal"].hidden, false);
+
+  for (const markup of [
+    malicious.html,
+    broken.html,
+    truncated,
+    nested,
+    empty,
+    scalar,
+    ctx.outputMarkup({ result: { ok: true } }),
+    Json.jsonPanelFromText("", esc).html,
+    Json.jsonPanelFromText(undefined, esc).html,
+    modalBody.innerHTML,
+  ]) {
+    assert.doesNotMatch(
+      markup,
+      /data-copy-json|data-copy-target|Copy (?:JSON|input|text|preview)|json-tools/,
+      "JSON panels, previews and modal must not offer the removed copy controls",
+    );
+  }
+
+  const artifact = ctx.outputMarkup({
+    result: { mime: "application/json", data: "{}", digest: "sha256:test" },
+  });
+  assert.match(artifact, /data-copy-value="sha256:test"/);
+  assert.match(artifact, /data-view-artifact="result"/);
+  assert.match(artifact, /data-download="artifact"/);
+  assert.equal(Json.stringifyForCopy({ count: 0 }), '{\n  "count": 0\n}');
 
   const css = readFileSync(new URL("../dist/app.css", import.meta.url), "utf8");
   assert.match(

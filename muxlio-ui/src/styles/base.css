@@ -500,7 +500,6 @@ td.primary-cell small{display:block;margin-top:3px}
 .json-summary{display:flex;align-items:baseline;gap:8px;min-width:0;list-style:none}
 .json-summary::-webkit-details-marker{display:none}
 .json-branch>summary:focus-visible,.json-more>summary:focus-visible,.artifact-preview>summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px;border-radius:4px}
-.json-tools{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px}
 .json-status{font-size:12px;color:var(--muted);margin:4px 0 8px}
 .json-raw-error{border-color:var(--red)}
 .json-loading{color:var(--muted);font-size:13px}

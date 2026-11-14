@@ -22,10 +22,6 @@
 <div class="json-row json-scalar"><span class="json-key">{{value0}}</span><span class="json-value {{value1}}">{{value2}}</span><span class="json-type json-muted">{{value3}}</span></div>
 </template>
 
-<template data-view="json-tools-markup-json-tools">
-<div class="json-tools"><button type="button" class="btn ghost" data-copy-json="{{value0}}"{{value1}}>{{value2}}</button></div>
-</template>
-
 <template data-view="json-status-markup-json-status">
 <p class="json-status" role="{{value0}}">{{value1}}</p>
 </template>
@@ -35,7 +31,7 @@
 </template>
 
 <template data-view="json-panel-from-document-json-tree">
-{{value0}}<div class="json-tree" data-json-root="{{value1}}">{{value2}}</div>
+<div class="json-tree" data-json-root="{{value0}}">{{value1}}</div>
 </template>
 
 <template data-view="json-artifact-preview-artifact-no-preview">
@@ -47,9 +43,5 @@
 </template>
 
 <template data-view="json-artifact-preview-artifact-preview">
-<details class="artifact-preview"><summary>{{value0}}</summary>{{value1}}{{value2}}{{value3}}</details>
-</template>
-
-<template data-view="json-tools-markup-fragment">
- data-copy-target="{{value0}}"
+<details class="artifact-preview"><summary>{{value0}}</summary>{{value1}}{{value2}}</details>
 </template>

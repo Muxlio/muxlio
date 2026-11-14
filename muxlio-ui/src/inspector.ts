@@ -200,16 +200,13 @@ async function loadInspectorSnapshots(act,runId){
 
 /* ── shared helpers (kept from original) ─────── */
 const PREVIEW_LIMIT=MuxlioJson?.PREVIEW_BYTES??4096;
-const jsonCopyStores=new Map();
 function valueType(v){return MuxlioJson.jsonValueType(v)}
 function treeMarkup(value,key='Value',depth=0,statePath='tree'){return MuxlioJson.jsonTreeMarkup(value,key,depth,statePath,esc)}
-function rememberJsonCopy(target,text){if(target&&text!=null)jsonCopyStores.set(target,String(text))}
-function resolveJsonCopy(target,mode){const full=jsonCopyStores.get(target)||'';if(mode==='preview'){const preview=full.slice(0,PREVIEW_LIMIT);return {text:preview,label:full.length>preview.length?'Preview copied.':'JSON copied.'}}return {text:full,label:'JSON copied.'}}
-function inputMarkup(value){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Input is null.':'No input recorded.')]);const panel=MuxlioJson.jsonPanelFromValue(value,esc,{title:'Input',statePath:'run:input',copyLabel:'Copy input'});rememberJsonCopy('run:input',panel.raw);return panel.html}
+function inputMarkup(value){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Input is null.':'No input recorded.')]);const panel=MuxlioJson.jsonPanelFromValue(value,esc,{title:'Input',statePath:'run:input'});return panel.html}
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
 function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
 function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT,raw}}
-function outputMarkup(value, ..._extra: unknown[]){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Output is null.':'No output recorded.')]);const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref){const panel=MuxlioJson.jsonPanelFromValue(item,esc,{title:name,statePath:`output:${name}`,copyLabel:'Copy JSON'});rememberJsonCopy(`output:${name}`,panel.raw);return renderViewTemplate("inspector/output-markup-artifact", [viewValue(esc(name)), viewValue(esc(valueType(item))), viewValue(typeof item==='string'?renderViewTemplate("inspector/output-markup-markdown-body", [viewValue(renderMarkdown(item))]):panel.html)])}const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');const jsonPreview=MuxlioJson.jsonArtifactPreview(ref,esc);const previewPayload=jsonPreview?MuxlioJson.jsonPreviewPayload(ref):null;if(previewPayload)rememberJsonCopy(`artifact-preview:${path||name}`,previewPayload.raw);return renderViewTemplate("inspector/output-markup-artifact-2", [viewValue(esc(path||name)), viewValue(esc(name)), viewValue(meta.length?renderViewTemplate("inspector/output-markup-artifact-meta", [viewValue(meta.map(([k,v])=>renderViewTemplate("inspector/output-markup-dt", [viewValue(esc(k)), viewValue(k==='Digest'?'':esc(v)), viewValue(k==='Digest'?renderViewTemplate("inspector/output-markup-digest-details", [viewValue(esc(v)), viewValue(esc(v))]):esc(v))])).join(''))]):''), viewValue(jsonPreview||''), viewValue(esc(name)), viewValue(esc(name))])}).join('')}`}
+function outputMarkup(value, ..._extra: unknown[]){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Output is null.':'No output recorded.')]);const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref){const panel=MuxlioJson.jsonPanelFromValue(item,esc,{title:name,statePath:`output:${name}`});return renderViewTemplate("inspector/output-markup-artifact", [viewValue(esc(name)), viewValue(esc(valueType(item))), viewValue(typeof item==='string'?renderViewTemplate("inspector/output-markup-markdown-body", [viewValue(renderMarkdown(item))]):panel.html)])}const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');const jsonPreview=MuxlioJson.jsonArtifactPreview(ref,esc);return renderViewTemplate("inspector/output-markup-artifact-2", [viewValue(esc(path||name)), viewValue(esc(name)), viewValue(meta.length?renderViewTemplate("inspector/output-markup-artifact-meta", [viewValue(meta.map(([k,v])=>renderViewTemplate("inspector/output-markup-dt", [viewValue(esc(k)), viewValue(k==='Digest'?'':esc(v)), viewValue(k==='Digest'?renderViewTemplate("inspector/output-markup-digest-details", [viewValue(esc(v)), viewValue(esc(v))]):esc(v))])).join(''))]):''), viewValue(jsonPreview||''), viewValue(esc(name)), viewValue(esc(name))])}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
 async function loadArtifactBlob(ref){
   const mime=ref.mime||ref.mimeType||'application/octet-stream';
@@ -242,11 +239,9 @@ async function showArtifactOutput(ref,name,value?){
     }
     if(json){
       const target=`modal:${ref?.path||name||'output'}`;
-      const panel=MuxlioJson.jsonPanelFromText(text,esc,{title:'Value',statePath:target,copyLabel:'Copy JSON'});
-      rememberJsonCopy(target,text);
+      const panel=MuxlioJson.jsonPanelFromText(text,esc,{title:'Value',statePath:target});
       body.innerHTML=panel.html;
       body._jsonRaw=text;
-      body.dataset.jsonTarget=target;
       return;
     }
     body.innerHTML=renderViewTemplate("inspector/body-inner-html-output-raw", [viewValue(esc(text))]);
@@ -254,7 +249,6 @@ async function showArtifactOutput(ref,name,value?){
   }catch(err){if(request===outputModalRequest){body.classList.remove('json-loading');body.innerHTML=renderNotice(err.message, {error:true});}}
 }
 (document.getElementById('closeOutputModal') as UIElement)?.addEventListener('click',closeArtifactOutput);
-document.addEventListener('click',e=>{if((e.target as UIElement).closest<UIElement>('[data-copy-json]'))inspectorAction(e)});
 (document.getElementById('outputModal') as UIElement)?.addEventListener('click',e=>{if((e.target as UIElement).id==='outputModal')closeArtifactOutput();});
 document.addEventListener('keydown',e=>{
   const modal=$('#outputModal');if(!modal||modal.hidden)return;
@@ -267,8 +261,6 @@ document.addEventListener('keydown',e=>{
   }
 });
 async function inspectorAction(e){
-  const copyJson=(e.target as UIElement).closest<UIElement>('[data-copy-json]');
-  if(copyJson){const mode=copyJson.dataset.copyJson||'full',target=copyJson.dataset.copyTarget||$('#outputModalBody')?.dataset.jsonTarget;const {text,label}=resolveJsonCopy(target,mode);try{if(!text)throw Error('Nothing to copy');if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(text);message(label)}catch(err){message('Copy failed: '+err.message,true)}return}
   const copyValue=(e.target as UIElement).closest<UIElement>('[data-copy-value]');
   if(copyValue){try{if(!navigator.clipboard)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(copyValue.dataset.copyValue);message('Copied.')}catch(err){message('Copy failed: '+err.message,true)}return}
   const copyLogs=(e.target as UIElement).closest<UIElement>('[data-copylogs]');
