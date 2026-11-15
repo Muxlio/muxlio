@@ -21,5 +21,5 @@ func invocationArgs(p *contract.AuthorizationPolicy, version, model, scratch, pr
 }
 
 func runnerChecks(binary string, authArgs ...string) []contract.ProbeCheck {
-	return adapter.QualifyRunnerChecks(adapter.RunnerChecks(binary, authArgs...), supportedVersion, "kiro-cli login")
+	return adapter.RunnerLoginGuidance(adapter.RunnerChecks(binary, authArgs...), "kiro-cli login")
 }

@@ -14,7 +14,7 @@ import (
 )
 
 func TestNativeInvocation(t *testing.T) {
-	for _, version := range []string{"2.1.319"} {
+	for _, version := range []string{"0.169.0", "999.0.0", "", "2.1.319"} {
 		for _, model := range []string{"", "explicit-model", "auto"} {
 			args, err := invocationArgs(fixtureAuthorization(), version, model, "/scratch", "--prompt content")
 			if err != nil {
@@ -34,18 +34,15 @@ func TestNativeInvocation(t *testing.T) {
 			}
 		}
 	}
-	if args, err := invocationArgs(fixtureAuthorization(), "999.0.0", "", "/scratch", "prompt"); err == nil || len(args) != 0 || !strings.Contains(err.Error(), "install") {
-		t.Fatalf("unsupported version: %v %v", args, err)
-	}
 }
 
 func TestNativeDefaultsAndModelProvenance(t *testing.T) {
 	binary := buildAgentClaude(t)
 	for _, tc := range []struct{ model, diagnostic, hint string }{
 		{"", "", ""}, {"explicit-model", "", ""},
-		{"", "unknown option --headless", "adapter-qualified"},
+		{"", "unknown option --headless", "compatible"},
 		{"explicit-model", "authentication failed", "login"},
-		{"", "stdout:unknown option --headless", "adapter-qualified"},
+		{"", "stdout:unknown option --headless", "compatible"},
 		{"explicit-model", "stdout:authentication failed", "login"},
 		{"", "stdout:permission denied", "operator authorization"},
 	} {
@@ -147,23 +144,23 @@ func TestNativeDefaultsAndModelProvenance(t *testing.T) {
 	}
 }
 
-func TestNativeReadinessRejectsUnsupportedVersion(t *testing.T) {
+func TestNativeReadinessAcceptsUnpinnedVersionAndChecksLogin(t *testing.T) {
 	cli := filepath.Join(t.TempDir(), "runner")
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 999.0.0; else echo 'not logged in'; fi\n"
 	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checks := runnerChecks(cli, "status")
-	var versionFailed, loginFailed bool
+	var versionPassed, loginFailed bool
 	for _, c := range checks {
 		if c.Name == contract.ProbeVersion {
-			versionFailed = !c.Passed && strings.Contains(c.Message, "install")
+			versionPassed = c.Passed && c.Version == "999.0.0"
 		}
 		if c.Name == contract.ProbeAuthentication {
 			loginFailed = !c.Passed && strings.Contains(c.Message, "login")
 		}
 	}
-	if !versionFailed || !loginFailed {
+	if !versionPassed || !loginFailed {
 		t.Fatalf("%+v", checks)
 	}
 }

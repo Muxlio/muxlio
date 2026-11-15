@@ -20,8 +20,9 @@ func AuthorizeRunner(req *Request, binary string, mapping AuthorizationMapping) 
 		return nil, fmt.Errorf("execution authorization denied: operator policy is required")
 	}
 	check := CommandCheck(contract.ProbeVersion, binary, "--version")
-	if !check.Passed {
-		return nil, fmt.Errorf("execution authorization cannot verify runner version")
+	report := contract.ProbeResult{Checks: []contract.ProbeCheck{check}}
+	if err := req.Environment.CheckRunners(report.RunnerVersions()); err != nil {
+		return nil, err
 	}
 	args, err := mapping(req.Authorization, check.Version)
 	if err != nil {

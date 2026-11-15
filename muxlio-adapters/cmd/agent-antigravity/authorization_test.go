@@ -17,7 +17,7 @@ func versionedFixture(script string) string {
 }
 
 func TestPermissionArguments(t *testing.T) {
-	for _, version := range []string{"1.5.5", "1.5.6", "1.5.8"} {
+	for _, version := range []string{"0.169.0", "999.0.0", "", "1.5.5", "1.5.6", "1.5.8"} {
 		t.Run(version, func(t *testing.T) {
 			p := fixtureAuthorization()
 			got, err := permissionArgs(p, version)
@@ -30,12 +30,6 @@ func TestPermissionArguments(t *testing.T) {
 
 			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("compatibility: %v %v", got, err)
-			}
-			for _, mode := range []string{"trusted", "restricted", "compatibility", "unknown"} {
-				p.Mode = mode
-				if args, err := permissionArgs(p, "999.0.0"); err == nil || len(args) != 0 {
-					t.Fatalf("unknown version accepted: %v %v", args, err)
-				}
 			}
 			p.Mode = "unknown"
 			if args, err := permissionArgs(p, version); err == nil || len(args) != 0 {

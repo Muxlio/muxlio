@@ -259,7 +259,7 @@ For explicitly trusted high-autonomy jobs, configure each capability separately:
 Trusted mode requires all unrestricted grants explicitly. `compatibility` is an
 operator-approved migration mode with the same explicit grants. For Codex it
 retains `--approve-for-me` auto-review; trusted mode selects the explicit bypass
-flag. Compatibility never restores automatic policy defaults, version fallback,
+flag. Compatibility never restores automatic policy defaults
 or broad shell environment inheritance. Codex uses
 `shell_environment_policy.inherit=none` in both modes. Supply necessary tool
 credentials through the existing explicit secret contract, rather than ambient
@@ -267,24 +267,27 @@ shell inheritance. For the other native agents compatibility uses the same
 explicit bypass mapping as trusted mode. These modes trust workspace hooks,
 plugins and tools with the execution host's accessible credentials and files.
 
-Current adapter argument mappings accept these exact builds:
+Runner versions are unconstrained unless the client explicitly pins them in the
+environment manifest. Adapters collect version evidence when available; an
+unlisted or unavailable version does not block an unpinned run. Explicit pins
+still require matching version evidence. CLI invocation errors are reported by
+the owning adapter.
 
-| Native agent | Runner versions | Restricted policy | Trusted / compatibility |
-| --- | --- | --- | --- |
-| Claude | 2.1.319 | Restricted and safe modes, empty MCP configuration, explicit file tools, `dontAsk`, no permission prompts; no shell/network tools | Explicit bypass permission mode |
-| Codex | 0.167.0, 0.167.2 | Rejected: full tool/MCP/hook enforcement is unqualified | Bypass / automatic approval review |
-| Cursor | 2026.11.05-86047df, 2026.11.11-b912975 | Rejected: full restrictive enforcement is unqualified | Explicit run-all and workspace trust |
-| Kiro | 2.37.0 | Rejected: selective tool trust does not prove workspace hook or network containment | Explicit all-tools and workspace trust |
-| Antigravity | 1.5.5, 1.5.6, 1.5.8 | Rejected: sandbox/plan flags do not prove the full contract | Explicit skip-permissions |
+| Native agent | Restricted policy | Trusted / compatibility |
+| --- | --- | --- |
+| Claude | Restricted and safe modes, empty MCP configuration, explicit file tools, `dontAsk`, no permission prompts; no shell/network tools | Explicit bypass permission mode |
+| Codex | Rejected: full tool/MCP/hook enforcement is unqualified | Bypass / automatic approval review |
+| Cursor | Rejected: full restrictive enforcement is unqualified | Explicit run-all and workspace trust |
+| Kiro | Rejected: selective tool trust does not prove workspace hook or network containment | Explicit all-tools and workspace trust |
+| Antigravity | Rejected: sandbox/plan flags do not prove the full contract | Explicit skip-permissions |
 
 For Claude file-only execution, use `mode: restricted`, `allowedTools:
 ["read-file", "write-file"]`, empty `allowedCommands`, `workspaceWrite: true`,
 `network: none`, and an explicit isolation choice. File tools are confined by
 restricted mode to the working roots, including the declared output scratch.
-No tool is exposed by default. An unknown mode, field, build, unavailable
-version probe or unsupported restriction fails before generation. CLI upgrades
-require updating the adapter-owned mapping and fixtures and rerunning live
-qualification; shared worker and coordinator code must never select CLI flags.
+No tool is exposed by default. An unknown mode, field or unsupported restriction
+fails before generation. CLI upgrades do not require an allowlist update.
+Shared worker and coordinator code must never select CLI flags.
 The policy log records accepted and denied attempts with a valid policy (including
 missing-policy denials). It records the SHA-256 digest, mode, tool/command counts, writes,
 network and isolation requirements, without command strings or environment

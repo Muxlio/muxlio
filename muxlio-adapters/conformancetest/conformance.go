@@ -89,15 +89,29 @@ func Run(t *testing.T, moduleRoot string, fixtures []Fixture) {
 						t.Fatal("denied attempt has no inspectable policy summary")
 					}
 				})
-				t.Run("unknown_runner_build_denied", func(t *testing.T) {
+				t.Run("unpinned_runner_build_accepted", func(t *testing.T) {
 					changed := f
 					changed.RunnerVersion = "999.0.0"
-					resp, progress := invoke(t, bin, changed, f.SuccessStream, "", 0, false, nil, func(req *adapter.Request) {})
-					if !strings.Contains(resp.Error, "unsupported runner version") {
-						t.Fatalf("unknown build dispatched: %+v", resp)
+					resp, progress := invoke(t, bin, changed, f.SuccessStream, "", 0, false, nil)
+					if resp.Error != "" {
+						t.Fatalf("unpinned build rejected: %+v", resp)
 					}
 					if !strings.Contains(progress, f.Authorization.Summary()) {
-						t.Fatal("version denial has no inspectable policy summary")
+						t.Fatal("execution has no inspectable policy summary")
+					}
+				})
+				t.Run("explicit_runner_pin_mismatch_denied", func(t *testing.T) {
+					changed := f
+					changed.RunnerVersion = "999.0.0"
+					resp, _ := invoke(t, bin, changed, f.SuccessStream, "", 0, false, nil, func(req *adapter.Request) {
+						req.Environment = &contract.EnvironmentManifest{
+							Version: "1", ProtocolDigest: manifest.ProtocolDigest(),
+							Runners: map[string]string{"runner": f.RunnerVersion},
+						}
+						req.Environment.Digest = req.Environment.ComputeDigest()
+					})
+					if !strings.Contains(resp.Error, "pinned runner version unavailable") {
+						t.Fatalf("explicit version pin not enforced: %+v", resp)
 					}
 				})
 			}

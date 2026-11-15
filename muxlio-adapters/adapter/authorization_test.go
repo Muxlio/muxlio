@@ -23,9 +23,14 @@ func TestAuthorizeRunnerIgnoresTaskPermissions(t *testing.T) {
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\necho runner-1.2.3\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Invalid/missing version evidence must not invoke the mapping.
+	// Without an explicit pin, unavailable version evidence does not block execution.
+	if _, err := AuthorizeRunner(req, runner, mapping); err != nil || !called {
+		t.Fatalf("unpinned runner rejected: %v", err)
+	}
+	called = false
+	req.Environment = &contract.EnvironmentManifest{Runners: map[string]string{"runner": "1.2.3"}}
 	if _, err := AuthorizeRunner(req, runner, mapping); err == nil || called {
-		t.Fatal("unverified version accepted")
+		t.Fatal("unverified pinned version accepted")
 	}
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\necho 1.2.3\n"), 0700); err != nil {
 		t.Fatal(err)

@@ -72,8 +72,14 @@ func BinaryCheck(binary string) contract.ProbeCheck {
 
 // RunnerChecks never starts a generation, login flow or billable task.
 func RunnerChecks(binary string, authArgs ...string) []contract.ProbeCheck {
+	version := CommandCheck(contract.ProbeVersion, binary, "--version")
+	if !version.Passed {
+		// Version evidence is optional until a client requests an environment pin.
+		version.Passed = true
+		version.Message = "runner version unavailable; no version constraint requested"
+	}
 	return []contract.ProbeCheck{
-		BinaryCheck(binary), CommandCheck(contract.ProbeVersion, binary, "--version"),
+		BinaryCheck(binary), version,
 		CommandCheck(contract.ProbeAuthentication, binary, authArgs...),
 		{Name: contract.ProbeBackend, Passed: true, Message: "native execution backend"},
 		{Name: contract.ProbeTools, Passed: true, Message: "no additional companion tools required"},
