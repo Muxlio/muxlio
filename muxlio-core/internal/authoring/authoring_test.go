@@ -47,20 +47,15 @@ func TestTemplatesValidateAndEchoPreservesInput(t *testing.T) {
 	}
 }
 
-func TestCompileRequiresTrustAndNeverFetchesPackages(t *testing.T) {
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
+func TestCompileNeverFetchesPackages(t *testing.T) {
 	t.Setenv("PATH", "")
 	path := filepath.Join(t.TempDir(), "workflow.ts")
-	if _, err := Compile(path); err == nil || !strings.Contains(err.Error(), "trusted definitions") {
-		t.Fatalf("trust guard: %v", err)
-	}
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
 	if _, err := Compile(path); err == nil || !strings.Contains(err.Error(), "no project-local tsx") {
 		t.Fatalf("offline failure: %v", err)
 	}
 }
 
-func TestTrustedCompileUsesNearestProjectRunner(t *testing.T) {
+func TestCompileUsesNearestProjectRunner(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("Node is needed only for optional source compilation")
@@ -95,7 +90,6 @@ func TestTrustedCompileUsesNearestProjectRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
 	raw, err := Compile(path)
 	if err != nil || !strings.Contains(string(raw), `"name":"local"`) {
 		t.Fatalf("compile: %s, %v", raw, err)

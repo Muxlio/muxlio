@@ -61,6 +61,21 @@ const registrySource =
   JSON.stringify(views) +
   ";\n";
 await writeFile(join(registryDirectory, "templates.ts"), registrySource);
+const canvasSchemaPath = join(
+  root,
+  "..",
+  "muxlio-core",
+  "internal",
+  "canvas",
+  "schema",
+  "v1.json",
+);
+const canvasSchemaRaw = await readFile(canvasSchemaPath, "utf8");
+const canvasSchemaSource =
+  "/* Generated Canvas schema. */\nvar canvasSchema: Readonly<Record<string,any>> = " +
+  JSON.stringify(JSON.parse(canvasSchemaRaw)) +
+  ";\n";
+await writeFile(join(registryDirectory, "canvas-schema.ts"), canvasSchemaSource);
 const compiler = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 for (const config of [
   "tsconfig.json",
@@ -225,7 +240,13 @@ execFileSync(
 );
 await rename(join(destination, "server.js"), join(destination, "server.mjs"));
 
-const styleOrder = ["base.css", "workspace.css", "operations.css", "theme.css"];
+const styleOrder = [
+  "base.css",
+  "workspace.css",
+  "operations.css",
+  "theme.css",
+  "canvas.css",
+];
 await writeFile(
   join(destination, "app.css"),
   (

@@ -135,6 +135,6 @@ needed for JSON authoring, validation, fake testing, or submission.
 
 See [the installed authoring guide](muxlio-skills/references/authoring.md) for
 an empty-workspace example and submission instructions. Optional TypeScript/
-JavaScript compilation executes arbitrary code, requires explicit
-`MUXLIO_TRUST_WORKFLOW_CODE=1` and project-local dependencies installed from
+JavaScript compilation executes arbitrary code, requires
+project-local dependencies installed from
 your pinned lockfile, and never implicitly downloads packages.

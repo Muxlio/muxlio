@@ -321,12 +321,12 @@ The recommended validation path for untrusted or agent-generated submissions is
 JSON Plan IR: use MCP `check_plan` (an in-memory JSON document), or `build`/`test`
 with a `.json` file. These paths never execute TypeScript, JavaScript, imports,
 package scripts, or compiler hooks. Catalog templates also produce JSON without
-Node. Do not enable source compilation merely to validate generated source.
+Node. Do not compile source merely to validate generated definitions.
 
 Loading `.ts`, `.js`, or `.mjs` executes arbitrary code before Plan IR validation.
 This includes CLI `build`, `check`, `test`, and `run`, and MCP `build`/`test`.
-The operator must explicitly set `MUXLIO_TRUST_WORKFLOW_CODE=1`; MCP additionally
-requires `trustedSource: true` on each source call. The tool descriptions and
+CLI source commands compile directly. MCP requires `trustedSource: true` on
+each source call. The tool descriptions and
 rejection messages expose the risk before execution. This acknowledgement is
 not a sandbox or a substitute for reviewing the source and dependencies.
 
@@ -354,5 +354,4 @@ run the compiler on a separate disposable host/container under a dedicated
 identity, with only the reviewed workspace and dependencies mounted, no
 operator credentials, network denied, and OS memory/process limits. Transfer
 only the resulting JSON Plan IR to the operator's MCP host for `check_plan` and
-submission. Never enable trusted source loading on a host that handles
-unreviewed definitions.
+submission. Never compile source on a host that handles unreviewed definitions.

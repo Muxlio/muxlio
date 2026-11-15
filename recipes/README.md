@@ -16,3 +16,6 @@ authoring recipe; an immutable workflow version identifies a compiled plan.
 The TypeScript recipes in this directory show more specialized compositions
 using `@muxlio/sdk`. Use them when the built-in shapes do not fit, with the same
 Plan IR execution and inspection tools.
+
+See [research](research/README.md) for iterative evidence gathering with a final
+Markdown report and Canvas dashboard.

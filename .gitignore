@@ -25,6 +25,7 @@ muxlio-testing/dist/
 
 # ---- Compiled plan artifacts (generated, not source) ----
 recipes/**/*.json
+!recipes/**/input.example.json
 
 # ---- Adapter binaries (built outputs) ----
 adapters

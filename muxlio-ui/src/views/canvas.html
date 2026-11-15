@@ -1,0 +1,73 @@
+<template data-view="artifact-preview">
+<div class="panel"><div class="panel-head"><h1>{{value0}}</h1></div><div class="panel-body markdown-body">{{value1}}</div></div>
+</template>
+
+<template data-view="shell">
+<div class="canvas-view-container">
+  <div id="canvasToolbarSlot">{{value0}}</div>
+  <div class="canvas-view-body">
+    <aside class="canvas-rail" id="canvasRailSlot">{{value1}}</aside>
+    <main class="canvas-main-area" id="canvasMainArea">
+      <div id="canvasRoot" class="canvas-root">{{value2}}</div>
+      <div id="canvasSourceView" class="canvas-source-view" hidden>{{value3}}</div>
+    </main>
+    <aside class="canvas-inspector-rail" id="canvasInspectorSlot">{{value4}}</aside>
+  </div>
+</div>
+</template>
+
+<template data-view="toolbar">
+<div class="canvas-toolbar">
+  <div class="canvas-toolbar-info">
+    <div class="canvas-toolbar-title-row">
+      <h1 class="canvas-doc-title">{{value0}}</h1>
+      <span class="status-badge {{value1}}">{{value2}}</span>
+    </div>
+    <p class="canvas-doc-desc">{{value3}}</p>
+  </div>
+  <div class="canvas-toolbar-actions">
+    <div class="tab-bar canvas-mode-tabs" role="tablist" aria-label="View mode">
+      <button type="button" class="tab-btn {{value4}}" id="canvasModePreview" role="tab" aria-selected="{{value5}}">Preview</button>
+      <button type="button" class="tab-btn {{value6}}" id="canvasModeSource" role="tab" aria-selected="{{value7}}">Source</button>
+    </div>
+    <button type="button" class="btn" id="canvasCopyLinkBtn">Copy link</button>
+    <button type="button" class="btn" id="canvasDownloadBtn">Download</button>
+    <button type="button" class="btn" id="canvasPinBtn">{{value8}}</button>
+    <button type="button" class="btn ghost" id="canvasToggleProvenanceBtn">Info</button>
+  </div>
+</div>
+</template>
+
+<template data-view="rail-nav">
+<div class="canvas-rail-inner">
+  <div class="canvas-rail-head"><strong>Files</strong></div>
+  <div class="canvas-rail-list">{{value0}}</div>
+</div>
+</template>
+
+<template data-view="rail-file">
+<a class="canvas-rail-link{{value0}}" href="{{value1}}"><span class="canvas-rail-icon">📄</span><span class="canvas-rail-name">{{value2}}</span></a>
+</template>
+
+<template data-view="provenance-panel">
+<div class="canvas-provenance">
+  <div class="panel-head"><h2>Provenance</h2></div>
+  <div class="panel-body">
+    <div class="canvas-prov-rows">{{value0}}</div>
+    <div class="canvas-revisions-block">
+      <div class="block-label">Revisions</div>
+      <select class="control" id="canvasRevisionSelect">{{value1}}</select>
+    </div>
+  </div>
+</div>
+</template>
+
+<template data-view="fallback-card">
+<div class="canvas-fallback panel">
+  <div class="panel-head"><h2 class="canvas-fallback-title">{{value0}}</h2></div>
+  <div class="panel-body">
+    <p class="canvas-fallback-msg">{{value1}}</p>
+    <div class="canvas-fallback-actions">{{value2}}</div>
+  </div>
+</div>
+</template>

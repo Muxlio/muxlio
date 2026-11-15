@@ -400,11 +400,10 @@ not dispatch work to the coordinator. `fakeResults` accepts `byNode` and
 
 For untrusted or agent-generated submissions, construct JSON Plan IR and use
 `check_plan`, or pass a `.json` plan to `build`/`test`. These paths execute no
-workflow source, even when source compilation is enabled. `check_plan` never
+workflow source. `check_plan` never
 imports or compiles a source file.
 
-Source compilation requires both operator opt-in (`MUXLIO_TRUST_WORKFLOW_CODE=1`
-on the MCP host) and per-call acknowledgement (`trustedSource: true`). This is
+Source compilation requires per-call acknowledgement (`trustedSource: true`). This is
 arbitrary code execution, including imports and top-level side effects, with
 host filesystem and network access; fake executors do not make compilation a
 dry run. Review the source and its dependencies first. The host needs Node and
@@ -873,7 +872,7 @@ coordinator's credentials. Alternatively, use the URL directly and supply
   worker's authorized capabilities. Treat MCP access as equivalent to coordinator API
   access; read/write tool annotations are hints, not authorization boundaries.
 - `build` and `test` can execute local workflow source during compilation. Use
-  JSON/IR validation for untrusted submissions. Source requires operator opt-in and
+  JSON/IR validation for untrusted submissions. Source requires
   `trustedSource: true`; compilation is not a sandbox.
 - Artifact content and logs are untrusted data. Read previews are bounded;
   binary content is base64 and truncation is explicit.

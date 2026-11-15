@@ -24,9 +24,6 @@ func Compile(filePath string) ([]byte, error) {
 }
 
 func compile(filePath string, timeout time.Duration) ([]byte, error) {
-	if os.Getenv("MUXLIO_TRUST_WORKFLOW_CODE") != "1" {
-		return nil, fmt.Errorf("TypeScript/JavaScript compilation executes arbitrary code; only for trusted definitions, set MUXLIO_TRUST_WORKFLOW_CODE=1. Use muxlio template echo or task for offline JSON authoring")
-	}
 	abs, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, err

@@ -263,3 +263,98 @@ test("compiled assets are served without registering individual filenames", asyn
     404,
   );
 });
+
+test("canvas route is recognised by isUIPath and served by the UI server", async () => {
+  const server = createUIServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const root = `http://127.0.0.1:${port(server)}`;
+    for (const path of [
+      "/artifacts/view/run-a/act-b/canvas",
+      "/artifacts/view/run%2Fa/act%2Fb/canvas%2Freport",
+    ]) {
+      const response = await fetch(root + path);
+      assert.equal(response.status, 200, `server must serve canvas route ${path}`);
+      assert.match(await response.text(), /<title>Muxlio/);
+    }
+    // Non-canvas artifact paths should still 404
+    assert.equal(
+      (await fetch(root + "/artifacts/view/only-two-segments")).status,
+      404,
+      "incomplete canvas route must 404",
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("navigate dispatches canvas route to loadCanvasPage with decoded IDs", () => {
+  const coreSrc = readFileSync(
+    new URL("./.generated/core.js", import.meta.url),
+    "utf8",
+  );
+  const crSrc = coreSrc.slice(
+    coreSrc.indexOf("function currentRoute()"),
+    coreSrc.indexOf("\nfunction isUIPath"),
+  );
+  const navSrc = coreSrc.slice(
+    coreSrc.indexOf("\nfunction navigate()"),
+    coreSrc.indexOf("\nasync function fetchRuns()"),
+  );
+
+  let loadedCanvas: { runId: string; actId: string; port: string } | null = null;
+  function makeCtx(url: string) {
+    let loc = new URL(url);
+    return vm.createContext({
+      URL,
+      get location() { return loc; },
+      message() {},
+      setView() {},
+      loadTranscriptPage() {},
+      loadCanvasPage(runId: string, actId: string, port: string) {
+        loadedCanvas = { runId, actId, port };
+      },
+      openRun() {},
+      loadOpsDashboard() {},
+      loadAutomation() {},
+      loadRetention() {},
+      loadWorkerCapabilityPage() {},
+      loadWorkers() {},
+      loadLive() {},
+      loadRuns() {},
+      loadWorkflows() {},
+      loadArtifacts() {},
+      loadAnalytics() {},
+      loadOverview() {},
+      analyticsFiltersFromURL() {},
+      current: null,
+    });
+  }
+
+  // Basic canvas route
+  {
+    loadedCanvas = null;
+    const ctx = makeCtx("http://localhost/artifacts/view/run-abc/act-def/report");
+    vm.runInContext(crSrc + navSrc, ctx);
+    ctx.navigate();
+    assert.ok(loadedCanvas, "loadCanvasPage must be called for canvas route");
+    assert.equal(loadedCanvas!.runId, "run-abc");
+    assert.equal(loadedCanvas!.actId, "act-def");
+    assert.equal(loadedCanvas!.port, "report");
+  }
+
+  // Encoded IDs are decoded before passing to loadCanvasPage
+  {
+    loadedCanvas = null;
+    const ctx = makeCtx(
+      "http://localhost/artifacts/view/run%2Fa/act%2Fb/canvas%2Freport",
+    );
+    vm.runInContext(crSrc + navSrc, ctx);
+    ctx.navigate();
+    assert.ok(loadedCanvas, "loadCanvasPage must be called for encoded canvas route");
+    assert.equal(loadedCanvas!.runId, "run/a", "runId must be decoded");
+    assert.equal(loadedCanvas!.actId, "act/b", "actId must be decoded");
+    assert.equal(loadedCanvas!.port, "canvas/report", "port must be decoded");
+  }
+});

@@ -2,6 +2,10 @@
 <div class="artifact-row"><div class="artifact-icon">📄</div><div><div class="artifact-name">{{value0}}</div><div class="artifact-meta">{{value1}}</div></div><button class="artifact-view" data-open-output="{{value2}}" data-output-name="{{value3}}">View</button></div>
 </template>
 
+<template data-view="list-inner-html-artifact-row-canvas">
+<div class="artifact-row"><div class="artifact-icon">🎨</div><div><div class="artifact-name">{{value0}}</div><div class="artifact-meta">{{value1}}</div></div><a class="btn artifact-view" href="{{value2}}">Open Canvas</a></div>
+</template>
+
 <template data-view="event-html-ev-sub">
 <span class="ev-sub">{{value0}}</span>
 </template>
@@ -84,6 +88,10 @@
 <button class="btn ghost" data-art-copy="{{value0}}">Copy digest</button>
 </template>
 
+<template data-view="el-inner-html-btn-canvas">
+<a class="btn ghost" href="{{value0}}">Open Canvas</a>
+</template>
+
 <template data-view="el-inner-html-primary-cell-2">
 
       <tr>
@@ -94,6 +102,7 @@
         <td class="row-actions">
           {{value7}}
           {{value8}}
+          {{value9}}
         </td>
       </tr>
 </template>

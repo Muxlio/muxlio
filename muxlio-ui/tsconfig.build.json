@@ -8,6 +8,7 @@
   "files": [
     "src/format.ts",
     ".generated/templates.ts",
+    ".generated/canvas-schema.ts",
     "src/components/template.ts",
     "src/components/view-template.ts",
     "src/components/feedback.ts",
@@ -20,6 +21,13 @@
     "src/components/form-dialog.ts",
     "src/markdown.ts",
     "src/json.ts",
+    "src/canvas/types.ts",
+    "src/canvas/source.ts",
+    "src/canvas/validate.ts",
+    "src/canvas/interactions.ts",
+    "src/canvas/registry.ts",
+    "src/canvas/render.ts",
+    "src/canvas/view.ts",
     "src/core.ts",
     "src/usage-summary.ts",
     "src/workbench.ts",
@@ -37,7 +45,5 @@
     "src/interactions.ts",
     "src/main.ts"
   ],
-  "include": [
-    "src/*.d.ts"
-  ]
+  "include": ["src/*.d.ts"]
 }

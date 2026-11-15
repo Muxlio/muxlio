@@ -12,7 +12,6 @@ import (
 
 func TestCatalogDiscoveryInstantiationAndSubmission(t *testing.T) {
 	t.Setenv("PATH", "")
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
 	s := &server{}
 	listed := s.dispatchTool("list_workflow_templates", json.RawMessage(`{}`))
 	var list struct {

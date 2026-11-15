@@ -79,7 +79,6 @@ Follow a run in the UI at `http://localhost:7600` or ask your assistant for its 
   <a class="path-card" href="benchmarks/"><span class="path-number">05</span><span><strong>Benchmarks</strong><small>Understand what the reference suite measures.</small></span><span class="path-arrow">↗</span></a>
   <a class="path-card" href="architecture/overview/"><span class="path-number">06</span><span><strong>Architecture &amp; reference</strong><small>Execution contracts, tools, configuration, and security.</small></span><span class="path-arrow">↗</span></a>
   <a class="path-card" href="https://github.com/Muxlio/muxlio/tree/main/recipes/implement-features"><span class="path-number">07</span><span><strong>Implement-features recipe</strong><small>Read the workflow, tasks, and example inputs.</small></span><span class="path-arrow">↗</span></a>
+  <a class="path-card" href="accounting/"><span class="path-number">08</span><span><strong>Accounting contract and limits</strong><small>Understand usage readings, costs, and run-budget limits.</small></span><span class="path-arrow">↗</span></a>
 </div>
 <p class="home-readme">Build your own workflows with the <a href="architecture/developer-reference/">CLI and SDK reference ↗</a></p>
-
-- [Accounting contract and limits](accounting.md)

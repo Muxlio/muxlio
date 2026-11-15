@@ -79,6 +79,7 @@ semantics or select an executor based on the authoring client's identity.
 
 - To create or repair a plan, read [authoring](references/authoring.md).
 - To set up, validate, run, or inspect a workflow, read [operations](references/operations.md).
+- To publish a declarative UI document as a workflow artifact, read [canvas](references/canvas.md).
 - Before executing commands or external effects, read [security](references/security.md).
 
 The installed service, skill, and MCP tools work without a Muxlio source checkout.

@@ -15,4 +15,5 @@ type UIElement = HTMLElement & Pick<HTMLInputElement, 'value' | 'disabled' | 'ch
 
 declare var renderMarkdown: (text: unknown) => string;
 declare var MuxlioJson: { [key: string]: (...args: any[]) => any };
+declare var canvasSchema: Readonly<Record<string, any>>;
 interface Window { MuxlioJson: typeof MuxlioJson; }

@@ -4,6 +4,8 @@ Run timing has two definitions: **Elapsed time** is wall-clock time from run cre
 
 The [durable execution contracts](durable-execution.md) define run, activation,
 attempt, plan-version, replay, and waiting semantics.
+The [accounting contract and limits](../accounting.md) define shared usage
+readings, provenance, aggregation, and run-budget enforcement.
 
 ## System boundary
 

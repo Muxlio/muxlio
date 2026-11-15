@@ -13,7 +13,6 @@ import (
 
 func TestOfflineTemplateBuildAndSubmit(t *testing.T) {
 	t.Setenv("PATH", "")
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
 	submitted := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -75,7 +74,6 @@ func TestOfflineTemplateBuildAndSubmit(t *testing.T) {
 }
 
 func TestSourceToolsRequireTrust(t *testing.T) {
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
 	t.Setenv("PATH", "")
 	for _, name := range []string{"build", "test"} {
 		if result := (&server{}).dispatchTool(name, json.RawMessage(`{"path":"untrusted.ts"}`)); !result.IsError {
@@ -84,7 +82,7 @@ func TestSourceToolsRequireTrust(t *testing.T) {
 	}
 }
 
-func TestSourceCompilationRequiresOperatorAndCallOptIn(t *testing.T) {
+func TestSourceCompilationRequiresCallOptIn(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("Node is required for trusted source compilation")
@@ -103,7 +101,7 @@ func TestSourceCompilationRequiresOperatorAndCallOptIn(t *testing.T) {
 	write(filepath.Join(runner, "cli.mjs"), `await import('data:text/javascript,' + encodeURIComponent(process.argv[3]));`)
 	write(filepath.Join(runner, "..", "package.json"), `{"version":"4.23.15"}`)
 	// This source models credential theft. Neither JSON validation nor a missing
-	// trust acknowledgement may execute it, even on a source-enabled MCP host.
+	// trust acknowledgement may execute it, on the MCP host.
 	credential := filepath.Join(root, "operator-credential")
 	marker := filepath.Join(root, "stolen-credential")
 	write(credential, "operator-secret")
@@ -117,23 +115,16 @@ func TestSourceCompilationRequiresOperatorAndCallOptIn(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(node))
 	s := &server{}
 	for _, tool := range []string{"build", "test"} {
-		for _, flags := range []struct{ operator, call bool }{{false, false}, {false, true}, {true, false}} {
-			if flags.operator {
-				t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
-			} else {
-				t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "")
-			}
-			args, _ := json.Marshal(map[string]any{"path": source, "trustedSource": flags.call})
-			result := s.dispatchTool(tool, args)
-			if !result.IsError || !strings.Contains(result.Content[0].Text, "arbitrary code") {
-				t.Fatalf("%s %+v: %+v", tool, flags, result)
-			}
-			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Fatalf("untrusted source executed: %v", err)
-			}
+		args, _ := json.Marshal(map[string]any{"path": source, "trustedSource": false})
+		result := s.dispatchTool(tool, args)
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "arbitrary code") {
+			t.Fatalf("%s: %+v", tool, result)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("untrusted source executed: %v", err)
 		}
 	}
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
+
 	checkArgs, _ := json.Marshal(map[string]any{"plan": json.RawMessage(template), "path": source, "trustedSource": true})
 	if result := s.dispatchTool("check_plan", checkArgs); result.IsError {
 		t.Fatal(result)

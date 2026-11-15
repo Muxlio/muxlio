@@ -18,7 +18,6 @@ func TestCompileStopsDescendants(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node is required for compiler process tests")
 	}
-	t.Setenv("MUXLIO_TRUST_WORKFLOW_CODE", "1")
 	for _, tc := range []struct {
 		name, stdio, finish string
 	}{

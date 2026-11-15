@@ -1,0 +1,10 @@
+{
+  "topic": "SQLite WAL mode for a small self-hosted service",
+  "questions": [
+    "How does WAL mode affect concurrent readers and writers?",
+    "What backup and recovery practices does SQLite recommend?",
+    "Which deployment constraints make WAL mode unsuitable?"
+  ],
+  "audience": "Engineers choosing a database configuration for a small service",
+  "depth": "standard"
+}

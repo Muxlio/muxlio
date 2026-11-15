@@ -167,7 +167,7 @@ export function createUIServer({
       return;
     }
     if (
-      !/^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+|worker-capabilities\/[^/]+\/[^/]+(?:\/[^/]+)?|operations|automation|retention|workers|live|workflows|artifacts|analytics|compare|evidence)\/?$/.test(
+      !/^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+|worker-capabilities\/[^/]+\/[^/]+(?:\/[^/]+)?|artifacts\/view\/[^/]+\/[^/]+\/[^/]+|operations|automation|retention|workers|live|workflows|artifacts|analytics|compare|evidence)\/?$/.test(
         pathname,
       ) &&
       pathname !== "/"

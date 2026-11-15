@@ -1,0 +1,399 @@
+/* ── Canvas Viewer & Components ──────────────────────────────── */
+.canvas-view-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: calc(100vh - 56px);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.canvas-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.canvas-toolbar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.canvas-toolbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.canvas-doc-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.canvas-doc-desc {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.canvas-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.canvas-mode-tabs {
+  margin-right: 0.5rem;
+}
+
+.canvas-view-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-rail {
+  width: 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.canvas-rail-head {
+  padding: 0 0.5rem 0.5rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.canvas-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.canvas-rail-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius, 4px);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-rail-link:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.05));
+}
+
+.canvas-rail-link--active {
+  background: var(--active, rgba(255, 255, 255, 0.1));
+  font-weight: 500;
+  color: var(--primary, #38bdf8);
+}
+
+.canvas-main-area {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.canvas-root {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.canvas-source-view {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.canvas-inspector-rail {
+  width: 300px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 1rem;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.canvas-provenance .panel-head h2 {
+  font-size: 0.9375rem;
+  margin: 0;
+}
+
+.canvas-revisions-block {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.canvas-fallback {
+  max-width: 600px;
+  margin: 2rem auto;
+}
+
+.canvas-fallback-title {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--red, #ef4444);
+}
+
+.canvas-fallback-msg {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Canvas Component Styles ─────────────────────────────────── */
+.canvas-stack {
+  display: flex;
+  flex-direction: column;
+}
+.canvas-stack--none { gap: 0; }
+.canvas-stack--compact { gap: 0.5rem; }
+.canvas-stack--comfortable { gap: 1rem; }
+.canvas-stack--spacious { gap: 2rem; }
+
+.canvas-grid {
+  display: grid;
+}
+.canvas-grid--none { gap: 0; }
+.canvas-grid--compact { gap: 0.5rem; }
+.canvas-grid--comfortable { gap: 1rem; }
+.canvas-grid--spacious { gap: 1.5rem; }
+
+.canvas-row {
+  display: flex;
+  align-items: center;
+}
+.canvas-row--none { gap: 0; }
+.canvas-row--compact { gap: 0.5rem; }
+.canvas-row--comfortable { gap: 1rem; }
+.canvas-row--spacious { gap: 1.5rem; }
+.canvas-row--wrap { flex-wrap: wrap; }
+
+.canvas-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  margin-bottom: 0.5rem;
+}
+
+.canvas-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.canvas-section-head strong {
+  font-size: 0.9375rem;
+}
+
+.canvas-section-head span {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.canvas-section-body {
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.canvas-tabs {
+  margin-bottom: 1rem;
+}
+
+.canvas-tab-content {
+  padding-top: 1rem;
+}
+
+.canvas-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  width: 100%;
+}
+.canvas-divider--none { margin: 0; }
+.canvas-divider--compact { margin: 0.5rem 0; }
+.canvas-divider--comfortable { margin: 1rem 0; }
+.canvas-divider--spacious { margin: 2rem 0; }
+
+.canvas-heading-wrap {
+  margin: 0.5rem 0;
+}
+.canvas-heading {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.canvas-text {
+  margin: 0.25rem 0;
+  line-height: 1.5;
+}
+.canvas-text--body { font-size: 0.9375rem; color: var(--text); }
+.canvas-text--caption { font-size: 0.8125rem; color: var(--muted); }
+.canvas-text--lead { font-size: 1.125rem; color: var(--text); font-weight: 500; }
+.canvas-text--code { font-family: var(--font-mono, monospace); font-size: 0.875rem; }
+.canvas-text--muted { font-size: 0.875rem; color: var(--muted); }
+
+.canvas-code-wrap {
+  margin: 0.5rem 0;
+}
+
+.canvas-callout {
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius, 6px);
+  border-left: 4px solid var(--border);
+  background: var(--surface);
+  margin: 0.5rem 0;
+}
+.canvas-callout--info {
+  border-left-color: var(--blue, #38bdf8);
+  background: rgba(56, 189, 248, 0.06);
+}
+.canvas-callout--success {
+  border-left-color: var(--green, #22c55e);
+  background: rgba(34, 197, 94, 0.06);
+}
+.canvas-callout--warning {
+  border-left-color: var(--amber, #f59e0b);
+  background: rgba(245, 158, 11, 0.06);
+}
+.canvas-callout--error {
+  border-left-color: var(--red, #ef4444);
+  background: rgba(239, 68, 68, 0.06);
+}
+.canvas-callout-title {
+  display: block;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+.canvas-callout-text {
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.canvas-link-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+.canvas-link-desc {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.canvas-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.canvas-toggle-wrap {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.canvas-tablebox {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  padding: 1rem;
+  margin: 0.5rem 0;
+}
+.canvas-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
+}
+.canvas-table-header h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+.canvas-table-footer {
+  margin-top: 0.75rem;
+}
+.canvas-sort-icon {
+  margin-left: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.canvas-chartbox,
+.canvas-sparkbox {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  padding: 1rem;
+  margin: 0.5rem 0;
+}
+.canvas-chart-head h3,
+.canvas-spark-head h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.canvas-bar-row {
+  cursor: pointer;
+  border-radius: var(--radius, 4px);
+  padding: 0.25rem;
+}
+.canvas-bar-row:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.05));
+}
+.canvas-bar-row--selected {
+  background: var(--active, rgba(255, 255, 255, 0.1));
+}
+
+@media (max-width: 768px) {
+  .canvas-rail {
+    display: none;
+  }
+  .canvas-inspector-rail {
+    display: none;
+  }
+  .canvas-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ── Presentation density tokens ─────────────────────────────── */
+/* Applied as canvas-density--<token> on #canvasRoot */
+.canvas-density--compact .canvas-stack--comfortable { gap: 0.5rem; }
+.canvas-density--compact .canvas-stack--spacious    { gap: 0.75rem; }
+.canvas-density--compact .canvas-grid--comfortable  { gap: 0.5rem; }
+.canvas-density--compact .canvas-section-body       { padding: 0.5rem 0.75rem; }
+
+.canvas-density--spacious .canvas-stack--comfortable { gap: 1.75rem; }
+.canvas-density--spacious .canvas-stack--compact     { gap: 1rem; }
+.canvas-density--spacious .canvas-grid--comfortable  { gap: 1.75rem; }
+.canvas-density--spacious .canvas-section-body       { padding: 1.5rem 2rem; }
