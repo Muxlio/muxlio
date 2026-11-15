@@ -505,7 +505,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 			_ = c.store.CancelAttemptWork(req.AttemptID)
 		}
 	}()
-	guarded, err := workers.GuardRequest(req)
+	guarded, err := workers.GuardSelectionRequest(req)
 	if err != nil {
 		return workers.ExecuteResult{}, err
 	}
@@ -513,9 +513,19 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if len(guarded.Secrets) != 0 {
 		return workers.ExecuteResult{}, fmt.Errorf("durable dispatch requires secret handles instead of credential values")
 	}
-	guarded, err = c.authorizeWorkspace(guarded)
+	persistedRequest, err := c.assignmentRequest(req.AttemptID)
 	if err != nil {
 		return workers.ExecuteResult{}, err
+	}
+	reattaching := persistedRequest != nil
+	guarded, err = c.authorizeDispatchWorkspace(guarded, !reattaching)
+	if err != nil {
+		return workers.ExecuteResult{}, err
+	}
+	if workers.IsAnyAgent(guarded.Executor) {
+		if err := c.prepareAgentSelection(&guarded, reattaching); err != nil {
+			return workers.ExecuteResult{}, err
+		}
 	}
 	guarded.TraceContext = telemetry.Inject(ctx)
 	queuedAt := time.Now()
@@ -619,7 +629,7 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	// effect. Instead, poll until the worker reconnects and delivers its result
 	// or the context is cancelled. This satisfies the durable-resume contract:
 	// the engine waits for reconciliation without replaying effectful work.
-	if req.Action == "reconcile" || req.Session != nil {
+	if (req.Action == "reconcile" || req.Session != nil) && !reattaching {
 		candidates, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
 		if err != nil {
 			return workers.ExecuteResult{}, err

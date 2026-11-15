@@ -272,7 +272,7 @@ export type TaskOutputSchema = Record<string, z.ZodTypeAny | ArtifactDecl | Outp
 
 /** Options for defining a task. */
 export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSchema> extends ExecutorRequirements {
-  /** Primary executor capability name, e.g. `'agent/kiro'`. */
+  /** Executor capability name, or `'any'` / `'agent/any'` to select a compatible agent at runtime. */
   executor: string;
   /** Fallback executors tried on retry. */
   fallbackExecutors?: string[];

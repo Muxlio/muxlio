@@ -15,6 +15,41 @@ definitions, independently of the template catalog. Changing executors or tasks
 changes the plan digest. Reusing a compiled plan with different run inputs keeps
 the same plan digest.
 
+Set any step's `executor` to `"any"` (or `"agent/any"`) to let Muxlio choose
+a compatible agent at runtime. This works in templates, JSON plans and SDK
+tasks. Selection considers ready `agent/` executors on live workers accepting
+work, with the same workspace, version, capability and execution-policy checks
+as an explicitly named executor. Required policy allowlists must name the
+concrete agents they permit.
+
+The coordinator chooses an agent when it reserves execution capacity, using
+current worker, executor and shared admission limits. It prefers immediately
+available capacity, then a different agent from the step's dependencies, then
+lower active load and round-robin rotation. Concurrent claims see each other's
+reservations. When all compatible agents are busy, the task stays unresolved in
+the queue and is reconsidered as capacity becomes available. Recovery preserves
+that wait and its original deadline even when workers are temporarily offline.
+For child workflows, the dependency preference follows output bindings to the
+agents that produced the result, including through projected outputs. Field and
+index selections track the consumed value; loop-carried state is traced through
+previous iterations to its originating attempt.
+
+After a replay-safe failure, Muxlio tries an untried compatible agent, waiting for
+that alternative if necessary. Once all have been tried, it avoids the most
+recently failed agent when another can be used. With one compatible agent, it
+reuses that agent. Keyed retries keep the original executor's deduplication
+domain, and resumed sessions retain their original agent and owner.
+
+The concrete choice is persisted atomically with admission, before worker
+dispatch, and recovery reuses it. Direct local runs use active attempts in the
+run for load and serialize selection with attempt admission. If no agent
+qualifies, selection fails with a clear error. Selection does not rank agents
+by quality, cost or speed.
+
+```ts
+const review = task({ executor: 'any', task: 'Review the supplied changes.' });
+```
+
 ## Summarize and verify a museum guide
 
 Inspect `get_workers` and choose installed executors. The following call to

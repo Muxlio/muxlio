@@ -70,7 +70,7 @@ func approvalSchema(verified bool) map[string]any {
 func ListWorkflowTemplates() []WorkflowTemplate {
 	text := map[string]any{"type": "string", "minLength": 1}
 	step := objectSchema(map[string]any{
-		"executor": map[string]any{"type": "string", "minLength": 1, "description": "Executor capability selected from get_workers; independent of the authoring client."},
+		"executor": map[string]any{"type": "string", "minLength": 1, "description": "Executor capability selected from get_workers, or any / agent/any for automatic compatible agent selection with a preference for variety across steps; independent of the authoring client."},
 		"task":     text, "params": map[string]any{"type": "object", "description": "Opaque parameters passed unchanged to the selected executor. Run inputs are supplied separately through bindings."},
 		"output": objectSchema(map[string]any{"mime": text, "path": text, "schema": map[string]any{"type": []string{"object", "boolean"}}}),
 	}, "executor")

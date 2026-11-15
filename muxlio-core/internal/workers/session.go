@@ -230,6 +230,12 @@ func ExplainWorkerDispatch(workerID, executor string, raw []byte, caps []state.W
 	if contract.DecodeJSON(raw, &req) != nil {
 		return mismatch("invalid_execution_request", "Invalid execution request.")
 	}
+	if IsAnyAgent(executor) {
+		if len(CompatibleAgents(req, state.Worker{ID: workerID, Capabilities: caps, Labels: labels})) > 0 {
+			return nil
+		}
+		return mismatch("no_compatible_agent", "Register a ready agent satisfying the execution requirements and policy.")
+	}
 	if req.WorkspaceID != "" && req.WorkspaceMode != "empty" && req.Action != "poll" && req.Action != "reconcile" {
 		if req.WorkspaceWorkerID != workerID || labels[WorkspaceIdentityLabelPrefix+req.WorkspaceID] != "true" {
 			return mismatch("workspace_owner_mismatch", "Select the worker that owns and advertises this workspace.")

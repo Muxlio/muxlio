@@ -45,6 +45,7 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS admission_config (id INTEGER PRIMARY KEY CHECK(id=1), config_json TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_reservations (activation_id TEXT PRIMARY KEY, slots INTEGER NOT NULL, executor TEXT NOT NULL, operator_key TEXT NOT NULL, provider_key TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_turns (run_id TEXT PRIMARY KEY, turn INTEGER NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS agent_selection_turns (executor TEXT PRIMARY KEY, turn INTEGER NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_buckets (provider_key TEXT PRIMARY KEY, tokens REAL NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_queue (activation_id TEXT PRIMARY KEY, reason TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS runs (
@@ -684,6 +685,7 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 	}
 	var selected *state.Dispatch
 	var demand state.AdmissionDemand
+	selectedAny := false
 	for rows.Next() {
 		var d state.Dispatch
 		var raw string
@@ -699,6 +701,23 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		now := time.Now()
 		if (envelope.QueueDeadline != nil && !now.Before(*envelope.QueueDeadline)) || (envelope.Deadline != nil && !now.Before(*envelope.Deadline)) {
 			continue
+		}
+		wasAny := workers.IsAnyAgent(d.Executor)
+		if wasAny {
+			resolved, ready, resolveErr := selectAnyDispatch(tx, cfg, d, envelope, workerID, now)
+			if resolveErr != nil {
+				rows.Close()
+				return nil, 0, resolveErr
+			}
+			if !ready {
+				continue
+			}
+			d = resolved
+			raw = string(d.Request)
+			if err := decodePersistedValue(raw, &envelope); err != nil {
+				rows.Close()
+				return nil, 0, err
+			}
 		}
 		if !workers.MatchWorkerDispatch(workerID, d.Executor, []byte(raw), caps, workerLabels) {
 			continue
@@ -726,13 +745,16 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 				return nil, 0, err
 			}
 			raw = string(encoded)
-			if _, err := tx.Exec(`UPDATE dispatches SET request_json=? WHERE attempt_id=?`, raw, d.AttemptID); err != nil {
-				rows.Close()
-				return nil, 0, err
+			if !wasAny {
+				if _, err := tx.Exec(`UPDATE dispatches SET request_json=? WHERE attempt_id=?`, raw, d.AttemptID); err != nil {
+					rows.Close()
+					return nil, 0, err
+				}
 			}
 		}
 		d.Request = []byte(raw)
 		selected = &d
+		selectedAny = wasAny
 		break
 	}
 	rows.Close()
@@ -754,6 +776,17 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 	}
 	if err = reserveAdmission(tx, cfg, *selected, demand, time.Now()); err != nil {
 		return nil, 0, err
+	}
+	if selectedAny {
+		if _, err = tx.Exec(`UPDATE dispatches SET executor=?,request_json=? WHERE assignment_id=?`, selected.Executor, string(selected.Request), selected.AssignmentID); err != nil {
+			return nil, 0, err
+		}
+		if _, err = tx.Exec(`UPDATE execution_attempts SET executor=? WHERE id=? AND executor IN ('any','agent/any')`, selected.Executor, selected.AttemptID); err != nil {
+			return nil, 0, err
+		}
+		if _, err = tx.Exec(`INSERT INTO agent_selection_turns(executor,turn) VALUES(?,(SELECT COALESCE(MAX(turn),0)+1 FROM agent_selection_turns)) ON CONFLICT(executor) DO UPDATE SET turn=excluded.turn`, selected.Executor); err != nil {
+			return nil, 0, err
+		}
 	}
 	generation++
 	if _, err = tx.Exec(`INSERT INTO assignments(activation_id,run_id,worker_id,generation,lease_until,state,assignment_id,attempt_id) VALUES(?,?,?,?,?,'active',?,?) ON CONFLICT(activation_id) DO UPDATE SET run_id=excluded.run_id,worker_id=excluded.worker_id,generation=excluded.generation,lease_until=excluded.lease_until,state='active',assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id`, selected.ActivationID, selected.RunID, workerID, generation, leaseTimestamp(lease), selected.AssignmentID, selected.AttemptID); err != nil {

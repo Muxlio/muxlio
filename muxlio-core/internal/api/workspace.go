@@ -92,6 +92,10 @@ func (c *Coordinator) AuthorizePlanWorkspace(p *plan.Plan, input json.RawMessage
 }
 
 func (c *Coordinator) authorizeWorkspace(req workers.ExecuteRequest) (workers.ExecuteRequest, error) {
+	return c.authorizeDispatchWorkspace(req, true)
+}
+
+func (c *Coordinator) authorizeDispatchWorkspace(req workers.ExecuteRequest, checkAvailability bool) (workers.ExecuteRequest, error) {
 	registry := c.workspaceRegistry()
 	if req.WorkspaceID == "" && len(c.Workspaces) == 0 && c.Workspace != "" {
 		req.WorkspaceID = "default"
@@ -126,6 +130,9 @@ func (c *Coordinator) authorizeWorkspace(req workers.ExecuteRequest) (workers.Ex
 	}
 	if err := workers.CheckWorkspaceInput(req.Inputs, binding.Path, false); err != nil {
 		return req, err
+	}
+	if !checkAvailability {
+		return req, nil
 	}
 	if c.store != nil {
 		available, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))

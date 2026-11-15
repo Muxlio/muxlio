@@ -85,6 +85,20 @@ func admissionDemand(cfg state.AdmissionConfig, executor string) state.Admission
 	return demand
 }
 
+// admissionCanFit excludes candidates whose slot cost exceeds a configured hard
+// limit even with no active work. Waiting for another assignment cannot help.
+func admissionCanFit(cfg state.AdmissionConfig, demand state.AdmissionDemand, workerCap int) bool {
+	if demand.Slots > workerCap {
+		return false
+	}
+	for _, limit := range []int{cfg.GlobalCap, cfg.PerRunCap, cfg.ExecutorCaps[demand.ExecutorKey], cfg.KeyCaps[demand.OperatorKey], cfg.ProviderCaps[demand.ProviderKey]} {
+		if limit > 0 && demand.Slots > limit {
+			return false
+		}
+	}
+	return true
+}
+
 func readAdmissionConfig(tx *sql.Tx) (state.AdmissionConfig, error) {
 	var cfg state.AdmissionConfig
 	var raw string

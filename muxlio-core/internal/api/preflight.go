@@ -338,7 +338,7 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 		ep.Constraints.PlacementLabels = req.placementLabels
 	}
 
-	guarded, guardErr := workers.GuardRequest(req.request)
+	guarded, guardErr := workers.GuardSelectionRequest(req.request)
 	if guardErr == nil {
 		guardErr = workers.ValidatePermissions(guarded)
 	}
@@ -361,7 +361,7 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 	reasons := make(map[string]struct{})
 	for _, w := range liveWorkers {
 		for _, capability := range w.Capabilities {
-			if capability.Name == execName {
+			if capability.Name == execName || (workers.IsAnyAgent(execName) && workers.IsAgent(capability.Name)) {
 				ep.WorkerEvidence = append(ep.WorkerEvidence, PreflightWorkerEvidence{WorkerID: w.ID, LastSeen: w.LastSeen, Capability: capability})
 			}
 		}
@@ -402,6 +402,8 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 
 func preflightReasonMessage(reason string) string {
 	switch reason {
+	case "no_compatible_agent":
+		return "Register a ready agent satisfying the execution requirements and policy."
 	case "executor_not_registered":
 		return "Install and register the requested executor on an eligible worker."
 	case "executor_not_ready":
@@ -430,6 +432,13 @@ func preflightReasonMessage(reason string) string {
 // collectBlockingReasons inspects why a specific worker does not match the
 // executor and records the reason classes in the provided set.
 func collectBlockingReasons(execName string, req *executorRequirements, w state.Worker, reasons *map[string]struct{}) {
+	if workers.IsAnyAgent(execName) {
+		raw, _ := json.Marshal(req.request)
+		if reason := workers.ExplainWorkerDispatch(w.ID, execName, raw, w.Capabilities, w.Labels); reason != nil {
+			(*reasons)[reason.Code] = struct{}{}
+		}
+		return
+	}
 	// Find the capability entry for this executor.
 	var cap *state.WorkerCapability
 	for i := range w.Capabilities {

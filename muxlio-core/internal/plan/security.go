@@ -48,6 +48,6 @@ func validateExecutionSecurity(node Node) error {
 			return err
 		}
 	}
-	_, err := workers.GuardRequest(workers.ExecuteRequest{Executor: node.Executor, Params: node.Params, Policy: params.Policy, SecretRefs: params.SecretRefs, WorkspaceMode: node.WorkspaceMode})
+	_, err := workers.GuardSelectionRequest(workers.ExecuteRequest{Executor: node.Executor, Params: node.Params, Policy: params.Policy, SecretRefs: params.SecretRefs, WorkspaceMode: node.WorkspaceMode})
 	return err
 }

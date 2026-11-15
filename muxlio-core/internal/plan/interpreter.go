@@ -74,6 +74,7 @@ type Engine struct {
 	workspaceID        string // Authorized run target; kept separate from the immutable plan.
 	traceContext       context.Context
 	budgetMu           sync.Mutex
+	selectionMu        sync.Mutex
 	Context            context.Context
 	plan               *Plan
 	store              state.Store
@@ -795,6 +796,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.Effect = "reconcilable"
 	}
 	recoveredBase := 0
+	keyedExecutor := ""
 	prior, priorErr := e.store.ListExecutionAttempts(runID, actID)
 	if priorErr != nil {
 		return nil, priorErr
@@ -806,6 +808,9 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		if a.IdempotencyKey != "" {
 			idempotencyKey = a.IdempotencyKey
 			req.IdempotencyKey = idempotencyKey
+			if a.Executor != "" && !workers.IsAnyAgent(a.Executor) {
+				keyedExecutor = a.Executor
+			}
 		}
 		if a.State == "succeeded" && a.Result != nil && a.Result.ExecutionSucceeded {
 			result := workers.ExecuteResult{Outputs: a.Result.Outputs}
@@ -900,18 +905,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.RunID = runID
 		req.ActivationID = actID
 		req.AttemptID = fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt)
-		guarded, guardErr := workers.GuardRequest(req)
-		if guardErr != nil {
-			return nil, fmt.Errorf("muxlio: execution policy: %w", guardErr)
+		guarded, started, prepareErr := e.prepareExecutionAttempt(req, node, scope, prior, keyedExecutor, attemptBase+attempt)
+		if prepareErr != nil {
+			return nil, prepareErr
 		}
-		coordinatorlog.RegisterSecrets(guarded.Secrets)
-		started := time.Now()
-		attemptStatus := "running"
-		if _, queued := e.executor.(workers.QueuedExecutor); queued {
-			attemptStatus = "queued"
-		}
-		if recordErr := e.admitAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptStatus, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey}); recordErr != nil {
-			return nil, recordErr
+		req.Executor, req.AgentSelection = guarded.Executor, guarded.AgentSelection
+		executor = req.Executor
+		if req.IdempotencyKey != "" && !workers.IsAnyAgent(executor) {
+			keyedExecutor = executor
 		}
 		logSink := workers.NewStoreLogSink(e.store, runID, actID, guarded.Secrets, req.AttemptID)
 		guarded.LogSink = logSink
@@ -925,6 +926,24 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})
 		}
 		result, err := workers.ExecuteAttempt(e.executor, guarded)
+		if workers.IsAnyAgent(executor) {
+			// Durable admission records the concrete choice before the worker can
+			// execute. Use that identity for terminal records, reconciliation and
+			// keyed retries, even when the worker returned an error.
+			attempts, lookupErr := e.store.ListExecutionAttempts(runID, actID)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			for _, persisted := range attempts {
+				if persisted.ID == req.AttemptID && !workers.IsAnyAgent(persisted.Executor) {
+					executor, req.Executor, guarded.Executor = persisted.Executor, persisted.Executor, persisted.Executor
+					if req.IdempotencyKey != "" {
+						keyedExecutor = executor
+					}
+					break
+				}
+			}
+		}
 		var queueTimeout workers.QueueTimeoutError
 		admissionExpired := errors.As(err, &queueTimeout)
 		if !admissionExpired && req.RequiredCapabilities[contract.CapabilityRemoteTask] != "" && (err != nil || (result.Error != "" && !remoteTerminalFailure(result))) && e.context().Err() == nil {
