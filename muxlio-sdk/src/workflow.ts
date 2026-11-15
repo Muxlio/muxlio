@@ -289,6 +289,7 @@ export interface TaskDefinition<TOutputs extends TaskOutputSchema = TaskOutputSc
   outputs?: TOutputs;
   /** Retry and effect policy. */
   timeoutSeconds?: number;
+  /** Admission timeout per attempt; omitted or zero defaults to 180 seconds. */
   queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }
@@ -489,6 +490,7 @@ interface IRNode extends ExecutorRequirements {
   inputs?: Record<string, Binding>;
   outputs?: Record<string, OutputDecl>;
   timeoutSeconds?: number;
+  /** Admission timeout per attempt; omitted or zero defaults to 180 seconds. */
   queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
   // map

@@ -307,3 +307,71 @@ func TestCoordinatorQueueTimeoutDoesNotWaitForWorker(t *testing.T) {
 		t.Fatalf("assignments=%+v err=%v", assignments, err)
 	}
 }
+
+func TestCoordinatorPersistsBoundedQueuePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seconds *float64
+		want    float64
+	}{
+		{name: "default", want: 180},
+		{name: "zero", seconds: queueTimeoutValue(0), want: 180},
+		{name: "override", seconds: queueTimeoutValue(600), want: 600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := sqlite.Open(filepath.Join(t.TempDir(), "queue-policy.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if err := store.CreateRun(&state.Run{ID: "run"}); err != nil {
+				t.Fatal(err)
+			}
+			c := NewCoordinator(store)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := c.Execute(workers.ExecuteRequest{Context: ctx, RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", QueueTimeoutSeconds: tc.seconds})
+				done <- err
+			}()
+			defer func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("dispatch did not stop after cancellation")
+				}
+			}()
+			until := time.Now().Add(time.Second)
+			var persisted *workers.ExecuteRequest
+			for time.Now().Before(until) {
+				persisted, err = c.assignmentRequest("attempt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if persisted != nil {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if persisted == nil || persisted.QueueDeadline == nil || persisted.QueuedAt == nil {
+				t.Fatalf("queue deadline must be durable: %+v", persisted)
+			}
+			if persisted.QueueTimeoutSeconds == nil || *persisted.QueueTimeoutSeconds != tc.want {
+				t.Fatalf("queue timeout=%v want=%v", persisted.QueueTimeoutSeconds, tc.want)
+			}
+			window := persisted.QueueDeadline.Sub(*persisted.QueuedAt).Seconds()
+			if window < tc.want-1 || window > tc.want {
+				t.Fatalf("window=%v want=%v", window, tc.want)
+			}
+			// Expire the persisted request at its boundary without a three-minute sleep.
+			expired, err := store.ExpireQueuedAttempt("attempt", *persisted.QueueDeadline)
+			if err != nil || !expired {
+				t.Fatalf("queue failed to expire: %v %v", expired, err)
+			}
+		})
+	}
+}
+
+func queueTimeoutValue(value float64) *float64 { return &value }

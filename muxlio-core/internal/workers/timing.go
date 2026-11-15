@@ -13,6 +13,17 @@ type QueuedExecutor interface {
 	ExecuteQueued(ExecuteRequest) (ExecuteResult, error)
 }
 
+// DefaultQueueTimeoutSeconds bounds admission when no positive task override is
+// supplied. Queue expiry never claims that an admitted execution has stopped.
+const DefaultQueueTimeoutSeconds = 180.0
+
+func EffectiveQueueTimeoutSeconds(configured *float64) float64 {
+	if configured != nil && *configured > 0 {
+		return *configured
+	}
+	return DefaultQueueTimeoutSeconds
+}
+
 // QueueTimeoutError proves admission expired before any worker claimed the attempt.
 // Unlike an execution timeout, it is safe to retry under the task effect policy.
 type QueueTimeoutError struct{ Deadline time.Time }
@@ -35,6 +46,8 @@ func ExecuteAttempt(executor Executor, req ExecuteRequest) (result ExecuteResult
 		end(executionErr != nil || result.Error != "")
 	}()
 	if queued, ok := executor.(QueuedExecutor); ok {
+		seconds := EffectiveQueueTimeoutSeconds(req.QueueTimeoutSeconds)
+		req.QueueTimeoutSeconds = &seconds
 		return queued.ExecuteQueued(req)
 	}
 	cancel := func() {}

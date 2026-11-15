@@ -163,6 +163,7 @@ export interface Node extends ExecutorRequirements {
   requestPermissions?: string[];
 
   timeoutSeconds?: number;
+  /** Admission timeout per attempt; omitted or zero defaults to 180 seconds. */
   queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }

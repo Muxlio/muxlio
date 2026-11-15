@@ -225,3 +225,67 @@ func TestQueueTimeoutAllowsFreshFallbackDispatch(t *testing.T) {
 		t.Fatalf("claimed state=%+v err=%v", attempts, err)
 	}
 }
+
+func TestRecoveredQueueWithoutDeadlineUsesOriginalQueuedAt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-queue.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.CreateRun(&state.Run{ID: "run", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	queuedAt := time.Now().Add(-4 * time.Minute)
+	raw, _ := json.Marshal(workers.ExecuteRequest{Executor: "test", QueuedAt: &queuedAt})
+	dispatch := state.Dispatch{AssignmentID: "attempt", RunID: "run", ActivationID: "act", AttemptID: "attempt", Executor: "test", Request: raw}
+	if err := s.EnqueueDispatch(dispatch); err != nil {
+		t.Fatal(err)
+	}
+	// Model a dispatch persisted by a release with no default queue deadline.
+	if _, err := s.db.Exec(`UPDATE dispatches SET request_json=? WHERE attempt_id='attempt'`, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The new coordinator supplies a bounded request when reattaching. The
+	// previously persisted timestamp remains authoritative for this attempt.
+	newDeadline := time.Now().Add(3 * time.Minute)
+	dispatch.Request, _ = json.Marshal(workers.ExecuteRequest{Executor: "test", QueueDeadline: &newDeadline})
+	if err := s.EnqueueDispatch(dispatch); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := s.AssignmentRequest("attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req workers.ExecuteRequest
+	if err := json.Unmarshal(persisted, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.QueueDeadline == nil || !req.QueueDeadline.Equal(queuedAt.Add(3*time.Minute)) {
+		t.Fatalf("recovery extended the queue wait: %+v", req.QueueDeadline)
+	}
+	if err := s.EnqueueDispatch(dispatch); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.AssignmentRequest("attempt")
+	if err != nil || string(again) != string(persisted) {
+		t.Fatalf("reattachment reset deadline: %s %v", again, err)
+	}
+	if err := s.RegisterWorker(state.Worker{ID: "worker", Capacity: 1, Capabilities: []state.WorkerCapability{{Name: "test"}}, LastSeen: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, _, err := s.ClaimDispatch("worker", time.Now().Add(time.Minute))
+	if err != nil || claimed != nil {
+		t.Fatalf("expired queued work reached worker: %+v %v", claimed, err)
+	}
+	if expired, err := s.ExpireQueuedAttempt("attempt", time.Now()); err != nil || !expired {
+		t.Fatalf("legacy queue did not expire: %v %v", expired, err)
+	}
+}

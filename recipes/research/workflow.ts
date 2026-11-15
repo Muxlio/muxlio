@@ -3,11 +3,16 @@
 import { defineWorkflow, zodToJsonSchema } from '@muxlio/sdk';
 import { input } from './schemas.js';
 import { researchIteration, synthesize } from './tasks.js';
+import { maxResearchIterations, maxTaskAttempts } from './limits.js';
 
 export default defineWorkflow({
   name: 'research',
   input: zodToJsonSchema(input),
-  limits: { maxActiveAttempts: 1, maxAttempts: 40, maxActivations: 100 },
+  limits: {
+    maxActiveAttempts: 1,
+    maxAttempts: (maxResearchIterations + 1) * maxTaskAttempts,
+    maxActivations: maxResearchIterations + 2,
+  },
   build: g => {
     const context = Object.fromEntries(
       ['topic', 'questions', 'audience', 'depth'].map(key => [key, { expr: g.inputField(key) }]),
@@ -15,7 +20,7 @@ export default defineWorkflow({
     const research = g.loop('research', {
       while: g.not(g.stateField('done')),
       initState: g.literal({ done: false, attempts: 0, findings: null, progress: null }),
-      maxIterations: 10, // The runtime defaults to pausing when exhausted.
+      maxIterations: maxResearchIterations, // Pause if coverage is still incomplete.
       body: body => {
         const iteration = body.add(body.stateField('attempts'), body.literal(1));
         const result = body.execute('iterate', {

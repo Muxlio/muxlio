@@ -173,6 +173,7 @@ type Node struct {
 	// This is independent of the ScriptExecutor's global adapter timeout.
 	TimeoutSeconds *float64 `json:"timeoutSeconds,omitempty"`
 	// QueueTimeoutSeconds limits waiting for dispatch independently of execution.
+	// Omitted or zero uses the three-minute default. A positive value overrides it.
 	QueueTimeoutSeconds *float64 `json:"queueTimeoutSeconds,omitempty"`
 
 	// --- wait ---

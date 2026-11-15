@@ -920,12 +920,6 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		}}
 		guarded.TimeoutSeconds = node.TimeoutSeconds
 		guarded.QueueTimeoutSeconds = node.QueueTimeoutSeconds
-		// Fallback must be reachable even when the primary never admits work.
-		// Explicit queue policies remain authoritative.
-		if guarded.QueueTimeoutSeconds == nil && len(node.FallbackExecutors) > 0 {
-			seconds := 60.0
-			guarded.QueueTimeoutSeconds = &seconds
-		}
 		attemptID := req.AttemptID
 		guarded.OnExecutionReturned = func() {
 			_ = e.store.AppendEvent(runID, "execution.returned", attemptID, map[string]any{"externalEffects": "completion not established by executor return"})

@@ -73,6 +73,7 @@ export interface ExecuteOptions extends ExecutorRequirements {
   inputs?: Record<string, Binding>;
   outputs?: Record<string, OutputDecl>;
   timeoutSeconds?: number;
+  /** Admission timeout per attempt; omitted or zero defaults to 180 seconds. */
   queueTimeoutSeconds?: number;
   retry?: RetryPolicy;
 }

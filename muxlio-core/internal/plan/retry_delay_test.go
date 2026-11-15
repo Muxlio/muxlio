@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,27 +73,26 @@ func (x *queueFallbackExecutor) ExecuteQueued(req workers.ExecuteRequest) (worke
 	return workers.ExecuteResult{}, nil
 }
 func TestQueueTimeoutReachesFallback(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
+	for _, seconds := range []*float64{nil, queueSeconds(0), queueSeconds(2), queueSeconds(600)} {
 		x := &queueFallbackExecutor{t: t}
 		e := NewEngine(&Plan{}, x)
 		x.engine = e
 		node := &Node{ID: "node", Executor: "primary", FallbackExecutors: []string{"fallback"}, Retry: &RetryPolicy{MaxAttempts: 2, Effect: "retryable"}}
-		if explicit {
-			seconds := 2.0
-			node.QueueTimeoutSeconds = &seconds
-		}
+		node.QueueTimeoutSeconds = seconds
 		if _, err := e.executeExecute("run", node, nil, &EvalContext{}); err != nil {
 			t.Fatal(err)
 		}
 		if len(x.calls) != 2 || x.calls[1].Executor != "fallback" {
 			t.Fatalf("calls=%+v", x.calls)
 		}
-		want := 60.0
-		if explicit {
-			want = 2
+		want := workers.DefaultQueueTimeoutSeconds
+		if seconds != nil && *seconds > 0 {
+			want = *seconds
 		}
-		if x.calls[0].QueueTimeoutSeconds == nil || *x.calls[0].QueueTimeoutSeconds != want {
-			t.Fatalf("queue timeout=%v", x.calls[0].QueueTimeoutSeconds)
+		for _, call := range x.calls {
+			if call.QueueTimeoutSeconds == nil || *call.QueueTimeoutSeconds != want {
+				t.Fatalf("queue timeout=%v, want %v", call.QueueTimeoutSeconds, want)
+			}
 		}
 		attempts, _ := e.Store().ListExecutionAttempts("run", "")
 		if len(attempts) != 2 || attempts[0].State != "failed" || attempts[0].AwaitReconciliationReason != "" || attempts[1].State != "succeeded" {
@@ -114,5 +114,31 @@ func TestReadmittingAttemptPreservesClaimedState(t *testing.T) {
 	attempts, err := e.Store().ListExecutionAttempts("run", "")
 	if err != nil || len(attempts) != 1 || attempts[0].State != "running" {
 		t.Fatalf("reattachment regressed admission: %+v %v", attempts, err)
+	}
+}
+
+func queueSeconds(value float64) *float64 { return &value }
+
+func TestQueueTimeoutWithoutFallbackIsBounded(t *testing.T) {
+	x := &queueFallbackExecutor{t: t}
+	e := NewEngine(&Plan{}, x)
+	x.engine = e
+	_, err := e.executeExecute("run", &Node{ID: "node", Executor: "primary", Retry: &RetryPolicy{MaxAttempts: 2, Effect: "retryable"}}, nil, &EvalContext{})
+	if err == nil || !strings.Contains(err.Error(), "queue timeout: no worker admitted") || len(x.calls) != 2 {
+		t.Fatalf("unadmitted attempts must exhaust bounded retries: calls=%d err=%v", len(x.calls), err)
+	}
+	for _, call := range x.calls {
+		if call.QueueTimeoutSeconds == nil || *call.QueueTimeoutSeconds != 180 {
+			t.Fatalf("missing three-minute queue timeout: %+v", call.QueueTimeoutSeconds)
+		}
+	}
+	attempts, err := e.Store().ListExecutionAttempts("run", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range attempts {
+		if attempt.State != "failed" || attempt.AwaitReconciliationReason != "" {
+			t.Fatalf("queue expiry should fail, not await execution reconciliation: %+v", attempt)
+		}
 	}
 }

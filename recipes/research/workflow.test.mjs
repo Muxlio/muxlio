@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import compiled from './workflow.ts';
-import { input, progress } from './schemas.ts';
+import { input, progress, createResearchSchemas } from './schemas.ts';
+import { zodToJsonSchema } from '@muxlio/sdk';
 
 const plan = compiled.plan;
 const loop = plan.subgraphs.root.nodes[0];
@@ -25,7 +26,7 @@ test('research input accepts the example and bounds question count and depth', (
 test('research carries the last complete artifact and increments a runtime counter', () => {
   assert.equal(plan.name, 'research');
   assert.equal(loop.kind, 'loop');
-  assert.equal(loop.maxIterations, 10);
+  assert.equal(loop.maxIterations, 40);
   assert.equal(loop.onExhausted ?? 'pause', 'pause');
   assert.deepEqual(loop.initState.value, { done: false, attempts: 0, findings: null, progress: null });
   assert.deepEqual(loop.while, { op: 'not', expr: { op: 'field', expr: { op: 'state' }, name: 'done' } });
@@ -68,4 +69,17 @@ test('final artifacts share one activation for Canvas sibling port resolution', 
   }
   assert.equal(plan.limits.maxActiveAttempts, 1);
   assert.ok(plan.limits.maxAttempts >= (loop.maxIterations + 1) * iterate.retry.maxAttempts);
+});
+
+test('research admission rejects questions that exceed the configured pass capacity', () => {
+  const twelveQuestions = { topic: 'Research topic', questions: Array.from({ length: 12 }, (_, i) => 'Question ' + (i + 1)) };
+  const small = createResearchSchemas(10);
+  assert.equal(small.input.safeParse(twelveQuestions).success, false);
+  assert.equal(zodToJsonSchema(small.input).properties.questions.maxItems, 10,
+    'the coordinator must receive the same admission constraint as local validation');
+  input.parse(twelveQuestions);
+  assert.ok(plan.inputSchema.properties.questions.maxItems <= loop.maxIterations);
+  progress.parse({ iteration: 12, done: true, answeredCount: 12, partialCount: 0, openCount: 0, totalQuestions: 12, thisIterationQuestion: null });
+  assert.equal(iterate.outputs.progress.schema.properties.iteration.maximum, loop.maxIterations);
+  for (const limit of [0, -1, 0.5, Infinity]) assert.throws(() => createResearchSchemas(limit), /positive safe integer/);
 });

@@ -494,8 +494,10 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if deadline, ok := ctx.Deadline(); ok {
 		req.Deadline = &deadline
 	}
-	if req.QueueTimeoutSeconds != nil && *req.QueueTimeoutSeconds > 0 {
-		deadline := time.Now().Add(time.Duration(*req.QueueTimeoutSeconds * float64(time.Second)))
+	queueSeconds := workers.EffectiveQueueTimeoutSeconds(req.QueueTimeoutSeconds)
+	req.QueueTimeoutSeconds = &queueSeconds
+	if req.QueueDeadline == nil {
+		deadline := time.Now().Add(time.Duration(queueSeconds * float64(time.Second)))
 		req.QueueDeadline = &deadline
 	}
 	defer func() {
@@ -636,6 +638,13 @@ func (c *Coordinator) Execute(req workers.ExecuteRequest) (workers.ExecuteResult
 	if !uncertain {
 		if err := c.EnqueueDispatch(state.Dispatch{AssignmentID: req.AttemptID, RunID: req.RunID, ActivationID: req.ActivationID, AttemptID: req.AttemptID, Executor: req.Executor, Request: raw}); err != nil {
 			return workers.ExecuteResult{}, err
+		}
+		persisted, err := c.assignmentRequest(req.AttemptID)
+		if err != nil {
+			return workers.ExecuteResult{}, err
+		}
+		if persisted != nil && persisted.QueueDeadline != nil {
+			req.QueueDeadline = persisted.QueueDeadline
 		}
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)

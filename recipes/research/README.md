@@ -15,9 +15,13 @@ are answered, synthesis produces:
 Copy [input.example.json](input.example.json) to `input.json`, then edit it with
 your topic and 1–20 questions. The local `input.json` is git-ignored. `audience` is
 optional (general technical reader); `depth` is optional (`standard`), with
-`brief` and `thorough` also supported. Start with at most 10 questions: each pass
-focuses on one question and the loop allows 10 passes in total. Questions that
-need several passes reduce the number that can be completed in a run.
+`brief` and `thorough` also supported. Each pass focuses on one question; the
+loop allows 40 passes for at most 20 questions, leaving room to revisit gaps.
+The input schema caps question count at the smaller of 20 and the configured
+pass limit. The coordinator enforces that schema before accepting a run.
+Change shared bounds in `limits.ts`; progress validation and run budgets use
+the same values, so expanding the loop cannot leave a ten-pass output ceiling
+or an undersized retry budget behind.
 
 With project dependencies installed, a current Muxlio CLI supporting Canvas,
 and a running coordinator and worker:
@@ -36,8 +40,10 @@ not provision browsing or credentials. Synthesis also needs `muxlio canvas
 catalog` and `muxlio canvas validate` on PATH. Open the resulting Canvas artifact
 in the Muxlio UI to inspect coverage and read the report.
 
-Execution is serial, with up to three attempts per task and a 15-minute task
-timeout. If coverage remains incomplete after 10 research passes, the run pauses
+Execution is serial, with up to three attempts per task, a three-minute queue
+timeout per attempt, and a separate 15-minute execution timeout. Configure the
+queue window with `queueTimeoutSeconds` in `tasks.ts`; a positive value overrides
+the default. If coverage remains incomplete after 40 research passes, the run pauses
 before synthesis. Inspect the latest findings and progress through the run's
 activation outputs. The iteration cap is a total bound: resuming alone does not
 provide more passes. Narrow the questions or start another run after addressing

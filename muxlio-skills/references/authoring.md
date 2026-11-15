@@ -4,6 +4,21 @@ Muxlio executes Plan IR JSON. You can construct that plan directly with MCP or
 compile a TypeScript definition using the SDK. The coordinator interprets the
 plan; JavaScript runs at compile time only.
 
+## Check capacity before submission
+
+Check the actual run input against the workflow's loop and run budgets before
+submission. When each pass handles one item, the accepted item count must not
+exceed the pass limit: a twelve-question input cannot fit a ten-pass loop that
+researches one question per pass. Encode this restriction in the input schema
+so the coordinator rejects oversized inputs before creating a run; derive the
+schema and loop bound from the same authoring configuration.
+
+Allow additional passes for revisiting incomplete work. Keep progress-output
+bounds, `maxAttempts` (including retries and final synthesis), and `maxActivations`
+consistent with the loop cap. Preflight cannot infer per-pass progress from an
+agent's prose instructions, so do not treat executor readiness as proof that
+the workflow has enough capacity to finish.
+
 ## Offline authoring from an installed release
 
 Homebrew and release installs include version-matched JSON workflow templates

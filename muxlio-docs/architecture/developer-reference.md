@@ -227,11 +227,16 @@ muxlio run examples/batch.plan.json examples/batch.input.json \
 
 Queued attempts and their activations remain `queued` until a worker claims the
 assignment; a running workflow can therefore be waiting for admission without
-an agent process executing. Tasks with `fallbackExecutors` default to a 60-second
-admission timeout when `queueTimeoutSeconds` is omitted. Set an explicit positive
+an agent process executing. Every queued attempt defaults to a three-minute
+(180-second) admission timeout,
+including tasks without fallback executors. Omitting `queueTimeoutSeconds` or
+setting it to zero uses this default. Set an explicit positive
 `queueTimeoutSeconds` to override this window. An admission timeout proves the
 attempt never reached a worker and can advance to retry/fallback within the task's
-retry and effect policy. An execution timeout does not prove termination and
+retry and effect policy. The timeout applies per attempt; exhausting the bounded
+retry policy fails the step. For example, `queueTimeoutSeconds: 300` allows five
+minutes per queued attempt. Once a worker claims the attempt, the queue timeout
+no longer applies. An execution timeout does not prove termination and
 continues to require the existing cancellation/reconciliation handling.
 
 Each executor maps to one executable file: replace `/` with `-` (e.g. `agent/claude` → `agent-claude`, `command` → `command`). The generic `command` executor passes `program` and `args` directly to the process without a shell. `task({ executor: 'command', ... })` automatically provides typed process outputs, so success is available as `result.passed`, including in `repeatUntil` conditions; no `outputs` declaration is needed. With `onNonZero: 'return'`, a nonzero exit produces `passed: false` so the workflow can run its fix step; `onNonZero: 'fail'` fails the step instead. Command details are also top-level outputs: `exitCode`, `signal`, `stdout`, `stderr`, and `durationMs`. Declare `outputs` only to add artifacts or customize a schema. `signal` is null unless the process was terminated by a signal, and stdout/stderr contain bounded previews. Declared files are collected from `MUXLIO_OUTPUT_DIR`.

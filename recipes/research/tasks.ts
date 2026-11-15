@@ -1,12 +1,13 @@
 import { zodToJsonSchema, type ExecuteOptions } from '@muxlio/sdk';
 import { progress } from './schemas.js';
+import { maxTaskAttempts } from './limits.js';
 
 const agent = {
   executor: 'agent/kiro',
   fallbackExecutors: ['agent/claude', 'agent/codex'],
-  retry: { maxAttempts: 3, backoffSeconds: 10, maxBackoffSeconds: 60, effect: 'retryable' as const },
+  retry: { maxAttempts: maxTaskAttempts, backoffSeconds: 10, maxBackoffSeconds: 60, effect: 'retryable' as const },
   timeoutSeconds: 900,
-  queueTimeoutSeconds: 1800,
+  queueTimeoutSeconds: 180,
 };
 
 // One research iteration. The agent reads the running findings document,

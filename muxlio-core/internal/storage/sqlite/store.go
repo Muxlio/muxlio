@@ -542,6 +542,36 @@ func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 	if err != nil {
 		return err
 	}
+	// Existing pending dispatches survive coordinator restarts. Backfill older
+	// requests that lack a queue deadline without resetting their original wait.
+	var pendingJSON string
+	err = tx.QueryRow(`SELECT request_json FROM dispatches WHERE attempt_id=? AND state='pending' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=?)`, d.AttemptID, d.AttemptID).Scan(&pendingJSON)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil && request.QueueDeadline != nil {
+		var pending workers.ExecuteRequest
+		if err := decodePersistedValue(pendingJSON, &pending); err != nil {
+			return err
+		}
+		if pending.QueueDeadline == nil {
+			if pending.QueuedAt == nil {
+				queuedAt := time.Now()
+				pending.QueuedAt = &queuedAt
+			}
+			seconds := workers.EffectiveQueueTimeoutSeconds(pending.QueueTimeoutSeconds)
+			pending.QueueTimeoutSeconds = &seconds
+			deadline := pending.QueuedAt.Add(time.Duration(seconds * float64(time.Second)))
+			pending.QueueDeadline = &deadline
+			raw, err := json.Marshal(pending)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE dispatches SET request_json=? WHERE attempt_id=? AND state='pending'`, string(raw), d.AttemptID); err != nil {
+				return err
+			}
+		}
+	}
 	updated, err := tx.Exec(`UPDATE activations SET state='queued' WHERE id=? AND state='running' AND EXISTS (SELECT 1 FROM dispatches WHERE attempt_id=? AND state='pending')`, d.ActivationID, d.AttemptID)
 	if err != nil {
 		return err
