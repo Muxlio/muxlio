@@ -49,6 +49,124 @@ async function loadCanvasSnapshots(
   return snapshots;
 }
 
+// All sibling artifacts share the same header, actions, and Info hierarchy.
+function renderCanvasArtifactPage(
+  rootHtml: string,
+  sourceHtml: string,
+  docTitle: string,
+  docDesc: string,
+  siblingOutputs: Record<string, CanvasSiblingOutput>,
+  portSnapshots: any[],
+): void {
+  const container = document.getElementById("canvasView");
+  if (!container) return;
+  const {
+    runId,
+    activationId,
+    port,
+    path: targetPath,
+    size: targetSize,
+    digest: targetDigest,
+    mime: targetMime,
+    isDraft,
+  } = activeCanvasInfo;
+  // Toolbar
+
+  const toolbarHtml = renderViewTemplate("canvas/toolbar", [
+    viewValue(docTitle),
+    viewValue(docDesc),
+  ]);
+
+  // Sibling file navigation
+  const fileLinks = Object.entries(siblingOutputs)
+    .map(([pName, pInfo]) => {
+      const isCurrent = pName === port;
+      const href =
+        "/artifacts/view/" +
+        encodeURIComponent(runId) +
+        "/" +
+        encodeURIComponent(activationId) +
+        "/" +
+        encodeURIComponent(pName);
+      return renderViewTemplate("canvas/rail-file", [
+        viewValue(isCurrent ? " canvas-rail-link--active" : ""),
+        viewValue(href),
+        viewValue(pInfo.path || pName),
+      ]);
+    })
+    .join("");
+  const railHtml = renderViewTemplate("canvas/rail-nav", [
+    viewValue(fileLinks),
+  ]);
+
+  // Provenance panel
+  const provRows = [
+    renderDefinitionRow("File", targetPath),
+    renderDefinitionRow(
+      "Size",
+      targetSize ? targetSize.toLocaleString() + " bytes" : "Unavailable",
+    ),
+    renderDefinitionRow("Run", runId),
+    renderDefinitionRow("Step", activationId),
+    renderDefinitionRow("Output", port),
+    renderDefinitionRow("Digest", targetDigest),
+    renderDefinitionRow("Format", targetMime),
+    renderDefinitionRow(
+      "Status",
+      isDraft ? "Draft observation" : "Committed output",
+    ),
+  ].join("");
+
+  let revOptions = renderComponent("canvas-select-option", {
+    value: "committed",
+    label: "Committed output",
+    selectedAttr: !isDraft ? "selected" : "",
+  });
+  for (const snap of portSnapshots) {
+    const isSel = isDraft && snap.seq === activeCanvasInfo.seq;
+    const lbl =
+      "Draft seq " + snap.seq + " (" + (snap.attemptId || "attempt") + ")";
+    revOptions += renderComponent("canvas-select-option", {
+      value: "seq-" + snap.seq,
+      label: lbl,
+      selectedAttr: isSel ? "selected" : "",
+    });
+  }
+  const provHtml = renderViewTemplate("canvas/provenance-panel", [
+    viewValue(provRows),
+    viewValue(revOptions),
+    viewValue(activeCanvasViewMode === "preview" ? "tab-btn--active" : ""),
+    viewValue(activeCanvasViewMode === "preview" ? "true" : "false"),
+    viewValue(activeCanvasViewMode === "source" ? "tab-btn--active" : ""),
+    viewValue(activeCanvasViewMode === "source" ? "true" : "false"),
+    viewValue(railHtml),
+    viewValue(activeCanvasDoc ? "Canvas" : "Preview"),
+    viewValue(/json/i.test(targetMime) ? "Source JSON" : "Source"),
+  ]);
+
+  container.innerHTML = renderViewTemplate("canvas/shell", [
+    viewValue(toolbarHtml),
+    viewValue(railHtml),
+    viewValue(rootHtml),
+    viewValue(sourceHtml),
+    viewValue(provHtml),
+  ]);
+
+  const rootEl = document.getElementById("canvasRoot");
+  const srcEl = document.getElementById("canvasSourceView");
+  if (rootEl && srcEl) {
+    rootEl.hidden = activeCanvasViewMode !== "preview";
+    srcEl.hidden = activeCanvasViewMode !== "source";
+    // Apply presentation.density token as a class on the canvas root.
+    const density = activeCanvasDoc?.presentation?.density;
+    if (density) {
+      rootEl.classList.add("canvas-density--" + density);
+    }
+  }
+
+  attachCanvasDOMListeners(container);
+}
+
 async function loadCanvasPage(
   runId: string,
   activationId: string,
@@ -213,7 +331,11 @@ async function loadCanvasPage(
       const mime = targetMime.split(";")[0].trim().toLowerCase();
       const markdown = mime === "text/markdown" || /\.md$/i.test(targetPath);
       let content: string;
-      if (markdown) content = renderMarkdown(rawText);
+      if (markdown)
+        content = renderViewTemplate(
+          "inspector/body-inner-html-markdown-body",
+          [viewValue(renderMarkdown(rawText))],
+        );
       else if (mime === "application/json" || /\+json$/.test(mime)) {
         content = MuxlioJson.jsonPanelFromText(rawText, componentEscape, {
           title: targetPath,
@@ -225,10 +347,20 @@ async function loadCanvasPage(
           language: "",
           code: rawText,
         });
-      container.innerHTML = renderViewTemplate("canvas/artifact-preview", [
-        viewValue(componentEscape(targetPath)),
-        viewValue(content),
-      ]);
+      activeCanvasViewMode = "preview";
+      const sourceHtml = renderComponent("canvas-code", {
+        id: "artifactSource",
+        language: mime.includes("json") ? "json" : "",
+        code: rawText,
+      });
+      renderCanvasArtifactPage(
+        content,
+        sourceHtml,
+        targetPath,
+        "",
+        siblingOutputs,
+        portSnapshots,
+      );
       return;
     }
 
@@ -290,21 +422,16 @@ async function loadCanvasPage(
                   "/v1/artifacts/" + encodeURIComponent(sibling.digest),
                 );
                 if (sibResp.ok) {
-                  const contentType = sibResp.headers.get("content-type") || "";
-                  const isJsonResponse =
-                    contentType.includes("json") ||
-                    contentType === "application/octet-stream" ||
-                    contentType === "";
-                  if (isJsonResponse) {
-                    const sibText = await readCanvasText(
-                      sibResp,
-                      SIBLING_BYTE_LIMIT,
-                    );
-                    if (sibText.length <= SIBLING_BYTE_LIMIT) {
-                      try {
-                        resolvedSources.set(sName, JSON.parse(sibText));
-                      } catch {}
-                    }
+                  // Artifact metadata determines the format. Byte storage may
+                  // serve JSON as text/plain or a generic download MIME.
+                  const sibText = await readCanvasText(
+                    sibResp,
+                    SIBLING_BYTE_LIMIT,
+                  );
+                  if (sibText.length <= SIBLING_BYTE_LIMIT) {
+                    try {
+                      resolvedSources.set(sName, JSON.parse(sibText));
+                    } catch {}
                   }
                 }
               } catch {}
@@ -335,80 +462,6 @@ async function loadCanvasPage(
       };
       activeCanvasContext = rendererCtx;
 
-      // Toolbar
-      const docTitle = activeCanvasDoc.title || "Canvas";
-      const docDesc = activeCanvasDoc.description || "";
-      const statusLabel = isDraft ? "Draft snapshot" : "Committed";
-      const statusClass = isDraft ? "amber" : "green";
-      const pinLabel = "Pin";
-
-      const toolbarHtml = renderViewTemplate("canvas/toolbar", [
-        viewValue(docTitle),
-        viewValue(statusClass),
-        viewValue(statusLabel),
-        viewValue(docDesc),
-        viewValue(activeCanvasViewMode === "preview" ? "tab-btn--active" : ""),
-        viewValue(activeCanvasViewMode === "preview" ? "true" : "false"),
-        viewValue(activeCanvasViewMode === "source" ? "tab-btn--active" : ""),
-        viewValue(activeCanvasViewMode === "source" ? "true" : "false"),
-        viewValue(pinLabel),
-      ]);
-
-      // Sibling file navigation
-      const fileLinks = Object.entries(siblingOutputs)
-        .map(([pName, pInfo]) => {
-          const isCurrent = pName === port;
-          const href =
-            "/artifacts/view/" +
-            encodeURIComponent(runId) +
-            "/" +
-            encodeURIComponent(activationId) +
-            "/" +
-            encodeURIComponent(pName);
-          return renderViewTemplate("canvas/rail-file", [
-            viewValue(isCurrent ? " canvas-rail-link--active" : ""),
-            viewValue(href),
-            viewValue(pInfo.path || pName),
-          ]);
-        })
-        .join("");
-      const railHtml = renderViewTemplate("canvas/rail-nav", [
-        viewValue(fileLinks),
-      ]);
-
-      // Provenance panel
-      const provRows = [
-        renderDefinitionRow("Run", runId),
-        renderDefinitionRow("Activation", activationId),
-        renderDefinitionRow("Port", port),
-        renderDefinitionRow("Digest", targetDigest.slice(0, 16) + "…"),
-        renderDefinitionRow("MIME", targetMime),
-        renderDefinitionRow(
-          "Status",
-          isDraft ? "Draft observation" : "Committed output",
-        ),
-      ].join("");
-
-      let revOptions = renderComponent("canvas-select-option", {
-        value: "committed",
-        label: "Committed output",
-        selectedAttr: !isDraft ? "selected" : "",
-      });
-      for (const snap of portSnapshots) {
-        const isSel = isDraft && snap.seq === activeCanvasInfo.seq;
-        const lbl =
-          "Draft seq " + snap.seq + " (" + (snap.attemptId || "attempt") + ")";
-        revOptions += renderComponent("canvas-select-option", {
-          value: "seq-" + snap.seq,
-          label: lbl,
-          selectedAttr: isSel ? "selected" : "",
-        });
-      }
-      const provHtml = renderViewTemplate("canvas/provenance-panel", [
-        viewValue(provRows),
-        viewValue(revOptions),
-      ]);
-
       // Render root tree
       const rootHtml = renderCanvasNode(
         activeCanvasDoc.content,
@@ -438,27 +491,14 @@ async function loadCanvasPage(
         });
       }
 
-      container.innerHTML = renderViewTemplate("canvas/shell", [
-        viewValue(toolbarHtml),
-        viewValue(railHtml),
-        viewValue(rootHtml),
-        viewValue(sourceHtml),
-        viewValue(provHtml),
-      ]);
-
-      const rootEl = document.getElementById("canvasRoot");
-      const srcEl = document.getElementById("canvasSourceView");
-      if (rootEl && srcEl) {
-        rootEl.hidden = activeCanvasViewMode !== "preview";
-        srcEl.hidden = activeCanvasViewMode !== "source";
-        // Apply presentation.density token as a class on the canvas root.
-        const density = activeCanvasDoc.presentation?.density;
-        if (density) {
-          rootEl.classList.add("canvas-density--" + density);
-        }
-      }
-
-      attachCanvasDOMListeners(container);
+      renderCanvasArtifactPage(
+        rootHtml,
+        sourceHtml,
+        activeCanvasDoc.title || "Canvas",
+        activeCanvasDoc.description || "",
+        siblingOutputs,
+        portSnapshots,
+      );
     };
 
     renderCurrentView();
@@ -522,12 +562,16 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
   const btnPrev = document.getElementById("canvasModePreview");
   const btnSrc = document.getElementById("canvasModeSource");
   if (btnPrev && btnSrc) {
+    btnPrev.tabIndex = activeCanvasViewMode === "preview" ? 0 : -1;
+    btnSrc.tabIndex = activeCanvasViewMode === "source" ? 0 : -1;
     btnPrev.onclick = () => {
       activeCanvasViewMode = "preview";
       btnPrev.classList.add("tab-btn--active");
       btnPrev.setAttribute("aria-selected", "true");
       btnSrc.classList.remove("tab-btn--active");
       btnSrc.setAttribute("aria-selected", "false");
+      btnPrev.tabIndex = 0;
+      btnSrc.tabIndex = -1;
       const r = document.getElementById("canvasRoot");
       const s = document.getElementById("canvasSourceView");
       if (r) r.hidden = false;
@@ -539,6 +583,8 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
       btnSrc.setAttribute("aria-selected", "true");
       btnPrev.classList.remove("tab-btn--active");
       btnPrev.setAttribute("aria-selected", "false");
+      btnSrc.tabIndex = 0;
+      btnPrev.tabIndex = -1;
       const r = document.getElementById("canvasRoot");
       const s = document.getElementById("canvasSourceView");
       if (r) r.hidden = true;
@@ -551,8 +597,12 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
   if (copyBtn) {
     copyBtn.onclick = async () => {
       try {
-        await navigator.clipboard.writeText(location.href);
-        message("Canvas deep-link copied.");
+        await copyCanvasLink();
+        copyBtn.textContent = "Copied";
+        setTimeout(() => {
+          copyBtn.textContent = "Copy link";
+        }, 2000);
+        message("Link copied.");
       } catch (e: any) {
         message("Failed to copy link: " + e.message, true);
       }
@@ -562,16 +612,18 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
   // Download
   const downloadBtn = document.getElementById("canvasDownloadBtn");
   if (downloadBtn) {
-    downloadBtn.onclick = () => {
-      const blob = new Blob([activeCanvasRawText], {
-        type: "application/vnd.muxlio.canvas+json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = activeCanvasInfo.path || "report.canvas.json";
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    downloadBtn.title = "Download as PDF";
+    downloadBtn.onclick = async () => {
+      (downloadBtn as HTMLButtonElement).disabled = true;
+      downloadBtn.textContent = "Preparing PDF…";
+      try {
+        await downloadCanvasPdf();
+      } catch (error: any) {
+        message("PDF download failed: " + error.message, true);
+      } finally {
+        (downloadBtn as HTMLButtonElement).disabled = false;
+        downloadBtn.textContent = "Download";
+      }
     };
   }
 
@@ -599,10 +651,19 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
   // Toggle provenance
   const provToggle = document.getElementById("canvasToggleProvenanceBtn");
   if (provToggle) {
+    const closeInfo = document.getElementById("canvasCloseInfoBtn");
+    if (closeInfo)
+      closeInfo.onclick = () => {
+        const rail = document.getElementById("canvasInspectorSlot");
+        if (rail) rail.hidden = true;
+        provToggle.setAttribute("aria-expanded", "false");
+        provToggle.focus();
+      };
     provToggle.onclick = () => {
       const rail = document.getElementById("canvasInspectorSlot");
       if (rail) {
         rail.hidden = !rail.hidden;
+        provToggle.setAttribute("aria-expanded", String(!rail.hidden));
       }
     };
   }

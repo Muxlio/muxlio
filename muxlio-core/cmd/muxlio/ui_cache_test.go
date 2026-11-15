@@ -17,7 +17,7 @@ func TestServiceUIFreshAssets(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	assets := map[string]string{"/": "index.html", "/dist/app.css": "dist/app.css", "/dist/chunk-a1b2.js": "dist/chunk-a1b2.js"}
+	assets := map[string]string{"/": "index.html", "/dist/app.css": "dist/app.css", "/dist/chunk-a1b2.js": "dist/chunk-a1b2.js", "/artifacts/view/run-a/act-b/canvas": "dist/canvas.html", "/artifacts/view/run%2Fa/act%2Fb/canvas%2Freport": "dist/canvas.html"}
 	for _, name := range assets {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("current asset"), 0600); err != nil {
 			t.Fatal(err)

@@ -276,7 +276,10 @@ test("canvas route is recognised by isUIPath and served by the UI server", async
     ]) {
       const response = await fetch(root + path);
       assert.equal(response.status, 200, `server must serve canvas route ${path}`);
-      assert.match(await response.text(), /<title>Muxlio/);
+      const html = await response.text();
+      assert.match(html, /src="\/dist\/canvas.js"/);
+      assert.match(html, /id="workspaceNavigation"/);
+      assert.doesNotMatch(html, /\/dist\/app.js/);
     }
     // Non-canvas artifact paths should still 404
     assert.equal(

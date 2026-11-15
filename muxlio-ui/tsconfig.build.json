@@ -27,6 +27,7 @@
     "src/canvas/interactions.ts",
     "src/canvas/registry.ts",
     "src/canvas/render.ts",
+    "src/canvas/export.ts",
     "src/canvas/view.ts",
     "src/core.ts",
     "src/usage-summary.ts",

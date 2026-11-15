@@ -28,6 +28,8 @@ cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favi
   "$destination/share/muxlio/ui/"
 mkdir -p "$destination/share/muxlio/ui/dist"
 cp "$repo/muxlio-ui/dist/server.mjs" "$repo/muxlio-ui/dist/app.js" "$repo/muxlio-ui/dist/app.js.map" "$repo/muxlio-ui/dist/app.css" "$destination/share/muxlio/ui/dist/"
+cp "$repo/muxlio-ui/dist/canvas.html" "$repo/muxlio-ui/dist/canvas.js" "$repo/muxlio-ui/dist/canvas.js.map" "$destination/share/muxlio/ui/dist/"
+cp "$repo/muxlio-ui/dist/canvas-pdf.js" "$destination/share/muxlio/ui/dist/"
 cp "$repo/LICENSE" "$destination/share/muxlio/LICENSE"
 if [ -f "$repo/muxlio-skills/SKILL.md" ]; then
   cp -R "$repo/muxlio-skills/." "$destination/share/muxlio/skills/"

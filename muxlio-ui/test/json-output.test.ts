@@ -174,6 +174,20 @@ regression("json output regression", async () => {
   assert.match(artifact, /data-copy-value="sha256:test"/);
   assert.match(artifact, /data-view-artifact="result"/);
   assert.match(artifact, /data-download="artifact"/);
+  const canvas = ctx.outputMarkup(
+    {
+      canvas: {
+        digest: "sha256:canvas",
+        mime: "application/vnd.muxlio.canvas+json",
+        path: "report.canvas.json",
+      },
+    },
+    { runId: "run/a", activationId: "act:b" },
+  );
+  assert.match(canvas, /Open Canvas/);
+  assert.match(canvas, /href="\/artifacts\/view\/run%2Fa\/act%3Ab\/canvas"/);
+  assert.match(canvas, /target="_blank"/);
+  assert.doesNotMatch(canvas, /data-view-artifact|json-artifact-preview/);
   assert.equal(Json.stringifyForCopy({ count: 0 }), '{\n  "count": 0\n}');
 
   const css = readFileSync(new URL("../dist/app.css", import.meta.url), "utf8");

@@ -809,6 +809,9 @@ func serviceUI(next http.Handler, directory, token string) http.Handler {
 			name, ok = strings.TrimPrefix(r.URL.Path, "/"), true
 		} else if isUIRoute(r.URL.EscapedPath()) {
 			name, ok = "index.html", true
+			if strings.HasPrefix(r.URL.Path, "/artifacts/view/") {
+				name = "dist/canvas.html"
+			}
 		}
 		if !ok {
 			next.ServeHTTP(w, r)
@@ -847,7 +850,9 @@ func isUIRoute(path string) bool {
 		return (len(parts) == 3 || len(parts) == 4) && parts[1] != "" && parts[2] != ""
 	case "transcripts":
 		return len(parts) == 3 && parts[1] != "" && parts[2] != ""
-	case "operations", "automation", "retention", "workers", "live", "workflows", "artifacts", "analytics", "compare", "evidence":
+	case "artifacts":
+		return len(parts) == 1 || (len(parts) == 5 && parts[1] == "view" && parts[2] != "" && parts[3] != "" && parts[4] != "")
+	case "operations", "automation", "retention", "workers", "live", "workflows", "analytics", "compare", "evidence":
 		return len(parts) == 1
 	}
 	return path == "/"

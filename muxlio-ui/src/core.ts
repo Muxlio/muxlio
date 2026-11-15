@@ -4,6 +4,7 @@ function isUIPath(path){return /^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+
 function navigateTo(path,{replace=false}={}){
   const url=new URL(path,location.href);
   if(url.origin!==location.origin||!isUIPath(url.pathname))return;
+  if(url.pathname.startsWith('/artifacts/view/')){location.assign(url.href);return;}
   const target=url.pathname+url.search+url.hash;
   if(target===currentRoute()+location.hash)return;
   window.history[replace?'replaceState':'pushState'](null,'',target);
@@ -20,6 +21,7 @@ document.addEventListener('click',event=>{
   if(!link||link.hasAttribute('download')||(link.target&&link.target!=='_self'))return;
   const href=link.getAttribute('href');if(!href||href.startsWith('#'))return;
   const url=new URL(href,location.href);
+  if(url.pathname.startsWith('/artifacts/view/'))return;
   if(url.origin!==location.origin||!isUIPath(url.pathname)||url.hash)return;
   event.preventDefault();navigateTo(url.href);
 });

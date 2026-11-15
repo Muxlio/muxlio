@@ -75,7 +75,10 @@ const canvasSchemaSource =
   "/* Generated Canvas schema. */\nvar canvasSchema: Readonly<Record<string,any>> = " +
   JSON.stringify(JSON.parse(canvasSchemaRaw)) +
   ";\n";
-await writeFile(join(registryDirectory, "canvas-schema.ts"), canvasSchemaSource);
+await writeFile(
+  join(registryDirectory, "canvas-schema.ts"),
+  canvasSchemaSource,
+);
 const compiler = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 for (const config of [
   "tsconfig.json",
@@ -231,6 +234,50 @@ execFileSync(
   process.execPath,
   [compiler, "-p", join(root, "tsconfig.build.json")],
   { stdio: "inherit" },
+);
+
+execFileSync(
+  process.execPath,
+  [compiler, "-p", join(root, "tsconfig.canvas.json")],
+  { stdio: "inherit" },
+);
+// Reuse the workbench navigation so both pages keep identical links and icons.
+const workbenchHTML = await readFile(join(root, "index.html"), "utf8");
+const workspaceNavigation = workbenchHTML.match(
+  /<aside\b[^>]*\bid="workspaceNavigation"[\s\S]*?<\/aside>/,
+)?.[0];
+if (!workspaceNavigation) throw new Error("Workbench navigation is missing");
+await writeFile(
+  join(destination, "canvas.html"),
+  (await readFile(join(root, "standalone", "canvas.html"), "utf8")).replace(
+    "{{workspaceNavigation}}",
+    workspaceNavigation,
+  ),
+);
+// Loaded only when exporting. All fonts and PDF code ship locally.
+const requirePDF = createRequire(import.meta.url);
+const pdfLicenses = await Promise.all(
+  ["pdfmake", "html-to-pdfmake"].map(
+    async (name) =>
+      name +
+      "\n" +
+      (await readFile(requirePDF.resolve(name + "/LICENSE"), "utf8")),
+  ),
+);
+await writeFile(
+  join(destination, "canvas-pdf.js"),
+  "/*!\n" +
+    pdfLicenses.join("\n\n").replace(/\*\//g, "* /") +
+    "\n*/\n" +
+    (
+      await Promise.all(
+        [
+          "pdfmake/build/pdfmake.min.js",
+          "pdfmake/build/vfs_fonts.js",
+          "html-to-pdfmake/browser.js",
+        ].map((name) => readFile(requirePDF.resolve(name), "utf8")),
+      )
+    ).join("\n;\n"),
 );
 
 execFileSync(

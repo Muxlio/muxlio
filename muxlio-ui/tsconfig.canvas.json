@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outFile": "./dist/canvas.js",
+    "sourceMap": true
+  },
+  "files": [
+    "src/format.ts",
+    ".generated/templates.ts",
+    ".generated/canvas-schema.ts",
+    "src/components/template.ts",
+    "src/components/view-template.ts",
+    "src/components/feedback.ts",
+    "src/components/execution-metadata.ts",
+    "src/components/data-display.ts",
+    "src/components/pagination.ts",
+    "src/components/run-table.ts",
+    "src/components/accounting-card.ts",
+    "src/components/fields.ts",
+    "src/components/form-dialog.ts",
+    "src/markdown.ts",
+    "src/json.ts",
+    "src/canvas/types.ts",
+    "src/canvas/source.ts",
+    "src/canvas/validate.ts",
+    "src/canvas/interactions.ts",
+    "src/canvas/registry.ts",
+    "src/canvas/render.ts",
+    "src/canvas/export.ts",
+    "src/canvas/view.ts",
+    "standalone/runtime.ts",
+    "src/interactions.ts",
+    "standalone/main.ts"
+  ],
+  "include": ["src/*.d.ts"]
+}

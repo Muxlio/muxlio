@@ -12,6 +12,8 @@
     "format": "prettier --write test scripts src/server.ts src/interactions.ts src/components src/styles/theme.css index.html"
   },
   "devDependencies": {
+    "html-to-pdfmake": "^2.6.0",
+    "pdfmake": "^0.3.14",
     "playwright": "^1.65.0",
     "prettier": "^3.10.1",
     "typescript": "^5.9.3"

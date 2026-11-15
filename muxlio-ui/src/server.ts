@@ -176,7 +176,14 @@ export function createUIServer({
       return;
     }
     try {
-      const html = await readFile(join(uiDirectory, "index.html"));
+      const html = await readFile(
+        join(
+          uiDirectory,
+          pathname.startsWith("/artifacts/view/")
+            ? "dist/canvas.html"
+            : "index.html",
+        ),
+      );
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "content-length": Buffer.byteLength(html),
