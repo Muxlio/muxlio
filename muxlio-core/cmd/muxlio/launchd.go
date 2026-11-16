@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"os"
@@ -42,6 +43,15 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
+func renderPlist(binary, home string) string {
+	escape := func(s string) string {
+		var b strings.Builder
+		_ = xml.EscapeText(&b, []byte(s))
+		return b.String()
+	}
+	return strings.NewReplacer("{{BINARY_PATH}}", escape(binary), "{{HOME_DIR}}", escape(home)).Replace(plistTemplate)
+}
+
 func cmdServerInstall(args []string) int {
 	fs := flag.NewFlagSet("server install", flag.ContinueOnError)
 	serviceType := fs.String("service", "launchd", "service supervisor to target (launchd)")
@@ -67,8 +77,7 @@ func cmdServerInstall(args []string) int {
 		return 1
 	}
 
-	plistContent := strings.ReplaceAll(plistTemplate, "{{BINARY_PATH}}", execPath)
-	plistContent = strings.ReplaceAll(plistContent, "{{HOME_DIR}}", home)
+	plistContent := renderPlist(execPath, home)
 
 	if *dryRun {
 		fmt.Print(plistContent)

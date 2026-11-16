@@ -67,14 +67,7 @@ func cmdUpgrade(args []string, globalDataDir string, globalJSON bool) int {
 
 	// Refresh env file
 	envScriptPath := filepath.Join(dest, "env")
-	envContent := fmt.Sprintf(`# Muxlio shell environment
-export MUXLIO_HOME="%s"
-case ":$PATH:" in
-  *":$MUXLIO_HOME/bin:"*) ;;
-  *) export PATH="$MUXLIO_HOME/bin:$PATH" ;;
-esac
-`, dest)
-	_ = os.WriteFile(envScriptPath, []byte(envContent), 0o600)
+	_ = os.WriteFile(envScriptPath, []byte(posixEnvScript(dest)), 0o600)
 
 	if *jsonOut {
 		out, _ := json.MarshalIndent(map[string]any{

@@ -21,11 +21,15 @@ import type {
   RetryPolicy,
   Subgraph,
 } from './types.js';
+import type { SymbolicRef } from './workflow.js';
+import { authored } from './authored.js';
 
 // --- Result types ---
 
-/** A value that can be used as an expression operand: either an Expr or a Binding (ref/expr). */
-export type ExprLike = Expr | Binding;
+/** A value that can be used as an expression operand: an Expr, a Binding (ref/expr), or a `workflow()` symbolic reference. */
+export type ExprLike = Expr | Binding | SymbolicRef<unknown>;
+
+const TRACED_EXPR = Symbol.for('muxlio.expr');
 
 /** Result of `execute()`: provides typed access to declared output ports. */
 export interface ExecuteResult {
@@ -99,6 +103,8 @@ export interface LoopOptions {
   maxIterations: number;
   /** Port name on the body output that carries the next iteration's state. */
   stateRef?: string;
+  /** When maxIterations is reached while `while` is still true. Default: 'pause'. */
+  onExhausted?: 'pause' | 'fail';
   body: (ctx: BuildContext) => Record<string, Binding>;
 }
 
@@ -110,11 +116,21 @@ export interface ProjectOptions {
 
 /** Convert an Expr or Binding to an Expr. Bindings with `ref` become `{ op: 'ref', ... }`. */
 export function toExpr(obj: ExprLike): Expr {
-  if (obj && 'op' in obj && (obj as Expr).op) return obj as Expr;
+  const traced = obj == null ? undefined : (obj as any)[TRACED_EXPR];
+  if (traced) return authored(traced as Expr);
+  if (obj && 'op' in obj && (obj as Expr).op) return authored(obj as Expr);
   const binding = obj as unknown as Binding;
-  if (binding.ref) return { op: 'ref', node: binding.ref.node, port: binding.ref.port };
-  if (binding.expr) return binding.expr;
+  if (binding.ref) return authored({ op: 'ref', node: binding.ref.node, port: binding.ref.port });
+  if (binding.expr) return authored(binding.expr);
   throw new Error('muxlio: cannot convert to expression (empty binding)');
+}
+
+/** A literal JSON value expression. `undefined` has no JSON encoding. */
+export function literalExpr(value: unknown): Expr {
+  if (value === undefined) {
+    throw new Error('muxlio: literal(undefined) is not a JSON value; use null or omit the value');
+  }
+  return authored({ op: 'literal', value });
 }
 
 export interface BuildContext {
@@ -191,30 +207,30 @@ class IRBuilder implements BuildContext {
 
   // --- Expression helpers ---
 
-  input(): Expr { return { op: 'input' }; }
-  inputField(name: string): Expr { return { op: 'field', expr: { op: 'input' }, name }; }
-  item(): Expr { return { op: 'item' }; }
-  itemField(name: string): Expr { return { op: 'field', expr: { op: 'item' }, name }; }
-  state(): Expr { return { op: 'state' }; }
-  stateField(name: string): Expr { return { op: 'field', expr: { op: 'state' }, name }; }
-  field(obj: ExprLike, name: string): Expr { return { op: 'field', expr: toExpr(obj), name }; }
-  index(arr: ExprLike, idx: number): Expr { return { op: 'index', expr: toExpr(arr), index: idx }; }
-  len(e: ExprLike): Expr { return { op: 'len', expr: toExpr(e) }; }
-  eq(l: ExprLike, r: ExprLike): Expr { return { op: 'eq', left: toExpr(l), right: toExpr(r) }; }
-  ne(l: ExprLike, r: ExprLike): Expr { return { op: 'ne', left: toExpr(l), right: toExpr(r) }; }
-  lt(l: ExprLike, r: ExprLike): Expr { return { op: 'lt', left: toExpr(l), right: toExpr(r) }; }
-  gt(l: ExprLike, r: ExprLike): Expr { return { op: 'gt', left: toExpr(l), right: toExpr(r) }; }
-  le(l: ExprLike, r: ExprLike): Expr { return { op: 'le', left: toExpr(l), right: toExpr(r) }; }
-  ge(l: ExprLike, r: ExprLike): Expr { return { op: 'ge', left: toExpr(l), right: toExpr(r) }; }
-  and(l: ExprLike, r: ExprLike): Expr { return { op: 'and', left: toExpr(l), right: toExpr(r) }; }
-  or(l: ExprLike, r: ExprLike): Expr { return { op: 'or', left: toExpr(l), right: toExpr(r) }; }
-  not(e: ExprLike): Expr { return { op: 'not', expr: toExpr(e) }; }
-  literal(value: unknown): Expr { return { op: 'literal', value }; }
-  add(l: ExprLike, r: ExprLike): Expr { return { op: 'add', left: toExpr(l), right: toExpr(r) }; }
-  sub(l: ExprLike, r: ExprLike): Expr { return { op: 'sub', left: toExpr(l), right: toExpr(r) }; }
-  mul(l: ExprLike, r: ExprLike): Expr { return { op: 'mul', left: toExpr(l), right: toExpr(r) }; }
-  div(l: ExprLike, r: ExprLike): Expr { return { op: 'div', left: toExpr(l), right: toExpr(r) }; }
-  mod(l: ExprLike, r: ExprLike): Expr { return { op: 'mod', left: toExpr(l), right: toExpr(r) }; }
+  input(): Expr { return authored({ op: 'input' }); }
+  inputField(name: string): Expr { return authored({ op: 'field', expr: { op: 'input' }, name }); }
+  item(): Expr { return authored({ op: 'item' }); }
+  itemField(name: string): Expr { return authored({ op: 'field', expr: { op: 'item' }, name }); }
+  state(): Expr { return authored({ op: 'state' }); }
+  stateField(name: string): Expr { return authored({ op: 'field', expr: { op: 'state' }, name }); }
+  field(obj: ExprLike, name: string): Expr { return authored({ op: 'field', expr: toExpr(obj), name }); }
+  index(arr: ExprLike, idx: number): Expr { return authored({ op: 'index', expr: toExpr(arr), index: idx }); }
+  len(e: ExprLike): Expr { return authored({ op: 'len', expr: toExpr(e) }); }
+  eq(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'eq', left: toExpr(l), right: toExpr(r) }); }
+  ne(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'ne', left: toExpr(l), right: toExpr(r) }); }
+  lt(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'lt', left: toExpr(l), right: toExpr(r) }); }
+  gt(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'gt', left: toExpr(l), right: toExpr(r) }); }
+  le(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'le', left: toExpr(l), right: toExpr(r) }); }
+  ge(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'ge', left: toExpr(l), right: toExpr(r) }); }
+  and(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'and', left: toExpr(l), right: toExpr(r) }); }
+  or(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'or', left: toExpr(l), right: toExpr(r) }); }
+  not(e: ExprLike): Expr { return authored({ op: 'not', expr: toExpr(e) }); }
+  literal(value: unknown): Expr { return literalExpr(value); }
+  add(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'add', left: toExpr(l), right: toExpr(r) }); }
+  sub(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'sub', left: toExpr(l), right: toExpr(r) }); }
+  mul(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'mul', left: toExpr(l), right: toExpr(r) }); }
+  div(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'div', left: toExpr(l), right: toExpr(r) }); }
+  mod(l: ExprLike, r: ExprLike): Expr { return authored({ op: 'mod', left: toExpr(l), right: toExpr(r) }); }
 
   // --- Node builders ---
 
@@ -248,11 +264,11 @@ class IRBuilder implements BuildContext {
     const outputs: Record<string, Binding> = {};
     if (opts.outputs) {
       for (const port of Object.keys(opts.outputs)) {
-        outputs[port] = { ref: { node: id, port } };
+        outputs[port] = authored({ ref: { node: id, port } });
       }
     }
     return {
-      output: (port: string) => ({ ref: { node: id, port } }),
+      output: (port: string) => authored({ ref: { node: id, port } }),
       outputs,
     };
   }
@@ -282,10 +298,10 @@ class IRBuilder implements BuildContext {
       maxItems: opts.maxItems,
       bodyRef: bodyName,
     };
-    this.nodes.push(node);
+    this.nodes.push(withInputs(node, externalDependencies(id, [bodyName], this.subgraphs)));
 
     return {
-      items: () => ({ ref: { node: id, port: 'items' } }),
+      items: () => authored({ ref: { node: id, port: 'items' } }),
     };
   }
 
@@ -298,28 +314,25 @@ class IRBuilder implements BuildContext {
     this.mergeSubgraphs(thenCollected);
     this.mergeExecutors(thenCollected);
 
-    let elseRef: string | undefined;
-    if (opts.else) {
-      const elseName = this.uniqueName(`${id}_else`);
-      const elseBuilder = new IRBuilder(this.counter);
-      const elseOutput = opts.else(elseBuilder);
-      const elseCollected = elseBuilder.collect();
-      this.subgraphs[elseName] = { nodes: elseCollected.nodes, output: elseOutput };
-      this.mergeSubgraphs(elseCollected);
-      this.mergeExecutors(elseCollected);
-      elseRef = elseName;
-    }
+    // An omitted else still needs a subgraph so the branch emits `result`.
+    const elseName = this.uniqueName(`${id}_else`);
+    const elseBuilder = new IRBuilder(this.counter);
+    const elseOutput = opts.else ? opts.else(elseBuilder) : {};
+    const elseCollected = elseBuilder.collect();
+    this.subgraphs[elseName] = { nodes: elseCollected.nodes, output: elseOutput };
+    this.mergeSubgraphs(elseCollected);
+    this.mergeExecutors(elseCollected);
 
     const node: Node = {
       id,
       kind: 'branch',
       condition: opts.condition,
       thenRef: thenName,
-      elseRef,
+      elseRef: elseName,
     };
-    this.nodes.push(node);
+    this.nodes.push(withInputs(node, externalDependencies(id, [thenName, elseName], this.subgraphs)));
 
-    return { result: () => ({ ref: { node: id, port: 'result' } }) };
+    return { result: () => authored({ ref: { node: id, port: 'result' } }) };
   }
 
   loop(id: string, opts: LoopOptions): LoopResult {
@@ -338,11 +351,12 @@ class IRBuilder implements BuildContext {
       initState: opts.initState,
       maxIterations: opts.maxIterations,
       stateRef: opts.stateRef,
+      onExhausted: opts.onExhausted,
       bodyRef: bodyName,
     };
-    this.nodes.push(node);
+    this.nodes.push(withInputs(node, externalDependencies(id, [bodyName], this.subgraphs)));
 
-    return { result: () => ({ ref: { node: id, port: 'result' } }) };
+    return { result: () => authored({ ref: { node: id, port: 'result' } }) };
   }
 
   project(id: string, opts: ProjectOptions): ProjectResult {
@@ -355,10 +369,10 @@ class IRBuilder implements BuildContext {
 
     const outputs: Record<string, Binding> = {};
     for (const port of Object.keys(opts.inputs)) {
-      outputs[port] = { ref: { node: id, port } };
+      outputs[port] = authored({ ref: { node: id, port } });
     }
     return {
-      output: (port: string) => ({ ref: { node: id, port } }),
+      output: (port: string) => authored({ ref: { node: id, port } }),
       outputs,
     };
   }
@@ -378,6 +392,72 @@ class IRBuilder implements BuildContext {
       this.requiredExecutors.add(exec);
     }
   }
+}
+
+/**
+ * Bindings from a body (its nodes, nested bodies, and outputs) to nodes
+ * defined outside it, one per referenced node, keyed `__after_N`. Placing
+ * them on the control node makes the parent schedule those producers first,
+ * which nested-scope validation requires.
+ */
+export function externalDependencies(
+  controlId: string,
+  bodyNames: string[],
+  subgraphs: Record<string, Subgraph>,
+): Record<string, Binding> {
+  const localIds = new Set<string>([controlId]);
+  const graphs: Subgraph[] = [];
+  const visited = new Set<string>();
+  const visit = (name: string | undefined) => {
+    if (!name || visited.has(name)) return;
+    visited.add(name);
+    const sg = subgraphs[name];
+    if (!sg) return;
+    graphs.push(sg);
+    for (const node of sg.nodes ?? []) {
+      localIds.add(node.id);
+      visit(node.bodyRef);
+      visit(node.thenRef);
+      visit(node.elseRef);
+    }
+  };
+  for (const name of bodyNames) visit(name);
+
+  const found = new Map<string, Binding>();
+  const noteExpr = (expr: Expr | undefined) => {
+    if (!expr) return;
+    if (expr.op === 'ref' && expr.node && !localIds.has(expr.node) && !found.has(expr.node)) {
+      found.set(expr.node, { ref: { node: expr.node, port: expr.port ?? 'result' } });
+    }
+    noteExpr(expr.expr);
+    noteExpr(expr.left);
+    noteExpr(expr.right);
+    for (const sub of Object.values(expr.fields ?? {})) noteExpr(sub);
+    for (const sub of expr.elements ?? []) noteExpr(sub);
+  };
+  const noteBinding = (binding: Binding | undefined) => {
+    if (!binding) return;
+    if (binding.ref && !localIds.has(binding.ref.node) && !found.has(binding.ref.node)) {
+      found.set(binding.ref.node, binding);
+    }
+    noteExpr(binding.expr);
+  };
+  for (const sg of graphs) {
+    for (const node of sg.nodes ?? []) {
+      for (const binding of Object.values(node.inputs ?? {})) noteBinding(binding);
+      for (const expr of [node.items, node.key, node.condition, node.while, node.initState]) noteExpr(expr);
+    }
+    for (const binding of Object.values(sg.output ?? {})) noteBinding(binding);
+  }
+
+  const inputs: Record<string, Binding> = {};
+  let n = 0;
+  for (const binding of found.values()) inputs[`__after_${n++}`] = binding;
+  return inputs;
+}
+
+function withInputs(node: Node, inputs: Record<string, Binding>): Node {
+  return Object.keys(inputs).length > 0 ? { ...node, inputs } : node;
 }
 
 // --- defineWorkflow ---

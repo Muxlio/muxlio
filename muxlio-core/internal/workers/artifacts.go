@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -219,6 +220,13 @@ func (a ArtifactTransferExecutor) materializeInputs(req *ExecuteRequest) error {
 		if declared, pathErr := declaredOutputPath(fileName); pathErr == nil && strings.Contains(declared, string(filepath.Separator)) {
 			rel = declared
 		}
+		if rel == "." || rel == ".." || rel == string(filepath.Separator) {
+			return fmt.Errorf("muxlio: input artifact %q has no file name", name)
+		}
+		// Case-insensitive file systems collide on any spelling.
+		if first, _, _ := strings.Cut(rel, string(filepath.Separator)); strings.EqualFold(first, attemptWorkspaceDir) {
+			return fmt.Errorf("muxlio: input artifact %q path %q is reserved for the attempt workspace", name, fileName)
+		}
 		destPath := filepath.Join(workDir, rel)
 		if dir := filepath.Dir(destPath); dir != workDir {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -291,7 +299,7 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		if err != nil {
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output workspace: %v", err)}, nil
 		}
-		f, err := root.Open(rel)
+		f, err := openRegular(func(flag int) (*os.File, error) { return root.OpenFile(rel, flag, 0) })
 		if err != nil {
 			_ = root.Close()
 			return ExecuteResult{Error: fmt.Sprintf("muxlio: open output %q: %v", port, err)}, nil
@@ -338,6 +346,26 @@ func (a ArtifactTransferExecutor) publishOutputs(req ExecuteRequest, result Exec
 		}
 	}
 	return result, nil
+}
+
+var errNotRegularFile = errors.New("not a regular file")
+
+// openRegular opens without blocking on a FIFO or device, then checks the
+// opened file so a concurrent replacement cannot bypass the type check.
+func openRegular(open func(flag int) (*os.File, error)) (*os.File, error) {
+	f, err := open(os.O_RDONLY | openNonblock)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errNotRegularFile
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 func declaredOutputPath(name string) (string, error) {

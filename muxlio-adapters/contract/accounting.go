@@ -129,6 +129,10 @@ func (u *RemoteAccountingUpdate) Validate() error {
 
 var accountingID = regexp.MustCompile(`^[a-z0-9._:-]{1,120}$`)
 var accountingMeta = regexp.MustCompile(`^[a-z0-9._:-]{1,80}$`)
+
+// Versions are retained verbatim so observed runner versions, including
+// uppercase prereleases and build metadata, stay exact provenance.
+var accountingVersion = regexp.MustCompile(`^[A-Za-z0-9._:+-]{1,80}$`)
 var accountingMethod = regexp.MustCompile(`^[a-z0-9._:-]{1,120}$`)
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$`)
@@ -178,7 +182,7 @@ func validateReading[T any](r *Reading[T], validate func(T) error, collected boo
 	if r.Method != "" && !accountingMethod.MatchString(r.Method) {
 		return fmt.Errorf("invalid accounting method")
 	}
-	if r.Version != "" && (len(r.Version) > 80 || !accountingMeta.MatchString(r.Version)) {
+	if r.Version != "" && !accountingVersion.MatchString(r.Version) {
 		return fmt.Errorf("invalid accounting version")
 	}
 	if r.CatalogID != "" && (len(r.CatalogID) > 120 || !accountingMeta.MatchString(strings.ToLower(r.CatalogID))) {
@@ -217,7 +221,7 @@ func (a *Accounting) Validate() error {
 	}
 	sessions := map[AccountingSession]bool{}
 	for _, session := range a.Sessions {
-		if session.ID == "" || len(session.ID) > 512 || strings.ContainsAny(session.ID, "\r\n\x00") || !accountingMeta.MatchString(session.Provider) || !accountingMeta.MatchString(session.Source) || session.Version != "" && !accountingMeta.MatchString(session.Version) || sessions[session] {
+		if session.ID == "" || len(session.ID) > 512 || strings.ContainsAny(session.ID, "\r\n\x00") || !accountingMeta.MatchString(session.Provider) || !accountingMeta.MatchString(session.Source) || session.Version != "" && !accountingVersion.MatchString(session.Version) || sessions[session] {
 			return fmt.Errorf("invalid or duplicate accounting session")
 		}
 		if len(session.Principal) > 256 || strings.ContainsAny(session.Principal, "\r\n\x00") {
@@ -255,7 +259,7 @@ func (a *Accounting) Validate() error {
 		if e.Provider != "" && !accountingMeta.MatchString(e.Provider) {
 			return fmt.Errorf("invalid accounting provider")
 		}
-		if e.Model != "" && (len(e.Model) > 160 || strings.ContainsAny(e.Model, "\r\n")) {
+		if e.Model != "" && (len(e.Model) > 160 || strings.ContainsAny(e.Model, "\r\n\x00")) {
 			return fmt.Errorf("invalid accounting model")
 		}
 		if e.Tokens != nil {
@@ -406,7 +410,19 @@ func CanonicalAccounting(a Accounting) ([]byte, error) {
 		if x.ID != y.ID {
 			return x.ID < y.ID
 		}
-		return x.Version < y.Version
+		if x.Version != y.Version {
+			return x.Version < y.Version
+		}
+		if x.StartedAt != y.StartedAt {
+			return x.StartedAt < y.StartedAt
+		}
+		if x.FinishedAt != y.FinishedAt {
+			return x.FinishedAt < y.FinishedAt
+		}
+		if x.Principal != y.Principal {
+			return x.Principal < y.Principal
+		}
+		return !x.Isolated && y.Isolated
 	})
 	copyA.Models = append([]AccountingModel(nil), a.Models...)
 	sort.Slice(copyA.Models, func(i, j int) bool {

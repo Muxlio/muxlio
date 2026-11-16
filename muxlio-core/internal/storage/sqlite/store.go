@@ -494,7 +494,7 @@ func (s *Store) RegisterWorker(w state.Worker) error {
 func (s *Store) ListWorkers(since time.Time) ([]state.Worker, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id,instance_id,capacity,capabilities_json,labels_json,last_seen,draining FROM workers WHERE last_seen>=? ORDER BY id`, rfc3339(since))
+	rows, err := s.db.Query(`SELECT id,instance_id,capacity,capabilities_json,labels_json,last_seen,draining FROM workers WHERE `+runTimestamp("last_seen")+`>=? ORDER BY id`, leaseTimestamp(since))
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +540,9 @@ func (s *Store) EnqueueDispatch(d state.Dispatch) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND (dispatches.state='completed' OR (dispatches.state='cancelled' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=dispatches.attempt_id)) OR (dispatches.state='pending' AND NOT EXISTS (SELECT 1 FROM assignments WHERE activation_id=dispatches.activation_id)))`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
+	// A cancelled attempt yields its slot once its assignment is fenced. Active
+	// or uncertain assignments may still be performing side effects.
+	_, err = tx.Exec(`INSERT INTO dispatches(assignment_id,run_id,activation_id,attempt_id,executor,request_json,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(activation_id) DO UPDATE SET assignment_id=excluded.assignment_id,attempt_id=excluded.attempt_id,executor=excluded.executor,request_json=excluded.request_json,state='pending' WHERE dispatches.attempt_id<>excluded.attempt_id AND (dispatches.state='completed' OR (dispatches.state='cancelled' AND NOT EXISTS (SELECT 1 FROM assignments WHERE attempt_id=dispatches.attempt_id AND state IN ('active','uncertain'))) OR (dispatches.state='pending' AND NOT EXISTS (SELECT 1 FROM assignments WHERE activation_id=dispatches.activation_id)))`, d.AssignmentID, d.RunID, d.ActivationID, d.AttemptID, d.Executor, string(d.Request))
 	if err != nil {
 		return err
 	}
@@ -900,7 +902,7 @@ func (s *Store) DueTimers(now time.Time) ([]state.Timer, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT id, run_id, activation_id, due_at, payload_json FROM timers WHERE state='pending' AND due_at<=? ORDER BY due_at`, rfc3339(now))
+	rows, err := tx.Query(`SELECT id, run_id, activation_id, due_at, payload_json FROM timers WHERE state='pending' AND `+runTimestamp("due_at")+`<=? ORDER BY `+runTimestamp("due_at"), leaseTimestamp(now))
 	if err != nil {
 		return nil, err
 	}
@@ -1108,7 +1110,7 @@ func (s *Store) GetInputRequest(runID, requestID string) (*state.InputRequest, e
 func (s *Store) ListInputRequests(runID string) ([]state.InputRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rows, err := s.db.Query(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? ORDER BY created_at, request_id`, runID)
+	rows, err := s.db.Query(`SELECT run_id, request_id, activation_id, name, schema_json, expires_at, permissions_json, state, response_json, responder_id, created_at, fulfilled_at, idempotency_key FROM input_requests WHERE run_id=? ORDER BY `+runTimestamp("created_at")+`, request_id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -1500,18 +1502,17 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 		args = append(args, attemptID)
 	}
 	if !details && limit < 0 {
-		query = strings.Replace(query, "result_json", "NULL", 1)
+		query = strings.Replace(query, "failure,result_json", "'',NULL", 1)
 		query = strings.Replace(query, "operation_ref_json", "NULL", 1)
-		query = strings.Replace(query, "failure,result_json", "'',result_json", 1)
 	} else if !details {
 		query = strings.Replace(query, "result_json", "json_remove(result_json,'$.outputs','$.validationFailure.actual','$.validationFailure.expected')", 1)
 	}
 	if analyticsOrder {
-		query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+		query += ` ORDER BY activation_id,retry_number,` + workerReplayArchiveOrder + ` LIMIT ? OFFSET ?`
 	} else if limit >= 0 {
-		query += ` ORDER BY (await_reconciliation_reason<>'') DESC,activation_id,retry_number,id LIMIT ? OFFSET ?`
+		query += ` ORDER BY (await_reconciliation_reason<>'') DESC,activation_id,retry_number,` + workerReplayArchiveOrder + ` LIMIT ? OFFSET ?`
 	} else {
-		query += ` ORDER BY activation_id,retry_number,id LIMIT ? OFFSET ?`
+		query += ` ORDER BY activation_id,retry_number,` + workerReplayArchiveOrder + ` LIMIT ? OFFSET ?`
 	}
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1847,6 +1848,14 @@ func (s *Store) RetryRun(id string) error {
 	if held > 0 {
 		return fmt.Errorf("run has attempts awaiting reconciliation; resolve their external outcomes before retrying")
 	}
+	if held, err := holdUncertainAttempts(tx, id); err != nil {
+		return err
+	} else if held {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return fmt.Errorf("run has attempts awaiting reconciliation; resolve their external outcomes before retrying")
+	}
 	rows, err := tx.Query(`SELECT id, node_id, scope_path_json FROM activations WHERE run_id=? AND state!='succeeded'`, id)
 	if err != nil {
 		return err
@@ -1897,7 +1906,13 @@ func (s *Store) RetryRun(id string) error {
 	for _, act := range queued {
 		incomplete[act.id] = true
 	}
-	for _, req := range state.RenewCancelledInputs(requests, incomplete, time.Now()) {
+	renewed, superseded := state.RenewClosedInputs(requests, incomplete, time.Now())
+	for _, requestID := range superseded {
+		if _, err := tx.Exec(`UPDATE input_requests SET state='cancelled' WHERE run_id=? AND request_id=?`, id, requestID); err != nil {
+			return err
+		}
+	}
+	for _, req := range renewed {
 		permissions, err := json.Marshal(req.Permissions)
 		if err != nil {
 			return err
@@ -1958,8 +1973,50 @@ func retryClearWork(tx *sql.Tx, runID string, activationIDs []string) error {
 		if _, err := tx.Exec(`UPDATE assignments SET state='cancelled', generation=generation+1 WHERE run_id=? AND activation_id=? AND state='active'`, runID, actID); err != nil {
 			return err
 		}
+		// Scheduling is insert-only, so a wait cancelled with its run must be
+		// removed for the retried activation to schedule a fresh deadline.
+		if _, err := tx.Exec(`DELETE FROM timers WHERE run_id=? AND activation_id=? AND state='cancelled'`, runID, actID); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// holdUncertainAttempts marks unfinished attempts whose assignment outcome is
+// uncertain and whose effect is not replay-safe as awaiting reconciliation.
+// Retrying them under a new attempt identity could repeat an external effect.
+func holdUncertainAttempts(tx *sql.Tx, runID string) (bool, error) {
+	rows, err := tx.Query(`SELECT e.id,e.activation_id,e.effect,e.idempotency_key FROM execution_attempts e JOIN assignments a ON a.attempt_id=e.id AND a.activation_id=e.activation_id WHERE e.run_id=? AND a.state='uncertain' AND e.state NOT IN ('succeeded','failed','cancelled','resolved')`, runID)
+	if err != nil {
+		return false, err
+	}
+	type heldAttempt struct{ id, activationID string }
+	var held []heldAttempt
+	for rows.Next() {
+		var a heldAttempt
+		var effect, key string
+		if err := rows.Scan(&a.id, &a.activationID, &effect, &key); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if !state.ReplaySafeEffect(effect, key) {
+			held = append(held, a)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return false, err
+	}
+	for _, a := range held {
+		if _, err := tx.Exec(`UPDATE execution_attempts SET await_reconciliation_reason=? WHERE id=?`, state.UncertainRetryReason, a.id); err != nil {
+			return false, err
+		}
+		if err := appendEvent(tx, runID, state.EventReconciliationRequired, a.activationID, map[string]any{"attemptId": a.id}); err != nil {
+			return false, err
+		}
+	}
+	return len(held) > 0, nil
 }
 
 func (s *Store) SetRunOutput(id string, output any) error {
@@ -2055,7 +2112,7 @@ func (s *Store) ListRuns() ([]*state.Run, error) {
 		`SELECT id, workflow_name, state, input_json, output_json, error, created_at, updated_at, plan_json, plan_digest,
    EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND id=runs.id),
    (SELECT retained_until FROM run_retention WHERE run_id=runs.id), fork_json, COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''), origin_label, caller_id
-   FROM runs ORDER BY created_at`)
+   FROM runs ORDER BY ` + runTimestamp("created_at"))
 	if err != nil {
 		return nil, err
 	}
@@ -2720,7 +2777,7 @@ func (s *Store) RetireWorkflowVersion(digest string) error {
 func (s *Store) ListWorkflowVersions() ([]state.WorkflowVersionSummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rows, err := s.db.Query(`SELECT digest, plan_json, created_at, retired FROM workflow_versions ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT digest, plan_json, created_at, retired FROM workflow_versions ORDER BY ` + runTimestamp("created_at") + ` DESC`)
 	if err != nil {
 		return nil, err
 	}

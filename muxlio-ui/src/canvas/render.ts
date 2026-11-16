@@ -1,5 +1,28 @@
 // Recursive Canvas tree walker and depth/count guard.
 
+function renderCanvasDocumentBody(
+  doc: CanvasDocument,
+  context: CanvasRendererContext,
+): ComponentHTML {
+  const controls = Object.entries(doc.controls || {})
+    .map(
+      ([key, ctrl]) =>
+        renderCanvasNode(
+          { ...ctrl, id: ctrl.id || key } as unknown as CanvasNode,
+          context,
+        ).value,
+    )
+    .join("");
+  const content = renderCanvasNode(doc.content, context).value;
+  return componentBody(
+    (controls
+      ? renderComponent("canvas-controls", {
+          controls: componentBody(controls),
+        })
+      : "") + content,
+  );
+}
+
 function renderCanvasNode(
   node: CanvasNode,
   context: CanvasRendererContext,

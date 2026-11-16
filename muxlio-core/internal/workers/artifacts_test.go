@@ -152,6 +152,26 @@ func TestMaterializeInputsPreservesDistinctDeclaredPaths(t *testing.T) {
 	}
 }
 
+func TestMaterializeInputsRejectsReservedAndUnnamedPaths(t *testing.T) {
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("payload")))
+	for _, path := range []string{"workspace/notes.txt", "workspace", "Workspace/notes.txt", "..", ".", "/"} {
+		a := ArtifactTransferExecutor{WorkBase: t.TempDir()}
+		req := ExecuteRequest{RunID: "run", ActivationID: "act", AttemptID: "attempt",
+			Inputs: map[string]any{"input": map[string]any{"digest": digest, "size": json.Number("7"), "path": path}}}
+		workDir, err := a.workDir(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.attemptScratch = workDir
+		if err := a.materializeInputs(&req); err == nil {
+			t.Errorf("input path %q accepted", path)
+		}
+		if _, err := os.Stat(filepath.Join(workDir, "workspace")); !os.IsNotExist(err) {
+			t.Errorf("input path %q occupied the attempt workspace: %v", path, err)
+		}
+	}
+}
+
 func TestStripInlineArtifactBytes(t *testing.T) {
 	req := ExecuteRequest{Inputs: map[string]any{
 		"doc": map[string]any{

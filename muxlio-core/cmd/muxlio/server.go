@@ -629,6 +629,18 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
 
+	// Control requests must observe recovered engines as running before any
+	// listener accepts them; otherwise retry could start a second engine.
+	runner.mu.Lock()
+	for id, engine := range recovered {
+		engine.Context = ctx
+		runner.workers[id] = make(chan struct{})
+		runner.wg.Add(1)
+	}
+	runner.mu.Unlock()
+	for id := range recovered {
+		go func(id string) { _ = runner.Run(id) }(id)
+	}
 	servers.start()
 	// Include every listener in the same failure/shutdown path.
 	errCh := make(chan error, 3)
@@ -640,14 +652,6 @@ func serve(dataDir, addr string, jsonOut bool, config *serviceConfig) int {
 			scheme = "https"
 		}
 		fmt.Fprintf(os.Stderr, "muxlio MCP listening on %s://%s/mcp\n", scheme, mcpListener.Addr())
-	}
-	for id, engine := range recovered {
-		engine.Context = ctx
-		runner.mu.Lock()
-		runner.workers[id] = make(chan struct{})
-		runner.mu.Unlock()
-		runner.wg.Add(1)
-		go func(id string) { _ = runner.Run(id) }(id)
 	}
 	subscriptionsDone := make(chan struct{})
 	go func() {

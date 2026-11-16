@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +57,15 @@ func TestCanvasCLI(t *testing.T) {
 	}
 	if code := cmdCanvas([]string{"validate", invalidPath}, false); code != 1 {
 		t.Fatalf("expected canvas validate invalidPath to return 1, got %d", code)
+	}
+
+	old, r, w := captureStdout(t)
+	code := cmdCanvas([]string{"validate", validPath, "--json"}, false)
+	w.Close()
+	restoreStdout(old)
+	out, _ := io.ReadAll(r)
+	var result map[string]any
+	if code != 0 || json.Unmarshal(out, &result) != nil || result["valid"] != true {
+		t.Fatalf("trailing --json ignored: code=%d output=%q", code, out)
 	}
 }

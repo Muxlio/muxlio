@@ -3,110 +3,112 @@
 // against the runtime context (input, item, state, node outputs).
 
 import type { Expr } from './types.js';
+import { authored } from './authored.js';
+import { literalExpr, toExpr, type ExprLike } from './builder.js';
 
 /** Root run input. */
 export function input(): Expr {
-  return { op: 'input' };
+  return authored({ op: 'input' });
 }
 
 /** Current map item. */
 export function item(): Expr {
-  return { op: 'item' };
+  return authored({ op: 'item' });
 }
 
 /** Current loop-carried state. */
 export function state(): Expr {
-  return { op: 'state' };
+  return authored({ op: 'state' });
 }
 
 /** A literal JSON value. */
 export function literal(value: unknown): Expr {
-  return { op: 'literal', value };
+  return literalExpr(value);
 }
 
 /** Field access on an object expression. */
-export function field(obj: Expr, name: string): Expr {
-  return { op: 'field', expr: obj, name };
+export function field(obj: ExprLike, name: string): Expr {
+  return authored({ op: 'field', expr: toExpr(obj), name });
 }
 
-/** Element access on an array expression. */
-export function index(arr: Expr, idx: number): Expr {
-  return { op: 'index', expr: arr, index: idx };
+/** Element access on an array, or a non-negative integer key on an object. */
+export function index(arr: ExprLike, idx: number): Expr {
+  return authored({ op: 'index', expr: toExpr(arr), index: idx });
 }
 
 /** Length of an array, string, or object. */
-export function len(e: Expr): Expr {
-  return { op: 'len', expr: e };
+export function len(e: ExprLike): Expr {
+  return authored({ op: 'len', expr: toExpr(e) });
 }
 
 /** Equality check. */
-export function eq(left: Expr, right: Expr): Expr {
-  return { op: 'eq', left, right };
+export function eq(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'eq', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Inequality check. */
-export function ne(left: Expr, right: Expr): Expr {
-  return { op: 'ne', left, right };
+export function ne(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'ne', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Less than. */
-export function lt(left: Expr, right: Expr): Expr {
-  return { op: 'lt', left, right };
+export function lt(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'lt', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Greater than. */
-export function gt(left: Expr, right: Expr): Expr {
-  return { op: 'gt', left, right };
+export function gt(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'gt', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Less than or equal. */
-export function le(left: Expr, right: Expr): Expr {
-  return { op: 'le', left, right };
+export function le(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'le', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Greater than or equal. */
-export function ge(left: Expr, right: Expr): Expr {
-  return { op: 'ge', left, right };
+export function ge(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'ge', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Boolean AND. */
-export function and(left: Expr, right: Expr): Expr {
-  return { op: 'and', left, right };
+export function and(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'and', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Boolean OR. */
-export function or(left: Expr, right: Expr): Expr {
-  return { op: 'or', left, right };
+export function or(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'or', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Boolean NOT. */
-export function not(e: Expr): Expr {
-  return { op: 'not', expr: e };
+export function not(e: ExprLike): Expr {
+  return authored({ op: 'not', expr: toExpr(e) });
 }
 
 /** Numeric addition or string concatenation. */
-export function add(left: Expr, right: Expr): Expr {
-  return { op: 'add', left, right };
+export function add(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'add', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Numeric subtraction. */
-export function sub(left: Expr, right: Expr): Expr {
-  return { op: 'sub', left, right };
+export function sub(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'sub', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Numeric multiplication. */
-export function mul(left: Expr, right: Expr): Expr {
-  return { op: 'mul', left, right };
+export function mul(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'mul', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Numeric division. */
-export function div(left: Expr, right: Expr): Expr {
-  return { op: 'div', left, right };
+export function div(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'div', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Integer remainder. */
-export function mod(left: Expr, right: Expr): Expr {
-  return { op: 'mod', left, right };
+export function mod(left: ExprLike, right: ExprLike): Expr {
+  return authored({ op: 'mod', left: toExpr(left), right: toExpr(right) });
 }
 
 /** Convenience: field access on the root input. */

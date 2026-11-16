@@ -52,6 +52,27 @@ func TestCommandRuntimeAuthorizationAndIsolation(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsLoaderInjectionEnvironment(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "command")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	for _, key := range []string{"LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES"} {
+		params, _ := json.Marshal(map[string]any{"program": "/bin/echo", "env": map[string]string{key: "/tmp/inject.so"}})
+		raw, _ := json.Marshal(adapter.Request{Workspace: t.TempDir(), WorkDir: t.TempDir(), HostExecutionAllowed: true, Params: params})
+		cmd := exec.Command(bin)
+		cmd.Stdin = strings.NewReader(string(raw))
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp adapter.Response
+		if err := json.Unmarshal(out, &resp); err != nil || !strings.Contains(resp.Error, "dynamic loading") {
+			t.Fatalf("%s accepted: %s %v", key, out, err)
+		}
+	}
+}
+
 func commandResponse(t *testing.T, params map[string]any, inputs ...map[string]any) (adapter.Response, string) {
 	t.Helper()
 	workspace, workDir := t.TempDir(), t.TempDir()

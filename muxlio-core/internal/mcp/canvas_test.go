@@ -74,6 +74,31 @@ func TestCanvasMCPTools(t *testing.T) {
 	if !valInvalid.IsError {
 		t.Errorf("expected validate_canvas invalid to return error")
 	}
+
+	if res := s.dispatchTool("validate_canvas", []byte(`{"path": `+string(mustJSON(tmpDir))+`}`)); !res.IsError || !strings.Contains(res.Content[0].Text, "regular file") {
+		t.Fatalf("directory path accepted: %+v", res)
+	}
+	large := filepath.Join(tmpDir, "large.canvas.json")
+	if err := os.WriteFile(large, []byte(strings.Repeat(" ", 3<<20)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if res := s.dispatchTool("validate_canvas", []byte(`{"path": `+string(mustJSON(large))+`}`)); !res.IsError || !strings.Contains(res.Content[0].Text, "exceeds maximum") {
+		t.Fatalf("oversize file not rejected by size: %+v", res)
+	}
+}
+
+func TestReadOnlyToolAnnotations(t *testing.T) {
+	offline := map[string]bool{"list_canvas_components": true, "get_canvas_component": true, "validate_canvas": true}
+	readOnly := map[string]bool{"list_workflow_versions": true, "preflight_run": true}
+	for _, tool := range tools {
+		if !offline[tool.Name] && !readOnly[tool.Name] {
+			continue
+		}
+		a := tool.Annotations
+		if a == nil || !a.ReadOnly || a.Destructive || !a.Idempotent || a.OpenWorld == offline[tool.Name] {
+			t.Errorf("%s annotations: %+v", tool.Name, a)
+		}
+	}
 }
 
 func mustJSON(v any) []byte {

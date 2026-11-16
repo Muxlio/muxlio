@@ -51,16 +51,35 @@ export function createUIServer({
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "same-origin");
-    const apiRequest = req.url?.startsWith("/v1/");
-    if (apiRequest || req.url === "/v1" || req.url === "/healthz") {
+    let requestURL: URL;
+    try {
+      requestURL = new URL(req.url || "/", "http://localhost");
+    } catch {
+      res.writeHead(400).end("Invalid request URL");
+      return;
+    }
+    const rawPath = (req.url || "/").split(/[?#]/, 1)[0];
+    const routedPath = requestURL.pathname;
+    const apiRequest = routedPath.startsWith("/v1/");
+    if (apiRequest || routedPath === "/v1" || routedPath === "/healthz") {
+      // Dot segments would reach a different coordinator route than the one
+      // authorized here.
+      if (rawPath !== routedPath) {
+        res.writeHead(400).end("Invalid request path");
+        return;
+      }
       // Reject browser CSRF before considering automatic local credentials.
       const origins = req.headersDistinct.origin || [];
       const credentials = req.headersDistinct.authorization || [];
       const site = req.headers["sec-fetch-site"];
+      const scheme = (req.socket as { encrypted?: boolean }).encrypted
+        ? "https"
+        : "http";
       if (
         (site && site !== "same-origin" && site !== "none") ||
         (origins.length > 0 &&
-          (origins.length !== 1 || origins[0] !== `http://${req.headers.host}`))
+          (origins.length !== 1 ||
+            origins[0] !== `${scheme}://${req.headers.host}`))
       ) {
         res.writeHead(403).end("Cross-origin browser request denied");
         return;
@@ -95,8 +114,12 @@ export function createUIServer({
       // The browser Origin was validated against this UI above. It is not the
       // coordinator's origin when the UI is hosted on a separate port.
       delete headers.origin;
+      const upstreamURL = new URL(target);
+      upstreamURL.pathname = target.pathname.replace(/\/+$/, "") + routedPath;
+      upstreamURL.search = requestURL.search;
+      upstreamURL.hash = "";
       const proxy = (target.protocol === "https:" ? httpsRequest : httpRequest)(
-        new URL(req.url, target),
+        upstreamURL,
         {
           method: req.method,
           headers: {
@@ -122,13 +145,7 @@ export function createUIServer({
       res.writeHead(405, { allow: "GET, HEAD" }).end();
       return;
     }
-    let pathname: string;
-    try {
-      pathname = new URL(req.url || "/", "http://localhost").pathname;
-    } catch {
-      res.writeHead(400).end("Invalid request URL");
-      return;
-    }
+    const pathname = routedPath;
     let assetName;
     try {
       assetName = decodeURIComponent(pathname);
@@ -167,7 +184,7 @@ export function createUIServer({
       return;
     }
     if (
-      !/^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+|worker-capabilities\/[^/]+\/[^/]+(?:\/[^/]+)?|artifacts\/view\/[^/]+\/[^/]+\/[^/]+|operations|automation|retention|workers|live|workflows|artifacts|analytics|compare|evidence)\/?$/.test(
+      !/^\/(?:runs(?:\/[^/]+)?|transcripts\/[^/]+\/[^/]+|worker-capabilities\/[^/]+\/[^/]+(?:\/[^/]+)?|artifacts\/view\/[^/]+\/[^/]+\/[^/]+|operations|automation|retention|workers|live|workflows|artifacts|analytics)\/?$/.test(
         pathname,
       ) &&
       pathname !== "/"

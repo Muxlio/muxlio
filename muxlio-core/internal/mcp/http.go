@@ -160,11 +160,18 @@ func newHTTPHandler(tools *server, token string, origins []string) (http.Handler
 		// coordinator authorization. HTTP clients must send plans to check_plan.
 		if message.Method == "tools/call" {
 			var call struct {
-				Name string `json:"name"`
+				Name      string `json:"name"`
+				Arguments struct {
+					Path *string `json:"path"`
+				} `json:"arguments"`
 			}
 			_ = json.Unmarshal(message.Params, &call)
 			if call.Name == "build" || call.Name == "test" {
 				writeHTTPRPCError(w, http.StatusForbidden, message.ID, -32602, "file-based build and test require local stdio transport; use check_plan for inline JSON")
+				return
+			}
+			if call.Name == "validate_canvas" && call.Arguments.Path != nil {
+				writeHTTPRPCError(w, http.StatusForbidden, message.ID, -32602, "file-based canvas validation requires local stdio transport; send the document as content")
 				return
 			}
 		}

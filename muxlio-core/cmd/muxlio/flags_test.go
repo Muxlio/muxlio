@@ -1,7 +1,11 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -31,6 +35,28 @@ func TestReorderArgsBooleanFlagsDoNotConsumePositionals(t *testing.T) {
 	want := []string{"--allow-command", "/workspace"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reorderArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestReorderArgsConfigOnlyDoesNotConsumeNextArgument(t *testing.T) {
+	got := reorderArgs([]string{"doctor", "--config-only", "extra"})
+	want := []string{"--config-only", "doctor", "extra"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reorderArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestWorkerSubcommandHonorsAdaptersAndDataDir(t *testing.T) {
+	if os.Getenv("MUXLIO_TEST_CLI") == "1" {
+		return
+	}
+	root := t.TempDir()
+	adapters := filepath.Join(root, "custom-adapters")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIProcess$", "--", "worker", "status", "--adapters", adapters, "--data-dir", root)
+	cmd.Env = append(os.Environ(), "MUXLIO_TEST_CLI=1")
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), adapters) {
+		t.Fatalf("worker status ignored --adapters: %s", out)
 	}
 }
 

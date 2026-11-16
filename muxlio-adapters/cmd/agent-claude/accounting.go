@@ -126,12 +126,12 @@ func claudeTokenEntry(ev map[string]json.RawMessage) (contract.AccountingEntry, 
 			const source = "claude-result-main-loop"
 			tokens := &contract.TokenMeasures{}
 			var input, output int64
+			if usage.InputTokens != nil && *usage.InputTokens < 0 {
+				return entry, fmt.Errorf("claude result.usage.input_tokens: negative value")
+			}
 			inputKnown := usage.InputTokens != nil && usage.CacheReadInputTokens != nil && usage.CacheCreationInputTokens != nil
 			if inputKnown {
 				input = *usage.InputTokens
-				if input < 0 {
-					return entry, fmt.Errorf("claude result.usage.input_tokens: negative value")
-				}
 				if err := addClaudeCount(&input, *usage.CacheReadInputTokens); err != nil {
 					return entry, err
 				}

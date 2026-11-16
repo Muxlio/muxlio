@@ -123,7 +123,7 @@ func reorderArgs(args []string) []string {
 func isBoolFlag(flagName string) bool {
 	name := strings.TrimLeft(flagName, "-")
 	switch name {
-	case "json", "fake", "open", "starter", "allow-command", "current", "dry-run", "list-requests":
+	case "json", "fake", "open", "starter", "allow-command", "current", "dry-run", "list-requests", "config-only":
 		return true
 	default:
 		return false

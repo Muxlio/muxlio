@@ -141,14 +141,29 @@ function renderLiveList(){
   list.querySelectorAll<UIElement>('[data-live-run]').forEach(btn=>btn.onclick=()=>selectLiveStream(btn.dataset.liveRun,btn.dataset.liveAct));
 }
 
+const LIVE_RUN_STATES=['running','waiting','paused','created'];
+const LIVE_RUN_PAGE_SIZE=200,LIVE_RUN_PAGE_LIMIT=5;
+// The unfiltered run list is capped, so active runs are requested by state.
+async function fetchLiveRuns(){
+  const byId=new Map();
+  await Promise.all(LIVE_RUN_STATES.map(async state=>{
+    for(let page=0,offset=0;page<LIVE_RUN_PAGE_LIMIT;page++){
+      const data=await api(`/v1/runs?state=${encodeURIComponent(state)}&limit=${LIVE_RUN_PAGE_SIZE}&offset=${offset}`);
+      for(const run of data.runs||[])if(run.state===state)byId.set(run.id,run);
+      if(!data.hasMore)break;
+      offset=data.nextOffset??offset+(data.runs||[]).length;
+    }
+  }));
+  return [...byId.values()];
+}
+
 async function loadLive(){
   const epoch=typeof refreshEpoch==='number'?refreshEpoch:0;
   const countEl=$('#liveActiveCount');
   if(countEl&&liveEntries.length===0)countEl.textContent='Loading…';
   try{
-    const allRuns=await fetchRuns();
+    const activeRuns=await fetchLiveRuns();
     if(typeof refreshEpoch==='number'&&epoch!==refreshEpoch)return;
-    const activeRuns=allRuns.filter(r=>['running','waiting','paused','created'].includes(r.state));
     const entries=[];
     await Promise.all(activeRuns.map(async r=>{
       if(typeof refreshEpoch==='number'&&epoch!==refreshEpoch)return;

@@ -85,12 +85,12 @@ func cmdGC(args []string, dataDir string) int {
 	}{{"run", *pinRun, true}, {"run", *unpinRun, false}, {"plan", *pinPlan, true}, {"plan", *unpinPlan, false}, {"artifact", *pinArtifact, true}, {"artifact", *unpinArtifact, false}} {
 		if op.id != "" {
 			if op.kind == "artifact" && op.pinned {
-				local, err := artifacts.NewLocal(filepath.Join(*root, "artifacts"))
+				driver, err := artifacts.FromEnvironment(filepath.Join(*root, "artifacts"))
 				if err != nil {
 					fmt.Fprintln(os.Stderr, err)
 					return 1
 				}
-				reader, _, err := local.GetStream(context.Background(), op.id)
+				reader, _, err := driver.GetStream(context.Background(), op.id)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, err)
 					return 1

@@ -33,7 +33,7 @@ function loadCanvas() {
       markdownFixture +
       "\n" +
       canvasFiles.join("\n") +
-      "\n;({renderCanvasNode,resolveCanvasData,evaluateJsonPointer,filterDataRows,sortDataRows,CanvasInteractionStore})",
+      "\n;({renderCanvasNode,renderCanvasDocumentBody,resolveCanvasData,evaluateJsonPointer,filterDataRows,sortDataRows,CanvasInteractionStore})",
   );
   return ctx;
 }
@@ -728,6 +728,174 @@ test("every node type declared in canvasSchema has a renderer in renderCanvasNod
     assert.equal(typeof result.value, "string", `must return ComponentHTML for "${type}"`);
     assert.ok(!result.value.includes("<script"), `must not inject scripts for "${type}"`);
   }
+});
+
+// ── Regressions: control semantics and renderer contracts ───────────────────
+
+test("control-driven filters: unchecked toggle and empty search show all rows", () => {
+  const rows = [
+    { failed: true, name: "Alpha" },
+    { failed: false, name: "beta" },
+  ];
+  const kinds = new Map([
+    ["onlyFailed", "toggle"],
+    ["q", "search"],
+  ]);
+  const filter = (field: string, id: string, value: unknown) =>
+    canvas.filterDataRows(
+      rows,
+      { field, equalsState: id },
+      new Map([[id, value]]),
+      kinds,
+    ) as any[];
+  assert.equal(filter("failed", "onlyFailed", false).length, 2);
+  assert.deepEqual(
+    filter("failed", "onlyFailed", true).map((r) => r.name),
+    ["Alpha"],
+  );
+  assert.equal(filter("name", "q", "").length, 2);
+  assert.deepEqual(
+    filter("name", "q", "ALP").map((r) => r.name),
+    ["Alpha"],
+  );
+  assert.deepEqual(
+    filter("name", "q", "et").map((r) => r.name),
+    ["beta"],
+  );
+});
+
+test("literal equals filters even when the literal is an empty string", () => {
+  const rows = [{ tag: "" }, { tag: "x" }];
+  assert.deepEqual(
+    canvas.filterDataRows(rows, { field: "tag", equals: "" }),
+    [{ tag: "" }],
+  );
+  assert.deepEqual(canvas.filterDataRows(rows, { field: "tag" }), rows);
+});
+
+test("select without initial starts on its first option; unknown tab falls back to first", () => {
+  const store = new canvas.CanvasInteractionStore({
+    version: 1,
+    title: "T",
+    controls: {
+      period: {
+        type: "select",
+        id: "period",
+        label: "Period",
+        options: [
+          { value: "7d", label: "7d" },
+          { value: "30d", label: "30d" },
+        ],
+      },
+    },
+    content: {
+      type: "tabs",
+      id: "tabs",
+      initial: "missing",
+      tabs: [
+        { id: "a", label: "A", children: [] },
+        { id: "b", label: "B", children: [] },
+      ],
+    },
+  });
+  assert.equal(store.state.get("period"), "7d");
+  assert.equal(store.controlTypes.get("period"), "select");
+  assert.equal(store.activeTabs.get("tabs"), "a");
+  const html = canvas.renderCanvasNode(
+    {
+      type: "tabs",
+      id: "t2",
+      initial: "missing",
+      tabs: [
+        { id: "a", label: "A", children: [] },
+        { id: "b", label: "B", children: [] },
+      ],
+    },
+    emptyCtx(),
+  ).value;
+  assert.match(html, /id="panel-t2-a" aria-labelledby="btn-t2-a"\s*>/);
+  assert.match(html, /id="panel-t2-b" aria-labelledby="btn-t2-b"\s*hidden>/);
+});
+
+test("top-level document controls render above content", () => {
+  const html = canvas.renderCanvasDocumentBody(
+    {
+      version: 1,
+      title: "T",
+      controls: {
+        q: { type: "search", id: "q", label: "Find <b>" },
+      },
+      content: { type: "text", id: "body", text: "Body" },
+    },
+    emptyCtx(),
+  ).value;
+  assert.match(html, /class="canvas-controls"/);
+  assert.ok(html.indexOf('data-canvas-id="q"') < html.indexOf("Body"));
+  assert.match(html, /Find &lt;b&gt;/);
+});
+
+test("non-sortable tables expose no sort action and ignore stale sort state", () => {
+  const node = {
+    type: "table",
+    id: "tbl",
+    columns: [{ field: "n", label: "N" }],
+    data: [{ n: 2 }, { n: 1 }],
+  };
+  const html = canvas.renderCanvasNode(
+    node,
+    emptyCtx({ tableSortState: new Map([["tbl", { field: "n", direction: "asc" }]]) }),
+  ).value;
+  assert.doesNotMatch(html, /data-canvas-action="sort"/);
+  assert.ok(html.indexOf(">2<") < html.indexOf(">1<"), "original order kept");
+  const sortable = canvas.renderCanvasNode({ ...node, sortable: true }, emptyCtx()).value;
+  assert.match(sortable, /data-canvas-action="sort"/);
+});
+
+test("json component data is inline JSON even when it has a string source key", () => {
+  const html = canvas.renderCanvasNode(
+    { type: "json", id: "raw", data: { source: "inline-value", n: 1 } },
+    emptyCtx({ sources: new Map([["inline-value", { hijacked: true }]]) }),
+  ).value;
+  assert.match(html, /inline-value/);
+  assert.doesNotMatch(html, /hijacked/);
+  const collapsed = canvas.renderCanvasNode(
+    { type: "json", id: "c", data: { a: { b: 1 } }, collapsed: true },
+    emptyCtx(),
+  ).value;
+  assert.doesNotMatch(collapsed, /<details[^>]*\sopen/);
+});
+
+test("non-collapsible sections render without a disclosure control", () => {
+  const html = canvas.renderCanvasNode(
+    { type: "section", id: "s", title: "Fixed", collapsible: false, collapsed: true, children: [] },
+    emptyCtx({ collapsedSections: new Set(["s"]) }),
+  ).value;
+  assert.doesNotMatch(html, /<details/);
+  assert.match(html, /<section class="canvas-section canvas-section--static" id="s"/);
+});
+
+test("sub-unit chart values scale to the largest value and stay visible", () => {
+  const bars = canvas.renderCanvasNode(
+    {
+      type: "barChart",
+      id: "b",
+      categoryField: "k",
+      valueField: "v",
+      data: [
+        { k: "a", v: 0.02 },
+        { k: "b", v: 0.0001 },
+        { k: "c", v: 0 },
+      ],
+    },
+    emptyCtx(),
+  ).value;
+  const widths = [...bars.matchAll(/width:([\d.]+)%/g)].map((m) => Number(m[1]));
+  assert.deepEqual(widths, [100, 1, 0]);
+  const spark = canvas.renderCanvasNode(
+    { type: "sparkline", id: "s", data: [0.1, 0.2] },
+    emptyCtx(),
+  ).value;
+  assert.match(spark, /height:40px/);
 });
 
 function emptyCtx(overrides: Partial<{

@@ -99,14 +99,43 @@ test('zod composite shapes preserve their JSON Schema constraints', () => {
   });
   assert.deepEqual(zodToJsonSchema(z.tuple([z.string(), z.number()])), {
     type: 'array',
-    items: [{ type: 'string' }, { type: 'number' }],
+    prefixItems: [{ type: 'string' }, { type: 'number' }],
+    items: false,
     minItems: 2,
-    maxItems: 2,
   });
   assert.deepEqual(zodToJsonSchema(z.tuple([z.string()]).rest(z.number())), {
     type: 'array',
-    items: [{ type: 'string' }],
+    prefixItems: [{ type: 'string' }],
+    items: { type: 'number' },
     minItems: 1,
-    additionalItems: { type: 'number' },
   });
+});
+
+test('zod object requiredness follows optionality, not nullability or wrappers', () => {
+  const schema = zodToJsonSchema(z.object({
+    nullable: z.string().nullable(),
+    optional: z.string().optional(),
+    refinedOptional: z.string().optional().refine((v) => v === undefined || v.length > 0),
+    throwingRefine: z.string().optional().refine((v) => v.length > 0),
+    branded: z.string().brand('Id'),
+  }));
+  assert.deepEqual(schema.required, ['nullable', 'branded']);
+  assert.deepEqual(schema.properties.nullable, { anyOf: [{ type: 'string' }, { type: 'null' }] });
+});
+
+test('zod strict and catchall objects constrain additional properties', () => {
+  assert.equal(zodToJsonSchema(z.object({ a: z.string() }).strict()).additionalProperties, false);
+  assert.deepEqual(zodToJsonSchema(z.object({ a: z.string() }).catchall(z.number())).additionalProperties, { type: 'number' });
+  assert.equal(zodToJsonSchema(z.object({ a: z.string() })).additionalProperties, undefined);
+});
+
+test('zod wrapper and enum types compile to their underlying schema', () => {
+  const Color = { Red: 'red', Blue: 'blue' };
+  const Level = { Low: 0, High: 1, 0: 'Low', 1: 'High' };
+  assert.deepEqual(zodToJsonSchema(z.nativeEnum(Color)), { enum: ['red', 'blue'] });
+  assert.deepEqual(zodToJsonSchema(z.nativeEnum(Level)), { enum: [0, 1] });
+  assert.deepEqual(zodToJsonSchema(z.string().readonly()), { type: 'string' });
+  assert.deepEqual(zodToJsonSchema(z.string().brand('Id')), { type: 'string' });
+  assert.deepEqual(zodToJsonSchema(z.string().pipe(z.string().min(1))), { type: 'string' });
+  assert.deepEqual(zodToJsonSchema(z.number().catch(0)), { type: 'number' });
 });

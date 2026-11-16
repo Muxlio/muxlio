@@ -92,7 +92,7 @@ func TestWebhookStartsAndExecutesPinnedRun(t *testing.T) {
 	// Simulate a crash between atomic acceptance and engine attachment.
 	// Recovery must use the stored immutable plan without asking the sender
 	// to redeliver or registering another workflow version.
-	body := []byte(`{"event":true}`)
+	body := []byte(`{"event":"recover-me"}`)
 	pending := httptest.NewRequest("POST", "/webhooks/test", bytes.NewReader(body))
 	pending.Header.Set("Idempotency-Key", "recover-me")
 	signature := hmac.New(sha256.New, []byte("0123456789abcdef"))

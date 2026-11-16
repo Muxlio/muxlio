@@ -220,6 +220,26 @@ func TestAgentCodexAdapterReportsUsageOnSuccess(t *testing.T) {
 	assertCodexAccounting(t, resp.Accounting, "100", "50", "30")
 }
 
+func TestOversizedCodexEventDoesNotFailSuccessfulRun(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		`printf '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'` + "\n" +
+		`head -c 1200000 /dev/zero | tr '\0' x` + "\n" +
+		`printf '"}}\n'` + "\n" +
+		`echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"done"}}'` + "\n" +
+		`echo '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"cached_input_tokens":30}}'` + "\n"
+	out, _ := runCodexAdapter(t, script)
+	var resp adapter.Response
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
+	}
+	if resp.Error != "" {
+		t.Fatalf("oversized diagnostic event failed the run: %s", resp.Error)
+	}
+	if got, _ := resp.Outputs["_text"].(map[string]any)["data"].(string); got != "done" {
+		t.Fatalf("_text = %q", got)
+	}
+}
+
 // TestAgentCodexAdapterPreservesUsageOnFailure verifies that a run which
 // reports usage via turn.completed and then fails (turn.failed + non-zero
 // exit) keeps the real token counts in the failure response, so failed

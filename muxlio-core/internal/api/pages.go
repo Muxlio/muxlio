@@ -34,6 +34,21 @@ func pageOptions(r *http.Request) (offset, limit int) {
 	}
 	return
 }
+const maxEventPage = 1000
+
+// pageWindow applies offset to a complete listing from stores without paged
+// reads, keeping one extra item so pageResult can report hasMore.
+func pageWindow[T any](items []T, offset, limit int) []T {
+	if offset >= len(items) {
+		return nil
+	}
+	items = items[offset:]
+	if len(items) > limit+1 {
+		items = items[:limit+1]
+	}
+	return items
+}
+
 func pageResult[T any](items []T, offset, limit int, key string) map[string]any {
 	more := len(items) > limit
 	if more {

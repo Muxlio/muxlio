@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const openNonblock = syscall.O_NONBLOCK
+
 func configureProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second

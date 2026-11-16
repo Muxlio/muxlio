@@ -582,7 +582,7 @@ function resolveInspectorAgent(act) {
   );
   const streamingBranch =
     transcriptPoll.match(
-      /\? `\/v1\/runs\/\$\{encodeURIComponent\(runId\)\}\/logs\?activationId=\$\{encodeURIComponent\(actId\)\}`/,
+      /api\(`\/v1\/runs\/\$\{encodeURIComponent\(runId\)\}\/logs\?activationId=\$\{encodeURIComponent\(actId\)\}`\)/,
     )?.[0] || "";
   assert.ok(
     streamingBranch,

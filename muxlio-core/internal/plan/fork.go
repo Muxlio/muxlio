@@ -42,7 +42,15 @@ func (e *Engine) ForkRun(sourceID string, input json.RawMessage, reuse []string)
 			return "", fmt.Errorf("muxlio: reuse candidate %q must be a successful source activation", id)
 		}
 	}
-	return e.createRun(input, &state.ForkProvenance{SourceRunID: sourceID, SourcePlanDigest: source.PlanDigest, ReuseActivations: append([]string(nil), reuse...)})
+	// Registered runs keep their authorized target outside the plan. A fork
+	// inherits that target and cannot redirect execution to another workspace.
+	workspaceID := source.WorkspaceID
+	if workspaceID == "" {
+		workspaceID = e.plan.WorkspaceID
+	} else if e.plan.WorkspaceID != "" && e.plan.WorkspaceID != workspaceID {
+		return "", fmt.Errorf("muxlio: fork cannot change the source run's workspace")
+	}
+	return e.createRunInWorkspace(input, &state.ForkProvenance{SourceRunID: sourceID, SourcePlanDigest: source.PlanDigest, ReuseActivations: append([]string(nil), reuse...)}, workspaceID)
 }
 
 func reusableNode(n *Node) bool {

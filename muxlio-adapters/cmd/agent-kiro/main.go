@@ -59,12 +59,13 @@ func main() {
 			Model                string `json:"model"`
 			CreditPricingContext string `json:"creditPricingContext"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err == nil {
-			if p.Model != "" {
-				model = p.Model
-			}
-			pricingContext = p.CreditPricingContext
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			adapter.Fail("agent-kiro: invalid params: %v", err)
 		}
+		if p.Model != "" {
+			model = p.Model
+		}
+		pricingContext = p.CreditPricingContext
 	}
 
 	kiroCLI := resolveKiroCLI()
@@ -207,16 +208,16 @@ func main() {
 			}
 			completed = true
 			if payload.Status != "" && payload.Status != "success" {
-				runErr = fmt.Sprintf("kiro run finished with status %s", payload.Status)
+				runErr = appendFailure(runErr, fmt.Sprintf("kiro run finished with status %s", payload.Status))
 			}
 			if textChunks.Len() == 0 && payload.FinalText != "" {
 				adapter.CaptureAgentText(&textChunks, payload.FinalText)
 			}
 			if payload.ExitCode != nil && *payload.ExitCode != 0 {
-				runErr = fmt.Sprintf("kiro-cli exited with code %d", *payload.ExitCode)
+				runErr = appendFailure(runErr, fmt.Sprintf("kiro-cli exited with code %d", *payload.ExitCode))
 			}
 			if payload.Error != "" {
-				runErr = payload.Error
+				runErr = appendFailure(runErr, payload.Error)
 			}
 		case "runError":
 			var payload struct {
@@ -231,11 +232,11 @@ func main() {
 			completed = true
 			switch {
 			case payload.Message != "":
-				runErr = payload.Message
+				runErr = appendFailure(runErr, payload.Message)
 			case payload.Stage != "":
-				runErr = fmt.Sprintf("kiro run error at stage %s", payload.Stage)
+				runErr = appendFailure(runErr, fmt.Sprintf("kiro run error at stage %s", payload.Stage))
 			default:
-				runErr = "kiro run error"
+				runErr = appendFailure(runErr, "kiro run error")
 			}
 		}
 	}
@@ -266,7 +267,7 @@ func main() {
 	if runErr != "" {
 		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "kiro-cli login")
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
-		_ = os.WriteFile(diagnosticPath, []byte(stdoutTail.String()), 0o600)
+		_ = os.WriteFile(diagnosticPath, []byte(adapter.Redact(stdoutTail.String())), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		adapter.FailWithAccounting(finalAccounting, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 	}

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/muxlio/muxlio-adapters/contract"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
@@ -257,13 +258,14 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	cmd.Stderr = &stderr
 
 	runErr := runProcess(ctx, cmd)
+	secrets := executionSecrets(req)
 	if ctx.Err() != nil {
-		return ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: RedactSecrets(stderr.String(), executionSecrets(req))}, nil
+		return ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: stderr.redacted(secrets)}, nil
 	}
 	if runErr != nil && stdout.Len() == 0 {
 		// Script failed with no stdout — surface stderr as executor error.
 		return ExecuteResult{
-			Error: fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr), Logs: RedactSecrets(stderr.String(), executionSecrets(req)),
+			Error: fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr), Logs: stderr.redacted(secrets),
 		}, nil
 	}
 
@@ -272,17 +274,17 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	if err != nil {
 		return ExecuteResult{
 			Error: fmt.Sprintf("adapter %q returned invalid JSON: %v\nstdout: %s\nstderr: %s",
-				req.Executor, err, boundedLog(RedactSecrets(stdout.String(), executionSecrets(req))), RedactSecrets(stderr.String(), executionSecrets(req))), Logs: RedactSecrets(stderr.String(), executionSecrets(req)),
+				req.Executor, err, boundedLog(stdout.redacted(secrets)), stderr.redacted(secrets)), Logs: stderr.redacted(secrets),
 		}, nil
 	}
-	result.Error = RedactSecrets(result.Error, executionSecrets(req))
+	result.Error = RedactSecrets(result.Error, secrets)
 	if result.Reconciliation != nil {
-		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, executionSecrets(req)))
+		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, secrets))
 	}
 	if runErr != nil {
 		result.Error = fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr)
 	}
-	result.Logs = boundedLog(RedactSecrets(result.Logs+stderr.String(), executionSecrets(req)))
+	result.Logs = boundedLog(RedactSecrets(result.Logs, secrets) + stderr.redacted(secrets))
 	if req.WorkspaceMode == "shared-write" {
 		result.Logs = "[muxlio shared writable workspace: exclusive workspace reservation admitted]\n" + result.Logs
 	}
@@ -317,7 +319,10 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return ExecuteResult{Error: "adapter output escapes scratch directory"}, nil
 		}
-		file, err := os.Open(resolved)
+		file, err := openRegular(func(flag int) (*os.File, error) { return os.OpenFile(resolved, flag, 0) })
+		if errors.Is(err, errNotRegularFile) {
+			return ExecuteResult{Error: fmt.Sprintf("adapter output %q is not a regular file", port)}, nil
+		}
 		if err != nil {
 			continue // file not present — script may not have produced it
 		}
@@ -404,7 +409,18 @@ func (s *ScriptExecutor) command(req ExecuteRequest, script, workDir string) (*e
 	return launch.Command, launch.Capabilities.Isolated(), err
 }
 
+// RedactSecrets replaces every complete occurrence of a secret value.
 func RedactSecrets(value string, secrets map[string]string) string {
+	return redactSecrets(value, secrets, false)
+}
+
+// redactTruncatedSecrets also redacts a trailing secret prefix. Use it only
+// for values cut at a byte limit, which may end halfway through a secret.
+func redactTruncatedSecrets(value string, secrets map[string]string) string {
+	return redactSecrets(value, secrets, true)
+}
+
+func redactSecrets(value string, secrets map[string]string, truncated bool) string {
 	values := make([]string, 0, len(secrets))
 	for _, secret := range secrets {
 		values = append(values, secret)
@@ -413,12 +429,15 @@ func RedactSecrets(value string, secrets map[string]string) string {
 	for _, secret := range values {
 		if secret != "" {
 			value = strings.ReplaceAll(value, secret, "[REDACTED]")
-			// A bounded stream may end halfway through a secret.
-			for n := len(secret) - 1; n > 0; n-- {
-				if strings.HasSuffix(value, secret[:n]) {
-					value = strings.TrimSuffix(value, secret[:n]) + "[REDACTED]"
-					break
-				}
+		}
+	}
+	if !truncated {
+		return value
+	}
+	for _, secret := range values {
+		for n := len(secret) - 1; n > 0; n-- {
+			if strings.HasSuffix(value, secret[:n]) {
+				return strings.TrimSuffix(value, secret[:n]) + "[REDACTED]"
 			}
 		}
 	}
@@ -429,26 +448,49 @@ const MaxLogBytes = 64 << 10
 
 func boundedLog(s string) string {
 	if len(s) > MaxLogBytes {
-		return s[:MaxLogBytes] + "\n[truncated]"
+		return s[:utf8Cut(s, MaxLogBytes)] + "\n[truncated]"
 	}
 	return s
 }
 
+// utf8Cut returns the largest length <= n that does not split a UTF-8
+// sequence of s. Invalid bytes are cut like single bytes.
+func utf8Cut[T string | []byte](s T, n int) int {
+	if n >= len(s) {
+		return len(s)
+	}
+	for cut := n; cut >= 0 && cut > n-utf8.UTFMax; cut-- {
+		if cut == 0 || utf8.RuneStart(s[cut]) {
+			return cut
+		}
+	}
+	return n
+}
+
 type boundedBuffer struct {
 	bytes.Buffer
-	limit int
+	limit     int
+	truncated bool
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	remaining := b.limit - b.Len()
-	if remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
-		}
-		_, _ = b.Buffer.Write(p)
+	if b.truncated {
+		return n, nil
 	}
+	if remaining := max(b.limit-b.Len(), 0); len(p) > remaining {
+		b.truncated = true
+		p = p[:utf8Cut(p, remaining)]
+	}
+	_, _ = b.Buffer.Write(p)
 	return n, nil
+}
+
+func (b *boundedBuffer) redacted(secrets map[string]string) string {
+	if b.truncated {
+		return redactTruncatedSecrets(b.String(), secrets)
+	}
+	return RedactSecrets(b.String(), secrets)
 }
 
 func (s *ScriptExecutor) environment(workDir string, isolated bool, executor string) ([]string, error) {

@@ -58,6 +58,10 @@ func activationID(runID string, scope []string, nodeID string) string {
 	return strings.Join(parts, ":")
 }
 
+func logicalAttemptID(actID string, retryNumber int) string {
+	return fmt.Sprintf("%s-attempt-%d", actID, retryNumber)
+}
+
 // inputRequestID returns a stable, URL-safe request ID for an input wait. The
 // identity is derived from the activation and request name so a run retry
 // (which preserves the activation) reuses the same request and any
@@ -189,6 +193,13 @@ func (e *Engine) persistIdempotentRun(input json.RawMessage, idempotencyKey, inp
 }
 
 func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (string, error) {
+	if e.plan == nil {
+		return "", fmt.Errorf("muxlio: create run: nil plan")
+	}
+	return e.createRunInWorkspace(input, fork, e.plan.WorkspaceID)
+}
+
+func (e *Engine) createRunInWorkspace(input json.RawMessage, fork *state.ForkProvenance, workspaceID string) (string, error) {
 	if errs := Validate(e.plan); HasErrors(errs) {
 		errOnly := ErrorsOnly(errs)
 		return "", fmt.Errorf("muxlio: invalid plan: %s", errOnly[0].Message)
@@ -219,7 +230,7 @@ func (e *Engine) createRun(input json.RawMessage, fork *state.ForkProvenance) (s
 	runID := generateRunID()
 	run := &state.Run{
 		SubmissionMetadata: e.SubmissionMetadata,
-		WorkspaceID:        snapshot.WorkspaceID,
+		WorkspaceID:        workspaceID,
 		Fork:               fork,
 		PlanJSON:           pinned,
 		PlanDigest:         snapshot.Digest,
@@ -307,12 +318,19 @@ func (e *Engine) Retry(runID string) error {
 	if err := e.store.RetryRun(runID); err != nil {
 		return fmt.Errorf("muxlio: retry: resetting run: %w", err)
 	}
-	// Reset the internal context so Cancel() from the previous attempt does
-	// not immediately abort this new attempt.
+	// Reset the internal context and local pause so Cancel() or Pause() from
+	// the previous attempt does not abort or block this new attempt.
+	e.controlMu.Lock()
+	defer e.controlMu.Unlock()
 	e.ctxOnce = sync.Once{}
 	e.ctx = nil
 	e.cancel = nil
 	e.cancelRequested = false
+	if e.paused {
+		e.paused = false
+		close(e.resumeCh)
+		e.resumeCh = nil
+	}
 	return nil
 }
 
@@ -459,6 +477,14 @@ func (e *Engine) Run(runID string) (runErr error) {
 		}
 	} else {
 		runOutput = output
+	}
+	if len(e.plan.OutputSchema) > 0 {
+		if err := validateJSONValue(runOutput, e.plan.OutputSchema, "output", OutputValidationFailed); err != nil {
+			if setErr := e.store.SetRunError(runID, err); setErr != nil {
+				return setErr
+			}
+			return err
+		}
 	}
 
 	if err := e.store.SetRunOutput(runID, runOutput); err != nil {
@@ -817,8 +843,23 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	if priorErr != nil {
 		return nil, priorErr
 	}
+	_, queuedExecutor := e.executor.(workers.QueuedExecutor)
+	// Durable queues may hold exclusive keys of an unconfirmed dispatch until
+	// an operator resolves it, so a replay could never be admitted.
+	holdsExclusive := len(workers.ExclusiveDispatchKeys(req)) > 0
+	logical := make(map[int]bool, len(prior))
+	for _, a := range prior {
+		if a.ID == logicalAttemptID(actID, a.RetryNumber) {
+			logical[a.RetryNumber] = true
+		}
+	}
 	for i := len(prior) - 1; i >= 0; i-- {
 		a := prior[i]
+		// Physical executions archived under a logical attempt share its retry
+		// number. The logical record is authoritative for that dispatch.
+		if logical[a.RetryNumber] && a.ID != logicalAttemptID(actID, a.RetryNumber) {
+			continue
+		}
 		// The durable operation identity takes precedence on recovery, including
 		// after an explicit run retry or while reattaching a queued dispatch.
 		if a.IdempotencyKey != "" {
@@ -847,13 +888,16 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			return result.Outputs, err
 		}
 		if a.AwaitReconciliationReason != "" || a.State == "running" || a.State == "queued" || a.State == "awaiting_reconciliation" {
-			if _, queued := e.executor.(workers.QueuedExecutor); queued && (a.State == "running" || a.State == "queued") && a.AwaitReconciliationReason == "" {
+			// An explicit retry supersedes the attempt numbering, so a dispatch
+			// left live by the failed run cannot be reattached; it must be
+			// replayed safely or reconciled below.
+			if queuedExecutor && (a.State == "running" || a.State == "queued") && a.AwaitReconciliationReason == "" && a.RetryNumber > explicitRetryBase {
 				recoveredBase = a.RetryNumber - 1
 				break
 			}
 			// A direct replay is a fresh invocation even when its effect is safe.
 			// Preserve the logical idempotency key but charge a new attempt slot.
-			if req.Session == nil && (a.Effect == "none" || a.Effect == "pure" || ((a.Effect == "idempotency-key" || a.Effect == "idempotent-with-key") && a.IdempotencyKey != "")) {
+			if req.Session == nil && !(queuedExecutor && holdsExclusive) && (a.Effect == "none" || a.Effect == "pure" || ((a.Effect == "idempotency-key" || a.Effect == "idempotent-with-key") && a.IdempotencyKey != "")) {
 				if a.IdempotencyKey != "" {
 					idempotencyKey = a.IdempotencyKey
 					req.IdempotencyKey = idempotencyKey
@@ -951,7 +995,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.Executor = executor
 		req.RunID = runID
 		req.ActivationID = actID
-		req.AttemptID = fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt)
+		req.AttemptID = logicalAttemptID(actID, attemptBase+attempt)
 		guarded, started, prepareErr := e.prepareExecutionAttempt(req, node, scope, prior, keyedExecutor, attemptBase+attempt)
 		if prepareErr != nil {
 			return nil, prepareErr
@@ -999,7 +1043,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		safeRedispatch := admissionExpired
 		var uncertain workers.UncertainExecutionError
 		if errors.As(err, &uncertain) {
-			if req.Session == nil && (req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key"))) {
+			if req.Session == nil && !holdsExclusive && (req.Effect == "pure" || req.Effect == "none" || (req.IdempotencyKey != "" && (req.Effect == "idempotency-key" || req.Effect == "idempotent-with-key"))) {
 				safeRedispatch = true
 			} else {
 				a := state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, StartedAt: started, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, Accounting: result.Accounting}
@@ -1163,7 +1207,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			heldReason = awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)
 			attemptState = "awaiting_reconciliation"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: fmt.Sprintf("%s-attempt-%d", actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: logicalAttemptID(actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
 			return nil, recordErr
 		}
 		if e.plan.Limits != nil {
@@ -1404,8 +1448,8 @@ func (e *Engine) executeBranch(runID string, node *Node, scope []string, ctx *Ev
 	}
 
 	if sgName == "" {
-		// No else branch and condition is false — empty output.
-		return map[string]any{}, nil
+		// A missing else behaves like an empty subgraph.
+		return map[string]any{"result": unwrapSubgraphOutput(map[string]any{})}, nil
 	}
 
 	sg, ok := e.plan.Subgraphs[sgName]
@@ -1725,12 +1769,12 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 		}
 		// Check if the signal is already waiting — avoid unnecessary state
 		// transitions for the common "pre-delivered" case used in tests.
-		sigs, err := e.store.ConsumeSignals(runID, node.SignalName)
+		payload, ok, err := e.consumeSignal(runID, node.SignalName)
 		if err != nil {
-			return nil, fmt.Errorf("muxlio: consuming signal %q: %w", node.SignalName, err)
+			return nil, err
 		}
-		if len(sigs) > 0 {
-			return map[string]any{"payload": sigs[len(sigs)-1].Payload}, nil
+		if ok {
+			return map[string]any{"payload": payload}, nil
 		}
 		// Signal not yet present: transition run and activation to waiting so
 		// observers (UI, status API) can see that the run is blocked. Then poll
@@ -1751,16 +1795,16 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 				if err := e.checkpoint(); err != nil {
 					return nil, err
 				}
-				sigs, err := e.store.ConsumeSignals(runID, node.SignalName)
+				payload, ok, err := e.consumeSignal(runID, node.SignalName)
 				if err != nil {
-					return nil, fmt.Errorf("muxlio: consuming signal %q: %w", node.SignalName, err)
+					return nil, err
 				}
-				if len(sigs) > 0 {
+				if ok {
 					// Restore run to running so the rest of the subgraph continues.
 					if _, err := e.store.TransitionRunState(runID, []string{RunWaiting}, RunRunning); err != nil {
 						return nil, fmt.Errorf("muxlio: resuming from signal wait: %w", err)
 					}
-					return map[string]any{"payload": sigs[len(sigs)-1].Payload}, nil
+					return map[string]any{"payload": payload}, nil
 				}
 			}
 		}
@@ -1770,8 +1814,9 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 			return nil, fmt.Errorf("muxlio: wait node %q: signalName required for input wait", node.ID)
 		}
 		reqID := inputRequestID(actID, node.SignalName)
-		// Explicit retry creates a successor for a cancelled wait. Follow only
-		// persisted successors; ordinary recovery must not reopen closed waits.
+		// Explicit retry creates a successor for a cancelled or expired wait.
+		// Follow only persisted successors; ordinary recovery must not reopen
+		// closed waits.
 		requests, err := e.store.ListInputRequests(runID)
 		if err != nil {
 			return nil, fmt.Errorf("muxlio: loading input requests: %w", err)
@@ -1780,7 +1825,7 @@ func (e *Engine) executeWait(runID string, node *Node, scope []string, ctx *Eval
 		for _, request := range requests {
 			byID[request.RequestID] = request
 		}
-		for byID[reqID].State == state.InputRequestCancelled {
+		for byID[reqID].State == state.InputRequestCancelled || byID[reqID].State == state.InputRequestExpired {
 			nextID := state.RetriedInputRequestID(reqID)
 			if _, exists := byID[nextID]; !exists {
 				break

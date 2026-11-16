@@ -127,7 +127,12 @@ func TestWebhookNumericInputExecutionAndRecovery(t *testing.T) {
 						}
 					}
 					// Leave a committed delivery unattached, simulating a coordinator crash.
-					pending := post(api.NewRouter(s, nil), "/webhooks/numbers", body, "pending", 201)
+					// Use a distinct trigger: the identical signed body on the
+					// original trigger is a replay even with a different key.
+					definition["id"] = "recovery-numbers"
+					def, _ = json.Marshal(definition)
+					post(router, "/v1/triggers", def, "", 201)
+					pending := post(api.NewRouter(s, nil), "/webhooks/recovery-numbers", body, "pending", 201)
 					ordinary := "7"
 					if nested {
 						ordinary = `{"values":[7]}`
@@ -147,7 +152,7 @@ func TestWebhookNumericInputExecutionAndRecovery(t *testing.T) {
 						t.Fatalf("list after reopen: %d %v", len(runs), err)
 					}
 					assertRunOutput(t, s, first, want)
-					if id := post(api.NewRouter(s, nil), "/webhooks/numbers", body, "pending", 200); id != pending {
+					if id := post(api.NewRouter(s, nil), "/webhooks/recovery-numbers", body, "pending", 200); id != pending {
 						t.Fatal("retry changed run")
 					}
 					recovered := workers.NewFake()

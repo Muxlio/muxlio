@@ -205,11 +205,21 @@ func sanitizeJSON(input, output any, secrets map[string]string) error {
 	return contract.DecodeJSON(raw, output)
 }
 
+// redactOperation redacts decoded JSON strings so escaped credentials cannot
+// bypass replacement, keeping the record decodable.
+func redactOperation(data []byte, secrets map[string]string) []byte {
+	if len(secrets) == 0 {
+		return data
+	}
+	var clean json.RawMessage
+	if sanitizeJSON(json.RawMessage(data), &clean, secrets) == nil {
+		return clean
+	}
+	return []byte(RedactSecrets(string(data), secrets))
+}
+
 func redactValues(value string, secrets map[string]string) string {
-	// RedactSecrets sorts longest values first; append a sentinel to avoid its
-	// stream-tail handling truncating ordinary result strings.
-	const sentinel = "\x00"
-	return strings.TrimSuffix(RedactSecrets(value+sentinel, secrets), sentinel)
+	return RedactSecrets(value, secrets)
 }
 
 func containsSecret(data []byte, secrets map[string]string) bool {

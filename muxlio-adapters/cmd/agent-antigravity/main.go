@@ -51,13 +51,14 @@ func main() {
 	}
 
 	model := ""
-	if req.Params != nil {
+	if len(req.Params) > 0 {
 		var p struct {
 			Model string `json:"model"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err == nil && p.Model != "" {
-			model = p.Model
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			adapter.Fail("agent-antigravity: invalid params: %v", err)
 		}
+		model = p.Model
 	}
 
 	antigravityCLI := resolveAntigravityCLI()
@@ -194,8 +195,12 @@ func main() {
 			if len(result) > 0 {
 				var payload map[string]json.RawMessage
 				if json.Unmarshal(result, &payload) == nil {
+					// Top-level event fields stay authoritative; only the
+					// expanded container itself may be replaced.
 					for k, v := range payload {
-						ev[k] = v
+						if _, exists := ev[k]; !exists || k == "result" {
+							ev[k] = v
+						}
 					}
 				}
 			}

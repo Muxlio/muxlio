@@ -349,6 +349,20 @@ func (t Tiered) GetStream(ctx context.Context, digest string) (io.ReadCloser, Re
 }
 func (t Tiered) Has(digest string) bool { return t.S3.Has(digest) || t.Local.Has(digest) }
 
+// LocalTier returns the filesystem store a driver keeps on this host, so
+// retention can collect local objects even when remote tiers are enabled.
+func LocalTier(d Driver) (*Local, bool) {
+	switch v := d.(type) {
+	case *Local:
+		return v, true
+	case Tiered:
+		return LocalTier(v.Local)
+	case Fallback:
+		return LocalTier(v.Local)
+	}
+	return nil, false
+}
+
 // FromEnvironment selects local storage by default and enables S3 for blobs at
 // or above MUXLIO_S3_THRESHOLD_BYTES when MUXLIO_S3_ENDPOINT is configured.
 func FromEnvironment(root string) (Driver, error) {

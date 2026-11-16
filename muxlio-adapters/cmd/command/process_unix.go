@@ -4,18 +4,31 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"syscall"
 	"time"
 )
 
+// Descendants that inherit stdout/stderr would otherwise keep Wait copying
+// until they exit; the delay lets Wait observe the leader's exit and the group
+// kill below then ends them.
+const descendantOutputDelay = 100 * time.Millisecond
+
 func runCommand(ctx context.Context, cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = descendantOutputDelay
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)

@@ -50,13 +50,14 @@ func main() {
 	}
 
 	model := ""
-	if req.Params != nil {
+	if len(req.Params) > 0 {
 		var p struct {
 			Model string `json:"model"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err == nil && p.Model != "" {
-			model = p.Model
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			adapter.Fail("agent-claude: invalid params: %v", err)
 		}
+		model = p.Model
 	}
 
 	claudeCLI := resolveClaudeCLI()
@@ -181,7 +182,9 @@ func main() {
 			} else {
 				entry.Costs = confirmedCosts
 			}
-			if err := recorder.ReplaceScope("invocation", []accounting.Part{{Scope: "invocation", Entry: entry}}); err == nil {
+			if entry.Tokens == nil && len(entry.Costs) == 0 {
+				// A result without usage or cost reports no accounting.
+			} else if err := recorder.ReplaceScope("invocation", []accounting.Part{{Scope: "invocation", Entry: entry}}); err == nil {
 				if entry.Tokens != nil {
 					_ = recorder.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "partial", "source-coverage-unverified")
 				}

@@ -107,13 +107,20 @@ func OverlayTokenCounters(prior, terminal *TokenCounters) *TokenCounters {
 	} else if v, ok := prior.ReportedCached(); ok {
 		ca = &v
 	}
+	changed := func(next, previous func() (int64, bool)) bool {
+		n, nok := next()
+		p, pok := previous()
+		return nok && pok && n != p
+	}
+	componentsChanged := changed(terminal.ReportedInput, prior.ReportedInput) || changed(terminal.ReportedOutput, prior.ReportedOutput)
 	result := NewTokenCounters(in, out, ca)
 	if result == nil {
-		return nil
+		result = UnavailableTokenCounters()
 	}
 	result.CacheWrite, result.Reasoning = terminal.CacheWrite, terminal.Reasoning
 	result.Total = terminal.Total
-	if result.Total == nil {
+	// A prior total describes the prior components, not corrected ones.
+	if result.Total == nil && !componentsChanged {
 		result.Total = prior.Total
 	}
 	if result.CacheWrite == nil {
@@ -121,6 +128,9 @@ func OverlayTokenCounters(prior, terminal *TokenCounters) *TokenCounters {
 	}
 	if result.Reasoning == nil {
 		result.Reasoning = prior.Reasoning
+	}
+	if !result.AnyReported() && result.CacheWrite == nil && result.Reasoning == nil && result.Total == nil {
+		return nil
 	}
 	return result
 }

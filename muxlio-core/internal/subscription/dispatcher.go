@@ -21,7 +21,16 @@ type Dispatcher struct {
 	Events   EventReader
 	Hooks    map[string]Hook
 	hookBusy chan struct{}
+	// deferred holds deliveries skipped while the local hook slot was busy.
+	// Contention is not an attempt, so it is tracked here rather than stored.
+	deferred map[string]time.Time
 }
+
+const (
+	dueBatch         = 32
+	maxDueScan       = 1000
+	hookBusyDeferral = 5 * time.Second
+)
 
 // Run delivers independently of workflow execution. Persistence failures are
 // retried on the next poll; cursors advance only after durable enqueue.
@@ -91,13 +100,26 @@ func (d *Dispatcher) Tick(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	due, err := d.Store.ListDueDeliveries(now, 32)
+	for id, until := range d.deferred {
+		if !now.Before(until) {
+			delete(d.deferred, id)
+		}
+	}
+	// Widen the window past deferred deliveries so they cannot starve others.
+	due, err := d.Store.ListDueDeliveries(now, min(dueBatch+len(d.deferred), maxDueScan))
 	if err != nil {
 		return err
 	}
+	attempted := 0
 	for _, record := range due {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if _, ok := d.deferred[record.ID]; ok {
+			continue
+		}
+		if attempted == dueBatch {
+			break
 		}
 		sub, err := d.Store.GetSubscription(record.SubscriptionID)
 		if err != nil {
@@ -115,8 +137,13 @@ func (d *Dispatcher) Tick(ctx context.Context, now time.Time) error {
 		// A stuck hook from an earlier cancelled attempt holds the single local
 		// slot; that is internal contention, not a receiver failure.
 		if errors.Is(err, ErrLocalHookBusy) {
+			if d.deferred == nil {
+				d.deferred = map[string]time.Time{}
+			}
+			d.deferred[record.ID] = now.Add(hookBusyDeferral)
 			continue
 		}
+		attempted++
 		// Include fanout and earlier attempts in this batch, while preserving
 		// the caller's clock (which can be synthetic in tests).
 		finished := now.Add(time.Since(started))
@@ -183,6 +210,9 @@ func (d *Dispatcher) deliver(ctx context.Context, sub Subscription, record Deliv
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(sub.SignatureHeader, sig)
 	req.Header.Set("X-Muxlio-Event-ID", record.EventID)
+	// Targets may resolve to this coordinator. Present as cross-site so the
+	// local UI never attaches its operator credential to a delivery.
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	// A redirect must never forward the signed payload to another destination.
 	client := http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	res, err := client.Do(req)

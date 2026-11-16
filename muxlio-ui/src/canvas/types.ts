@@ -268,6 +268,7 @@ interface CanvasSiblingOutput {
 interface CanvasRendererContext {
   sources: ReadonlyMap<string, unknown>;
   state: ReadonlyMap<string, CanvasStateValue>;
+  controlTypes?: ReadonlyMap<string, CanvasControl["type"]>;
   resolveData(ref: unknown): unknown;
   siblingOutputs?: Readonly<Record<string, CanvasSiblingOutput>>;
   runId?: string;

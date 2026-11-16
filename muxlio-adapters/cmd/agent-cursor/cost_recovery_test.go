@@ -137,6 +137,31 @@ func TestCursorRevisedWindowReplacesPreviousAmount(t *testing.T) {
 	}
 }
 
+func TestCursorFailedLookupWithoutLedgerStaysUnknown(t *testing.T) {
+	cfg, session := cursorBillingFixture()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer server.Close()
+	initial := contract.Accounting{Revision: 1, Final: true, Sessions: []contract.AccountingSession{session}}
+	next, err := reconcileCursorSnapshot(context.Background(), server.Client(), server.URL, "key", cfg, initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, basis := range []string{"provider-metered", "model-reference"} {
+		found := false
+		for _, c := range next.Coverage {
+			if c.Key.Basis == basis {
+				found = true
+				if c.State != "unknown" {
+					t.Fatalf("%s coverage = %s without any ledger evidence", basis, c.State)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s coverage missing", basis)
+		}
+	}
+}
+
 func TestCursorCentsAndRequestBasedZero(t *testing.T) {
 	for raw, want := range map[string]string{"21.36232": "0.2136232", "0": "0", "1e-7": "0.000000001", "125": "1.25"} {
 		got, err := cursorCentsUSD(json.RawMessage(raw))

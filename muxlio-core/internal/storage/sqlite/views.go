@@ -32,9 +32,9 @@ func (s *Store) listOutputPage(runID string, offset, limit int, search string, r
  coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.digest'),'') AS digest,
  coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.mime'),'') AS mime,
  coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.path'),'') AS path,
- coalesce(json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.size'),0) AS size
- FROM activations a LEFT JOIN completions c ON c.run_id=a.run_id AND c.subject_id=a.id,json_each(a.outputs_json) j WHERE (?='' OR a.run_id=?))
- SELECT id,run_id,node_id,key,digest,mime,path,size FROM ports WHERE (?<>'' OR digest LIKE 'sha256:%') AND (NOT ? OR substr(digest,1,7)='sha256:') AND instr(lower(run_id||' '||node_id||' '||key||' '||digest||' '||path||' '||mime),lower(?))>0 ORDER BY completed DESC,position DESC,key LIMIT ? OFFSET ?`, runID, runID, runID, runID, runID, referencesOnly, search, limit, offset)
+ CASE WHEN j.type='object' AND json_type(j.value,'$.size')='integer' THEN json_extract(j.value,'$.size') ELSE 0 END AS size
+ FROM activations a LEFT JOIN completions c ON c.run_id=a.run_id AND c.subject_id=a.id,json_each(a.outputs_json) j WHERE (?='' OR a.run_id=?) AND j.key<>'`+state.LoopProgressOutputKey+`')
+ SELECT id,run_id,node_id,key,digest,mime,path,CASE WHEN substr(digest,1,7)='sha256:' THEN size ELSE 0 END FROM ports WHERE (?<>'' OR digest LIKE 'sha256:%') AND (NOT ? OR substr(digest,1,7)='sha256:') AND instr(lower(run_id||' '||node_id||' '||key||' '||digest||' '||path||' '||mime),lower(?))>0 ORDER BY completed DESC,position DESC,key LIMIT ? OFFSET ?`, runID, runID, runID, runID, runID, referencesOnly, search, limit, offset)
 	if err != nil {
 		return nil, err
 	}

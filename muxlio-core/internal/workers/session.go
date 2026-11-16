@@ -28,6 +28,14 @@ func (s *ScriptExecutor) SessionEnvironment() string {
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
 
+// sessionOwner is the worker identity recorded in session handles.
+func (s *ScriptExecutor) sessionOwner() string {
+	if s.WorkerID != "" {
+		return s.WorkerID
+	}
+	return "local:" + s.SessionEnvironment()
+}
+
 func newSessionInstance() string {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -60,11 +68,7 @@ func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, erro
 			return ExecuteResult{Error: "steer requires an owned session"}, nil
 		}
 		h := req.Session.Handle
-		owner := s.WorkerID
-		if owner == "" {
-			owner = "local:" + s.SessionEnvironment()
-		}
-		if h.OwnerWorker != owner || h.OwnerEnvironment != s.SessionEnvironment() {
+		if h.OwnerWorker != s.sessionOwner() || h.OwnerEnvironment != s.SessionEnvironment() {
 			return ExecuteResult{Error: "session owner unavailable"}, nil
 		}
 		return s.execute(req)
@@ -83,7 +87,7 @@ func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, erro
 	if err := CheckAdapterCapabilities(req, manifest); err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
 	}
-	req, err = ApplyWorkerWorkspace(req, s.Workspace)
+	req, err = ApplyAuthorizedWorkspace(req, s.WorkerID, s.Workspaces, s.Workspace)
 	if err != nil {
 		return ExecuteResult{Error: err.Error()}, nil
 	}
@@ -97,10 +101,7 @@ func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, erro
 	}
 	invocation, _ := json.Marshal([]any{req.Workspace, req.WorkspaceMode, params.Isolation})
 	invocationEnvironment := fmt.Sprintf("%x", sha256.Sum256(invocation))
-	owner := s.WorkerID
-	if owner == "" {
-		owner = "local:" + s.SessionEnvironment()
-	}
+	owner := s.sessionOwner()
 	environment := s.SessionEnvironment()
 	ctx := req.Context
 	if ctx == nil {
@@ -146,7 +147,8 @@ func (s *ScriptExecutor) executeSession(req ExecuteRequest) (ExecuteResult, erro
 	}
 	result, err := s.execute(req)
 	fail := func(message string) (ExecuteResult, error) {
-		if path != "" {
+		// A shared lock means other turns still rely on this checkpoint.
+		if path != "" && !(multiplex && req.Session.Mode == "resume") {
 			_ = os.Remove(path)
 		}
 		result.Session = nil

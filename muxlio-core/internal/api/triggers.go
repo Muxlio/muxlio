@@ -138,22 +138,26 @@ func registerTriggers(mux *http.ServeMux, store state.Store, runner Runner) {
 			}
 			writeError(w, status, code, reason)
 		}
-		if !tr.Enabled {
-			reject(403, CodeUnauthorized, "trigger disabled")
-			return
-		}
+		// Nothing is recorded, and enabled and disabled triggers answer alike,
+		// until the sender proves it holds the trigger secret.
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(tr.PayloadLimitBytes)))
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				reject(413, CodeBadRequest, "webhook payload exceeds limit")
+				writeError(w, 413, CodeBadRequest, "webhook payload exceeds limit")
 			} else {
-				reject(400, CodeBadRequest, "could not read webhook payload")
+				writeError(w, 400, CodeBadRequest, "could not read webhook payload")
 			}
 			return
 		}
-		if err := tr.VerifySignature(body, r.Header.Get(tr.SignatureHeader)); err != nil {
-			reject(401, CodeUnauthorized, "invalid or missing webhook signature")
+		verifier := tr
+		verifier.Enabled = true
+		if err := verifier.VerifySignature(body, r.Header.Get(tr.SignatureHeader)); err != nil {
+			writeError(w, 401, CodeUnauthorized, "invalid or missing webhook signature")
+			return
+		}
+		if !tr.Enabled {
+			reject(403, CodeUnauthorized, "trigger disabled")
 			return
 		}
 		if len(key) > 256 {

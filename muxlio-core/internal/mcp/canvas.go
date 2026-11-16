@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -65,9 +67,8 @@ func (s *server) toolCanvas(name string, args json.RawMessage) toolCallResult {
 
 		var data []byte
 		if p.Path != "" {
-			clean := filepath.Clean(p.Path)
 			var err error
-			data, err = os.ReadFile(clean)
+			data, err = readCanvasFile(filepath.Clean(p.Path))
 			if err != nil {
 				return errResult("failed to read file: " + err.Error())
 			}
@@ -87,6 +88,9 @@ func (s *server) toolCanvas(name string, args json.RawMessage) toolCallResult {
 		}
 
 		res, valErr := canvas.Validate(data)
+		if res == nil {
+			return errResult(fmt.Sprintf("canvas validation unavailable: %v", valErr))
+		}
 		out, _ := json.MarshalIndent(res, "", "  ")
 		if valErr != nil || !res.Valid {
 			return toolCallResult{
@@ -101,4 +105,22 @@ func (s *server) toolCanvas(name string, args json.RawMessage) toolCallResult {
 	default:
 		return errResult(fmt.Sprintf("unknown canvas tool %q", name))
 	}
+}
+
+// readCanvasFile reads at most one byte past the document limit so Validate
+// reports oversize documents without the host buffering arbitrary files.
+func readCanvasFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("canvas path must be a regular file")
+	}
+	return io.ReadAll(io.LimitReader(f, canvas.MaxDocumentSizeBytes+1))
 }

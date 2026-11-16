@@ -29,6 +29,7 @@ type storeLogSink struct {
 	mu           sync.Mutex
 	seq          map[string]int
 	pending      map[string]*bytes.Buffer
+	redactor     logRedactor
 	timer        *time.Timer
 	closed       bool
 	remaining    int
@@ -45,6 +46,7 @@ func NewStoreLogSink(store logChunkStore, runID, activationID string, secrets ma
 		seq:          make(map[string]int),
 		pending:      make(map[string]*bytes.Buffer),
 		remaining:    state.MaxAttemptProgressBytes,
+		redactor:     logRedactor{secrets: secrets},
 	}
 	if len(attemptID) > 0 {
 		s.attemptID = attemptID[0]
@@ -57,6 +59,9 @@ func (s *storeLogSink) Append(stream string, data []byte) error {
 		return nil
 	}
 	if stream == "operation" {
+		// Operation references are durable reconciliation checkpoints. The
+		// store bounds them separately, so progress text cannot starve them.
+		data = redactOperation(data, s.secrets)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.closed {
@@ -66,14 +71,18 @@ func (s *storeLogSink) Append(stream string, data []byte) error {
 		return s.store.AppendLogChunk(state.LogChunk{RunID: s.runID, ActivationID: s.activationID, AttemptID: s.attemptID, Stream: stream, Seq: s.seq[stream], Data: data, Timestamp: time.Now()})
 	}
 	stream = normalizeLogStream(stream)
-	redacted := []byte(RedactSecrets(string(data), s.secrets))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.remaining == 0 {
 		return nil
 	}
+	return s.appendLocked(stream, s.redactor.append(stream, data))
+}
+
+func (s *storeLogSink) appendLocked(stream string, redacted []byte) error {
 	if len(redacted) > s.remaining {
-		redacted = redacted[:s.remaining]
+		redacted = redacted[:utf8Cut(redacted, s.remaining)]
+		s.remaining = len(redacted)
 	}
 	s.remaining -= len(redacted)
 	buf := s.pending[stream]
@@ -91,7 +100,13 @@ func (s *storeLogSink) Append(stream string, data []byte) error {
 		}
 		n := len(redacted)
 		if n > room {
-			n = room
+			n = utf8Cut(redacted, room)
+			if n == 0 {
+				if err := s.flushLocked(stream, buf); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		_, _ = buf.Write(redacted[:n])
 		redacted = redacted[n:]
@@ -106,7 +121,7 @@ func (s *storeLogSink) Append(stream string, data []byte) error {
 			return err
 		}
 	}
-	if buf.Len() > 0 && s.timer == nil {
+	if !s.closed && buf.Len() > 0 && s.timer == nil {
 		s.timer = time.AfterFunc(250*time.Millisecond, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -128,6 +143,11 @@ func (s *storeLogSink) Close() error {
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
+	}
+	for stream := range s.redactor.tails {
+		if err := s.appendLocked(stream, s.redactor.finish(stream)); err != nil {
+			return err
+		}
 	}
 	for stream, buf := range s.pending {
 		if buf.Len() == 0 {
@@ -171,7 +191,7 @@ func AppendBoundedExecutorLog(store state.Store, runID, activationID string, att
 	logs = RedactSecrets(logs, secrets)
 	const softMax = 60 * 1024
 	if len(logs) > softMax {
-		logs = logs[:softMax] + "\n[log truncated]"
+		logs = logs[:utf8Cut(logs, softMax)] + "\n[log truncated]"
 	}
 	id := ""
 	if len(attemptID) > 0 {

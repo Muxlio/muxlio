@@ -18,6 +18,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -69,6 +70,33 @@ func NewRouter(store state.Store, runner Runner, workerProtocol ...http.Handler)
 // NewRouterWithArtifacts builds the coordinator API with an artifact driver.
 func NewRouterWithArtifacts(store state.Store, runner Runner, driver artifacts.Driver, workerProtocol ...http.Handler) http.Handler {
 	return newRouter(store, runner, driver, workerProtocol...)
+}
+
+func readArtifactHead(stream io.Reader) ([]byte, error) {
+	head := make([]byte, 512)
+	n, err := io.ReadFull(stream, head)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+	}
+	return head[:n], err
+}
+
+// Artifact bytes are untrusted and served from the UI origin, where loopback
+// browsers receive operator credentials. They must never render as active
+// content, whatever MIME an uploader supplied.
+func setArtifactHeaders(w http.ResponseWriter, ref artifacts.Ref, head []byte) {
+	mime := ref.Mime
+	if mime == "" {
+		mime = http.DetectContentType(head)
+		if strings.HasPrefix(mime, "text/") {
+			mime = "text/plain; charset=utf-8"
+		}
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("Content-Disposition", "attachment")
+	w.Header().Set("X-Artifact-SHA256", ref.Digest)
 }
 
 func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver, workerProtocol ...http.Handler) http.Handler {
@@ -165,6 +193,13 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					writeError(w, http.StatusRequestEntityTooLarge, CodeArtifactDownloadFailed, "artifact exceeds transfer limit")
 					return
 				}
+				head, err := readArtifactHead(stream)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, CodeArtifactDownloadFailed, "artifact unavailable")
+					return
+				}
+				body := io.MultiReader(bytes.NewReader(head), stream)
+				setArtifactHeaders(w, ref, head)
 				var offset int64
 				if value := r.Header.Get("Range"); value != "" {
 					var err error
@@ -178,7 +213,7 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 						return
 					}
-					if _, err := io.CopyN(io.Discard, stream, offset); err != nil {
+					if _, err := io.CopyN(io.Discard, body, offset); err != nil {
 						writeError(w, http.StatusInternalServerError, CodeArtifactDownloadFailed, "artifact range unavailable")
 						return
 					}
@@ -186,14 +221,10 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 				}
 				w.Header().Set("Accept-Ranges", "bytes")
 				w.Header().Set("Content-Length", strconv.FormatInt(ref.Size-offset, 10))
-				w.Header().Set("X-Artifact-SHA256", ref.Digest)
-				if ref.Mime != "" {
-					w.Header().Set("Content-Type", ref.Mime)
-				}
 				if r.Header.Get("Range") != "" {
 					w.WriteHeader(http.StatusPartialContent)
 				}
-				_, _ = io.CopyN(w, stream, ref.Size-offset)
+				_, _ = io.CopyN(w, body, ref.Size-offset)
 			case http.MethodHead:
 				stream, ref, err := artifactDriver.GetStream(r.Context(), digest)
 				if err != nil {
@@ -209,12 +240,14 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 					writeError(w, status, CodeArtifactDownloadFailed, err.Error())
 					return
 				}
+				head, err := readArtifactHead(stream)
 				_ = stream.Close()
-				w.Header().Set("Content-Length", strconv.FormatInt(ref.Size, 10))
-				w.Header().Set("X-Artifact-SHA256", ref.Digest)
-				if ref.Mime != "" {
-					w.Header().Set("Content-Type", ref.Mime)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, CodeArtifactDownloadFailed, "artifact unavailable")
+					return
 				}
+				w.Header().Set("Content-Length", strconv.FormatInt(ref.Size, 10))
+				setArtifactHeaders(w, ref, head)
 				w.WriteHeader(http.StatusOK)
 			default:
 				w.Header().Set("Allow", "GET, HEAD, PUT")
@@ -684,6 +717,9 @@ func handleGetAttempts(w http.ResponseWriter, r *http.Request, store state.Store
 		attempts, err = views.ListExecutionAttemptPage(runID, activationID, offset, limit+1, r.URL.Query().Get("details") != "false")
 	} else {
 		attempts, err = store.ListExecutionAttempts(runID, activationID)
+		if paged {
+			attempts = pageWindow(attempts, offset, limit)
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
@@ -881,7 +917,7 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, store state.Store, 
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
+			limit = min(n, maxEventPage)
 		}
 	}
 	if _, err := runHeader(store, runID); err != nil {
@@ -1047,6 +1083,9 @@ func handleGetGraph(w http.ResponseWriter, r *http.Request, store state.Store, r
 		} else {
 			activations, err = store.ListActivations(runID)
 		}
+		if paged {
+			activations = pageWindow(activations, offset, limit)
+		}
 	}
 	var response map[string]any
 	if paged {
@@ -1100,6 +1139,9 @@ func handleGetLogs(w http.ResponseWriter, r *http.Request, store state.Store, ru
 		logs, err = views.GetLogChunkPage(runID, activationID, offset, limit+1)
 	} else {
 		logs, err = store.GetLogChunks(runID, activationID)
+		if paged {
+			logs = pageWindow(logs, offset, limit)
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())

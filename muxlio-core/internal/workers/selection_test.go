@@ -2,6 +2,7 @@ package workers
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -141,6 +142,34 @@ func TestLocalAnyAgentSelectionUsesReadinessAndOperatorPermissions(t *testing.T)
 	s.Executors = map[string]ExecutorConfig{"agent/b": {Allow: &denied}}
 	if _, err := s.SelectExecutor(req, nil); err == nil {
 		t.Fatal("operator denial ignored")
+	}
+}
+
+func TestLocalAnyAgentSelectionResumesLocallyOwnedSession(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s' '{\"ready\":true,\"checks\":[{\"name\":\"authentication\",\"passed\":true}]}'\n"
+	if err := os.WriteFile(filepath.Join(dir, "agent-test"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"manifestVersion":"1","contractVersion":"1","probeVersion":"1","executor":"agent/test","executorVersion":"1","capabilities":{"session":true},"capabilityVersions":{"session":"` + contract.SessionVersion + `"}}`
+	if err := os.WriteFile(filepath.Join(dir, "agent-test.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewScriptExecutor(dir, t.TempDir())
+	handle := &contract.SessionHandle{ID: "conversation", Executor: "agent/test", RunnerVersion: "1", OwnerWorker: "local:" + s.SessionEnvironment(), OwnerEnvironment: s.SessionEnvironment(), ExpiresAt: time.Now().Add(time.Hour)}
+	name, err := s.SelectExecutor(ExecuteRequest{Executor: "any", WorkspaceMode: "empty", Session: &contract.SessionRequest{Mode: "resume", Handle: handle}}, nil)
+	if err != nil || name != "agent/test" {
+		t.Fatalf("local session owner rejected: %q %v", name, err)
+	}
+}
+
+func TestChooseAgentComparesHugeCapacitiesExactly(t *testing.T) {
+	const huge = math.MaxInt64 / 2
+	idle := AgentCandidate{Executor: "agent/idle", Available: true, WorkerLoad: 1, Capacity: huge}
+	busy := AgentCandidate{Executor: "agent/busy", Available: true, WorkerLoad: 4, Capacity: 8}
+	choice, err := ChooseAgent([]AgentCandidate{busy, idle}, nil)
+	if err != nil || choice.Executor != "agent/idle" {
+		t.Fatalf("overflowed load ratio chose %q, %v", choice.Executor, err)
 	}
 }
 

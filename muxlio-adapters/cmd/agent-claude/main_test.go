@@ -424,6 +424,15 @@ func TestAgentClaudeAdapterUsageAbsentWhenNotReported(t *testing.T) {
 	if hasUsage {
 		t.Fatalf("expected usage field absent when not reported, got raw=%s", raw["usage"])
 	}
+	var resp struct {
+		Accounting *contract.Accounting `json:"accounting"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Accounting != nil && len(resp.Accounting.Entries) != 0 {
+		t.Fatalf("result without usage or cost recorded an entry: %+v", resp.Accounting.Entries)
+	}
 }
 
 func TestAgentClaudeAdapterReportsEstimatedCostOnSuccess(t *testing.T) {

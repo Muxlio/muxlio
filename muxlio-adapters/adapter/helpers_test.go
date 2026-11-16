@@ -10,12 +10,31 @@ import (
 func TestParseTokenUsageRejectsMixedValidAndInvalidCounts(t *testing.T) {
 	for _, raw := range []string{
 		`{"input_tokens":-1,"output_tokens":5}`,
-		`{"input_tokens":null,"output_tokens":5}`,
 		`{"inputTokens":100,"outputTokens":40,"cachedTokens":"many"}`,
 	} {
 		if got := ParseTokenUsage(json.RawMessage(raw)); got != nil {
 			t.Fatalf("invalid usage field must make whole usage unavailable: %s -> %+v", raw, got)
 		}
+	}
+}
+
+func TestParseTokenUsageTreatsNullAsUnavailableField(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"input_tokens":null,"output_tokens":5}`))
+	if got == nil || got.Output != 5 {
+		t.Fatalf("null field discarded reported usage: %+v", got)
+	}
+	if _, ok := got.ReportedInput(); ok {
+		t.Fatalf("null input became reported: %+v", got)
+	}
+}
+
+func TestParseTokenUsageUncachedInputIsMadeInclusive(t *testing.T) {
+	got := ParseTokenUsage(json.RawMessage(`{"uncachedInputTokens":100,"outputTokens":40}`))
+	if got == nil || got.Output != 40 {
+		t.Fatalf("usage = %+v", got)
+	}
+	if _, ok := got.ReportedInput(); ok {
+		t.Fatalf("uncached input without cache reads became inclusive input: %+v", got)
 	}
 }
 
@@ -59,7 +78,7 @@ func TestParseTokenUsagePreservesUnavailableAndReportedZero(t *testing.T) {
 
 func TestParseTokenUsageProviderSummaryFields(t *testing.T) {
 	for _, raw := range []string{
-		`{"uncachedInputTokens":100,"outputTokens":40,"cacheReadInputTokens":12}`,
+		`{"uncachedInputTokens":88,"outputTokens":40,"cacheReadInputTokens":12}`,
 		`{"input_tokens":100,"output_tokens":40,"cached":12,"input":88}`,
 	} {
 		got := ParseTokenUsage(json.RawMessage(raw))
@@ -256,14 +275,14 @@ func TestCollectOutputsMissingFile(t *testing.T) {
 // ---- InputContent -----------------------------------------------------
 
 func TestInputContentString(t *testing.T) {
-	content, ok := InputContent("hello world")
+	content, ok := InputContent(t.TempDir(), "hello world")
 	if !ok || content != "hello world" {
 		t.Errorf("got %q %v", content, ok)
 	}
 }
 
 func TestInputContentMapData(t *testing.T) {
-	content, ok := InputContent(map[string]any{"data": "inline text", "mime": "text/plain"})
+	content, ok := InputContent(t.TempDir(), map[string]any{"data": "inline text", "mime": "text/plain"})
 	if !ok || content != "inline text" {
 		t.Errorf("got %q %v", content, ok)
 	}
@@ -275,20 +294,44 @@ func TestInputContentMapPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte("looks good"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	content, ok := InputContent(map[string]any{"path": path, "mime": "text/markdown"})
+	content, ok := InputContent(dir, map[string]any{"path": path, "mime": "text/markdown"})
 	if !ok || content != "looks good" {
 		t.Errorf("got %q %v", content, ok)
 	}
 }
 
+func TestInputContentConfinesPathsToWorkDir(t *testing.T) {
+	workDir, outside := t.TempDir(), t.TempDir()
+	secret := filepath.Join(outside, "secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(workDir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{secret, filepath.Join(workDir, "link"), filepath.Join(workDir, "..", filepath.Base(outside), "secret")} {
+		if content, ok := InputContent(workDir, map[string]any{"path": path, "mime": "text/plain"}); ok {
+			t.Fatalf("read outside work directory via %s: %q", path, content)
+		}
+	}
+	large := filepath.Join(workDir, "large")
+	if err := os.WriteFile(large, make([]byte, MaxCaptureBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := InputContent(workDir, map[string]any{"path": large, "mime": "text/plain"}); ok {
+		t.Fatal("oversized input was inlined")
+	}
+}
+
 func TestInputContentEmpty(t *testing.T) {
-	if _, ok := InputContent(""); ok {
+	dir := t.TempDir()
+	if _, ok := InputContent(dir, ""); ok {
 		t.Error("empty string should return false")
 	}
-	if _, ok := InputContent(map[string]any{}); ok {
+	if _, ok := InputContent(dir, map[string]any{}); ok {
 		t.Error("empty map should return false")
 	}
-	if _, ok := InputContent(42); ok {
+	if _, ok := InputContent(dir, 42); ok {
 		t.Error("int should return false")
 	}
 }
@@ -338,7 +381,7 @@ func TestComposePromptInlinesArtifactInput(t *testing.T) {
 	}
 	req := &Request{
 		Task:    "Review the implementation.",
-		WorkDir: "/tmp/work",
+		WorkDir: dir,
 		Inputs: map[string]any{
 			"notes": map[string]any{"path": path, "mime": "text/markdown"},
 		},

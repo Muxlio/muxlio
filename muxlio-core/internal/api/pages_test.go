@@ -140,3 +140,63 @@ func TestRunPagesKeepLargePayloadsOutOfLists(t *testing.T) {
 		})
 	}
 }
+
+// basicStore hides optional paged-read extensions from the router.
+type basicStore struct{ state.Store }
+
+func TestPagedReadsWithoutViewStoreAdvanceOffsets(t *testing.T) {
+	s := state.New()
+	if err := s.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("act-%d", i)
+		if err := s.CreateActivation(&state.Activation{ID: id, RunID: "run", NodeID: id, State: "running"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordExecutionAttempt(state.ExecutionAttempt{ID: id + "-attempt", RunID: "run", ActivationID: id, State: "running", StartedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AppendLogChunk(state.LogChunk{RunID: "run", ActivationID: id, Stream: "stdout", Seq: i + 1, Data: []byte(id), Timestamp: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := NewRouter(basicStore{s}, nil)
+	for _, tc := range []struct{ path, key string }{{"attempts", "attempts"}, {"graph", "activations"}, {"logs", "logs"}} {
+		seen := 0
+		for offset, pages := 0, 0; ; pages++ {
+			if pages > 5 {
+				t.Fatalf("%s pagination does not terminate", tc.path)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/v1/runs/run/%s?limit=2&offset=%d", tc.path, offset), nil))
+			var page map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 {
+				t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body.String())
+			}
+			seen += len(page[tc.key].([]any))
+			if page["hasMore"] != true {
+				break
+			}
+			offset = int(page["nextOffset"].(float64))
+		}
+		if seen != 5 {
+			t.Fatalf("%s pages returned %d items", tc.path, seen)
+		}
+	}
+}
+
+func TestEventLimitIsBounded(t *testing.T) {
+	s := state.New()
+	if err := s.CreateRun(&state.Run{ID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	NewRouter(s, nil).ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/v1/runs/run/events?limit=%d", int(^uint(0)>>1)), nil))
+	var page struct {
+		Limit int `json:"limit"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || page.Limit != maxEventPage {
+		t.Fatalf("events: %d %s", w.Code, w.Body.String())
+	}
+}

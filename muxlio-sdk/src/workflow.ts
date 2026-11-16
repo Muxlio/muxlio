@@ -24,11 +24,15 @@
 
 import { z } from 'zod';
 import type { ExecutorRequirements, Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
-import { computeDigest } from './builder.js';
+import { computeDigest, externalDependencies } from './builder.js';
 import { assertNoLiteralCredentials } from './security.js';
+import { isAuthored } from './authored.js';
+
+declare const symbolicBrand: unique symbol;
 
 /** Opaque compile-time symbolic reference (property access builds Plan IR expressions). */
-export type SymbolicRef<T = unknown> = T & { readonly __muxlioSymbolic: unique symbol };
+export type SymbolicRef<T = unknown> =
+  (T extends object ? { readonly [K in keyof T]: SymbolicRef<T[K]> } : T) & { readonly [symbolicBrand]: true };
 
 type TaskOutputPortType<T> =
   T extends ArtifactDecl ? SymbolicRef<ArtifactDecl>
@@ -147,12 +151,16 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
     for (const [key, val] of Object.entries(shape)) {
       const field = val as z.ZodTypeAny;
       properties[key] = zodTypeToJsonSchema(field);
-      if (!(field instanceof z.ZodOptional) && !(field instanceof z.ZodNullable) && !(field instanceof z.ZodDefault)) {
-        required.push(key);
-      }
+      if (!acceptsMissing(field)) required.push(key);
     }
     const out: JSONSchema = { type: 'object', properties };
     if (required.length > 0) out['required'] = required;
+    const def = (schema as any)._def;
+    if (def.catchall && !(def.catchall instanceof z.ZodNever)) {
+      out['additionalProperties'] = zodTypeToJsonSchema(def.catchall);
+    } else if (def.unknownKeys === 'strict') {
+      out['additionalProperties'] = false;
+    }
     return out;
   }
   if (schema instanceof z.ZodUnion) {
@@ -182,23 +190,34 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
   if (schema instanceof z.ZodTuple) {
     const def = (schema as any)._def;
     const items = (def.items ?? []) as z.ZodTypeAny[];
-    const out: JSONSchema = {
+    // The Go validator compiles schemas as JSON Schema Draft 2020-12.
+    return {
       type: 'array',
-      items: items.map(zodTypeToJsonSchema),
+      prefixItems: items.map(zodTypeToJsonSchema),
+      items: def.rest ? zodTypeToJsonSchema(def.rest) : false,
       minItems: items.length,
     };
-    if (def.rest) {
-      out['additionalItems'] = zodTypeToJsonSchema(def.rest);
-    } else {
-      out['maxItems'] = items.length;
-    }
-    return out;
   }
   if (schema instanceof z.ZodLiteral) {
     return { const: (schema as any)._def.value };
   }
   if (schema instanceof z.ZodEnum) {
     return { enum: (schema as any)._def.values };
+  }
+  if (schema instanceof z.ZodNativeEnum) {
+    const values = (schema as any)._def.values as Record<string, string | number>;
+    // Numeric TypeScript enums also carry reverse name mappings.
+    const keys = Object.keys(values).filter((key) => typeof values[values[key]!] !== 'number');
+    return { enum: keys.map((key) => values[key]) };
+  }
+  if (schema instanceof z.ZodReadonly || schema instanceof z.ZodCatch) {
+    return zodTypeToJsonSchema((schema as any)._def.innerType);
+  }
+  if (schema instanceof z.ZodBranded) {
+    return zodTypeToJsonSchema((schema as any)._def.type);
+  }
+  if (schema instanceof z.ZodPipeline) {
+    return zodTypeToJsonSchema((schema as any)._def.in);
   }
   if (schema instanceof z.ZodDefault) {
     const inner = zodTypeToJsonSchema((schema as any)._def.innerType);
@@ -208,6 +227,15 @@ function zodTypeToJsonSchema(schema: z.ZodTypeAny): JSONSchema {
   }
   // Fallback: allow any value
   return {};
+}
+
+function acceptsMissing(field: z.ZodTypeAny): boolean {
+  try {
+    return field.isOptional();
+  } catch {
+    // Refinements and preprocessors may not expect undefined.
+    return field instanceof z.ZodEffects && acceptsMissing((field as any)._def.schema);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,12 +253,12 @@ function isArtifactDecl(v: unknown): v is ArtifactDecl {
   return typeof v === 'object' && v !== null && (v as any).__isArtifact === true;
 }
 
-/** A plain OutputDecl has a `mime` string and no `__isArtifact` marker. */
+/** A plain OutputDecl is any non-Zod object without the `__isArtifact` marker. */
 function isOutputDecl(v: unknown): v is OutputDecl {
   return typeof v === 'object' && v !== null &&
-    typeof (v as any).mime === 'string' &&
+    !(v instanceof z.ZodType) &&
     (v as any).__isArtifact !== true &&
-    typeof (v as any)._def === 'undefined'; // not a Zod schema
+    typeof (v as any)._def === 'undefined';
 }
 
 /**
@@ -341,9 +369,13 @@ export function task(def: TaskDefinition): TaskDef {
 // Symbolic reference system (proxy-based traced values)
 // ---------------------------------------------------------------------------
 
-const SYM_IS_TRACED = Symbol('muxlio.isTraced');
-const SYM_BINDING = Symbol('muxlio.binding');
-const SYM_EXPR = Symbol('muxlio.expr');
+// Registered symbols so builder and expression helpers can read traced values
+// without importing this module.
+const SYM_IS_TRACED = Symbol.for('muxlio.isTraced');
+const SYM_BINDING = Symbol.for('muxlio.binding');
+const SYM_EXPR = Symbol.for('muxlio.expr');
+const SYM_NODE = Symbol('muxlio.node');
+const SYM_OUTPUTLESS = Symbol('muxlio.outputless');
 
 function createTracedRef(binding: Binding): any {
   const expr = bindingToExpr(binding);
@@ -353,12 +385,32 @@ function createTracedRef(binding: Binding): any {
       if (prop === SYM_BINDING) return binding;
       if (prop === SYM_EXPR) return expr;
       if (typeof prop === 'symbol') return undefined;
-      const name = String(prop);
-      const fieldExpr: Expr = { op: 'field', expr, name };
-      return createTracedRef({ expr: fieldExpr });
+      return createTracedRef({ expr: accessExpr(expr, String(prop)) });
     },
   };
   return new Proxy({} as object, handler);
+}
+
+/** Canonical non-negative integer keys index arrays; other keys read fields. */
+function accessExpr(expr: Expr, name: string): Expr {
+  if (/^(0|[1-9]\d*)$/.test(name) && Number.isSafeInteger(Number(name))) {
+    return { op: 'index', expr, index: Number(name) };
+  }
+  return { op: 'field', expr, name };
+}
+
+function isExprObject(v: unknown): v is Expr {
+  return isAuthored(v) && typeof (v as any).op === 'string';
+}
+
+function isBindingObject(v: unknown): v is Binding {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const keys = Object.keys(v);
+  if (keys.length !== 1) return false;
+  if (keys[0] === 'expr') return isExprObject((v as any).expr);
+  const ref = (v as any).ref;
+  return isAuthored(v) && keys[0] === 'ref' && typeof ref === 'object' && ref !== null &&
+    typeof ref.node === 'string' && typeof ref.port === 'string';
 }
 
 function isTraced(v: unknown): boolean {
@@ -383,31 +435,26 @@ function bindingToExpr(b: Binding): Expr {
 
 function toBinding(value: unknown): Binding {
   if (isTraced(value)) return getBinding(value);
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    const fields: Record<string, Expr> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      fields[key] = toExpr(val);
-    }
-    return { expr: { op: 'object', fields } as Expr };
-  }
-  if (Array.isArray(value)) {
-    const elements = value.map((v) => toExpr(v));
-    return { expr: { op: 'array', elements } as Expr };
-  }
-  return { expr: { op: 'literal', value } };
+  if (isBindingObject(value)) return value;
+  return { expr: toExpr(value) };
 }
 
 function toExpr(value: unknown): Expr {
   if (isTraced(value)) return getExpr(value);
+  if (isExprObject(value)) return value;
+  if (isBindingObject(value)) return bindingToExpr(value);
+  if (value === undefined) {
+    throw new Error('muxlio: undefined is not a JSON value; omit the property or use null');
+  }
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const fields: Record<string, Expr> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      fields[key] = toExpr(val);
+      if (val !== undefined) fields[key] = toExpr(val);
     }
     return { op: 'object', fields } as Expr;
   }
   if (Array.isArray(value)) {
-    return { op: 'array', elements: value.map((v) => toExpr(v)) } as Expr;
+    return { op: 'array', elements: value.map((v) => (v === undefined ? { op: 'literal', value: null } : toExpr(v))) } as Expr;
   }
   return { op: 'literal', value };
 }
@@ -428,15 +475,22 @@ function createStepProxy(nodeId: string, ports: string[]): any {
     portBindings[port] = { ref: { node: nodeId, port } };
   }
   // Control-flow `after: stepRef` uses the whole step result; depend on the
-  // step completing via any declared output port (or a synthetic result ref).
-  const completionBinding: Binding =
-    ports.length > 0
-      ? portBindings[ports[0]!]
-      : { ref: { node: nodeId, port: 'result' } };
+  // step completing via any declared output port. The Plan IR has no
+  // ordering-only edge, so an outputless step cannot be depended on.
+  const completionBinding: Binding | undefined = ports.length > 0 ? portBindings[ports[0]!] : undefined;
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (prop === SYM_IS_TRACED) return true;
-      if (prop === SYM_BINDING) return completionBinding;
+      if (prop === SYM_NODE) return nodeId;
+      if (prop === SYM_OUTPUTLESS) return !completionBinding;
+      if (prop === SYM_BINDING || prop === SYM_EXPR) {
+        if (!completionBinding) {
+          throw new Error(
+            `muxlio: step '${nodeId}' declares no outputs, so it cannot be used as a value or 'after' dependency; declare an output port`,
+          );
+        }
+        return prop === SYM_BINDING ? completionBinding : bindingToExpr(completionBinding);
+      }
       if (typeof prop === 'symbol') return undefined;
       const name = String(prop);
       if (!portSet.has(name)) {
@@ -662,7 +716,7 @@ function compileStepRequiresPassed<TOutputs extends TaskOutputSchema>(
   state.subgraphs[elseName] = { nodes: [], output: {} };
 
   const branchId = uniqueName(state, `${id}_if_passed`);
-  const control = afterBindings(options.after);
+  const control = mergeAfter(afterBindings(options.after), externalDependencies(branchId, [thenName], state.subgraphs));
   state.activeNodes.push({
     id: branchId,
     kind: 'branch',
@@ -716,7 +770,7 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
 
   const inputBindings: Record<string, Binding> = {};
   for (const [key, val] of Object.entries(inputs)) {
-    inputBindings[key] = toBinding(val);
+    if (val !== undefined) inputBindings[key] = toBinding(val);
   }
 
   Object.assign(inputBindings, afterBindings(options?.after));
@@ -727,7 +781,12 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
       if (isArtifactDecl(decl)) {
         outputs[port] = { mime: decl.mime, path: decl.path };
       } else if (isOutputDecl(decl)) {
-        outputs[port] = { mime: (decl as OutputDecl).mime, path: (decl as OutputDecl).path };
+        const { mime, path, schema } = decl;
+        outputs[port] = {
+          ...(mime !== undefined ? { mime } : {}),
+          ...(path !== undefined ? { path } : {}),
+          ...(schema !== undefined ? { schema } : {}),
+        };
       } else {
         outputs[port] = {
           mime: 'application/json',
@@ -809,6 +868,7 @@ function makeContext(state: CompileState, inputExpr: Expr): WorkflowBuildContext
       state.activeNodes = savedActive;
 
       state.subgraphs[bodyName] = { nodes: bodyNodes as any, output: bodyOutput };
+      const deps = externalDependencies(mapId, [bodyName], state.subgraphs);
 
       state.activeNodes.push({
         id: mapId,
@@ -818,6 +878,7 @@ function makeContext(state: CompileState, inputExpr: Expr): WorkflowBuildContext
         concurrency: options.concurrency,
         maxItems: options.maxItems,
         bodyRef: bodyName,
+        ...(Object.keys(deps).length > 0 ? { inputs: deps } : {}),
       });
 
       return createTracedRef({ ref: { node: mapId, port: 'items' } }) as EachResult;
@@ -888,10 +949,10 @@ function compileRepeatUntil<TOutputs extends TaskOutputSchema>(
 
   // ── 1. Record attempt steps ──────────────────────────────────────────────
   const attemptResult = opts.attempt();
-  // The last node added is the primary attempt node.
-  const attemptNode = bodyNodes[bodyNodes.length - 1];
+  const attemptId = isTraced(attemptResult) ? (attemptResult as any)[SYM_NODE] : undefined;
+  const attemptNode = bodyNodes.find((node) => node.id === attemptId && node.kind === 'execute');
   if (!attemptNode) {
-    throw new Error(`muxlio: repeatUntil '${loopId}': attempt() must call step() at least once`);
+    throw new Error(`muxlio: repeatUntil '${loopId}': attempt() must return the result of a step() it calls`);
   }
   const attemptPorts = Object.keys(attemptNode.outputs ?? {});
 
@@ -981,7 +1042,7 @@ function compileRepeatUntil<TOutputs extends TaskOutputSchema>(
   // Outer steps referenced from the body (for example `after: reviewed`) are
   // not nodes of this subgraph. Copy one binding per outer node onto the loop
   // so the parent schedules those steps first and validation can see them.
-  const loopInputs = externalLoopDeps(state, bodyNodes, bodyName);
+  const loopInputs = externalDependencies(loopId, [bodyName], state.subgraphs);
 
   const onExhausted = opts.onExhausted ?? 'pause';
 
@@ -1036,77 +1097,6 @@ function compileRepeatUntil<TOutputs extends TaskOutputSchema>(
 }
 
 /**
- * Bindings from a loop body to nodes that live outside that body.
- * One entry per referenced node, keyed `__after_N`.
- */
-function externalLoopDeps(
-  state: CompileState,
-  bodyNodes: IRNode[],
-  bodyName: string,
-): Record<string, Binding> {
-  const localIds = new Set<string>();
-  const groups: IRNode[][] = [bodyNodes];
-  const consider = (name: string) => {
-    const sg = state.subgraphs[name];
-    if (!sg) return;
-    const nodes = (sg.nodes ?? []) as IRNode[];
-    groups.push(nodes);
-    for (const node of nodes) {
-      localIds.add(node.id);
-      if (node.bodyRef) consider(node.bodyRef);
-      if (node.thenRef) consider(node.thenRef);
-      if (node.elseRef) consider(node.elseRef);
-    }
-  };
-  for (const node of bodyNodes) localIds.add(node.id);
-  consider(bodyName);
-
-  const found = new Map<string, Binding>();
-  for (const nodes of groups) {
-    for (const node of nodes) collectExternalNodeDeps(node, localIds, found);
-  }
-
-  const inputs: Record<string, Binding> = {};
-  let n = 0;
-  for (const binding of found.values()) {
-    inputs[`__after_${n++}`] = binding;
-  }
-  return inputs;
-}
-
-function collectExternalNodeDeps(node: IRNode, localIds: Set<string>, found: Map<string, Binding>) {
-  if (node.inputs) {
-    for (const binding of Object.values(node.inputs)) noteExternalBinding(binding, localIds, found);
-  }
-  for (const expr of [node.items, node.key, node.condition, node.while, node.initState]) {
-    if (expr) noteExternalExpr(expr, localIds, found);
-  }
-}
-
-function noteExternalBinding(binding: Binding | undefined, localIds: Set<string>, found: Map<string, Binding>) {
-  if (!binding) return;
-  if (binding.ref && !localIds.has(binding.ref.node) && !found.has(binding.ref.node)) {
-    found.set(binding.ref.node, binding);
-  }
-  if (binding.expr) noteExternalExpr(binding.expr, localIds, found);
-}
-
-function noteExternalExpr(expr: Expr, localIds: Set<string>, found: Map<string, Binding>) {
-  if (expr.op === 'ref' && expr.node && !localIds.has(expr.node) && !found.has(expr.node)) {
-    found.set(expr.node, { ref: { node: expr.node, port: expr.port ?? 'result' } });
-  }
-  if (expr.expr) noteExternalExpr(expr.expr, localIds, found);
-  if (expr.left) noteExternalExpr(expr.left, localIds, found);
-  if (expr.right) noteExternalExpr(expr.right, localIds, found);
-  if (expr.fields) {
-    for (const sub of Object.values(expr.fields)) noteExternalExpr(sub, localIds, found);
-  }
-  if (expr.elements) {
-    for (const sub of expr.elements) noteExternalExpr(sub, localIds, found);
-  }
-}
-
-/**
  * Routes `result.report` (etc.) to `{ ref: captureId, port: 'value_<port>' }`
  * for the current loop iteration's attempt outputs.
  */
@@ -1121,6 +1111,16 @@ function afterBindings(after: unknown): Record<string, Binding> {
     if (binding && (binding.ref || binding.expr)) bindings[`__after_${n++}`] = binding;
   }
   return bindings;
+}
+
+/** Combines `__after_N` dependency maps, renumbering to keep keys unique. */
+function mergeAfter(...groups: Record<string, Binding>[]): Record<string, Binding> {
+  const merged: Record<string, Binding> = {};
+  let n = 0;
+  for (const group of groups) {
+    for (const binding of Object.values(group)) merged[`__after_${n++}`] = binding;
+  }
+  return merged;
 }
 
 function createCaptureResultProxy(captureId: string, ports: string[]): any {
@@ -1154,11 +1154,12 @@ function createCaptureResultProxy(captureId: string, ports: string[]): any {
 
 function resultToBindings(result: unknown): Record<string, Binding> {
   if (result === null || result === undefined) return {};
-  if (isTraced(result)) return { result: getBinding(result) };
+  if (isTraced(result) && (result as any)[SYM_OUTPUTLESS] === true) return {};
+  if (isTraced(result) || isExprObject(result) || isBindingObject(result)) return { result: toBinding(result) };
   if (typeof result === 'object' && !Array.isArray(result)) {
     const out: Record<string, Binding> = {};
     for (const [key, val] of Object.entries(result as Record<string, unknown>)) {
-      out[key] = toBinding(val);
+      if (val !== undefined) out[key] = toBinding(val);
     }
     return out;
   }

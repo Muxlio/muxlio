@@ -127,3 +127,34 @@ test("Canvas downloads enforce actual UTF-8 bytes without trusting Content-Lengt
   await assert.rejects(readCanvasText(response, 5), /byte limit/);
   assert.equal(cancelled, true);
 });
+
+test("json component data is inline JSON, not a source reference", () => {
+  validateCanvasDocument(
+    doc({
+      type: "json",
+      id: "raw",
+      data: { source: "undeclared", pointer: "x" },
+    }),
+  );
+  assert.throws(
+    () =>
+      validateCanvasDocument(
+        doc({
+          type: "table",
+          id: "t",
+          columns: [{ field: "a", label: "A" }],
+          data: { source: "undeclared" },
+        }),
+      ),
+    /Unknown source/,
+  );
+});
+
+test("inline source size matches the coordinator's escaped JSON encoding", () => {
+  // JSON.stringify keeps "<" literal; encoding/json writes \u003c (6 bytes).
+  const value = "<".repeat(50 * 1024);
+  assert.throws(
+    () => validateCanvasDocument({ ...doc(), sources: { data: { value } } }),
+    /256 KiB/,
+  );
+});

@@ -27,14 +27,21 @@ export function refine<T>(g: BuildContext, id: string, opts: RefineOptions<T>): 
   if (!Number.isSafeInteger(opts.maxIterations) || opts.maxIterations < 0) {
     throw new Error('muxlio: refine maxIterations must be a non-negative safe integer');
   }
-  const state = g.state() as TypedExpr<T>;
+  if (opts.maxIterations === 0) return { expr: toExpr(opts.initial) } as TypedBinding<T>;
+  // Plan loops pause when the bound is hit with `while` still true, so the
+  // pass counter is carried in state and ends the loop at the bound instead.
+  const value = g.stateField('value') as TypedExpr<T>;
+  const pass = g.stateField('pass');
   const loop: LoopResult = g.loop(id, {
-    while: opts.continueWhile(state),
-    initState: toExpr(opts.initial),
+    while: g.and(opts.continueWhile(value), g.lt(pass, g.literal(opts.maxIterations))),
+    initState: { op: 'object', fields: { value: toExpr(opts.initial), pass: g.literal(0) } },
     maxIterations: opts.maxIterations,
-    body: (ctx) => ({ value: opts.refine(ctx, ctx.state() as TypedExpr<T>) }),
+    body: (ctx) => ({
+      value: opts.refine(ctx, value),
+      pass: { expr: ctx.add(pass, ctx.literal(1)) },
+    }),
   });
-  return loop.result() as TypedBinding<T>;
+  return { expr: g.field(loop.result(), 'value') } as TypedBinding<T>;
 }
 
 /** Options for mapping speculative candidates and selecting one by position. */

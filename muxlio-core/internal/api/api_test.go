@@ -241,6 +241,53 @@ func TestArtifactHTTPStreamingRoundTripAndDigestEnforcement(t *testing.T) {
 	}
 }
 
+func TestArtifactDownloadsNeverRenderAsActiveContent(t *testing.T) {
+	driver, err := artifacts.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewRouterWithArtifacts(state.New(), nil, driver)
+	for _, tc := range []struct{ body, mime string }{
+		{"<html><script>fetch('/v1/runs')</script></html>", "text/plain; charset=utf-8"},
+		{"plain notes", "text/plain; charset=utf-8"},
+		{"\x00\x01\x02binary", "application/octet-stream"},
+	} {
+		sum := sha256.Sum256([]byte(tc.body))
+		digest := "sha256:" + hex.EncodeToString(sum[:])
+		put := httptest.NewRequest(http.MethodPut, "/v1/artifacts/"+digest, strings.NewReader(tc.body))
+		put.Header.Set("Content-Type", "text/html")
+		putResponse := httptest.NewRecorder()
+		handler.ServeHTTP(putResponse, put)
+		if putResponse.Code != http.StatusCreated {
+			t.Fatalf("PUT %d: %s", putResponse.Code, putResponse.Body.String())
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			for _, rangeHeader := range []string{"", "bytes=2-"} {
+				if method == http.MethodHead && rangeHeader != "" {
+					continue
+				}
+				req := httptest.NewRequest(method, "/v1/artifacts/"+digest, nil)
+				if rangeHeader != "" {
+					req.Header.Set("Range", rangeHeader)
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+				h := w.Header()
+				if h.Get("Content-Type") != tc.mime || h.Get("Content-Security-Policy") != "sandbox" || h.Get("Content-Disposition") != "attachment" || h.Get("X-Content-Type-Options") != "nosniff" {
+					t.Fatalf("%s %q range=%q headers=%v", method, tc.body, rangeHeader, h)
+				}
+				want := tc.body
+				if rangeHeader != "" {
+					want = tc.body[2:]
+				}
+				if method == http.MethodGet && w.Body.String() != want {
+					t.Fatalf("%s range=%q body=%q", method, rangeHeader, w.Body.String())
+				}
+			}
+		}
+	}
+}
+
 type workerBackendFixture struct {
 	registered  bool
 	heartbeat   bool
@@ -276,6 +323,38 @@ func (f *workerBackendFixture) Complete(string, WorkerCompletion) error {
 func (f *workerBackendFixture) AppendWorkerLog(string, WorkerLogAppend) error { return nil }
 func (f *workerBackendFixture) RecordWorkerAccounting(string, WorkerAccountingAppend) error {
 	return nil
+}
+
+func TestWorkerRegistrationRejectsUnroutableIDsAndUnboundedCapacity(t *testing.T) {
+	backend := &workerBackendFixture{}
+	handler := NewRouter(state.New(), nil, NewWorkerProtocolHandler(backend))
+	register := func(id string, capacity int) int {
+		body, _ := json.Marshal(map[string]any{"protocolVersion": "v1", "workerId": id, "capacity": capacity})
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/v1/workers/register", strings.NewReader(string(body))))
+		return resp.Code
+	}
+	for _, id := range []string{"a/b", "..", ".", "with space", "pct%2F", "q?x", strings.Repeat("w", 129)} {
+		if code := register(id, 1); code != http.StatusBadRequest {
+			t.Errorf("worker id %q: %d", id, code)
+		}
+	}
+	if code := register("worker", MaxWorkerCapacity+1); code != http.StatusBadRequest {
+		t.Errorf("unbounded capacity accepted: %d", code)
+	}
+	if backend.registered {
+		t.Fatal("invalid registration reached backend")
+	}
+	for _, id := range []string{"worker-1", "host.example_a@b:1", "register"} {
+		if code := register(id, MaxWorkerCapacity); code != http.StatusOK {
+			t.Errorf("worker id %q: %d", id, code)
+		}
+	}
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/v1/workers/worker-1/heartbeat", strings.NewReader(fmt.Sprintf(`{"protocolVersion":"v1","capacity":%d}`, MaxWorkerCapacity+1))))
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("heartbeat capacity: %d", resp.Code)
+	}
 }
 
 func TestWorkerProtocolLifecycleMessages(t *testing.T) {

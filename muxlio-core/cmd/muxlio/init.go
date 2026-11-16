@@ -268,14 +268,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 
 	// 3. Write env script for shell sourcing
 	envScriptPath := filepath.Join(root, "env")
-	envContent := fmt.Sprintf(`# Muxlio shell environment
-export MUXLIO_HOME="%s"
-case ":$PATH:" in
-  *":$MUXLIO_HOME/bin:"*) ;;
-  *) export PATH="$MUXLIO_HOME/bin:$PATH" ;;
-esac
-`, root)
-	_ = os.WriteFile(envScriptPath, []byte(envContent), 0o600)
+	_ = os.WriteFile(envScriptPath, []byte(posixEnvScript(root)), 0o600)
 
 	// 4. Install Agent Skill
 	instructionBase := ws
@@ -326,7 +319,7 @@ esac
         {
           "id": "step1",
           "kind": "execute",
-          "executor": "agent/codex",
+          "executor": "agent/any",
           "task": "Process inputs and generate summary.md",
           "outputs": {
             "summary": { "mime": "text/markdown", "path": "summary.md" }

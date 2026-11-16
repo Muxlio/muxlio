@@ -55,6 +55,7 @@ export {
 export {
   defineWorkflow,
   computeDigest,
+  externalDependencies,
   toExpr,
 } from './builder.js';
 

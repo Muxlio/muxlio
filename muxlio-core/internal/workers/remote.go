@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -219,9 +220,28 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	if _, err := rand.Read(instance); err != nil {
 		return err
 	}
-	if script, ok := executor.(*ScriptExecutor); ok {
-		script.WorkerID = cfg.WorkerID
-		script.Workspaces = cfg.Workspaces
+	// Attempt runners must own sessions and workspaces as this worker.
+	bind := func(e Executor) Executor {
+		if script, ok := e.(*ScriptExecutor); ok && script != nil {
+			script.WorkerID = cfg.WorkerID
+			script.Workspaces = cfg.Workspaces
+		}
+		return e
+	}
+	newAttempt := func() Executor {
+		if cfg.ExecutorFactory != nil {
+			return bind(cfg.ExecutorFactory())
+		}
+		if factory, ok := executor.(interface{ NewAttempt() Executor }); ok {
+			return factory.NewAttempt()
+		}
+		return executor
+	}
+	sample := executor
+	if sample == nil {
+		sample = cfg.ExecutorFactory()
+	}
+	if script, ok := bind(sample).(*ScriptExecutor); ok && script != nil {
 		labels := make(map[string]string, len(cfg.Labels)+1)
 		for key, value := range cfg.Labels {
 			labels[key] = value
@@ -236,11 +256,21 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		registration.Capacity = max(0, cfg.CapacityLimit())
 	}
 	registration.SupportedProtocolVersions = []string{remoteProtocolVersion}
+	// Registration carries no drain flag; a draining worker advertises zero.
+	// The supervisor publishes its current limit for re-registration.
+	var advertised atomic.Int64
+	advertised.Store(int64(registration.Capacity))
 	var registered remoteRegistrationResult
 
 	// Helper function with retry logic for coordinator calls
 	call := func(method, path string, body any, target any) (int, error) {
 		return callWithTimeout(method, path, body, target, 30*time.Second)
+	}
+	reregister := func() {
+		current := registration
+		current.Capacity = int(advertised.Load())
+		var result remoteRegistrationResult
+		_, _ = call(http.MethodPost, "/v1/workers/register", current, &result)
 	}
 
 	retryableCall := func(method, path string, body any, target any) (int, error) {
@@ -276,8 +306,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			}
 
 			if status == 409 && !strings.HasSuffix(path, "/complete") {
-				var result remoteRegistrationResult
-				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
+				reregister()
 				continue
 			}
 			// 4xx errors are not retryable (except 429)
@@ -358,6 +387,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		}
 	}()
 	updateLimit := func() {
+		defer func() { advertised.Store(int64(limit)) }()
 		if draining {
 			limit = 0
 			return
@@ -443,12 +473,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 
 		execCtx, endAttempt := telemetry.Start(telemetry.Extract(execCtx, executeReq.TraceContext), "muxlio.worker.attempt", telemetry.WorkerAttemptAttributes(executeReq.RunID, executeReq.ActivationID, executeReq.AttemptID, executeReq.Executor, cfg.WorkerID)...)
 		executeReq.Context = execCtx
-		inner := executor
-		if cfg.ExecutorFactory != nil {
-			inner = cfg.ExecutorFactory()
-		} else if factory, ok := executor.(interface{ NewAttempt() Executor }); ok {
-			inner = factory.NewAttempt()
-		}
+		inner := newAttempt()
 		if inner == nil {
 			endAttempt(true)
 			execCancel()
@@ -539,8 +564,10 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 			var hb remoteHeartbeatResult
 			status, err := call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", body, &hb)
 			if status == 409 {
-				var result remoteRegistrationResult
-				_, _ = call(http.MethodPost, "/v1/workers/register", registration, &result)
+				reregister()
+				// Restore drain state and leases, which registration cannot carry.
+				hb = remoteHeartbeatResult{}
+				status, err = call(http.MethodPost, "/v1/workers/"+url.PathEscape(cfg.WorkerID)+"/heartbeat", body, &hb)
 			}
 			select {
 			case heartbeats <- heartbeatResult{inputReceiptCount: len(receiptSnapshot), response: hb, status: status, err: err, leases: leases, sentAt: sentAt, draining: body.Draining}:
@@ -638,12 +665,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				req.Task, req.Outputs = "", nil
 				req.RunID, req.ActivationID, req.AttemptID = child.assignment.RunID, child.assignment.ActivationID, child.assignment.AttemptID
 				req.resourcesAdmitted = true
-				inner := executor
-				if cfg.ExecutorFactory != nil {
-					inner = cfg.ExecutorFactory()
-				} else if factory, ok := executor.(interface{ NewAttempt() Executor }); ok {
-					inner = factory.NewAttempt()
-				}
+				inner := newAttempt()
 				if inner == nil {
 					continue
 				}

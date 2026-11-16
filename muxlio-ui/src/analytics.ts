@@ -209,11 +209,11 @@ function analyticsNumber(value) {
 
 function barChartMarkup(items, opts: Record<string, any> = {}) {
   if (!items.length) return renderViewTemplate("analytics/bar-chart-markup-p");
-  const maxVal = opts.maxValue ?? Math.max(...items.map(it => it.value), 1);
+  const maxVal = opts.maxValue ?? Math.max(0, ...items.map(it => it.value || 0));
   const colorVar = opts.colorVar || '--teal';
   const drillKind = opts.drillKind || '';
   return renderViewTemplate("analytics/bar-chart-markup-analytics-bar-chart", [viewValue(items.map(it => {
-    const pct = maxVal > 0 ? Math.max(0, Math.min(100, (it.value / maxVal) * 100)) : 0;
+    const pct = maxVal > 0 && it.value > 0 ? Math.max(1, Math.min(100, (it.value / maxVal) * 100)) : 0;
     const label = it.label;
     const val = opts.fmt ? opts.fmt(it.exactValue??it.value) : String(it.value);
     const drillKey = it.drillKey || it.label;
@@ -253,7 +253,7 @@ function sparklineMarkup(buckets, opts: Record<string, any> = {}) {
 function usageMeasureSparklineMarkup(rollup, opts: Record<string, any> = {}) {
   if (!rollup) return renderViewTemplate("shared/empty-chart");
   const buckets = rollup.buckets;
-  const maxTotal = Math.max(...buckets.map(b => b.total ?? 0), 1);
+  const maxTotal = Math.max(0, ...buckets.map(b => b.total ?? 0));
   const hasAny = buckets.some(b => b.hasData);
   if (!hasAny) return renderViewTemplate("shared/empty-chart");
   const fmt = v => analyticsFormatMeasureValue(rollup.measure, v);
@@ -264,7 +264,7 @@ function usageMeasureSparklineMarkup(rollup, opts: Record<string, any> = {}) {
     const drill = opts.drillKind ? renderViewTemplate("analytics/drill-fragment", [viewValue(esc(`${opts.drillKind}:${b.dateKey}`))]) : '';
     const tag = opts.drillKind ? 'button' : 'div';
     const btnType = opts.drillKind ? renderViewTemplate("analytics/btn-type-fragment") : '';
-    return renderViewTemplate("analytics/bars-spark-col-2", [viewValue(tag), viewValue(opts.drillKind ? ' spark-drill' : ''), viewValue(btnType), viewValue(drill), viewValue(esc(tip)), viewValue(esc(tip)), viewValue(Math.max(1, Math.round(totalH))), viewValue(total > 0 ? renderViewTemplate("analytics/bars-spark-seg-4", [viewValue(Math.round(totalH))]) : ''), viewValue(tag)]);
+    return renderViewTemplate("analytics/bars-spark-col-2", [viewValue(tag), viewValue(opts.drillKind ? ' spark-drill' : ''), viewValue(btnType), viewValue(drill), viewValue(esc(tip)), viewValue(esc(tip)), viewValue(Math.max(1, Math.round(totalH))), viewValue(total > 0 ? renderViewTemplate("analytics/bars-spark-seg-4", [viewValue(Math.max(1, Math.round(totalH)))]) : ''), viewValue(tag)]);
   }).join('');
   const labels = buckets
     .filter((_, i) => i === 0 || i === Math.floor(buckets.length / 2) || i === buckets.length - 1)
@@ -338,10 +338,10 @@ function analyticsDrillRecords(model, drill, measureId) {
       const bt = analyticsAttemptBucketTime(matchRow.attempt, matchRow.run);
       if (!bt) return false;
       const b = analyticsBucketForTimestamp(bt.ms, range, tz);
-      return b?.dateKey === key && row.value != null;
+      return b?.dateKey === key && row.exactValue != null;
     }).map(row => {
       const match = [...model.flatAttempts].find(({ attempt, run }) => run.id === row.runId && (attempt.id || '') === row.attemptId);
-      return { kind: 'attempt', run: match.run, attempt: match.attempt, value: row.value, measureId };
+      return { kind: 'attempt', run: match.run, attempt: match.attempt, value: row.exactValue, measureId };
     });
   }
   if (kind === 'executor') {
@@ -422,10 +422,10 @@ function analyticsWireInteractiveUI(container, model, options: Record<string, an
         page: 1,
       };
       if (filters.preset === 'custom') {
-        filters.from = form.elements.from.value ? new Date(form.elements.from.value).toISOString() : filters.from;
-        filters.to = form.elements.to.value ? new Date(form.elements.to.value).toISOString() : filters.to;
+        filters.from = form.elements.from.value || filters.from;
+        filters.to = form.elements.to.value || filters.to;
       }
-      applyFilters(filters);
+      applyFilters(analyticsNormalizeFilters(filters));
     };
   }
   const reset = container.querySelector('#analyticsResetFilters');

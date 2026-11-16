@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 // Expr is a pure expression in the Muxlio expression language. It is a
@@ -21,7 +22,7 @@ import (
 //	literal   value               literal JSON value
 //	ref       node, port           output port of a node in current scope
 //	field     expr, name           field access on an object
-//	index     expr, index          element access on an array
+//	index     expr, index          array element or numeric object key
 //	len       expr                 length of an array or string
 //	eq/ne     left, right          equality / inequality
 //	lt/gt/le/ge left, right         numeric comparison
@@ -183,6 +184,12 @@ func (e *Expr) evalIndex(ctx *EvalContext) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// JavaScript property access uses the same numeric spelling for array
+	// elements and object keys. The symbolic frontends cannot know which
+	// container a runtime value holds, so preserve both meanings here.
+	if object, ok := arr.(map[string]any); ok && e.Index >= 0 {
+		return object[strconv.Itoa(e.Index)], nil
+	}
 	a, ok := arr.([]any)
 	if !ok {
 		return nil, fmt.Errorf("muxlio: cannot index non-array (%T)", arr)
@@ -227,23 +234,27 @@ func (e *Expr) evalEquality(ctx *EvalContext) (any, error) {
 }
 
 func (e *Expr) evalCompare(ctx *EvalContext) (any, error) {
-	l, err := toFloat64(e.Left, ctx)
+	lv, err := e.Left.Eval(ctx)
 	if err != nil {
 		return nil, err
 	}
-	r, err := toFloat64(e.Right, ctx)
+	rv, err := e.Right.Eval(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cmp, err := compareNumbers(lv, rv)
 	if err != nil {
 		return nil, err
 	}
 	switch e.Op {
 	case "lt":
-		return l < r, nil
+		return cmp < 0, nil
 	case "gt":
-		return l > r, nil
+		return cmp > 0, nil
 	case "le":
-		return l <= r, nil
+		return cmp <= 0, nil
 	case "ge":
-		return l >= r, nil
+		return cmp >= 0, nil
 	default:
 		return nil, fmt.Errorf("muxlio: unknown comparison %q", e.Op)
 	}

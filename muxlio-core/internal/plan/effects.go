@@ -19,6 +19,9 @@ func (e *Engine) reconcileEffect(req workers.ExecuteRequest, a state.ExecutionAt
 	a.AwaitReconciliationReason = awaitReconciliationReason(a.Effect, node.ID, a.ID)
 	if a.AwaitReconciliationReason == "" {
 		a.AwaitReconciliationReason = "external outcome unknown; explicit resolution required"
+		if len(workers.ExclusiveDispatchKeys(req)) > 0 {
+			a.AwaitReconciliationReason = fmt.Sprintf("node %q attempt %q (effect %q): termination is unknown while the dispatch holds exclusive resources; explicit operator resolution is required before retry", node.ID, a.ID, a.Effect)
+		}
 	}
 	// A reference may have arrived on the progress channel before worker loss.
 	prior, err := e.store.ListExecutionAttempts(a.RunID, a.ActivationID)

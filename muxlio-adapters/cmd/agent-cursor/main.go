@@ -48,12 +48,13 @@ func main() {
 			Model   string              `json:"model"`
 			Billing cursorBillingConfig `json:"billing"`
 		}
-		if json.Unmarshal(req.Params, &params) == nil {
-			if params.Model != "" {
-				model = params.Model
-			}
-			billing = params.Billing
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			adapter.Fail("agent-cursor: invalid params: %v", err)
 		}
+		if params.Model != "" {
+			model = params.Model
+		}
+		billing = params.Billing
 	}
 
 	cli, err := resolveCursorAgent()

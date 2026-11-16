@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
@@ -173,6 +174,14 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, "workerId and nonnegative capacity are required (0 drains)")
 			return
 		}
+		if !validWorkerID(req.WorkerID) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, fmt.Sprintf("workerId must be 1..%d letters, digits, '.', '_', '-', '@' or ':' and not . or ..", maxWorkerIDLength))
+			return
+		}
+		if req.Capacity > MaxWorkerCapacity {
+			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, fmt.Sprintf("capacity must not exceed %d", MaxWorkerCapacity))
+			return
+		}
 		if err := validateCapabilities(req.Capabilities); err != nil {
 			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, err.Error())
 			return
@@ -206,8 +215,8 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusBadRequest, CodeUnsupportedProtocol, "protocolVersion must be v1")
 				return
 			}
-			if req.Capacity != nil && *req.Capacity < 0 {
-				writeError(w, http.StatusBadRequest, CodeBadRequest, "capacity must be non-negative")
+			if req.Capacity != nil && (*req.Capacity < 0 || *req.Capacity > MaxWorkerCapacity) {
+				writeError(w, http.StatusBadRequest, CodeBadRequest, fmt.Sprintf("capacity must be between 0 and %d", MaxWorkerCapacity))
 				return
 			}
 			result, err := h.backend.Heartbeat(workerID, req)
@@ -354,6 +363,24 @@ func decodeWorkerJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	if err := d.Decode(&extra); err != io.EOF {
 		writeError(w, http.StatusBadRequest, CodeInvalidJSON, "request body must contain one JSON value")
 		return false
+	}
+	return true
+}
+
+// MaxWorkerCapacity bounds the concurrent assignments one worker may advertise.
+const MaxWorkerCapacity = 1024
+
+const maxWorkerIDLength = 128
+
+// Worker IDs are path segments of every subsequent worker endpoint.
+func validWorkerID(id string) bool {
+	if id == "" || len(id) > maxWorkerIDLength || id == "." || id == ".." {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-@:", c)) {
+			return false
+		}
 	}
 	return true
 }

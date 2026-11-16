@@ -49,6 +49,14 @@ async function loadCanvasSnapshots(
   return snapshots;
 }
 
+function canvasFallbackCard(title: string, detail: string): string {
+  return renderViewTemplate("canvas/fallback-card", [
+    viewValue(componentEscape(title)),
+    viewValue(componentEscape(detail)),
+    viewValue(""),
+  ]);
+}
+
 // All sibling artifacts share the same header, actions, and Info hierarchy.
 function renderCanvasArtifactPage(
   rootHtml: string,
@@ -73,8 +81,8 @@ function renderCanvasArtifactPage(
   // Toolbar
 
   const toolbarHtml = renderViewTemplate("canvas/toolbar", [
-    viewValue(docTitle),
-    viewValue(docDesc),
+    viewValue(componentEscape(docTitle)),
+    viewValue(componentEscape(docDesc)),
   ]);
 
   // Sibling file navigation
@@ -90,8 +98,8 @@ function renderCanvasArtifactPage(
         encodeURIComponent(pName);
       return renderViewTemplate("canvas/rail-file", [
         viewValue(isCurrent ? " canvas-rail-link--active" : ""),
-        viewValue(href),
-        viewValue(pInfo.path || pName),
+        viewValue(componentEscape(href)),
+        viewValue(componentEscape(pInfo.path || pName)),
       ]);
     })
     .join("");
@@ -182,11 +190,10 @@ async function loadCanvasPage(
   activeCanvasStore = null;
   activeCanvasContext = null;
   container.hidden = false;
-  container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-    viewValue("Loading Canvas"),
-    viewValue("Fetching artifact metadata and document bytes..."),
-    viewValue(""),
-  ]);
+  container.innerHTML = canvasFallbackCard(
+    "Loading Canvas",
+    "Fetching artifact metadata and document bytes...",
+  );
 
   if (activeCanvasUnsubscribe) {
     activeCanvasUnsubscribe();
@@ -264,15 +271,12 @@ async function loadCanvasPage(
     }
 
     if (!targetDigest) {
-      container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-        viewValue("Artifact Unavailable"),
-        viewValue(
-          "No committed output or intermediate snapshot found for port '" +
-            port +
-            "'.",
-        ),
-        viewValue(""),
-      ]);
+      container.innerHTML = canvasFallbackCard(
+        "Artifact Unavailable",
+        "No committed output or intermediate snapshot found for port '" +
+          port +
+          "'.",
+      );
       return;
     }
 
@@ -306,13 +310,10 @@ async function loadCanvasPage(
       "/v1/artifacts/" + encodeURIComponent(targetDigest),
     );
     if (resp.status === 410) {
-      container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-        viewValue("Artifact Expired"),
-        viewValue(
-          "This artifact has expired under the coordinator retention policy.",
-        ),
-        viewValue(""),
-      ]);
+      container.innerHTML = canvasFallbackCard(
+        "Artifact Expired",
+        "This artifact has expired under the coordinator retention policy.",
+      );
       return;
     }
     if (!resp.ok) {
@@ -368,11 +369,10 @@ async function loadCanvasPage(
     try {
       parsedDoc = JSON.parse(rawText);
     } catch (parseErr: any) {
-      container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-        viewValue("Malformed Canvas JSON"),
-        viewValue("Failed to parse JSON: " + parseErr.message),
-        viewValue(""),
-      ]);
+      container.innerHTML = canvasFallbackCard(
+        "Malformed Canvas JSON",
+        "Failed to parse JSON: " + parseErr.message,
+      );
       return;
     }
 
@@ -386,11 +386,7 @@ async function loadCanvasPage(
         "Canvas version " +
         (ver !== undefined ? ver : "unknown") +
         " is not supported by this viewer (expected version 1).";
-      container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-        viewValue("Unsupported Version"),
-        viewValue(msg),
-        viewValue(""),
-      ]);
+      container.innerHTML = canvasFallbackCard("Unsupported Version", msg);
       return;
     }
 
@@ -450,6 +446,7 @@ async function loadCanvasPage(
       const rendererCtx: CanvasRendererContext = {
         sources: resolvedSources,
         state: activeCanvasStore.state,
+        controlTypes: activeCanvasStore.controlTypes,
         resolveData: (ref) => resolveCanvasData(ref, rendererCtx),
         siblingOutputs,
         runId,
@@ -463,8 +460,8 @@ async function loadCanvasPage(
       activeCanvasContext = rendererCtx;
 
       // Render root tree
-      const rootHtml = renderCanvasNode(
-        activeCanvasDoc.content,
+      const rootHtml = renderCanvasDocumentBody(
+        activeCanvasDoc,
         rendererCtx,
       ).value;
 
@@ -509,8 +506,8 @@ async function loadCanvasPage(
       const rootEl = document.getElementById("canvasRoot");
       if (!rootEl) return;
       const scrollY = rootEl.scrollTop;
-      const rootHtml = renderCanvasNode(
-        activeCanvasDoc.content,
+      const rootHtml = renderCanvasDocumentBody(
+        activeCanvasDoc,
         activeCanvasContext,
       ).value;
       const focused = document.activeElement as HTMLInputElement | null;
@@ -549,11 +546,10 @@ async function loadCanvasPage(
     });
   } catch (err: any) {
     if (generation !== canvasLoadGeneration) return;
-    container.innerHTML = renderViewTemplate("canvas/fallback-card", [
-      viewValue("Unable to Load Canvas"),
-      viewValue(err.message || String(err)),
-      viewValue(""),
-    ]);
+    container.innerHTML = canvasFallbackCard(
+      "Unable to Load Canvas",
+      err.message || String(err),
+    );
   }
 }
 
@@ -675,22 +671,26 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
   if (revSelect) {
     revSelect.onchange = () => {
       const val = revSelect.value;
-      if (val === "committed") {
-        loadCanvasPage(
-          activeCanvasInfo.runId,
-          activeCanvasInfo.activationId,
-          activeCanvasInfo.port,
-        );
-      } else if (val.startsWith("seq-")) {
-        const seq = Number(val.slice(4));
-        loadCanvasPage(
-          activeCanvasInfo.runId,
-          activeCanvasInfo.activationId,
-          activeCanvasInfo.port,
-          undefined,
-          seq,
-        );
-      }
+      const url = new URL(location.href);
+      url.searchParams.delete("attempt");
+      url.searchParams.delete("seq");
+      let seq: number | undefined;
+      if (val.startsWith("seq-")) {
+        seq = Number(val.slice(4));
+        url.searchParams.set("seq", String(seq));
+      } else if (val !== "committed") return;
+      history.replaceState(
+        history.state,
+        "",
+        url.pathname + url.search + url.hash,
+      );
+      loadCanvasPage(
+        activeCanvasInfo.runId,
+        activeCanvasInfo.activationId,
+        activeCanvasInfo.port,
+        undefined,
+        seq,
+      );
     };
   }
 
@@ -804,15 +804,22 @@ function attachCanvasDOMListeners(root: HTMLElement): void {
 
   // Section collapse/expand — <details> fires a native "toggle" event after
   // open state changes. Update the store so re-renders preserve the state.
+  // The container persists across renders, so the capture listener is bound once.
+  if (root.dataset.canvasToggleBound === "true") return;
+  root.dataset.canvasToggleBound = "true";
   root.addEventListener(
     "toggle",
     (e) => {
       if (!activeCanvasStore) return;
       const details = e.target as HTMLDetailsElement | null;
-      if (!details || details.tagName !== "DETAILS") return;
-      const section = details.closest<HTMLElement>(".canvas-section[id]");
-      if (!section) return;
-      const id = section.id;
+      if (
+        !details ||
+        details.tagName !== "DETAILS" ||
+        !details.classList.contains("canvas-section") ||
+        !details.id
+      )
+        return;
+      const id = details.id;
       const isNowOpen = details.open;
       const wasCollapsed = activeCanvasStore.collapsedSections.has(id);
       // Only dispatch if the DOM state disagrees with the store to avoid loops.

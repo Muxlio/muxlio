@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -168,10 +169,10 @@ func cmdWorkerStart(coordinator, workerID, capabilities, capacityArg, adaptersDi
 		capStr = os.Getenv("MUXLIO_WORKER_CAPACITY")
 	}
 	if capStr != "" {
-		if cap, err := strconv.Atoi(capStr); err == nil && cap > 0 {
+		if cap, err := strconv.Atoi(capStr); err == nil && cap > 0 && cap <= api.MaxWorkerCapacity {
 			capacity = cap
 		} else {
-			fmt.Fprintln(os.Stderr, "error: capacity must be a positive integer")
+			fmt.Fprintf(os.Stderr, "error: capacity must be an integer between 1 and %d\n", api.MaxWorkerCapacity)
 			return 2
 		}
 	}

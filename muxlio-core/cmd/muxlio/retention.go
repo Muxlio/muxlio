@@ -24,7 +24,7 @@ func cleanupIdleRuntime(store *sqlite.Store, driver artifacts.Driver, dataDir st
 	return cleanupIdleRuntimeAt(store, driver, dataDir, gate, time.Now())
 }
 func cleanupIdleRuntimeAt(store *sqlite.Store, driver artifacts.Driver, dataDir string, gate *sync.RWMutex, now time.Time) (*sqlite.GCReport, error) {
-	local, ok := driver.(*artifacts.Local)
+	local, ok := artifacts.LocalTier(driver)
 	if !ok || !gate.TryLock() {
 		return nil, nil
 	}

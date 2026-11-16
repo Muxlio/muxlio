@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -87,8 +88,8 @@ func ChooseAgent(candidates []AgentCandidate, preferences *AgentSelectionPrefere
 		if a.Load != b.Load {
 			return a.Load < b.Load
 		}
-		if a.WorkerLoad*b.Capacity != b.WorkerLoad*a.Capacity {
-			return a.WorkerLoad*b.Capacity < b.WorkerLoad*a.Capacity
+		if c := compareLoadRatio(a, b); c != 0 {
+			return c < 0
 		}
 		if a.LastTurn != b.LastTurn {
 			return a.LastTurn < b.LastTurn
@@ -99,6 +100,14 @@ func ChooseAgent(candidates []AgentCandidate, preferences *AgentSelectionPrefere
 		return a.WorkerID < b.WorkerID
 	})
 	return choices[0], nil
+}
+
+// compareLoadRatio compares WorkerLoad/Capacity by exact cross products, which
+// can exceed int range for operator-configured capacities.
+func compareLoadRatio(a, b AgentCandidate) int {
+	left := new(big.Int).Mul(big.NewInt(int64(a.WorkerLoad)), big.NewInt(int64(b.Capacity)))
+	right := new(big.Int).Mul(big.NewInt(int64(b.WorkerLoad)), big.NewInt(int64(a.Capacity)))
+	return left.Cmp(right)
 }
 
 func IsAnyAgent(name string) bool { return name == "any" || name == "agent/any" }
@@ -193,7 +202,7 @@ func (s *ScriptExecutor) SelectExecutor(req ExecuteRequest, usage map[string]int
 	if err != nil {
 		return "", err
 	}
-	worker := state.Worker{ID: s.WorkerID, Labels: map[string]string{SessionEnvironmentLabel: s.SessionEnvironment()}}
+	worker := state.Worker{ID: s.sessionOwner(), Labels: map[string]string{SessionEnvironmentLabel: s.SessionEnvironment()}}
 	var params struct {
 		Isolation *isolationPolicy `json:"isolation"`
 	}

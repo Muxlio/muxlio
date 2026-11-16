@@ -7,12 +7,54 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/muxlio/muxlio-core/internal/coordinatorconfig"
 )
 
 type serverProfile struct {
-	URL   string `json:"url"`
-	Token string `json:"token,omitempty"`
+	URL           string `json:"url"`
+	Token         string `json:"token,omitempty"`
+	TokenFile     string `json:"tokenFile,omitempty"`
+	CredentialRef string `json:"credentialRef,omitempty"`
+}
+
+// credentials applies coordinatorconfig's transport and credential rules. The
+// root token is only sent to this machine's own coordinator.
+func (p serverProfile) credentials(cfgPath, dataDir, rootToken string) (string, string, error) {
+	u, err := url.Parse(p.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", fmt.Errorf("invalid coordinator URL in server profile; use an HTTP(S) URL without credentials, query, or fragment")
+	}
+	if u.Scheme == "http" && !coordinatorconfig.IsLoopback(u.Hostname()) {
+		return "", "", fmt.Errorf("remote coordinator %s requires HTTPS", u.Host)
+	}
+	if p.CredentialRef != "" && p.CredentialRef != "root" {
+		return "", "", fmt.Errorf("unknown coordinator credentialRef; use root only for a local profile")
+	}
+	if p.CredentialRef == "root" && !coordinatorconfig.IsLoopback(u.Hostname()) {
+		return "", "", fmt.Errorf("root credential reference requires a loopback coordinator; remote profiles require explicit scoped token or tokenFile")
+	}
+	token := strings.TrimSpace(p.Token)
+	if token == "" && p.TokenFile != "" {
+		file := p.TokenFile
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(filepath.Dir(cfgPath), file)
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return "", "", fmt.Errorf("reading coordinator token file: %w", err)
+		}
+		token = strings.TrimSpace(string(raw))
+	}
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("MUXLIO_TOKEN"))
+	}
+	if token == "" && (p.CredentialRef == "root" || isLocalCoordinatorURL(u, dataDir)) {
+		token = rootToken
+	}
+	return strings.TrimRight(p.URL, "/"), token, nil
 }
 
 // resolveServer resolves a server identifier (which can be a profile name like "macmini",
@@ -72,24 +114,10 @@ func resolveServer(serverArg, dataDir string) (serverURL string, token string, e
 			}
 
 			if p := lookup(cfg.Servers); p != nil {
-				tok := p.Token
-				if tok == "" {
-					tok = cfg.Token
-				}
-				if tok == "" {
-					tok = os.Getenv("MUXLIO_TOKEN")
-				}
-				return strings.TrimRight(p.URL, "/"), tok, nil
+				return p.credentials(cfgPath, dataDir, cfg.Token)
 			}
 			if p := lookup(cfg.Profiles); p != nil {
-				tok := p.Token
-				if tok == "" {
-					tok = cfg.Token
-				}
-				if tok == "" {
-					tok = os.Getenv("MUXLIO_TOKEN")
-				}
-				return strings.TrimRight(p.URL, "/"), tok, nil
+				return p.credentials(cfgPath, dataDir, cfg.Token)
 			}
 		}
 	}

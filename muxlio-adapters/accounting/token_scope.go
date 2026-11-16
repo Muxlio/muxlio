@@ -3,6 +3,7 @@ package accounting
 import (
 	"fmt"
 	"github.com/muxlio/muxlio-adapters/contract"
+	"math/big"
 	"reflect"
 )
 
@@ -35,6 +36,31 @@ func mergeScopeMeasure(a, b contract.Measure[contract.Count]) (contract.Measure[
 	}
 	a.Estimated, err = merge(a.Estimated, b.Estimated)
 	return a, err
+}
+
+func measureExceeds(inclusive contract.Measure[contract.Count], subsets ...contract.Measure[contract.Count]) bool {
+	exceeds := func(limit *contract.Reading[contract.Count], pick func(contract.Measure[contract.Count]) *contract.Reading[contract.Count]) bool {
+		if limit == nil {
+			return false
+		}
+		max, ok := new(big.Int).SetString(string(limit.Value), 10)
+		if !ok {
+			return false
+		}
+		sum := new(big.Int)
+		for _, m := range subsets {
+			if r := pick(m); r != nil {
+				v, ok := new(big.Int).SetString(string(r.Value), 10)
+				if !ok {
+					return false
+				}
+				sum.Add(sum, v)
+			}
+		}
+		return sum.Cmp(max) > 0
+	}
+	return exceeds(inclusive.Collected, func(m contract.Measure[contract.Count]) *contract.Reading[contract.Count] { return m.Collected }) ||
+		exceeds(inclusive.Estimated, func(m contract.Measure[contract.Count]) *contract.Reading[contract.Count] { return m.Estimated })
 }
 
 // ReplaceTokenScope applies a certified aggregate over a token-only scope.
@@ -76,6 +102,27 @@ func (r *Recorder) ReplaceTokenScope(scope string, entry contract.AccountingEntr
 			if err != nil {
 				return r.reject("accounting_scope_provenance_ambiguous")
 			}
+		}
+	}
+	// Carried subsets were confirmed against superseded inclusive counts.
+	if componentsChanged {
+		drop := func(i int) {
+			if missing[i] {
+				*left[i] = contract.Measure[contract.Count]{}
+			}
+		}
+		if measureExceeds(t.Input, t.CacheRead) {
+			drop(3)
+		}
+		if measureExceeds(t.Input, t.CacheWrite) {
+			drop(4)
+		}
+		if measureExceeds(t.Input, t.CacheRead, t.CacheWrite) {
+			drop(3)
+			drop(4)
+		}
+		if measureExceeds(t.Output, t.Reasoning) {
+			drop(5)
 		}
 	}
 	if missing[0] && t.Input.Collected != nil && t.Output.Collected != nil {

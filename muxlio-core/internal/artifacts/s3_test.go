@@ -112,3 +112,22 @@ func TestTieredUsesLocalForSmallAndFallsBackForLarge(t *testing.T) {
 		t.Fatalf("got %q", data)
 	}
 }
+
+func TestLocalTierFindsHostStoreBehindRemoteTiers(t *testing.T) {
+	local, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, driver := range map[string]Driver{
+		"local":    local,
+		"tiered":   Tiered{S3: Fallback{Primary: local, Local: local}, Local: local},
+		"fallback": Fallback{Primary: Tiered{S3: local, Local: local}, Local: local},
+	} {
+		if got, ok := LocalTier(driver); !ok || got != local {
+			t.Errorf("%s: local tier not found", name)
+		}
+	}
+	if _, ok := LocalTier(Tiered{S3: local, Local: Fallback{}}); ok {
+		t.Error("driver without a local store reported one")
+	}
+}

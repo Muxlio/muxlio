@@ -1,8 +1,10 @@
 package workers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -36,6 +38,46 @@ func TestStoreLogSinkPersistsIncrementalChunks(t *testing.T) {
 	}
 	if got := string(rec.chunks[1].Data); got != "[REDACTED]world" {
 		t.Fatalf("redacted data = %q", got)
+	}
+}
+
+func TestStoreLogSinkCutsOnRuneBoundaries(t *testing.T) {
+	rec := &logRecorder{}
+	sink := NewStoreLogSink(rec, "run", "act", nil)
+	if err := sink.Append("agent", []byte(strings.Repeat("a", logChunkMaxBytes-1)+"é")); err != nil {
+		t.Fatal(err)
+	}
+	budget := state.MaxAttemptProgressBytes - logChunkMaxBytes - 1
+	if err := sink.Append("agent", []byte(strings.Repeat("b", budget-1)+"é")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Append("agent", []byte("z")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, c := range rec.chunks {
+		if !utf8.Valid(c.Data) {
+			t.Fatalf("chunk %d splits a rune", c.Seq)
+		}
+		all.Write(c.Data)
+	}
+	if got := all.String(); strings.Contains(got, "z") || !strings.HasSuffix(got, "b") {
+		t.Fatalf("budget cut resumed or split a rune: suffix %q", got[len(got)-4:])
+	}
+}
+
+func TestStoreLogSinkRedactsOperationReferences(t *testing.T) {
+	rec := &logRecorder{}
+	sink := NewStoreLogSink(rec, "run", "act", map[string]string{"api": "quoted\"credential"})
+	if err := sink.Append("operation", []byte(`{"id":"quoted\"credential","url":"https://example.test/task"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var ref struct{ ID, URL string }
+	if len(rec.chunks) != 1 || json.Unmarshal(rec.chunks[0].Data, &ref) != nil || ref.ID != "[REDACTED]" || ref.URL != "https://example.test/task" {
+		t.Fatalf("operation reference not redacted: %+v", rec.chunks)
 	}
 }
 

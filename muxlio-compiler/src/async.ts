@@ -10,7 +10,7 @@
 // The compiler validates and records the supported operations as the workflow
 // function runs with a recording context.
 
-import { computeDigest, assertNoLiteralCredentials } from '@muxlio/sdk';
+import { computeDigest, assertNoLiteralCredentials, externalDependencies } from '@muxlio/sdk';
 import type {
   Binding,
   ExecutorRequirements,
@@ -37,11 +37,18 @@ function createTraced(binding: Binding): any {
       if (prop === '__binding') return binding;
       if (prop === '__expr') return expr;
       if (typeof prop === 'symbol') return undefined;
-      const fieldExpr: Expr = { op: 'field', expr, name: String(prop) };
-      return createTraced({ expr: fieldExpr });
+      return createTraced({ expr: accessExpr(expr, String(prop)) });
     },
   };
   return new Proxy({}, handler);
+}
+
+/** Canonical non-negative integer keys index arrays; other keys read fields. */
+function accessExpr(expr: Expr, name: string): Expr {
+  if (/^(0|[1-9]\d*)$/.test(name) && Number.isSafeInteger(Number(name))) {
+    return { op: 'index', expr, index: Number(name) };
+  }
+  return { op: 'field', expr, name };
 }
 
 function isTraced(v: unknown): v is { __binding: Binding; __expr: Expr } {
@@ -71,27 +78,57 @@ function bindingToExpr(b: Binding): Expr {
   throw new Error('muxlio: empty binding has no expression');
 }
 
-function toBinding(value: unknown): Binding {
-  if (isTraced(value)) return value.__binding;
-  return { expr: { op: 'literal', value } };
+function isExecuteResult(v: unknown): v is { __nodeId: string; outputs: Record<string, unknown> } {
+  return v !== null && typeof v === 'object' && !isTraced(v) &&
+    typeof (v as any).__nodeId === 'string' &&
+    typeof (v as any).outputs === 'object' && (v as any).outputs !== null;
 }
 
+function containsTraced(value: unknown): boolean {
+  if (isTraced(value) || isExecuteResult(value)) return true;
+  if (Array.isArray(value)) return value.some(containsTraced);
+  if (value !== null && typeof value === 'object') return Object.values(value).some(containsTraced);
+  return false;
+}
+
+function toBinding(value: unknown): Binding {
+  if (isTraced(value)) return value.__binding;
+  return { expr: toExpr(value) };
+}
+
+/** Output bindings for a body or run result; `undefined` values produce no port. */
 function toBindings(value: unknown): Record<string, Binding> {
+  if (value === undefined) return {};
   if (isTraced(value)) {
     return { result: value.__binding };
   }
+  if (isExecuteResult(value)) return toBindings(value.outputs);
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const result: Record<string, Binding> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      result[key] = toBinding(val);
+      if (val !== undefined) result[key] = toBinding(val);
     }
     return result;
   }
-  return { result: { expr: { op: 'literal', value } } };
+  return { result: toBinding(value) };
 }
 
 function toExpr(value: unknown): Expr {
   if (isTraced(value)) return value.__expr;
+  if (isExecuteResult(value)) return toExpr(value.outputs);
+  if (value === undefined) {
+    throw new Error('muxlio: undefined is not a JSON value; omit the property or use null');
+  }
+  if (containsTraced(value)) {
+    if (Array.isArray(value)) {
+      return { op: 'array', elements: value.map((v) => (v === undefined ? { op: 'literal', value: null } : toExpr(v))) };
+    }
+    const fields: Record<string, Expr> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (val !== undefined) fields[key] = toExpr(val);
+    }
+    return { op: 'object', fields };
+  }
   return { op: 'literal', value };
 }
 
@@ -100,9 +137,9 @@ function toExpr(value: unknown): Expr {
 // A plain object (not thenable, not a proxy). `await` returns it directly.
 // `result.outputs.portName` returns a Traced value for that port.
 
-function createExecuteResult(nodeId: string, outputDecls: Record<string, OutputDecl>): any {
+function createExecuteResult(nodeId: string, ports: string[]): any {
   const outputs: Record<string, any> = {};
-  for (const port of Object.keys(outputDecls)) {
+  for (const port of ports) {
     outputs[port] = createTraced({ ref: { node: nodeId, port } });
   }
   return { __nodeId: nodeId, outputs };
@@ -166,7 +203,7 @@ class RecordingContext {
     const inputs: Record<string, Binding> = {};
     if (opts.inputs) {
       for (const [name, val] of Object.entries(opts.inputs)) {
-        inputs[name] = toBinding(val);
+        if (val !== undefined) inputs[name] = toBinding(val);
       }
     }
     const node: Node = {
@@ -194,7 +231,7 @@ class RecordingContext {
       node.fallbackExecutors = opts.fallbackExecutors;
     }
     this.nodes.push(node);
-    return createExecuteResult(id, outputDecls);
+    return createExecuteResult(id, Object.keys(outputDecls));
   }
 
   async map(
@@ -230,6 +267,7 @@ class RecordingContext {
       concurrency: opts?.concurrency,
       maxItems: opts?.maxItems,
       bodyRef: bodyName,
+      ...this.liftedInputs(id, [bodyName]),
     });
 
     return createTraced({ ref: { node: id, port: 'items' } });
@@ -252,25 +290,22 @@ class RecordingContext {
     this.mergeSubgraphs(thenCollected);
     this.mergeExecutors(thenCollected);
 
-    let elseRef: string | undefined;
-    if (elseFn) {
-      const elseName = this.uniqueName(`${id}_else`);
-      const elseCtx = new RecordingContext(this.counter);
-      const elseResult = await elseFn(elseCtx);
-      const elseOutput = toBindings(elseResult);
-      const elseCollected = elseCtx.collect();
-      this.subgraphs[elseName] = { nodes: elseCollected.nodes, output: elseOutput };
-      this.mergeSubgraphs(elseCollected);
-      this.mergeExecutors(elseCollected);
-      elseRef = elseName;
-    }
+    // An omitted else still needs a subgraph so the branch emits `result`.
+    const elseName = this.uniqueName(`${id}_else`);
+    const elseCtx = new RecordingContext(this.counter);
+    const elseOutput = elseFn ? toBindings(await elseFn(elseCtx)) : {};
+    const elseCollected = elseCtx.collect();
+    this.subgraphs[elseName] = { nodes: elseCollected.nodes, output: elseOutput };
+    this.mergeSubgraphs(elseCollected);
+    this.mergeExecutors(elseCollected);
 
     this.nodes.push({
       id,
       kind: 'branch',
       condition: condExpr,
       thenRef: thenName,
-      elseRef,
+      elseRef: elseName,
+      ...this.liftedInputs(id, [thenName, elseName]),
     });
 
     return createTraced({ ref: { node: id, port: 'result' } });
@@ -304,6 +339,7 @@ class RecordingContext {
       stateRef: opts.stateRef,
       onExhausted: opts.onExhausted,
       bodyRef: bodyName,
+      ...this.liftedInputs(id, [bodyName]),
     });
 
     return createTraced({ ref: { node: id, port: 'result' } });
@@ -312,10 +348,10 @@ class RecordingContext {
   project(id: string, inputs: Record<string, unknown>): any {
     const bindings: Record<string, Binding> = {};
     for (const [name, val] of Object.entries(inputs)) {
-      bindings[name] = toBinding(val);
+      if (val !== undefined) bindings[name] = toBinding(val);
     }
     this.nodes.push({ id, kind: 'project', inputs: bindings });
-    return createExecuteResult(id, {});
+    return createExecuteResult(id, Object.keys(bindings));
   }
 
   collect(): {
@@ -328,6 +364,11 @@ class RecordingContext {
       subgraphs: this.subgraphs,
       requiredExecutors: this.requiredExecutors,
     };
+  }
+
+  private liftedInputs(id: string, bodyNames: string[]): { inputs?: Record<string, Binding> } {
+    const inputs = externalDependencies(id, bodyNames, this.subgraphs);
+    return Object.keys(inputs).length > 0 ? { inputs } : {};
   }
 
   private mergeSubgraphs(collected: { subgraphs: Record<string, Subgraph> }) {

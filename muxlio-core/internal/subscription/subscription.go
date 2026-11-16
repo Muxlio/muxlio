@@ -363,7 +363,7 @@ func validHeaderName(name string) error {
 	// These fields are owned by the envelope or HTTP transport. Go may
 	// overwrite, interpret, or omit them rather than send a signature.
 	switch strings.ToLower(name) {
-	case "content-type", "content-length", "host", "connection", "transfer-encoding", "trailer", "te", "upgrade", "keep-alive", "proxy-connection", "x-muxlio-event-id":
+	case "content-type", "content-length", "host", "connection", "transfer-encoding", "trailer", "te", "upgrade", "keep-alive", "proxy-connection", "x-muxlio-event-id", "sec-fetch-site":
 		return errors.New("muxlio: signatureHeader conflicts with a reserved HTTP header")
 	}
 	if name == "" {

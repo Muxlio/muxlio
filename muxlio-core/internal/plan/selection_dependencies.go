@@ -331,6 +331,8 @@ func (r *selectionDependencyResolver) expr(expr *Expr, scope []string, path sele
 		}
 	case "state":
 		r.loopState(scope, path)
+	case "item":
+		r.mapItem(scope, path)
 	default:
 		// Scalar computations depend on each operand, regardless of any later
 		// selection. Literals and root inputs have no executor producer.
@@ -376,6 +378,33 @@ func (r *selectionDependencyResolver) loopState(scope []string, path selectionVa
 				previous := append(append([]string{}, scope[:depth]...), prefix+strconv.Itoa(iteration-1))
 				r.output(node.BodyRef, previous, node.StateRef, path)
 			}
+			return
+		}
+	}
+}
+
+// The current item is an element of the nearest enclosing map's collection.
+// Branches, children and loops inherit it. Default keys are item indices;
+// custom keys do not encode a position, so they keep every element together.
+func (r *selectionDependencyResolver) mapItem(scope []string, path selectionValuePath) {
+	for depth := len(scope) - 1; depth >= 0; depth-- {
+		graph, ok := r.graphAtScope(scope[:depth])
+		if !ok {
+			continue
+		}
+		frame := scope[depth]
+		for _, node := range graph.Nodes {
+			prefix := "map:" + identityComponent(node.ID) + ":"
+			if node.Kind != KindMap || !strings.HasPrefix(frame, prefix) {
+				continue
+			}
+			if node.Key == nil {
+				if index, err := strconv.Atoi(strings.TrimPrefix(frame, prefix)); err == nil && index >= 0 {
+					r.expr(node.Items, scope[:depth], append(selectionValuePath{"i:" + strconv.Itoa(index)}, path...))
+					return
+				}
+			}
+			r.expr(node.Items, scope[:depth], nil)
 			return
 		}
 	}

@@ -94,7 +94,12 @@ func SummarizeAccounting(views []AttemptView) (AccountingSummary, error) {
 			}
 		}
 		if !known {
-			state = "unknown"
+			reported := func(contract.AccountingKey) bool { return false }
+			if state == "complete" && unattributedState(v, "cost", reported) == "inapplicable" {
+				state = "inapplicable"
+			} else {
+				state = "unknown"
+			}
 		}
 		a.Coverage = []contract.MeterCoverage{{Key: key, State: state}}
 		p.Accounting = a

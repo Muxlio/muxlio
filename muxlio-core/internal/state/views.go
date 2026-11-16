@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ type OutputEntry struct {
 	NodeID       string `json:"nodeId"`
 	Name         string `json:"name"`
 }
+
+// LoopProgressOutputKey is the interpreter's loop checkpoint entry in
+// activation outputs. It is internal state, not an output port.
+const LoopProgressOutputKey = "__muxlioLoopProgress"
 
 // RunViewStore supports bounded reads without decoding the entire run history.
 // Existing execution methods retain their full-history semantics.
@@ -169,7 +174,9 @@ func (s *Memory) listOutputPage(id string, offset, limit int, search string, ref
 	for _, a := range acts {
 		keys := []string{}
 		for key := range a.Outputs {
-			keys = append(keys, key)
+			if key != LoopProgressOutputKey {
+				keys = append(keys, key)
+			}
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
@@ -178,7 +185,7 @@ func (s *Memory) listOutputPage(id string, offset, limit int, search string, ref
 				e.Digest, _ = value["digest"].(string)
 				e.Mime, _ = value["mime"].(string)
 				e.Path, _ = value["path"].(string)
-				if size, ok := value["size"].(float64); ok {
+				if size, ok := value["size"].(float64); ok && strings.HasPrefix(e.Digest, "sha256:") && size == math.Trunc(size) && math.Abs(size) < 1<<63 {
 					e.Size = int64(size)
 				}
 			}

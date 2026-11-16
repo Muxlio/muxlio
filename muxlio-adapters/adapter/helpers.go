@@ -3,6 +3,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,8 +98,10 @@ func CollectOutputs(req *Request) (map[string]any, []string, map[string]string) 
 // InputContent returns inline text for an input port value. It handles raw
 // strings, maps carrying a "data" string (inline artifact bytes), and maps
 // carrying a "path" to a readable file (a materialized artifact downloaded by
-// the coordinator). It returns ("", false) when there is nothing to inline.
-func InputContent(value any) (string, bool) {
+// the coordinator into workDir). Paths outside workDir, including through
+// symlinks, and files over MaxCaptureBytes are not read. It returns ("", false)
+// when there is nothing to inline.
+func InputContent(workDir string, value any) (string, bool) {
 	switch v := value.(type) {
 	case string:
 		if v != "" {
@@ -109,12 +112,48 @@ func InputContent(value any) (string, bool) {
 			return data, true
 		}
 		if path, ok := v["path"].(string); ok && path != "" {
-			if b, err := os.ReadFile(path); err == nil {
+			if b, err := readConfined(workDir, path); err == nil {
 				return string(b), true
 			}
 		}
 	}
 	return "", false
+}
+
+func readConfined(workDir, path string) ([]byte, error) {
+	if workDir == "" || !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("input path must be absolute within the work directory")
+	}
+	root, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("input path escapes the work directory")
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	file, err := dir.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, MaxCaptureBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxCaptureBytes {
+		return nil, fmt.Errorf("input exceeds %d byte limit", MaxCaptureBytes)
+	}
+	return data, nil
 }
 
 // ComposePrompt builds the common agent prompt from a request: the task
@@ -176,7 +215,7 @@ func ComposePrompt(req *Request) string {
 		// A domain object may have a path or data field without being an
 		// artifact. Keep all its fields instead of reading that path.
 		if !structured || artifact {
-			content, inline = InputContent(val)
+			content, inline = InputContent(req.WorkDir, val)
 		}
 		if !inline {
 			encoded, err := json.MarshalIndent(val, "", "  ")

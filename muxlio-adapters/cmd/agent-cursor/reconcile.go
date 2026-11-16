@@ -71,6 +71,9 @@ func reconcileCursorSnapshot(ctx context.Context, client *http.Client, endpoint,
 		coverage := contract.MeterCoverage{Key: contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: basis}, State: "partial", Reason: "provider-window-provisional"}
 		if lookupErr != nil {
 			coverage.Reason = lookupErr.Error()
+			if !hasCursorLedgerCost(next.Entries, basis) {
+				coverage.State = "unknown"
+			}
 		}
 		found := false
 		for i := range next.Coverage {
@@ -88,6 +91,17 @@ func reconcileCursorSnapshot(ctx context.Context, client *http.Client, endpoint,
 		return nil, err
 	}
 	return &next, nil
+}
+
+func hasCursorLedgerCost(entries []contract.AccountingEntry, basis string) bool {
+	for _, entry := range entries {
+		for _, cost := range entry.Costs {
+			if cost.Basis == basis && cost.Amount.Collected != nil && cost.Amount.Collected.Source == "cursor-admin-usage" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func runCursorReconciliation() error {

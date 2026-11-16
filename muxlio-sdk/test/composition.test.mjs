@@ -18,10 +18,40 @@ test('refine compiles to a bounded state-carrying loop', () => {
   });
 
   const root = plan.subgraphs.root;
-  assert.equal(root.nodes.at(-1).kind, 'loop');
-  assert.equal(root.nodes.at(-1).maxIterations, 3);
-  const body = plan.subgraphs[root.nodes.at(-1).bodyRef];
-  assert.deepEqual(body.output, { value: { expr: { op: 'add', left: { op: 'state' }, right: { op: 'literal', value: 1 } } } });
+  const loop = root.nodes.at(-1);
+  assert.equal(loop.kind, 'loop');
+  assert.equal(loop.maxIterations, 3);
+  const value = { op: 'field', expr: { op: 'state' }, name: 'value' };
+  const pass = { op: 'field', expr: { op: 'state' }, name: 'pass' };
+  // The bound is part of `while`, so reaching it ends the loop instead of pausing.
+  assert.deepEqual(loop.while, {
+    op: 'and',
+    left: { op: 'lt', left: value, right: { op: 'literal', value: 3 } },
+    right: { op: 'lt', left: pass, right: { op: 'literal', value: 3 } },
+  });
+  const body = plan.subgraphs[loop.bodyRef];
+  assert.deepEqual(body.output, {
+    value: { expr: { op: 'add', left: value, right: { op: 'literal', value: 1 } } },
+    pass: { expr: { op: 'add', left: pass, right: { op: 'literal', value: 1 } } },
+  });
+  assert.deepEqual(root.output.result, { expr: { op: 'field', expr: { op: 'ref', node: 'refine', port: 'result' }, name: 'value' } });
+});
+
+test('refine with zero iterations returns the initial value without a loop', () => {
+  const { plan } = defineWorkflow({
+    name: 'refine-zero',
+    build(g) {
+      const result = refine(g, 'refine', {
+        initial: { expr: literal(7) },
+        maxIterations: 0,
+        continueWhile: () => literal(true),
+        refine: () => ({ expr: literal(0) }),
+      });
+      g.output({ result });
+    },
+  });
+  assert.deepEqual(plan.subgraphs.root.nodes, []);
+  assert.deepEqual(plan.subgraphs.root.output.result, { expr: { op: 'literal', value: 7 } });
 });
 
 test('speculate maps candidates and selects a deterministic position', () => {

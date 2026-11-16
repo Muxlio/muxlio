@@ -69,13 +69,23 @@ function renderCanvasSection(
   context: CanvasRendererContext,
   renderChild: (n: CanvasNode) => ComponentHTML,
 ): ComponentHTML {
+  const renderedChildren = (node.children || [])
+    .map((c) => renderChild(c).value)
+    .join("");
+  if (node.collapsible === false) {
+    return componentBody(
+      renderComponent("canvas-section-static", {
+        id: node.id,
+        title: node.title || "",
+        description: node.description || "",
+        children: componentBody(renderedChildren),
+      }),
+    );
+  }
   const isCollapsed = context.collapsedSections
     ? context.collapsedSections.has(node.id)
     : !!node.collapsed;
   const openAttr = isCollapsed ? "" : "open";
-  const renderedChildren = (node.children || [])
-    .map((c) => renderChild(c).value)
-    .join("");
   return componentBody(
     renderComponent("canvas-section", {
       id: node.id,
@@ -93,10 +103,14 @@ function renderCanvasTabs(
   renderChild: (n: CanvasNode) => ComponentHTML,
 ): ComponentHTML {
   const tabs = node.tabs || [];
-  const activeTabId =
+  const requested =
     (context.activeTabsState && context.activeTabsState.get(node.id)) ||
-    node.initial ||
-    (tabs.length > 0 ? tabs[0].id : "");
+    node.initial;
+  const activeTabId = tabs.some((t) => t.id === requested)
+    ? requested
+    : tabs.length > 0
+      ? tabs[0].id
+      : "";
 
   const renderedButtons = tabs
     .map((t) => {
@@ -253,7 +267,10 @@ function renderCanvasTable(
   }
 
   // Local sorting
-  const sortInfo = context.tableSortState ? context.tableSortState.get(node.id) : undefined;
+  const sortInfo =
+    node.sortable && context.tableSortState
+      ? context.tableSortState.get(node.id)
+      : undefined;
   const sorted = sortDataRows(rawData, sortInfo?.field, sortInfo?.direction || "asc");
 
   // Local paging
@@ -276,6 +293,7 @@ function renderCanvasTable(
       }
       return renderComponent("canvas-table-header", {
         thClass: node.sortable ? "canvas-th-sortable" : "",
+        action: node.sortable ? "sort" : "",
         ownerId: node.id,
         field: col.field,
         label: col.label,
@@ -348,12 +366,14 @@ function renderCanvasJson(
   node: CanvasJsonNode,
   context: CanvasRendererContext,
 ): ComponentHTML {
-  const rawData = context.resolveData(node.data);
+  // The schema types json `data` as arbitrary inline JSON, not a dataRef.
+  const rawData = node.data;
   let panelHtml = "";
   if (typeof MuxlioJson !== "undefined" && typeof MuxlioJson.jsonPanelFromValue === "function") {
     const panel = MuxlioJson.jsonPanelFromValue(rawData, componentEscape, {
       title: node.title || "JSON Document",
       statePath: "canvas:" + node.id,
+      ...(node.collapsed ? { openDepth: 0 } : {}),
     });
     panelHtml = panel.html;
   } else {
@@ -387,7 +407,11 @@ function renderCanvasBarChart(
     const v = it && typeof it === "object" ? Number(it[node.valueField]) : 0;
     return Number.isFinite(v) ? v : 0;
   });
-  const maxVal = Math.max(...numericVals, 1);
+  // Percent values share a fixed 0–1 scale; other values scale to the largest.
+  const maxVal =
+    node.format === "percent"
+      ? Math.max(1, ...numericVals)
+      : Math.max(0, ...numericVals);
 
   const renderedBars = bounded
     .map((it: any) => {
@@ -395,7 +419,10 @@ function renderCanvasBarChart(
       const rawVal = it && typeof it === "object" ? it[node.valueField] : 0;
       const numVal = Number(rawVal);
       const val = Number.isFinite(numVal) ? numVal : 0;
-      const pct = maxVal > 0 ? Math.max(0, Math.min(100, (val / maxVal) * 100)) : 0;
+      const pct =
+        maxVal > 0 && val > 0
+          ? Math.max(1, Math.min(100, (val / maxVal) * 100))
+          : 0;
       let displayVal = String(rawVal);
       if (node.format === "percent" && Number.isFinite(numVal)) {
         displayVal = (numVal * 100).toFixed(1) + "%";
@@ -444,7 +471,7 @@ function renderCanvasSparkline(
     }
     return 0;
   });
-  const maxVal = Math.max(...values, 1);
+  const maxVal = Math.max(0, ...values);
 
   const renderedBars = values
     .map((v, i) => {

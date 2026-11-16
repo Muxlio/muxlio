@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -45,6 +46,10 @@ func handleForkRun(w http.ResponseWriter, r *http.Request, s state.Store, runner
 	}
 	if request.PlanDigest != "" {
 		raw, err := s.GetWorkflowVersion(request.PlanDigest)
+		if errors.Is(err, state.ErrWorkflowVersionRetired) {
+			writeError(w, http.StatusGone, CodeWorkflowVersionRetired, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, 404, CodeNotFound, err.Error())
 			return

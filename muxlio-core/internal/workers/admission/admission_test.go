@@ -185,22 +185,22 @@ func TestProviderKeyFuncUsed(t *testing.T) {
 	// Two executors map to the same provider key.
 	g := newGate(Config{
 		ProviderKeyFunc: func(executor string) string {
-			if executor == "openai/gpt-4o" || executor == "openai/gpt-4-turbo" {
-				return "openai"
+			if executor == "agent/example-a" || executor == "agent/example-b" {
+				return "example"
 			}
 			return executor
 		},
 		ProviderRateLimits: map[string]TokenBucketConfig{
-			"openai": {Burst: 1, RatePerSecond: 0.001},
+			"example": {Burst: 1, RatePerSecond: 0.001},
 		},
 	})
 	now := time.Now()
-	ok1, _ := g.TryAdmit(DispatchInfo{RunID: "run1", Executor: "openai/gpt-4o"}, 0, 0, now)
+	ok1, _ := g.TryAdmit(DispatchInfo{RunID: "run1", Executor: "agent/example-a"}, 0, 0, now)
 	if !ok1 {
 		t.Fatal("first admission")
 	}
-	// Different model, same provider — rate limited.
-	ok2, r2 := g.TryAdmit(DispatchInfo{RunID: "run2", Executor: "openai/gpt-4-turbo"}, 0, 0, now)
+	// Different executor, same provider key — rate limited.
+	ok2, r2 := g.TryAdmit(DispatchInfo{RunID: "run2", Executor: "agent/example-b"}, 0, 0, now)
 	if ok2 || r2 != QueueReasonRateLimit {
 		t.Fatalf("cross-model rate limit: ok=%v reason=%v", ok2, r2)
 	}
@@ -455,6 +455,26 @@ func TestKeyCapRejectionLeavesNoRunState(t *testing.T) {
 	}
 	if ok, reason := g.TryAdmit(DispatchInfo{RunID: "other", Executor: "ex", OperatorKey: "keyY"}, 0, 0, now); !ok {
 		t.Fatalf("other run should admit: reason=%v", reason)
+	}
+}
+
+// TestFinishedRunDoesNotBlockLaterRun reproduces a run that executed alone,
+// kept its unspent quantum after completing, and blocked every later run.
+func TestFinishedRunDoesNotBlockLaterRun(t *testing.T) {
+	g := newGate(Config{})
+	finished := DispatchInfo{RunID: "run1", Executor: "ex"}
+	if ok, reason := admit(g, finished); !ok {
+		t.Fatalf("solo run: %v", reason)
+	}
+	g.Release(finished)
+	later := DispatchInfo{RunID: "run2", Executor: "ex"}
+	for i := range 5 {
+		if ok, reason := admit(g, later); !ok {
+			t.Fatalf("later run admission %d blocked: %v", i, reason)
+		}
+	}
+	if _, exists := g.runs[finished.RunID]; exists {
+		t.Fatal("finished run kept scheduling state")
 	}
 }
 

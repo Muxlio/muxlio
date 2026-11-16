@@ -448,6 +448,16 @@ func TestHTTPRejectsLocalFileAuthoring(t *testing.T) {
 			}
 		}
 	}
+	for _, args := range []string{`{"path":"/etc/passwd"}`, `{"PATH":"/etc/passwd"}`, `{"path":""}`} {
+		w := httpMCPRequest(handler, "POST", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"validate_canvas","arguments":`+args+`}}`, nil)
+		if w.Code != 403 {
+			t.Fatalf("validate_canvas %s: %d %s", args, w.Code, w.Body)
+		}
+	}
+	w := httpMCPRequest(handler, "POST", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"validate_canvas","arguments":{"content":{"version":1,"title":"t","content":{"type":"heading","id":"h","level":1,"text":"x"}}}}}`, nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `\"valid\": true`) {
+		t.Fatalf("inline validate_canvas: %d %s", w.Code, w.Body)
+	}
 }
 
 func TestHTTPRejectsAmbiguousCredentials(t *testing.T) {

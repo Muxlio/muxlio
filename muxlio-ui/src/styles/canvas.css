@@ -378,6 +378,11 @@
   user-select: none;
 }
 
+.canvas-section--static .canvas-section-head {
+  cursor: default;
+  user-select: text;
+}
+
 .canvas-section-head strong {
   font-size: 0.9375rem;
 }
@@ -499,6 +504,14 @@
 .canvas-link-desc {
   font-size: 0.8125rem;
   color: var(--muted);
+}
+
+.canvas-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
 }
 
 .canvas-control {

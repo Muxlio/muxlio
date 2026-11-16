@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
@@ -96,8 +97,8 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 			return c, fmt.Errorf("config: %w", err)
 		}
 		if len(capacity.Value) != 0 {
-			if string(capacity.Value) == "null" || json.Unmarshal(capacity.Value, &c.WorkerCapacity) != nil || c.WorkerCapacity < 0 {
-				return c, fmt.Errorf("workerCapacity must be a nonnegative integer (0 drains, default 1)")
+			if string(capacity.Value) == "null" || json.Unmarshal(capacity.Value, &c.WorkerCapacity) != nil || c.WorkerCapacity < 0 || c.WorkerCapacity > api.MaxWorkerCapacity {
+				return c, fmt.Errorf("workerCapacity must be a nonnegative integer no greater than %d (0 drains, default 1)", api.MaxWorkerCapacity)
 			}
 		}
 		if err = json.Unmarshal(raw, &c); err != nil {

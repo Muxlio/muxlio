@@ -126,6 +126,46 @@ test("UI proxy limits automatic credentials to safe local requests", async (t) =
   }
 });
 
+test("UI proxy authorizes the normalized path and keeps the coordinator base path", async (t) => {
+  setEnvironment(t, { MUXLIO_TOKEN: "operator-admin" });
+  const seen: string[] = [];
+  const coordinator = createServer((req, res) => {
+    seen.push(`${req.url} ${req.headers.authorization || ""}`);
+    res.writeHead(200).end("{}");
+  });
+  coordinator.listen(0, "127.0.0.1");
+  await once(coordinator, "listening");
+  t.after(() => new Promise((resolve) => coordinator.close(resolve)));
+  const ui = createUIServer({
+    coordinatorURL: new URL(`http://127.0.0.1:${port(coordinator)}/api/`),
+  });
+  ui.listen(0, "127.0.0.1");
+  await once(ui, "listening");
+  t.after(() => new Promise((resolve) => ui.close(resolve)));
+  const status = (path: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request(
+        { host: "127.0.0.1", port: port(ui), path },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode!));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  for (const [path, expected] of [
+    ["/v1/../secret", 404],
+    ["/v1/%2e%2e/secret", 404],
+    ["/v1/./runs", 400],
+    ["/v1/runs/%2E%2E/x", 400],
+  ] as const)
+    assert.equal(await status(path), expected, path);
+  assert.deepEqual(seen, []);
+  assert.equal(await status("/v1/runs?limit=1"), 200);
+  assert.deepEqual(seen, ["/api/v1/runs?limit=1 Bearer operator-admin"]);
+});
+
 test("UI proxy reloads credentials created or rotated after startup", async (t) => {
   const runtime = await mkdtemp(join(tmpdir(), "muxlio-ui-auth-"));
   t.after(() => rm(runtime, { recursive: true, force: true }));

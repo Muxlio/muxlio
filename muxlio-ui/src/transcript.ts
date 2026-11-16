@@ -5,6 +5,23 @@ let tpagePollTimer = null, tpagePollToken = 0;
 let tpageActState = '';
 let tpageLogOffset=0;
 const transcriptPageLogs = new Map();
+const TPAGE_LOG_FETCH_LIMIT = 200, TPAGE_LOG_FETCH_PAGES = 50, TPAGE_CHUNKS_PER_PAGE = 200;
+let tpageHistory: { key: string, chunks: any[] } | null = null;
+
+async function loadTranscriptHistory(runId, actId) {
+  const key = `${runId}:${actId}`;
+  if (tpageHistory?.key === key) return tpageHistory.chunks;
+  const logs = [];
+  for (let page = 0, offset = 0; page < TPAGE_LOG_FETCH_PAGES; page++) {
+    const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=${offset}&limit=${TPAGE_LOG_FETCH_LIMIT}`);
+    logs.push(...(d.logs || []));
+    if (!d.hasMore) break;
+    offset = d.nextOffset ?? offset + (d.logs || []).length;
+  }
+  const chunks = transcriptChunks(logs);
+  tpageHistory = { key, chunks };
+  return chunks;
+}
 
 function stopTranscriptPage() {
   if (tpagePollTimer) { clearTimeout(tpagePollTimer); tpagePollTimer = null; }
@@ -52,15 +69,22 @@ function scheduleTranscriptPagePoll(runId, actId) {
     if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
     try {
       const streaming = tpageActState === 'running';
-      const d = await api(streaming
-        ? `/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`
-        : `/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}&offset=${tpageLogOffset}&limit=1`);
-      if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
-      if (!streaming) activationTranscripts.delete(actId);
-      const text = mergeActivationLogs(actId, d.logs || []);
+      let text, pageCount = 1;
+      if (streaming) {
+        tpageHistory = null;
+        const d = await api(`/v1/runs/${encodeURIComponent(runId)}/logs?activationId=${encodeURIComponent(actId)}`);
+        if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+        text = mergeActivationLogs(actId, d.logs || []);
+      } else {
+        const chunks = await loadTranscriptHistory(runId, actId);
+        if (token !== tpagePollToken || tpageRunId !== runId || tpageActId !== actId) return;
+        pageCount = Math.max(1, Math.ceil(chunks.length / TPAGE_CHUNKS_PER_PAGE));
+        tpageLogOffset = Math.min(tpageLogOffset, pageCount - 1);
+        text = chunks.slice(tpageLogOffset * TPAGE_CHUNKS_PER_PAGE, (tpageLogOffset + 1) * TPAGE_CHUNKS_PER_PAGE).map(chunk => decodeLogData(chunk.data)).join('');
+      }
       const pager=(document.getElementById('transcriptPager') as UIElement);
       if(pager){
-        pager.innerHTML=streaming?'':renderPagination({label:'Transcript pages',summary:`Page ${tpageLogOffset+1}`,previous:{attributes:{'data-transcript-page':-1},disabled:tpageLogOffset===0},next:{attributes:{'data-transcript-page':1},disabled:!d.hasMore}});
+        pager.innerHTML=streaming||pageCount<=1?'':renderPagination({label:'Transcript pages',summary:`Page ${tpageLogOffset+1} of ${pageCount}`,previous:{attributes:{'data-transcript-page':-1},disabled:tpageLogOffset===0},next:{attributes:{'data-transcript-page':1},disabled:tpageLogOffset>=pageCount-1}});
         if(!streaming)pager.querySelectorAll<UIElement>('[data-transcript-page]').forEach(button=>button.onclick=()=>{tpageLogOffset=Math.max(0,tpageLogOffset+Number(button.dataset.transcriptPage));scheduleTranscriptPagePoll(runId,actId);});
       }
       transcriptPageLogs.set(`${runId}:${actId}`, text);
@@ -125,7 +149,7 @@ async function loadTranscriptPage(runId, actId) {
   stopTranscriptPage();
   tpageRunId = runId;
   tpageActId = actId;
-  tpageLogOffset=0;activationTranscripts.clear();transcriptPageLogs.clear();
+  tpageLogOffset=0;tpageHistory=null;activationTranscripts.clear();transcriptPageLogs.clear();
   tpageActState = '';
   const meta = (document.getElementById('transcriptMeta') as UIElement);
   if (meta) meta.innerHTML = renderPlaceholder("Loading…", "inspector-placeholder");
@@ -138,5 +162,5 @@ async function loadTranscriptPage(runId, actId) {
 }
 
 (document.getElementById('refreshTranscript') as UIElement)?.addEventListener('click', () => {
-  if (tpageRunId && tpageActId) refreshTranscriptState(tpageRunId, tpageActId);
+  if (tpageRunId && tpageActId) { tpageHistory = null; refreshTranscriptState(tpageRunId, tpageActId); }
 });

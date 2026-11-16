@@ -2,6 +2,8 @@ package plan
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/muxlio/muxlio-adapters/accounting"
 
 	"github.com/muxlio/muxlio-core/internal/state"
@@ -13,7 +15,8 @@ import (
 // nested scope. Active attempts include uncertain operations until resolved.
 // Accounting limits stop further work after recorded consumption; they cannot
 // cap the bill of an already admitted external operation. Fail-closed (default)
-// stops after any attempt lacks eligible accounting evidence.
+// stops after any finished attempt lacks eligible accounting evidence; usage of
+// in-flight attempts is pending, but their recorded readings still count.
 // Fail-open permits unknown usage, but never treats it as zero consumption.
 type RunLimits struct {
 	Accounting        []accounting.Limit `json:"accounting,omitempty"`
@@ -117,13 +120,37 @@ func (e *Engine) checkAccounting(attempts []state.ExecutionAttempt, admission bo
 		return nil
 	}
 	views := make([]accounting.AttemptView, 0, len(attempts))
+	finished := make([]accounting.AttemptView, 0, len(attempts))
 	for _, a := range attempts {
-		views = append(views, accounting.AttemptView{State: a.State, Accounting: a.Accounting})
+		view := accounting.AttemptView{State: a.State, Accounting: a.Accounting}
+		views = append(views, view)
+		if !accountingInFlight(a.State) {
+			finished = append(finished, view)
+		}
 	}
 	for _, limit := range l.Accounting {
-		if err := accounting.CheckLimit(views, limit, admission); err != nil {
+		err := accounting.CheckLimit(views, limit, admission)
+		if err == nil {
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "missing-accounting:") || len(finished) == len(views) {
+			return err
+		}
+		// Recorded consumption of in-flight siblings still counts toward the
+		// maximum above. Their final usage is pending rather than missing, so
+		// only finished attempts decide the missing-accounting policy.
+		if err := accounting.CheckLimit(finished, limit, admission); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// accountingInFlight reports attempts whose final usage cannot be reported yet.
+func accountingInFlight(state string) bool {
+	switch state {
+	case "queued", "running", "detached", "awaiting_reconciliation", "uncertain", "waiting", "suspended":
+		return true
+	}
+	return false
 }

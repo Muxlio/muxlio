@@ -19,6 +19,8 @@ func remoteTerminalFailure(result workers.ExecuteResult) bool {
 	return result.Error != "" && result.RemoteTask != nil && result.RemoteTask.ID != "" && !result.RemoteTask.Pending
 }
 
+const minRemotePollInterval = time.Second
+
 func remotePending(result workers.ExecuteResult) bool {
 	return result.RemoteTask != nil && result.RemoteTask.Pending
 }
@@ -153,7 +155,12 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 			if result.RemoteTask.ID != ref.ID {
 				return workers.ExecuteResult{}, fmt.Errorf("remote poll changed task identity")
 			}
-			a.OperationRef = result.RemoteTask
+			next := *result.RemoteTask
+			// A provider schedule in the past must not turn polling into a busy loop.
+			if earliest := time.Now().Add(minRemotePollInterval).UTC(); !next.PollAt.IsZero() && next.PollAt.Before(earliest) {
+				next.PollAt = earliest
+			}
+			a.OperationRef = &next
 			continue
 		}
 		if err := ValidateExecuteResult(node.Outputs, result); err != nil {

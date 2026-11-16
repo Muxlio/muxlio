@@ -374,6 +374,8 @@ func main() {
 		workerArgs, workerCapacity = absorbFlagValue("capacity", workerArgs, workerCapacity)
 		workerArgs, workerTokenFlag = absorbFlagValue("worker-token", workerArgs, workerTokenFlag)
 		workerArgs, workerTokenFileFlag = absorbFlagValue("worker-token-file", workerArgs, workerTokenFileFlag)
+		workerArgs, adaptersDir = absorbFlagValue("adapters", workerArgs, adaptersDir)
+		workerArgs, dataDir = absorbFlagValue("data-dir", workerArgs, dataDir)
 		if len(workerArgs) > 0 && workerArgs[0] == "status" {
 			os.Exit(cmdWorkerStatus(dataDir, adaptersDir, jsonOut))
 		}

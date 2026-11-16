@@ -210,7 +210,7 @@ function evidenceMarkup(report){
  }), 'No result rows');
  return renderViewTemplate("operations-hub/evidence-markup-section-head", [viewValue(esc(report.name)), viewValue(hubButton('export-report','Download original result JSON')), viewValue(reportProvenance(report)), viewValue(summary), viewValue(hubClientPage('evidence-rows',rows,render))]);
 }
-function hubAccounting(summary){if(!summary)return '';const rows=[...(summary.referenceValue?[['Estimated reference value (USD)',summary.referenceValue]]:[]),['Tokens',summary.tokens],...(summary.credits||[]).map(c=>[`Credits · ${c.provider} · ${c.unit}`,c.value]),...(summary.costs||[]).map(c=>[`${c.currency} · ${c.basis==='provider-metered'?'Provider-metered usage':c.basis==='model-reference'?'Provider model reference':c.basis==='credit-replacement'?'Add-on replacement equivalent':c.basis==='api-equivalent'?'API-equivalent estimate':c.basis==='plan-debit'?'Plan debit':'Cost (unspecified basis)'}`,c.value])];return rows.map(([label,row])=>renderViewTemplate("operations-hub/hub-accounting-small", [viewValue(esc(label)), viewValue(esc(row?.knownSubtotal??'Unavailable')), viewValue(esc(row?.estimatedFallbackSubtotal!=null?`${row.completeness||'unknown'} · includes estimates`:(row?.completeness||'unknown')))])).join('')}
+function hubAccounting(summary){if(!summary)return '';return accountingMeasures(summary).filter(x=>x.key!=='reference-value'||(x.row.effectiveTotal??x.row.knownSubtotal)!=null).map(({label,row})=>{const value=row?.effectiveTotal??row?.knownSubtotal,status=accountingStatus(row);return renderViewTemplate("operations-hub/hub-accounting-small", [viewValue(esc(label)), viewValue(esc(value??(status==='inapplicable'?'Not applicable':'Unavailable'))), viewValue(esc(row?.estimatedFallbackSubtotal!=null?`${status} · includes estimates`:status))])}).join('')}
 
 async function openEvidence(id){
  return hubRead('evidenceDetail',async isCurrent=>{const report=await api(`/v1/reports/${hubID(id)}`);if(!isCurrent())return '';hubState.report=report;return evidenceMarkup(report)});
@@ -306,7 +306,6 @@ document.addEventListener('click',async event=>{
    case 'run-deadline':setRetentionDeadline(d.run);break;
    case 'pin-run':if(d.pinned!=='true'){await hubPost('/v1/retention',{kind:'run',id:d.run,pinned:true});await refreshRetentionContext();break;}d.kind='run';d.id=d.run;
    case 'unpin':hubDialog('Remove retention pin',renderViewTemplate("operations-hub/operations-hub-p", [viewValue(esc(d.id))]),async()=>{await hubPost('/v1/retention',{kind:d.kind,id:d.id,pinned:false});await refreshRetentionContext()},'Remove pin');break;
-   case 'compare-current':navigateTo(`/compare?before=${hubID(current)}`);break;
    case 'fork-source':await forkOperationalRun(d.run);break;
    case 'compare-inputs':{const c=hubState.comparison;showArtifactOutput(null,'Inputs and pinned plans',{baseline:{input:c.before.input,plan:c.beforePlan},comparison:{input:c.after.input,plan:c.afterPlan}});break;}
    case 'compare-node':{const row=hubState.comparison.activations[Number(d.nodeIndex)];showArtifactOutput(null,`${row.nodeId} · output comparison`,{baseline:row.before?.outputs,comparison:row.after?.outputs});break;}

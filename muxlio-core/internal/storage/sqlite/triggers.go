@@ -209,10 +209,12 @@ func (s *Store) RecordDelivery(d trigger.Delivery) error {
 	return err
 }
 
+// ListDeliveries returns the most recent deliveries, newest first. Older
+// history is available through AutomationHistoryPage.
 func (s *Store) ListDeliveries(triggerID string) ([]trigger.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT idempotency_key, COALESCE(run_id,''), workflow_digest, state, reason, timestamp FROM trigger_deliveries WHERE trigger_id=? ORDER BY id DESC`, triggerID)
+	rows, err := s.db.Query(`SELECT idempotency_key, COALESCE(run_id,''), workflow_digest, state, reason, timestamp FROM trigger_deliveries WHERE trigger_id=? ORDER BY id DESC LIMIT ?`, triggerID, subscriptionLimit(0))
 	if err != nil {
 		return nil, err
 	}

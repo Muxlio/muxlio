@@ -163,6 +163,32 @@ func TestValidateRejectsUndeclaredSource(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsInlineJSONDataWithReferenceShapedKeys(t *testing.T) {
+	doc := `{"version":1,"title":"Inline","content":{"type":"json","id":"raw","data":{"source":"undeclared","pointer":"relative","filter":{"equalsState":"missing"}}}}`
+	if res, err := Validate([]byte(doc)); err != nil || !res.Valid {
+		t.Fatalf("inline json data rejected: %v", err)
+	}
+	table := `{"version":1,"title":"Ref","content":{"type":"table","id":"t","data":{"source":"undeclared"}}}`
+	if _, err := Validate([]byte(table)); err == nil || !strings.Contains(err.Error(), "referenced source") {
+		t.Fatalf("table dataRef not checked: %v", err)
+	}
+}
+
+func TestValidateRejectsExcessiveJSONNesting(t *testing.T) {
+	nested := func(depth int) string {
+		return strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	}
+	doc := func(depth int) string {
+		return `{"version":1,"title":"Deep","content":{"type":"json","id":"raw","data":` + nested(depth) + `}}`
+	}
+	if res, err := Validate([]byte(doc(127))); err != nil || !res.Valid {
+		t.Fatalf("nesting within limit rejected: %v", err)
+	}
+	if _, err := Validate([]byte(doc(128))); err == nil || !strings.Contains(err.Error(), "JSON nesting exceeds") {
+		t.Fatalf("excessive nesting accepted: %v", err)
+	}
+}
+
 func TestValidateRejectsUndeclaredEqualsState(t *testing.T) {
 	doc := strings.Replace(illustrativeDocument, `"equalsState": "period"`, `"equalsState": "nonexistent"`, 1)
 	_, err := Validate([]byte(doc))

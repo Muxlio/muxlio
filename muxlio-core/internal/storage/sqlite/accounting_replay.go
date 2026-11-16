@@ -15,6 +15,14 @@ import (
 
 type replayBudgetError struct{ error }
 
+const workerReplayArchivePrefix = "worker-execution-"
+
+// workerReplayArchiveOrder breaks retry_number ties. An archived physical
+// execution shares the retry number of the logical attempt it replaced, and
+// readers treat the last row for a retry as current, so archives sort first
+// in archival order and the logical attempt row sorts last.
+const workerReplayArchiveOrder = `CASE WHEN id GLOB '` + workerReplayArchivePrefix + `*' THEN rowid END IS NULL,CASE WHEN id GLOB '` + workerReplayArchivePrefix + `*' THEN rowid END,id`
+
 // prepareWorkerReplay keeps physical executions disjoint even when the durable
 // dispatch retains its logical attempt ID for the waiting coordinator. It runs
 // in the claim transaction, before assigning the replacement worker.
@@ -60,7 +68,7 @@ func prepareWorkerReplay(tx *sql.Tx, d state.Dispatch, generation int64) (bool, 
 		}
 		return true, appendEvent(tx, d.RunID, "execution.replay_blocked", d.ActivationID, map[string]any{"attemptId": d.AttemptID, "reason": err.Error()})
 	}
-	archiveID := fmt.Sprintf("worker-execution-%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%d", d.AttemptID, generation))))
+	archiveID := fmt.Sprintf(workerReplayArchivePrefix+"%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%d", d.AttemptID, generation))))
 	// Retain non-final accounting as non-final: losing a worker does not prove
 	// that its usage report covered all consumption or that it stopped.
 	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,effect,idempotency_key,accounting_json,accounting_revision,accounting_final,accounting_hash,accounting_assignment,accounting_generation)

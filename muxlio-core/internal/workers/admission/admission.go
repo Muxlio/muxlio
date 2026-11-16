@@ -39,7 +39,7 @@ import (
 type DispatchInfo struct {
 	// RunID is the workflow run that owns this dispatch.
 	RunID string
-	// Executor is the capability name (e.g. "openai/gpt-4o").
+	// Executor is the capability name (e.g. "agent/example").
 	// The provider key is derived from the executor name by the Gate according
 	// to ProviderKeyFunc (defaults to the full executor string).
 	Executor string
@@ -392,9 +392,11 @@ func (g *Gate) Release(info DispatchInfo) {
 			rs.active--
 			released = true
 		}
-		// Clean up idle run states to prevent unbounded map growth.
-		if rs.active == 0 && rs.deficit <= 0 {
+		// An idle run is not competing; its unspent deficit must not hold
+		// back other runs. A returning run rejoins with a fresh quantum.
+		if rs.active == 0 {
 			delete(g.runs, info.RunID)
+			delete(g.roundSeen, info.RunID)
 		}
 	}
 	if !released {

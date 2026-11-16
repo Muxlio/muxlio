@@ -29,7 +29,7 @@ func TestWorkflowVersionsAPI(t *testing.T) {
 					{
 						ID:       "n1",
 						Kind:     plan.KindExecute,
-						Executor: "agent/claude",
+						Executor: "test/task",
 					},
 				},
 			},
@@ -180,6 +180,14 @@ func TestRegisteredSubmissionRejectsInvalidRequests(t *testing.T) {
 	got := postRun(router, `{"planDigest":"`+digest+`","input":{"count":1}}`, "key")
 	if got.Code != 410 || decodeError(t, got).Code != CodeWorkflowVersionRetired {
 		t.Fatalf("retired: %d %s", got.Code, got.Body.String())
+	}
+	if err := st.CreateRun(&state.Run{ID: "source", State: plan.RunSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	fork := httptest.NewRecorder()
+	router.ServeHTTP(fork, httptest.NewRequest("POST", "/v1/runs/source/fork", strings.NewReader(`{"planDigest":"`+digest+`","input":{"count":1}}`)))
+	if fork.Code != 410 || decodeError(t, fork).Code != CodeWorkflowVersionRetired {
+		t.Fatalf("retired fork: %d %s", fork.Code, fork.Body.String())
 	}
 	if _, err := st.GetWorkflowVersion(digest); !errors.Is(err, state.ErrWorkflowVersionRetired) {
 		t.Fatalf("retired lookup: %v", err)

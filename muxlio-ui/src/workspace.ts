@@ -244,15 +244,18 @@ openRun=async function(id){
     const r=await api(`/v1/runs/${encodeURIComponent(id)}?summary=true`);
     if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
     if(!r.overview)throw Error('Coordinator update required: this UI uses paged run views. Upgrade the coordinator before opening run histories.');
-    const [g,e,o,l,attemptPage]=await Promise.all([
+    const selectedId=same?selectedActivation:null,selectedOffset=selectedId?attemptOffset:0;
+    const [g,e,o,l,attemptPage,selectedAttempts]=await Promise.all([
       api(`/v1/runs/${encodeURIComponent(id)}/graph`),
       api(`/v1/runs/${encodeURIComponent(id)}/events?order=desc&before=${eventCursors[eventPageIndex]||0}&limit=${RUN_DETAIL_PAGE_SIZE}`),
       api(`/v1/runs/${encodeURIComponent(id)}/outputs?offset=${outputOffset}&limit=${RUN_DETAIL_PAGE_SIZE}`),
       api(`/v1/runs/${encodeURIComponent(id)}/events?tail=true&limit=50`),
-      api(`/v1/runs/${encodeURIComponent(id)}/attempts?offset=0&limit=50&details=false`)
+      api(`/v1/runs/${encodeURIComponent(id)}/attempts?offset=0&limit=50&details=false`),
+      selectedId?api(`/v1/runs/${encodeURIComponent(id)}/attempts?activationId=${encodeURIComponent(selectedId)}&offset=${selectedOffset}&limit=50&details=false`).catch(()=>null):null
     ]);
     if(epoch!==refreshEpoch||seq!==detailRequest||current!==id)return;
     wbActivityAttempts=attemptPage.attempts||[];
+    if(selectedAttempts&&selectedActivation===selectedId&&attemptOffset===selectedOffset){runAttempts=selectedAttempts.attempts||[];attemptPageMore=!!selectedAttempts.hasMore;}
     if(!same)liveAfter=r.overview?.latestEventSeq||0;
     const recent=new Map((l.events||[]).map(event=>[event.seq,event]));for(const event of liveEventRecords)recent.set(event.seq,event);liveEventRecords=[...recent.values()].sort((a,b)=>(a as any).seq-(b as any).seq).slice(-50);
     mergeEvents(e);
@@ -288,7 +291,7 @@ function connectionError(err){lastRefresh=lastRefresh||null;}
 
 // ── auto-refresh ──────────────────────────────────────────────────────────
 function stopRefresh(){clearTimeout(refreshTimer);refreshTimer=null;}
-function scheduleRefresh(){stopRefresh();if(!['/analytics','/compare','/evidence','/retention'].some(hash=>currentRoute().startsWith(hash))&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
+function scheduleRefresh(){stopRefresh();if(!['/analytics','/retention'].some(hash=>currentRoute().startsWith(hash))&&!refreshPaused&&!document.hidden)refreshTimer=setTimeout(refreshWorkspace,5000);}
 async function refreshWorkspace(){
   if(refreshBusy){scheduleRefresh();return;}
   refreshBusy=true;
@@ -321,6 +324,9 @@ navigate=function(){
   stopEventStream();
   if(typeof stopLivePoll==='function')stopLivePoll();
   if(typeof stopTranscriptPage==='function')stopTranscriptPage();
+  stopTranscriptPoll();stopInspectorSnapshotPoll();
+  closeCancelRunModal(false);closeRetryRunModal(false);closePlanModal();
+  if((document.getElementById('outputModal') as UIElement)?.hidden===false)closeArtifactOutput();
   (document.getElementById('runControls') as UIElement)?.remove();
   for(const c of requestControllers)(c as any).abort();
   renderedRun=null;current=null;
@@ -398,7 +404,14 @@ function renderWorkflowList(){
   el.querySelectorAll<UIElement>('[data-wf-digest]').forEach(btn=>btn.onclick=()=>openPlanModal(btn.dataset.wfDigest,btn.dataset.wfName));
 }
 
+let planModalRequest=0;
+function closePlanModal(){
+  planModalRequest++;
+  const modal=(document.getElementById('planModal') as UIElement);
+  if(modal)modal.hidden=true;
+}
 async function openPlanModal(digest,name){
+  const request=++planModalRequest;
   const modal=(document.getElementById('planModal') as UIElement);
   const titleEl=(document.getElementById('planModalTitle') as UIElement);
   const eyebrowEl=(document.getElementById('planModalEyebrow') as UIElement);
@@ -415,6 +428,7 @@ async function openPlanModal(digest,name){
   modal.style.display='';
   try{
     const data=await api(`/v1/workflow-versions/${encodeURIComponent(digest)}`);
+    if(request!==planModalRequest)return;
     if(titleEl)titleEl.textContent=data.name||name||'Plan IR';
     if(metaEl){
       const badges=[
@@ -434,16 +448,20 @@ async function openPlanModal(digest,name){
       subgraphsEl.textContent=pretty(summary);
     }
   }catch(err){
-    if(schemaEl)schemaEl.textContent='Error: '+err.message;
+    if(request===planModalRequest&&schemaEl)schemaEl.textContent='Error: '+err.message;
   }
 }
 
-(document.getElementById('closePlanModal') as UIElement)?.addEventListener('click',()=>{
-  const modal=(document.getElementById('planModal') as UIElement);
-  if(modal)modal.hidden=true;
-});
+(document.getElementById('closePlanModal') as UIElement)?.addEventListener('click',closePlanModal);
 (document.getElementById('planModal') as UIElement)?.addEventListener('click',e=>{
-  if((e.target as UIElement)===e.currentTarget)(e.currentTarget as any).hidden=true;
+  if((e.target as UIElement)===e.currentTarget)closePlanModal();
+});
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  const modal=(document.getElementById('planModal') as UIElement);
+  if(!modal||modal.hidden)return;
+  e.preventDefault();
+  closePlanModal();
 });
 
 
@@ -475,10 +493,10 @@ function renderArtifacts(){
   const countEl=(document.getElementById('artifactCount') as UIElement);
   if(!el)return;
   const q=((document.getElementById('artifactSearch') as UIElement)?.value||'').trim().toLowerCase();
-  const filtered=q?allArtifacts.filter(a=>`${a.runId} ${a.workflowName} ${a.nodeId} ${a.name} ${a.digest} ${a.mime} ${a.path}`.toLowerCase().includes(q)):allArtifacts;
+  const filtered=q?allArtifacts.filter(a=>[a.runId,a.workflowName,a.nodeId,a.name,a.digest,a.mime,a.path].filter(v=>v!=null).join(' ').toLowerCase().includes(q)):allArtifacts;
   if(countEl)countEl.textContent=`${filtered.length} artifacts on page ${Math.floor(artifactOffset/50)+1}`;
   if(!filtered.length){
-    el.innerHTML=renderEmptyState(q?'No matching artifacts':'No artifacts found', "")+runPager('artifact-index',artifactOffset,false,'Artifacts');
+    el.innerHTML=renderEmptyState(q?'No matching artifacts':'No artifacts found', "")+runPager('artifact-index',artifactOffset,artifactPageMore,'Artifacts');
     return;
   }
   el.innerHTML=renderViewTemplate("workspace/el-inner-html-tablebox-4", [viewValue(filtered.map(a=>{const isCanvas=a.mime==='application/vnd.muxlio.canvas+json';const canvasHref=isCanvas&&a.runId&&a.activationId&&a.name?'/artifacts/view/'+encodeURIComponent(a.runId)+'/'+encodeURIComponent(a.activationId)+'/'+encodeURIComponent(a.name):'';return renderViewTemplate("workspace/el-inner-html-primary-cell-2", [viewValue(esc(a.name)), viewValue(a.mime?renderSmallContent(a.mime):''), viewValue(encodeURIComponent(a.runId)), viewValue(esc(a.workflowName||a.runId)), viewValue(esc(a.nodeId)), viewValue(esc(a.path||a.mime||'—')), viewValue(a.digest?esc(a.digest.slice(0,22))+'…':'—'), viewValue(a.digest?renderViewTemplate("workspace/el-inner-html-btn", [viewValue(esc(a.digest)), viewValue(esc(a.path||a.name||'artifact'))]):''), viewValue(a.digest?renderViewTemplate("workspace/el-inner-html-btn-2", [viewValue(esc(a.digest))]):''), viewValue(canvasHref?renderViewTemplate("workspace/el-inner-html-btn-canvas", [viewValue(canvasHref)]):'')]);}).join(''))])+runPager('artifact-index',artifactOffset,artifactPageMore,'Artifacts');

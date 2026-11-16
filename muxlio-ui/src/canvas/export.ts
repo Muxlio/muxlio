@@ -113,11 +113,17 @@ function canvasPdfHTML(root: HTMLElement): string {
   copy
     .querySelectorAll<HTMLElement>("[style]")
     .forEach((element) => element.removeAttribute("style"));
-  for (const link of copy.querySelectorAll<HTMLAnchorElement>("a[href]"))
-    link.href = new URL(link.getAttribute("href")!, location.href).href;
+  for (const link of copy.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    try {
+      link.href = new URL(link.getAttribute("href")!, location.href).href;
+    } catch {
+      link.replaceWith(document.createTextNode(link.textContent || ""));
+    }
+  }
+  // Move children so nested <details> in the static list stay attached.
   for (const details of copy.querySelectorAll("details")) {
     const section = document.createElement("div");
-    section.innerHTML = details.innerHTML;
+    section.append(...details.childNodes);
     details.replaceWith(section);
   }
   return copy.innerHTML;

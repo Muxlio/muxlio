@@ -106,6 +106,10 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 			if len(parts) == 3 && parts[2] == "input-requests" {
 				return g.permits("read") || g.permits("inputs")
 			}
+			// Steering clients reconnect to their submissions' delivery receipts.
+			if len(parts) == 5 && parts[2] == "sessions" && parts[4] == "inputs" {
+				return g.permits("read") || g.permits("steer")
+			}
 			return g.permits("read")
 		}
 		if r.Method != http.MethodPost || len(parts) < 3 {

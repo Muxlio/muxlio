@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,24 +61,29 @@ func ParseTokenUsage(raw json.RawMessage) *TokenCounters {
 			continue
 		}
 		var n *int64
-		if json.Unmarshal(b, &n) != nil || n == nil || *n < 0 {
+		if json.Unmarshal(b, &n) != nil || n != nil && *n < 0 {
 			return nil
 		}
 	}
-	read := func(keys ...string) (int64, bool) {
+	read := func(keys ...string) (int64, string, bool) {
 		for _, key := range keys {
 			if b, ok := values[key]; ok {
 				var n *int64
 				if json.Unmarshal(b, &n) == nil && n != nil && *n >= 0 {
-					return *n, true
+					return *n, key, true
 				}
 			}
 		}
-		return 0, false
+		return 0, "", false
 	}
-	input, inputOK := read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
-	output, outputOK := read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
-	cached, cachedOK := read("cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
+	input, inputKey, inputOK := read("input_tokens", "prompt_token_count", "prompt_tokens", "uncachedInputTokens", "inputTokens", "promptTokenCount")
+	output, _, outputOK := read("output_tokens", "candidates_token_count", "completion_tokens", "outputTokens", "candidatesTokenCount")
+	cached, _, cachedOK := read("cached_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens", "cached_content_token_count", "cached_tokens", "cachedTokens", "cachedContentTokenCount", "cached")
+	// Inclusive input is unavailable when only its uncached part is known.
+	if inputKey == "uncachedInputTokens" {
+		inputOK = cachedOK && input <= math.MaxInt64-cached
+		input += cached
+	}
 	var in, out, ca *int64
 	if inputOK {
 		in = &input
@@ -123,17 +129,26 @@ func WriteResponse(resp Response) error {
 	for port, message := range resp.OutputErrors {
 		resp.OutputErrors[port] = redact(message)
 	}
-	for _, port := range []string{"stdout", "stderr", "_text"} {
-		if value, ok := resp.Outputs[port].(string); ok {
-			resp.Outputs[port] = redact(value)
-		}
-		if value, ok := resp.Outputs[port].(map[string]any); ok {
-			if data, ok := value["data"].(string); ok {
-				value["data"] = redact(data)
-			}
-		}
+	for port, value := range resp.Outputs {
+		resp.Outputs[port] = redactValue(value)
 	}
 	return json.NewEncoder(os.Stdout).Encode(resp)
+}
+
+func redactValue(value any) any {
+	switch v := value.(type) {
+	case string:
+		return redact(v)
+	case map[string]any:
+		for key, item := range v {
+			v[key] = redactValue(item)
+		}
+	case []any:
+		for i, item := range v {
+			v[i] = redactValue(item)
+		}
+	}
+	return value
 }
 
 // Fail writes an error Response and exits 0 (adapter errors are
@@ -201,6 +216,22 @@ func WorkspaceRoot(req *Request) (string, error) {
 		return "", fmt.Errorf("workspace must be a directory")
 	}
 	return root, nil
+}
+
+// Redact removes request secrets from diagnostics an adapter persists outside
+// its Response, including their JSON-escaped spellings in raw stream captures.
+func Redact(value string) string {
+	for _, secret := range responseSecrets {
+		if secret == "" {
+			continue
+		}
+		if quoted, err := json.Marshal(secret); err == nil {
+			if escaped := string(quoted[1 : len(quoted)-1]); escaped != secret {
+				value = strings.ReplaceAll(value, escaped, "[REDACTED]")
+			}
+		}
+	}
+	return redact(value)
 }
 
 func redact(value string) string {

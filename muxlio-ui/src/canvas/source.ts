@@ -36,26 +36,45 @@ function evaluateJsonPointer(target: unknown, pointer?: string): unknown {
   return curr;
 }
 
+// Control-driven filters treat an empty search or an unchecked toggle as "no
+// filter"; a literal `equals` always filters, including an empty string.
 function filterDataRows(
   rows: readonly unknown[],
   filter?: CanvasDataFilter,
   state?: ReadonlyMap<string, CanvasStateValue>,
+  controlTypes?: ReadonlyMap<string, CanvasControl["type"]>,
 ): readonly unknown[] {
   if (!filter || !filter.field || !Array.isArray(rows)) {
     return rows;
   }
-  let targetVal: unknown = filter.equals;
-  if (filter.equalsState && state) {
-    targetVal = state.get(filter.equalsState);
+  const fieldOf = (row: unknown) =>
+    row !== null && typeof row === "object"
+      ? (row as Record<string, unknown>)[filter.field]
+      : undefined;
+  const isRow = (row: unknown) => row !== null && typeof row === "object";
+  if (filter.equalsState) {
+    const target = state?.get(filter.equalsState);
+    const kind = controlTypes?.get(filter.equalsState);
+    if (target === undefined || target === "") return rows;
+    if (kind === "toggle" && target === false) return rows;
+    if (kind === "search") {
+      const needle = String(target).toLowerCase();
+      return rows.filter(
+        (row) =>
+          isRow(row) &&
+          String(fieldOf(row) ?? "")
+            .toLowerCase()
+            .includes(needle),
+      );
+    }
+    return rows.filter(
+      (row) => isRow(row) && String(fieldOf(row)) === String(target),
+    );
   }
-  if (targetVal === undefined || targetVal === "") {
-    return rows;
-  }
-  return rows.filter((row) => {
-    if (row === null || typeof row !== "object") return false;
-    const val = (row as Record<string, unknown>)[filter.field];
-    return String(val) === String(targetVal);
-  });
+  if (filter.equals === undefined) return rows;
+  return rows.filter(
+    (row) => isRow(row) && String(fieldOf(row)) === String(filter.equals),
+  );
 }
 
 function sortDataRows(
@@ -107,6 +126,7 @@ function resolveCanvasData(
         extracted,
         obj.filter as CanvasDataFilter,
         context.state,
+        context.controlTypes,
       );
     }
     return extracted;

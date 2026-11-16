@@ -65,13 +65,23 @@ func kiroCreditTurnID(raw json.RawMessage) string {
 // Kiro turn metadata reports consumed credits. Context occupancy and tool
 // context breakdowns deliberately do not enter this decoder.
 func parseKiroCreditAmount(raw json.RawMessage) *contract.Amount {
+	amount, _ := parseKiroCredits(raw)
+	return amount
+}
+
+// parseKiroCredits reports an error when a turn completion carries credit
+// usage that cannot be represented exactly, so the loss is never silent.
+func parseKiroCredits(raw json.RawMessage) (*contract.Amount, error) {
 	raw = kiroTurnCompletion(raw)
 	if raw == nil {
-		return nil
+		return nil, nil
 	}
 	var value map[string]json.RawMessage
 	if json.Unmarshal(raw, &value) != nil {
-		return nil
+		return nil, nil
+	}
+	if summaries := value["promptTurnSummaries"]; len(summaries) == 0 || string(summaries) == "null" {
+		return nil, nil
 	}
 	var entries []struct {
 		Unit  string      `json:"unit"`
@@ -80,7 +90,7 @@ func parseKiroCreditAmount(raw json.RawMessage) *contract.Amount {
 	d := json.NewDecoder(bytes.NewReader(value["promptTurnSummaries"]))
 	d.UseNumber()
 	if d.Decode(&entries) != nil {
-		return nil
+		return nil, fmt.Errorf("kiro turn summaries malformed")
 	}
 	var total *contract.Amount
 	for _, entry := range entries {
@@ -89,17 +99,17 @@ func parseKiroCreditAmount(raw json.RawMessage) *contract.Amount {
 		}
 		amount, err := accounting.ParseJSONAmount(json.RawMessage(entry.Usage.String()))
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("kiro credit usage rejected: %w", err)
 		}
 		if total != nil {
 			amount, err = accounting.AddAmount(*total, amount)
 			if err != nil {
-				return nil
+				return nil, fmt.Errorf("kiro credit usage rejected: %w", err)
 			}
 		}
 		total = &amount
 	}
-	return total
+	return total, nil
 }
 
 func recordKiroCredits(recorder *accounting.Recorder, raw json.RawMessage) error {
@@ -107,7 +117,18 @@ func recordKiroCredits(recorder *accounting.Recorder, raw json.RawMessage) error
 }
 
 func recordKiroCreditsAt(recorder *accounting.Recorder, raw json.RawMessage, pricingContext string, at time.Time) error {
-	amount := parseKiroCreditAmount(raw)
+	creditKey := contract.AccountingKey{Kind: "credits", Provider: "kiro", Unit: "credit"}
+	amount, err := parseKiroCredits(raw)
+	if err != nil {
+		state := "unknown"
+		if snapshot, snapErr := recorder.Snapshot(); snapErr == nil && hasKiroCredits(snapshot) {
+			state = "partial"
+		}
+		if covErr := recorder.SetCoverage(creditKey, state, "credit-observation-rejected"); covErr != nil {
+			return covErr
+		}
+		return err
+	}
 	if amount == nil {
 		return nil
 	}
@@ -144,7 +165,18 @@ func recordKiroCreditsAt(recorder *accounting.Recorder, raw json.RawMessage, pri
 	if strings.HasPrefix(id, "credit-event-") {
 		reason = "turn-identity-unavailable"
 	}
-	return recorder.SetCoverage(contract.AccountingKey{Kind: "credits", Provider: "kiro", Unit: "credit"}, "partial", reason)
+	return recorder.SetCoverage(creditKey, "partial", reason)
+}
+
+func hasKiroCredits(a *contract.Accounting) bool {
+	for _, entry := range a.Entries {
+		for _, credit := range entry.Credits {
+			if credit.Provider == "kiro" && credit.Unit == "credit" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Reviewed official commercial USD add-on price. The review establishes

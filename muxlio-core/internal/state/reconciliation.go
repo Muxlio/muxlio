@@ -10,6 +10,16 @@ type AttemptResolution struct {
 	Result  *AttemptResult `json:"result,omitempty"`
 }
 
+// UncertainRetryReason holds an attempt found by explicit retry whose worker
+// outcome is unknown and whose effect cannot be replayed safely.
+const UncertainRetryReason = "execution outcome unknown after worker or coordinator loss; explicit resolution required before retry"
+
+// ReplaySafeEffect reports whether repeating an attempt cannot duplicate an
+// external effect. Unclassified effects are unsafe.
+func ReplaySafeEffect(effect, idempotencyKey string) bool {
+	return effect == "none" || effect == "pure" || ((effect == "idempotency-key" || effect == "idempotent-with-key") && idempotencyKey != "")
+}
+
 func (r AttemptResolution) Validate() error {
 	if r.Reason == "" {
 		return fmt.Errorf("resolution requires a reason")

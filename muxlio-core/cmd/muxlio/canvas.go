@@ -22,7 +22,7 @@ func cmdCanvas(args []string, globalJSON bool) int {
 	case "catalog":
 		fs := flag.NewFlagSet("canvas catalog", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON")
-		if err := fs.Parse(subargs); err != nil {
+		if err := fs.Parse(reorderArgs(subargs)); err != nil {
 			return 2
 		}
 		cat := canvas.Catalog()
@@ -51,7 +51,7 @@ func cmdCanvas(args []string, globalJSON bool) int {
 	case "validate":
 		fs := flag.NewFlagSet("canvas validate", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", globalJSON, "emit machine-readable JSON")
-		if err := fs.Parse(subargs); err != nil {
+		if err := fs.Parse(reorderArgs(subargs)); err != nil {
 			return 2
 		}
 		if fs.NArg() < 1 {
@@ -74,6 +74,10 @@ func cmdCanvas(args []string, globalJSON bool) int {
 		}
 
 		res, valErr := canvas.Validate(data)
+		if res == nil {
+			fmt.Fprintf(os.Stderr, "%s: canvas validation unavailable: %v\n", filePath, valErr)
+			return 1
+		}
 		if valErr != nil || !res.Valid {
 			if *jsonOut {
 				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{

@@ -1,4 +1,5 @@
 import { artifact, task, workflow } from '../src/workflow.js';
+import { eq, field, index, literal } from '../src/expr.js';
 import { z } from 'zod';
 
 const notesTask = task({
@@ -70,5 +71,7 @@ workflow('typing-check', {
     const _ok = implementation.notes;
     // @ts-expect-error unknown output port must fail typecheck
     const _bad = implementation.notDeclared;
+    const _sameRepo = eq(input.repository, literal('muxlio'));
+    const _secondFeature = field(index(input.features, 1), 'id');
   },
 });

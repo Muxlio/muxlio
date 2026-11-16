@@ -421,3 +421,46 @@ func TestProgressEventRequiresNonEmptyStream(t *testing.T) {
 		t.Fatal("unexpected non-empty stream")
 	}
 }
+
+func TestAccountingVersionsKeepObservedRunnerVersions(t *testing.T) {
+	version := "1.2.3-RC.1+build.5"
+	if !IsRunnerVersion(version) {
+		t.Fatal("fixture is not a runner version")
+	}
+	a := Accounting{Revision: 1, Sessions: []AccountingSession{{ID: "s", Provider: "p", Source: "s", Version: version}}, Entries: []AccountingEntry{{ID: "call", Costs: []CostMeasure{{Currency: "USD", Basis: "unspecified", Amount: Measure[Amount]{Collected: &Reading[Amount]{Value: "1", Source: "fixture", Fidelity: "metered", Version: version}}}}}}}
+	if err := a.Validate(); err != nil {
+		t.Fatalf("observed runner version rejected: %v", err)
+	}
+	a.Sessions[0].Version = "1.0 beta"
+	if err := a.Validate(); err == nil {
+		t.Fatal("unsafe version accepted")
+	}
+}
+
+func TestCanonicalAccountingOrdersSessionsTotally(t *testing.T) {
+	x := AccountingSession{ID: "s", Provider: "p", Source: "src", StartedAt: "2026-01-01T00:00:00Z"}
+	y := x
+	y.StartedAt = "2026-01-02T00:00:00Z"
+	z := y
+	z.Principal = "user:a"
+	w := z
+	w.Isolated = true
+	first, err := CanonicalAccounting(Accounting{Revision: 1, Sessions: []AccountingSession{w, z, y, x}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CanonicalAccounting(Accounting{Revision: 1, Sessions: []AccountingSession{x, y, z, w}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("canonical bytes depend on input order:\n%s\n%s", first, second)
+	}
+}
+
+func TestAccountingEntryModelRejectsNUL(t *testing.T) {
+	a := Accounting{Revision: 1, Entries: []AccountingEntry{{ID: "call", Model: "model\x00x"}}}
+	if err := a.Validate(); err == nil {
+		t.Fatal("NUL in model accepted")
+	}
+}

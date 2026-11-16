@@ -187,29 +187,40 @@ func coverageFor(view AttemptView, key contract.AccountingKey) string {
 	}
 	return "unknown"
 }
-func unattributedState(view AttemptView, kind string) string {
-	identified := false
-	if view.Accounting != nil {
-		for _, c := range view.Accounting.Coverage {
+
+// unattributedState reports coverage that no summary row carries. A qualified
+// meter without a reported bucket has no row, so its open state lands here.
+func unattributedState(view AttemptView, kind string, bucketed func(contract.AccountingKey) bool) string {
+	free := ""
+	var qualified []contract.AccountingKey
+	collect := func(coverage []contract.MeterCoverage) {
+		for _, c := range coverage {
 			k := c.Key
-			if k.Kind == kind {
-				identified = true
+			if k.Kind != kind {
+				continue
 			}
-			if k.Kind == kind && k.Provider == "" && k.Unit == "" && k.Currency == "" && k.Basis == "" {
-				return c.State
+			if k.Provider == "" && k.Unit == "" && k.Currency == "" && k.Basis == "" {
+				if free == "" {
+					free = c.State
+				}
+				continue
 			}
+			qualified = append(qualified, k)
 		}
 	}
-	for _, c := range view.Applicability {
-		k := c.Key
-		if k.Kind == kind {
-			identified = true
-		}
-		if k.Kind == kind && k.Provider == "" && k.Unit == "" && k.Currency == "" && k.Basis == "" {
-			return c.State
+	if view.Accounting != nil {
+		collect(view.Accounting.Coverage)
+	}
+	collect(view.Applicability)
+	for _, k := range qualified {
+		if !bucketed(k) && coverageFor(view, k) != "inapplicable" {
+			return "unknown"
 		}
 	}
-	if identified {
+	if free != "" {
+		return free
+	}
+	if len(qualified) > 0 {
 		return "inapplicable"
 	}
 	return "unknown"
@@ -421,7 +432,7 @@ func meterReported(v AttemptView, key contract.AccountingKey) bool {
 
 func pendingAccounting(state string) bool {
 	switch state {
-	case "running", "queued", "uncertain", "awaiting_reconciliation", "waiting", "suspended":
+	case "running", "queued", "uncertain", "awaiting_reconciliation", "waiting", "suspended", "detached":
 		return true
 	}
 	return false
@@ -476,7 +487,13 @@ func summarizeAccounting(views []AttemptView) (AccountingSummary, error) {
 						if token.evidence["estimated"] == nil {
 							token.evidence["estimated"] = map[string]bool{}
 						}
-						token.evidence["estimated"]["derived-exact"] = true
+						for _, m := range []contract.Measure[contract.Count]{e.Tokens.Input, e.Tokens.Output} {
+							if c, _ := selected(m); c != "" {
+								token.evidence["estimated"][m.Collected.Fidelity] = true
+							} else {
+								token.evidence["estimated"][m.Estimated.Fidelity] = true
+							}
+						}
 						n, err := AddCount(contract.Count(valueOrZeroFrom(ic, ie)), contract.Count(valueOrZeroFrom(oc, oe)))
 						if err != nil {
 							return out, err
@@ -542,9 +559,11 @@ func summarizeAccounting(views []AttemptView) (AccountingSummary, error) {
 		}
 		return out.Costs[i].Currency < out.Costs[j].Currency
 	})
+	creditBucket := func(k contract.AccountingKey) bool { return credits[k.Provider+"\x00"+k.Unit] != nil }
+	costBucket := func(k contract.AccountingKey) bool { return costs[k.Currency+"\x00"+k.Basis] != nil }
 	for _, v := range views {
-		creditState := unattributedState(v, "credits")
-		costState := unattributedState(v, "cost")
+		creditState := unattributedState(v, "credits", creditBucket)
+		costState := unattributedState(v, "cost", costBucket)
 		pending := pendingAccounting(v.State)
 		if creditState != "inapplicable" {
 			if pending {

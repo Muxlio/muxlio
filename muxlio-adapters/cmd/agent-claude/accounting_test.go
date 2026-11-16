@@ -72,6 +72,7 @@ func TestClaudeAccountingPartialUsageRemainsUnknown(t *testing.T) {
 func TestClaudeAccountingRejectsNegativeAndInvalidPrecision(t *testing.T) {
 	cases := []string{
 		`{"type":"result","usage":{"cache_creation_input_tokens":-2}}`,
+		`{"type":"result","usage":{"input_tokens":-1,"output_tokens":3}}`,
 		`{"type":"result","total_cost_usd":-1.0}`,
 		`{"type":"result","total_cost_usd":1e-19}`,
 		`{"type":"result","modelUsage":{"a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":-3,"cacheCreationInputTokens":4}}}`,

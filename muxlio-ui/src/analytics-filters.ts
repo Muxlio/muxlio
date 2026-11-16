@@ -25,6 +25,39 @@ function analyticsDefaultFilters(now = new Date()) {
   };
 }
 
+function analyticsValidInstant(value) {
+  return typeof value === 'string' && value !== '' && Number.isFinite(Date.parse(value));
+}
+
+function analyticsValidTimeZone(tz) {
+  if (typeof tz !== 'string' || !tz) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Shared links and form input may carry unparseable instants or zones; fall
+// back to defaults instead of letting Date/Intl throw while rendering.
+function analyticsNormalizeFilters(filters) {
+  if (!analyticsValidTimeZone(filters.tz)) filters.tz = 'UTC';
+  if (!Object.hasOwn(ANALYTICS_RANGE_PRESETS, filters.preset) && filters.preset !== 'custom') filters.preset = '30d';
+  if (filters.preset === 'custom' && !(analyticsValidInstant(filters.from) && analyticsValidInstant(filters.to) && Date.parse(filters.from) < Date.parse(filters.to))) {
+    filters.preset = '30d';
+  }
+  if (filters.preset !== 'custom') {
+    const range = analyticsResolveRange(filters);
+    filters.from = range.from.toISOString();
+    filters.to = range.to.toISOString();
+  } else {
+    filters.from = new Date(filters.from).toISOString();
+    filters.to = new Date(filters.to).toISOString();
+  }
+  return filters;
+}
+
 function analyticsFiltersFromURL(hash = currentRoute()) {
   const base = hash.startsWith('/analytics') ? hash : '/analytics';
   const query = base.includes('?') ? base.slice(base.indexOf('?') + 1) : '';
@@ -33,12 +66,6 @@ function analyticsFiltersFromURL(hash = currentRoute()) {
   if (params.has('range')) filters.preset = params.get('range') || filters.preset;
   if (params.has('from')) filters.from = params.get('from');
   if (params.has('to')) filters.to = params.get('to');
-  if (filters.preset === 'custom' && (!filters.from || !filters.to)) {
-    filters.preset = '30d';
-    const range = analyticsResolveRange(filters);
-    filters.from = range.from.toISOString();
-    filters.to = range.to.toISOString();
-  }
   if (params.has('state')) {
     filters.states = params.get('state').split(',').map(s => s.trim()).filter(Boolean);
   }
@@ -48,12 +75,7 @@ function analyticsFiltersFromURL(hash = currentRoute()) {
   filters.measureId = params.get('measure') || '';
   filters.drill = params.get('drill') || '';
   filters.page = Math.max(1, Number(params.get('page')) || 1);
-  if (filters.preset !== 'custom') {
-    const range = analyticsResolveRange(filters);
-    filters.from = range.from.toISOString();
-    filters.to = range.to.toISOString();
-  }
-  return filters;
+  return analyticsNormalizeFilters(filters);
 }
 
 function analyticsFiltersToURL(filters) {

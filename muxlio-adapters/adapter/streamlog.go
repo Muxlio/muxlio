@@ -1,12 +1,14 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -23,6 +25,12 @@ var progressWrites chan progressWrite
 var progressFileMu sync.Mutex
 var progressFile *os.File
 var progressFD = -1
+
+// A timed-out frame leaves the channel blocked; later frames fail fast until
+// the writer drains, so terminal reporting is bounded by one timeout.
+var progressStalled atomic.Bool
+var accountingProgressMu sync.Mutex
+var deliveredAccounting []byte
 
 // AppendStreamText emits incremental assistant text to muxlio when MUXLIO_LOG_FD is set.
 func AppendStreamText(text string) {
@@ -69,6 +77,11 @@ func AppendAccountingSnapshot(snapshot contract.Accounting) error {
 	if err != nil {
 		return err
 	}
+	accountingProgressMu.Lock()
+	defer accountingProgressMu.Unlock()
+	if bytes.Equal(payload, deliveredAccounting) {
+		return nil
+	}
 	var canonical contract.Accounting
 	if err = json.Unmarshal(payload, &canonical); err != nil {
 		return err
@@ -77,7 +90,11 @@ func AppendAccountingSnapshot(snapshot contract.Accounting) error {
 	if err != nil {
 		return err
 	}
-	return writeProgress(file, raw)
+	if err = writeProgress(file, raw); err != nil {
+		return err
+	}
+	deliveredAccounting = payload
+	return nil
 }
 
 func writeProgress(file *os.File, raw []byte) error {
@@ -89,22 +106,30 @@ func writeProgress(file *os.File, raw []byte) error {
 				if err == nil && n != len(job.frame) {
 					err = io.ErrShortWrite
 				}
+				if len(progressWrites) == 0 {
+					progressStalled.Store(false)
+				}
 				job.done <- err
 			}
 		}()
 	})
+	if progressStalled.Load() {
+		return fmt.Errorf("progress delivery stalled")
+	}
 	job := progressWrite{file: file, frame: append(append([]byte(nil), raw...), '\n'), done: make(chan error, 1)}
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	select {
 	case progressWrites <- job:
 	case <-timer.C:
+		progressStalled.Store(true)
 		return fmt.Errorf("progress delivery timed out")
 	}
 	select {
 	case err := <-job.done:
 		return err
 	case <-timer.C:
+		progressStalled.Store(true)
 		return fmt.Errorf("progress delivery timed out")
 	}
 }

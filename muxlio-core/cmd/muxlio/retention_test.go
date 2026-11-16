@@ -59,8 +59,9 @@ func TestIdleMaintenanceWaitsForRequestsAndProtectsRunningEngines(t *testing.T) 
 	if err = store.SetRunState("active", "succeeded"); err != nil {
 		t.Fatal(err)
 	}
-	if report, err = cleanupIdleRuntimeAt(store, local, root, &gate, now); err != nil || report == nil || !report.Applied {
-		t.Fatal("idle cleanup did not apply", err)
+	tiered := artifacts.Tiered{S3: artifacts.Fallback{Primary: local, Local: local}, Local: local}
+	if report, err = cleanupIdleRuntimeAt(store, tiered, root, &gate, now); err != nil || report == nil || !report.Applied {
+		t.Fatal("idle cleanup with tiered storage did not apply", err)
 	}
 	if _, err = os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("expired scratch remains")

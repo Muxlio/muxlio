@@ -44,6 +44,9 @@ func ValidateWorkspaceContract(mode string, keys []string) error {
 	return nil
 }
 
+// attemptWorkspaceDir is the scratch entry reserved for the attempt workspace.
+const attemptWorkspaceDir = "workspace"
+
 // prepareAttemptWorkspace never exposes the source as writable by default.
 // Snapshots contain independent files, require no Git repository, and preserve
 // relative symlinks only when their targets stay within the source tree.
@@ -53,7 +56,7 @@ func prepareAttemptWorkspace(req ExecuteRequest, scratch string) (ExecuteRequest
 	}
 	switch req.WorkspaceMode {
 	case "", "snapshot", "empty":
-		dst := filepath.Join(scratch, "workspace")
+		dst := filepath.Join(scratch, attemptWorkspaceDir)
 		if err := os.Mkdir(dst, 0o700); err != nil {
 			return req, err
 		}

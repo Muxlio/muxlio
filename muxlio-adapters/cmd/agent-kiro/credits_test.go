@@ -93,6 +93,32 @@ func TestNativeTurnIdentityDeduplicatesButRejectsConflictingAmounts(t *testing.T
 	}
 }
 
+func TestUnrepresentableCreditsAreRejectedVisibly(t *testing.T) {
+	excess := json.RawMessage(`{"kind":"turn_completion","turnId":"t1","promptTurnSummaries":[{"unit":"credit","usage":0.0012345678901234567}]}`)
+	r := accounting.NewRecorder()
+	if err := recordKiroCredits(r, excess); err == nil {
+		t.Fatal("excess-precision credits dropped silently")
+	}
+	a, _ := r.Finish()
+	if len(a.Entries) != 0 || len(a.Coverage) != 1 || a.Coverage[0].State != "unknown" || a.Coverage[0].Reason != "credit-observation-rejected" {
+		t.Fatalf("rejection not reflected in coverage: %+v", a)
+	}
+
+	r = accounting.NewRecorder()
+	first := json.RawMessage(`{"kind":"turn_completion","turnId":"t0","promptTurnSummaries":[{"unit":"credit","usage":0.1}]}`)
+	if err := recordKiroCredits(r, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordKiroCredits(r, excess); err == nil {
+		t.Fatal("excess-precision credits dropped silently")
+	}
+	a, _ = r.Finish()
+	s, err := accounting.SummarizeAccounting([]accounting.AttemptView{{State: "succeeded", Accounting: a}})
+	if err != nil || len(s.Credits) != 1 || s.Credits[0].Value.Completeness != "partial" || s.Credits[0].Value.EffectiveTotal != nil {
+		t.Fatalf("rejected turn treated as complete: %+v %v", s, err)
+	}
+}
+
 func TestParseKiroCreditAmountAcceptsCreditUnitCasing(t *testing.T) {
 	raw := `{"update":{"_meta":{"kiro":{"kind":"turn_completion","promptTurnSummaries":[{"unit":"Credit","usage":0.1}]}}}}`
 	got := parseKiroCreditAmount(json.RawMessage(raw))

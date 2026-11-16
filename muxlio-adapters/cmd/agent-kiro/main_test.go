@@ -23,7 +23,7 @@ func TestParseKiroOptionalNumericMetadata(t *testing.T) {
 	// These shapes exercise optional token counts understood by Kiro's client;
 	// they are not evidence that its credit-only completion reports tokens.
 	for _, container := range []string{"tokenUsage", "usage", "metrics"} {
-		raw := `{"update":{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_completion","` + container + `":{"uncachedInputTokens":100,"outputTokens":40,"cacheReadInputTokens":12}}}}}`
+		raw := `{"update":{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_completion","` + container + `":{"uncachedInputTokens":88,"outputTokens":40,"cacheReadInputTokens":12}}}}}`
 		got := parseKiroUsage(json.RawMessage(raw))
 		if got == nil || got.Input != 100 || got.Output != 40 || got.Cached != 12 {
 			t.Fatalf("ACP %s usage = %+v", container, got)
@@ -349,6 +349,80 @@ func TestKiroStreamReportsModelFromFlatConfigUpdate(t *testing.T) {
 		}
 	}
 	t.Fatalf("selected model missing: %+v", resp.Accounting.Models)
+}
+
+func runKiroFixture(t *testing.T, stream string, extra map[string]any) (string, string) {
+	t.Helper()
+	bin := buildAgentKiro(t)
+	workDir := t.TempDir()
+	binDir := t.TempDir()
+	cli := filepath.Join(binDir, "kiro-cli")
+	script := "#!/bin/sh\n/bin/cat <<'EOF'\n" + stream + "EOF\n"
+	if err := os.WriteFile(cli, []byte(versionedFixture(script)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]any{
+		"authorization":        fixtureAuthorization(),
+		"contractVersion":      "1",
+		"workspace":            workDir,
+		"workDir":              workDir,
+		"executor":             "agent/kiro",
+		"task":                 "fixture",
+		"hostExecutionAllowed": true,
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	req, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + workDir, "KIRO_CLI=" + cli}
+	cmd.Stdin = strings.NewReader(string(req))
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v", err)
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
+	}
+	return resp.Error, workDir
+}
+
+func TestKiroRunFinishedKeepsEveryFailureReason(t *testing.T) {
+	stream := `{"type":"runFinished","data":{"status":"failed","exitCode":3,"error":"quota exhausted"}}` + "\n"
+	got, _ := runKiroFixture(t, stream, nil)
+	for _, want := range []string{"status failed", "code 3", "quota exhausted"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q lost %q", got, want)
+		}
+	}
+}
+
+func TestKiroDiagnosticStreamIsRedacted(t *testing.T) {
+	stream := `{"type":"text","data":{"content":"token s3cr3t-kiro"}}` + "\n" + `{"type":"runError","data":{"message":"failed"}}` + "\n"
+	_, workDir := runKiroFixture(t, stream, map[string]any{"secrets": map[string]string{"TOKEN": "s3cr3t-kiro"}})
+	saved, err := os.ReadFile(filepath.Join(workDir, "kiro-stream.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(saved), "s3cr3t-kiro") || !strings.Contains(string(saved), "[REDACTED]") {
+		t.Fatalf("diagnostic stream not redacted: %s", saved)
+	}
+}
+
+func TestInvalidKiroParamsFail(t *testing.T) {
+	stream := `{"type":"runFinished","data":{"status":"success"}}` + "\n"
+	got, _ := runKiroFixture(t, stream, map[string]any{"params": json.RawMessage(`{"model":7}`)})
+	if !strings.Contains(got, "invalid params") {
+		t.Fatalf("error = %q, want invalid params failure", got)
+	}
 }
 
 func TestKiroAdapterTreatsRunErrorAsTerminalEvent(t *testing.T) {

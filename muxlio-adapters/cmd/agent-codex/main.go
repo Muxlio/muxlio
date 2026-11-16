@@ -104,11 +104,13 @@ func main() {
 				break
 			}
 			if errors.Is(readErr, errCodexLineTooLong) {
-				runErr = appendFailure(runErr, "skipped a codex stdout event larger than 1 MiB")
+				adapter.AppendLogChunk("stderr", "skipped a codex stdout event larger than 1 MiB")
 				continue
 			}
 			if readErr != nil {
 				runErr = appendFailure(runErr, fmt.Sprintf("reading codex stdout: %v", readErr))
+				// An undrained stdout pipe would block codex and therefore Wait.
+				_ = cmd.Process.Kill()
 				break
 			}
 			continue
@@ -200,12 +202,9 @@ func main() {
 		if readErr == io.EOF {
 			break
 		}
-		if errors.Is(readErr, errCodexLineTooLong) {
-			runErr = appendFailure(runErr, "skipped a codex stdout event larger than 1 MiB")
-			continue
-		}
 		if readErr != nil {
 			runErr = appendFailure(runErr, fmt.Sprintf("reading codex stdout: %v", readErr))
+			_ = cmd.Process.Kill()
 			break
 		}
 	}

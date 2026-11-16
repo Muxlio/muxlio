@@ -165,6 +165,64 @@ func TestAuthenticatedPinnedWebhooks(t *testing.T) {
 	}
 }
 
+func TestUnauthenticatedWebhooksRecordNothingAndHideTriggerState(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "coordinator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p := &plan.Plan{Name: "webhook", IRVersion: "1.0", Root: "root", Subgraphs: map[string]plan.Subgraph{"root": {Nodes: []plan.Node{{ID: "task", Kind: plan.KindExecute, Executor: "test/task"}}}}}
+	digest, err := p.ComputeDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(p)
+	if err := s.SaveWorkflowVersion(digest, raw); err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(s, nil)
+	const secret = "0123456789abcdef"
+	serve := func(path string, body []byte, signature string) int {
+		req := httptest.NewRequest("POST", path, bytes.NewReader(body))
+		if signature != "" {
+			req.Header.Set("X-Muxlio-Signature", signature)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for id, enabled := range map[string]bool{"on": true, "off": false} {
+		def, _ := json.Marshal(map[string]any{"id": id, "workflowDigest": digest, "secret": secret, "signaturePrefix": "sha256=", "enabled": enabled, "payloadLimitBytes": 64})
+		if code := serve("/v1/triggers", def, ""); code != 201 {
+			t.Fatalf("create %s: %d", id, code)
+		}
+	}
+	body := []byte(`{}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	valid := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	for _, id := range []string{"on", "off"} {
+		for _, tc := range []struct {
+			body      []byte
+			signature string
+			status    int
+		}{{body, "", 401}, {body, "sha256=00", 401}, {bytes.Repeat([]byte(" "), 65), valid, 413}} {
+			if code := serve("/webhooks/"+id, tc.body, tc.signature); code != tc.status {
+				t.Fatalf("%s unauthenticated delivery: %d want %d", id, code, tc.status)
+			}
+		}
+		if deliveries, err := s.ListDeliveries(id); err != nil || len(deliveries) != 0 {
+			t.Fatalf("%s recorded unauthenticated deliveries: %+v %v", id, deliveries, err)
+		}
+	}
+	if code := serve("/webhooks/off", body, valid); code != 403 {
+		t.Fatalf("signed delivery to disabled trigger: %d", code)
+	}
+	if deliveries, err := s.ListDeliveries("off"); err != nil || len(deliveries) != 1 {
+		t.Fatalf("authenticated rejection not audited: %+v %v", deliveries, err)
+	}
+}
+
 // Use a real HTTP connection: direct ServeHTTP calls do not normalize headers.
 func TestWebhookSignatureConfigurationOverHTTP(t *testing.T) {
 	s, err := sqlite.Open(filepath.Join(t.TempDir(), "webhooks.db"))

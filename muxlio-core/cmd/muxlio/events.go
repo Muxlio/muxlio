@@ -43,8 +43,12 @@ func cmdEvents(args []string, globalDataDir string, globalJSON bool) int {
 			store, err := openStore(root)
 			if err == nil {
 				defer store.Close()
-				evs, err := store.GetEvents(runID, *since, *limit)
-				if err == nil && len(evs) > 0 {
+				if _, err := store.GetRun(runID); err == nil {
+					evs, err := store.GetEvents(runID, *since, *limit)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "error: reading events: %v\n", err)
+						return 1
+					}
 					return renderEvents(evs, *jsonOut)
 				}
 			}

@@ -130,7 +130,7 @@ func (s *Store) OperationalPage(kind string, offset, limit int) ([]state.Operati
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err = s.db.Query(operationalFacts+`SELECT kind,run_id,activation_id,attempt_id,state,reason,stamp FROM facts WHERE (?='' OR kind=?) ORDER BY stamp DESC,run_id,activation_id,attempt_id LIMIT ? OFFSET ?`, kind, kind, limit, offset)
+	rows, err = s.db.Query(operationalFacts+`SELECT kind,run_id,activation_id,attempt_id,state,reason,stamp FROM facts WHERE (?='' OR kind=?) ORDER BY `+runTimestamp("stamp")+` DESC,run_id,activation_id,attempt_id LIMIT ? OFFSET ?`, kind, kind, limit, offset)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -172,7 +172,7 @@ func (s *Store) SaveOperationalReport(r state.OperationalReport) error {
 func (s *Store) ListOperationalReports(offset, limit int) ([]state.OperationalReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id,kind,name,imported_at FROM operational_reports ORDER BY imported_at DESC,id LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.Query(`SELECT id,kind,name,imported_at FROM operational_reports ORDER BY `+runTimestamp("imported_at")+` DESC,id LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

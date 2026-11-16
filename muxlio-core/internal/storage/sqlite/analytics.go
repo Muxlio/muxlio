@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"strings"
-	"time"
 
 	"github.com/muxlio/muxlio-core/internal/state"
 )
@@ -60,12 +59,12 @@ func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot
 		args = append(args, q.State)
 	}
 	if !q.CreatedAfter.IsZero() {
-		where += ` AND created_at>=?`
-		args = append(args, q.CreatedAfter.UTC().Format(time.RFC3339Nano))
+		where += ` AND ` + runTimestamp("created_at") + `>=?`
+		args = append(args, leaseTimestamp(q.CreatedAfter))
 	}
 	if !q.CreatedBefore.IsZero() {
-		where += ` AND created_at<=?`
-		args = append(args, q.CreatedBefore.UTC().Format(time.RFC3339Nano))
+		where += ` AND ` + runTimestamp("created_at") + `<=?`
+		args = append(args, leaseTimestamp(q.CreatedBefore))
 	}
 	var total int
 	if err := s.db.QueryRow(`SELECT count(*) FROM runs`+where, args...).Scan(&total); err != nil {
@@ -99,7 +98,7 @@ func (s *Store) QueryAnalytics(q state.AnalyticsQuery) (*state.AnalyticsSnapshot
 	if limit <= 0 {
 		limit = 200
 	}
-	query := `SELECT id,workflow_name,state,NULL,NULL,'',created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json,COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''),origin_label,caller_id FROM runs` + where + ` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`
+	query := `SELECT id,workflow_name,state,NULL,NULL,'',created_at,updated_at,NULL,plan_digest,EXISTS(SELECT 1 FROM retention_pins WHERE kind='run' AND retention_pins.id=runs.id),(SELECT retained_until FROM run_retention WHERE run_id=runs.id),fork_json,COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId'),''),origin_label,caller_id FROM runs` + where + ` ORDER BY ` + runTimestamp("created_at") + ` DESC,id LIMIT ? OFFSET ?`
 	pageArgs := append(append([]any{}, args...), limit, offset)
 	rows, err := s.db.Query(query, pageArgs...)
 	if err != nil {

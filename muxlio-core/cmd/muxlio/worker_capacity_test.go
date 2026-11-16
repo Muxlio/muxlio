@@ -25,6 +25,8 @@ func TestServiceWorkerCapacityConfigAndDoctor(t *testing.T) {
 		{`{"WorkerCapacity":null}`, 0, true},
 		{`{"workerCapacity":  null }`, 0, true},
 		{`{"workerCapacity":9999999999999999999999999}`, 0, true},
+		{`{"workerCapacity":1024}`, 1024, false},
+		{`{"workerCapacity":1025}`, 0, true},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {

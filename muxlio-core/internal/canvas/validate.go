@@ -20,13 +20,48 @@ const (
 	MaxInlineDataBytes   = 256 * 1024  // 256 KiB
 	MaxComponentCount    = 500
 	MaxTreeDepth         = 16
+	MaxJSONNesting       = 128
 )
 
 var (
 	compiledSchema *jsonschema.Schema
 	schemaInitOnce sync.Once
 	schemaInitErr  error
+
+	dataRefTypesOnce sync.Once
+	dataRefTypes     map[string]bool
 )
+
+// componentDataIsRef reports whether the schema allows a dataRef in the
+// component's data property. Other components (json) carry arbitrary data.
+func componentDataIsRef(nodeType string) bool {
+	dataRefTypesOnce.Do(func() {
+		dataRefTypes = map[string]bool{}
+		var schema struct {
+			Defs struct {
+				Node struct {
+					AnyOf []struct {
+						Properties struct {
+							Type struct {
+								Const string `json:"const"`
+							} `json:"type"`
+							Data json.RawMessage `json:"data"`
+						} `json:"properties"`
+					} `json:"anyOf"`
+				} `json:"node"`
+			} `json:"$defs"`
+		}
+		if json.Unmarshal(schemaV1Bytes, &schema) != nil {
+			return
+		}
+		for _, variant := range schema.Defs.Node.AnyOf {
+			if bytes.Contains(variant.Properties.Data, []byte(`"#/$defs/dataRef"`)) {
+				dataRefTypes[variant.Properties.Type.Const] = true
+			}
+		}
+	})
+	return dataRefTypes[nodeType]
+}
 
 func getSchema() (*jsonschema.Schema, error) {
 	schemaInitOnce.Do(func() {
@@ -117,7 +152,7 @@ func Validate(data []byte) (*ValidationResult, error) {
 	}
 
 	// Prototype pollution key check
-	if err := checkNoProtoKeys(parsed, ""); err != nil {
+	if err := checkNoProtoKeys(parsed, "", 0); err != nil {
 		res.Errors = append(res.Errors, *err)
 		return res, *err
 	}
@@ -218,8 +253,7 @@ func Validate(data []byte) (*ValidationResult, error) {
 			stateIDs[id] = struct{}{}
 		}
 
-		// Validate data references if present
-		if dataProp, ok := node["data"]; ok {
+		if dataProp, ok := node["data"]; ok && componentDataIsRef(nodeType) {
 			if dataRef, ok := dataProp.(map[string]any); ok {
 				if src, ok := dataRef["source"].(string); ok {
 					if _, declared := declaredSources[src]; !declared {
@@ -311,7 +345,8 @@ func Validate(data []byte) (*ValidationResult, error) {
 	// Second pass: check filter.equalsState references
 	var checkFilters func(node map[string]any, path string) *ValidationError
 	checkFilters = func(node map[string]any, path string) *ValidationError {
-		if dataProp, ok := node["data"]; ok {
+		nodeType, _ := node["type"].(string)
+		if dataProp, ok := node["data"]; ok && componentDataIsRef(nodeType) {
 			if dataRef, ok := dataProp.(map[string]any); ok {
 				if filterObj, ok := dataRef["filter"].(map[string]any); ok {
 					if eqState, ok := filterObj["equalsState"].(string); ok && eqState != "" {
@@ -364,7 +399,13 @@ func Validate(data []byte) (*ValidationResult, error) {
 	return res, nil
 }
 
-func checkNoProtoKeys(v any, path string) *ValidationError {
+func checkNoProtoKeys(v any, path string, depth int) *ValidationError {
+	if depth > MaxJSONNesting {
+		return &ValidationError{
+			Path:    path,
+			Message: fmt.Sprintf("JSON nesting exceeds maximum depth of %d", MaxJSONNesting),
+		}
+	}
 	switch val := v.(type) {
 	case map[string]any:
 		for k, item := range val {
@@ -374,13 +415,13 @@ func checkNoProtoKeys(v any, path string) *ValidationError {
 					Message: fmt.Sprintf("forbidden property name %q", k),
 				}
 			}
-			if err := checkNoProtoKeys(item, path+"/"+k); err != nil {
+			if err := checkNoProtoKeys(item, path+"/"+k, depth+1); err != nil {
 				return err
 			}
 		}
 	case []any:
 		for i, item := range val {
-			if err := checkNoProtoKeys(item, fmt.Sprintf("%s/%d", path, i)); err != nil {
+			if err := checkNoProtoKeys(item, fmt.Sprintf("%s/%d", path, i), depth+1); err != nil {
 				return err
 			}
 		}

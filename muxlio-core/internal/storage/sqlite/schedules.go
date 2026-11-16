@@ -95,7 +95,7 @@ func (s *Store) ListSchedules() ([]schedule.Schedule, error) {
 func (s *Store) ListScheduleFires(id string) ([]schedule.Fire, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT due_at,through_at,state,COALESCE(run_id,'') FROM schedule_fires WHERE schedule_id=? ORDER BY due_at`, id)
+	rows, err := s.db.Query(`SELECT due_at,through_at,state,COALESCE(run_id,'') FROM schedule_fires WHERE schedule_id=? ORDER BY `+runTimestamp("due_at"), id)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *Store) TickSchedules(now time.Time) ([]string, error) {
 		if err := tx.QueryRow(`SELECT count(*) FROM schedule_fires f JOIN runs r ON r.id=f.run_id WHERE f.schedule_id=? AND r.state NOT IN ('succeeded','failed','cancelled')`, e.d.ID).Scan(&active); err != nil {
 			return nil, err
 		}
-		pending, err := tx.Query(`SELECT due_at FROM schedule_fires WHERE schedule_id=? AND state='queued' ORDER BY due_at`, e.d.ID)
+		pending, err := tx.Query(`SELECT due_at FROM schedule_fires WHERE schedule_id=? AND state='queued' ORDER BY `+runTimestamp("due_at"), e.d.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -193,6 +193,9 @@ func main() {
 		if managedEnv[k] {
 			adapter.Fail("command: environment key %q is worker-managed", k)
 		}
+		if loaderInjection(k) {
+			adapter.Fail("command: environment key %q controls dynamic loading", k)
+		}
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	cmd.Stdin = strings.NewReader(p.Stdin)
@@ -260,6 +263,14 @@ func main() {
 	// Keep full output available through normal Muxlio task logs; the adapter
 	// response holds only the bounded previews.
 	_ = adapter.WriteResponse(adapter.Response{Outputs: result, OutputErrors: outputErrors})
+}
+
+func loaderInjection(key string) bool {
+	switch key {
+	case "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH":
+		return true
+	}
+	return strings.HasPrefix(key, "DYLD_")
 }
 
 var argPlaceholder = regexp.MustCompile(`\{\{([A-Za-z0-9_.-]+)\}\}`)

@@ -214,6 +214,24 @@ func (s *Memory) RetryRun(id string) error {
 			return fmt.Errorf("attempt %s awaits reconciliation: %s", attempt.ID, attempt.AwaitReconciliationReason)
 		}
 	}
+	var held *ExecutionAttempt
+	for i := range s.attempts {
+		a := &s.attempts[i]
+		assignment := s.assignments[a.ActivationID]
+		switch a.State {
+		case "succeeded", "failed", "cancelled", "resolved":
+			continue
+		}
+		if a.RunID != id || assignment == nil || assignment.AttemptID != a.ID || assignment.State != "uncertain" || ReplaySafeEffect(a.Effect, a.IdempotencyKey) {
+			continue
+		}
+		a.AwaitReconciliationReason = UncertainRetryReason
+		s.appendEventLocked(id, EventReconciliationRequired, a.ActivationID, map[string]any{"attemptId": a.ID})
+		held = a
+	}
+	if held != nil {
+		return fmt.Errorf("attempt %s awaits reconciliation: %s", held.ID, held.AwaitReconciliationReason)
+	}
 	incomplete := make(map[string]bool)
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
@@ -226,10 +244,21 @@ func (s *Memory) RetryRun(id string) error {
 			requests = append(requests, *req)
 		}
 	}
-	for _, req := range RenewCancelledInputs(requests, incomplete, time.Now()) {
+	renewed, superseded := RenewClosedInputs(requests, incomplete, time.Now())
+	for _, requestID := range superseded {
+		s.inputRequests[inputRequestKey(id, requestID)].State = InputRequestCancelled
+	}
+	for _, req := range renewed {
 		s.inputRequests[inputRequestKey(id, req.RequestID)] = &req
 		s.appendEventLocked(req.RunID, EventInputRequired, req.ActivationID, map[string]any{"requestId": req.RequestID})
 	}
+	timers := s.timers[:0]
+	for _, timer := range s.timers {
+		if timer.RunID != id || timer.State != "cancelled" || !incomplete[timer.ActivationID] {
+			timers = append(timers, timer)
+		}
+	}
+	s.timers = timers
 	for _, act := range s.activations {
 		if act.RunID == id && act.State != "succeeded" {
 			for _, attempt := range s.attempts {
@@ -769,10 +798,11 @@ func (s *Memory) ListAssignments(runID string) ([]Assignment, error) {
 	defer s.mu.RUnlock()
 	result := make([]Assignment, 0)
 	for _, a := range s.assignments {
-		if a.RunID == runID && a.State == "active" {
+		if a.RunID == runID {
 			result = append(result, *a)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ActivationID < result[j].ActivationID })
 	return result, nil
 }
 

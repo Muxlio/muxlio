@@ -38,7 +38,7 @@ func (r *Recorder) ObserveCumulative(part Part) error {
 			entry.Tokens = prior.Tokens
 		} else if prior.Tokens != nil {
 			t, p := entry.Tokens, prior.Tokens
-			changedDimensions := t.Input.Collected != nil || t.Input.Estimated != nil || t.Output.Collected != nil || t.Output.Estimated != nil
+			changedDimensions := measureChanged(t.Input, p.Input) || measureChanged(t.Output, p.Output)
 			t.Input = retainMeasure(t.Input, p.Input)
 			t.Output = retainMeasure(t.Output, p.Output)
 			t.CacheRead = retainMeasure(t.CacheRead, p.CacheRead)
@@ -46,16 +46,19 @@ func (r *Recorder) ObserveCumulative(part Part) error {
 			t.Reasoning = retainMeasure(t.Reasoning, p.Reasoning)
 			if t.Total.Collected == nil && t.Total.Estimated == nil {
 				t.Total = p.Total
-				// An arithmetic total follows its component replacement; a
-				// provider-reported conflicting total remains explicit evidence.
-				if changedDimensions && p.Total.Collected != nil && p.Total.Collected.Fidelity == "derived-exact" && t.Input.Collected != nil && t.Output.Collected != nil {
-					value, err := AddCount(t.Input.Collected.Value, t.Output.Collected.Value)
-					if err != nil {
-						return r.reject("accounting_overflow")
+				// A prior total describes the prior components. Once they change, an
+				// arithmetic total follows them and any other total is stale.
+				if changedDimensions {
+					t.Total = contract.Measure[contract.Count]{}
+					if p.Total.Collected != nil && p.Total.Collected.Fidelity == "derived-exact" && t.Input.Collected != nil && t.Output.Collected != nil {
+						value, err := AddCount(t.Input.Collected.Value, t.Output.Collected.Value)
+						if err != nil {
+							return r.reject("accounting_overflow")
+						}
+						reading := *p.Total.Collected
+						reading.Value = value
+						t.Total = contract.Measure[contract.Count]{Collected: &reading}
 					}
-					reading := *p.Total.Collected
-					reading.Value = value
-					t.Total = contract.Measure[contract.Count]{Collected: &reading}
 				}
 			}
 		}
@@ -109,16 +112,22 @@ func readingRegressed[T ~string](next, prior contract.Measure[T]) bool {
 			return true
 		}
 	}
-	nextValue, nextOK := measureValue(next)
-	priorValue, priorOK := measureValue(prior)
-	if nextOK && priorOK && (next.Collected == nil || next.Estimated == nil || prior.Collected == nil || prior.Estimated == nil) {
-		n, okN := new(big.Rat).SetString(nextValue)
-		p, okP := new(big.Rat).SetString(priorValue)
+	// A collected reading may undercut an earlier estimate. An estimate-only
+	// report would replace collected evidence, so it must not undercut it.
+	if next.Collected == nil && next.Estimated != nil && prior.Collected != nil {
+		n, okN := new(big.Rat).SetString(string(next.Estimated.Value))
+		p, okP := new(big.Rat).SetString(string(prior.Collected.Value))
 		if okN && okP && n.Cmp(p) < 0 {
 			return true
 		}
 	}
 	return false
+}
+
+func measureChanged[T ~string](next, prior contract.Measure[T]) bool {
+	nextValue, nextOK := measureValue(next)
+	priorValue, priorOK := measureValue(prior)
+	return nextOK && priorOK && nextValue != priorValue
 }
 
 func cumulativeRegressed(next, prior contract.AccountingEntry) bool {

@@ -1,7 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { workflow, task, artifact } from '../dist/index.js';
+import { workflow, task, artifact, eq, literal, field, input as inputExpr, defineWorkflow, toExpr } from '../dist/index.js';
 import { z } from 'zod';
+
+test('expression-shaped JSON stays data while SDK helper expressions remain executable', () => {
+  const data = {
+    operation: { op: 'input' },
+    reference: { ref: { node: 'ordinary', port: 'data' } },
+    expression: { expr: { op: 'literal', value: 'ordinary data' } },
+    nested: [{ op: 'input' }],
+  };
+  const { plan } = workflow('literal-expression-shapes', {
+    build: ({ step, input }) => {
+      step('read', task({ executor: 'command' }), {
+        data,
+        condition: eq(input.enabled, literal(true)),
+        numericKey: input.values['0'],
+        helperField: field(inputExpr(), 'enabled'),
+        explicitLiteral: literal({ op: 'input' }),
+        explicitExpression: toExpr({ op: 'input' }),
+        explicitSymbolic: toExpr(input.enabled),
+      });
+      return data;
+    },
+  });
+  const inputs = plan.subgraphs.root.nodes[0].inputs;
+  const evaluateData = expr => {
+    if (expr.op === 'literal') return expr.value;
+    if (expr.op === 'array') return expr.elements.map(evaluateData);
+    assert.equal(expr.op, 'object');
+    return Object.fromEntries(Object.entries(expr.fields).map(([k, v]) => [k, evaluateData(v)]));
+  };
+  assert.deepEqual(evaluateData(inputs.data.expr), data);
+  for (const [key, binding] of Object.entries(plan.subgraphs.root.output)) {
+    assert.deepEqual(evaluateData(binding.expr), data[key]);
+  }
+  assert.equal(inputs.condition.expr.op, 'eq');
+  assert.equal(inputs.condition.expr.left.op, 'field');
+  assert.equal(inputs.condition.expr.right.op, 'literal');
+  assert.equal(inputs.numericKey.expr.op, 'index');
+  assert.equal(inputs.numericKey.expr.index, 0);
+  assert.equal(inputs.helperField.expr.op, 'field');
+  assert.deepEqual(inputs.explicitLiteral.expr.value, { op: 'input' });
+  assert.equal(inputs.explicitExpression.expr.op, 'input');
+  assert.equal(inputs.explicitSymbolic.expr.op, 'field');
+  assert.equal(inputs.explicitSymbolic.expr.name, 'enabled');
+  assert.doesNotMatch(JSON.stringify(plan), /muxlio.authored/);
+
+  // Builder expression helpers use the same marker as standalone helpers.
+  defineWorkflow({ name: 'builder-helpers', build: g => {
+    const { plan: nested } = workflow('nested-helper', { build: ({step}) => {
+      step('read', task({executor:'command'}), { value: g.add(g.literal(1), g.literal(2)) });
+    }});
+    assert.equal(nested.subgraphs.root.nodes[0].inputs.value.expr.op, 'add');
+  }});
+});
 
 test('command tasks infer process outputs without declarations', () => {
   const { plan } = workflow('inferred-command', {

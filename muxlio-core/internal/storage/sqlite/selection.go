@@ -87,7 +87,7 @@ func selectAnyDispatch(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, 
 	if preferences.HeartbeatSeconds > 0 {
 		window = time.Duration(preferences.HeartbeatSeconds * float64(time.Second))
 	}
-	registered, err := tx.Query(`SELECT id,capacity,capabilities_json,labels_json FROM workers WHERE draining=0 AND capacity>0 AND last_seen>=? ORDER BY id`, rfc3339(now.Add(-window)))
+	registered, err := tx.Query(`SELECT id,capacity,capabilities_json,labels_json FROM workers WHERE draining=0 AND capacity>0 AND `+runTimestamp("last_seen")+`>=? ORDER BY id`, leaseTimestamp(now.Add(-window)))
 	if err != nil {
 		return d, false, err
 	}

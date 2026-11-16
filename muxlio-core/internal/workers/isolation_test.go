@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIsolationPolicyRequiresExplicitMode(t *testing.T) {
@@ -101,6 +102,40 @@ func TestGuardRequestRequiresCapabilityAndSecretAllowlist(t *testing.T) {
 func TestRedactSecrets(t *testing.T) {
 	if got := RedactSecrets("token=sensitive", map[string]string{"token": "sensitive"}); got != "token=[REDACTED]" {
 		t.Fatalf("secret was not redacted: %q", got)
+	}
+	secrets := map[string]string{"api": "secret-value"}
+	for _, value := range []string{"tests pass", "status: s", "ends with secret-valu"} {
+		if got := RedactSecrets(value, secrets); got != value {
+			t.Errorf("complete value %q changed to %q", value, got)
+		}
+	}
+	if got := redactTruncatedSecrets("cut at secret-va", secrets); got != "cut at [REDACTED]" {
+		t.Errorf("truncated secret prefix leaked: %q", got)
+	}
+}
+
+func TestBoundedOutputRedactsOnlyTruncatedTails(t *testing.T) {
+	secrets := map[string]string{"api": "secret-value"}
+	complete := boundedBuffer{limit: 64}
+	_, _ = complete.Write([]byte("tests pass"))
+	if got := complete.redacted(secrets); got != "tests pass" {
+		t.Fatalf("untruncated stream changed: %q", got)
+	}
+	cut := boundedBuffer{limit: 10}
+	_, _ = cut.Write([]byte("log secret-value"))
+	if got := cut.redacted(secrets); got != "log [REDACTED]" {
+		t.Fatalf("truncated stream leaked a secret prefix: %q", got)
+	}
+	runes := boundedBuffer{limit: 5}
+	_, _ = runes.Write([]byte("abcd"))
+	_, _ = runes.Write([]byte("é!"))
+	_, _ = runes.Write([]byte("later"))
+	if got := runes.String(); got != "abcd" {
+		t.Fatalf("bounded buffer split a rune or resumed after truncation: %q", got)
+	}
+	long := strings.Repeat("a", MaxLogBytes-1) + "é"
+	if got := boundedLog(long); !utf8.ValidString(got) || !strings.HasSuffix(got, "a\n[truncated]") {
+		t.Fatalf("bounded log split a rune: %q", got[len(got)-20:])
 	}
 }
 

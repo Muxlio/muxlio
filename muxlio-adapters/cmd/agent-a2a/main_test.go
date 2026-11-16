@@ -356,6 +356,44 @@ func TestPollingFailureRetainsIdentity(t *testing.T) {
 	}
 }
 
+func TestAgentCardOutageKeepsRemoteTaskPending(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer s.Close()
+	raw, _ := json.Marshal(params{URL: s.URL})
+	ref := &contract.RemoteTaskReference{ID: "durable-task", ContextID: "remote-context", URL: s.URL + "/rpc"}
+	req := adapter.Request{Executor: "agent/a2a", Params: raw, WorkDir: t.TempDir(), Action: "poll", RemoteTask: ref}
+	result := execute(context.Background(), &req)
+	if result.Error != "" || result.RemoteTask == nil || !result.RemoteTask.Pending || result.RemoteTask.ID != "durable-task" {
+		t.Fatalf("card outage terminated remote task: %+v", result)
+	}
+	req.Action = "reconcile"
+	result = execute(context.Background(), &req)
+	if result.Error != "" || result.Reconciliation == nil || result.Reconciliation.Status != "inconclusive" {
+		t.Fatalf("card outage reconciliation: %+v", result)
+	}
+	req.Action, req.RemoteTask = "", nil
+	if result = execute(context.Background(), &req); result.Error == "" {
+		t.Fatal("submission proceeded without an Agent Card")
+	}
+}
+
+func TestScalarArtifactPreservesLargeIntegers(t *testing.T) {
+	remote := task{Kind: "task", ID: "durable-task", ContextID: "remote-context"}
+	remote.Status.State = "completed"
+	remote.Artifacts = append(remote.Artifacts, struct {
+		Name  string `json:"name"`
+		Parts []part `json:"parts"`
+	}{Name: "answer", Parts: []part{{Kind: "data", Data: json.RawMessage(`{"id":9007199254740993}`)}}})
+	req := adapter.Request{WorkDir: t.TempDir(), Outputs: map[string]adapter.OutputDecl{"answer": {}}}
+	result := finish(&req, remote, "https://example.test/rpc")
+	encoded, _ := json.Marshal(result.Outputs["answer"])
+	if string(encoded) != `{"id":9007199254740993}` {
+		t.Fatalf("scalar artifact lost precision: %s", encoded)
+	}
+}
+
 func TestDiscoveryAlternateInterfaceAndRecoveryIdentity(t *testing.T) {
 	f := newFixture(t)
 	f.card["preferredTransport"] = "GRPC"

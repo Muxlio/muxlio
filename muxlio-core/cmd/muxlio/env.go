@@ -36,11 +36,10 @@ func cmdEnv(args []string, globalDataDir string, globalJSON bool) int {
 	if *shell != "" {
 		switch *shell {
 		case "fish":
-			fmt.Printf("set -gx MUXLIO_HOME %q;\n", root)
-			fmt.Printf("set -gx PATH %q $PATH;\n", binDir)
+			fmt.Printf("set -gx MUXLIO_HOME %s;\n", fishQuote(root))
+			fmt.Printf("set -gx PATH %s $PATH;\n", fishQuote(binDir))
 		default: // bash, zsh, sh
-			fmt.Printf("export MUXLIO_HOME=%q\n", root)
-			fmt.Printf("case \":$PATH:\" in\n  *\":%s:\"*) ;;\n  *) export PATH=\"%s:$PATH\" ;;\nesac\n", binDir, binDir)
+			fmt.Print(posixEnvScript(root))
 		}
 		return 0
 	}
@@ -98,4 +97,24 @@ func cmdEnv(args []string, globalDataDir string, globalJSON bool) int {
 
 	fmt.Printf("\nTo configure your active shell:\n  eval \"$(muxlio env --shell zsh)\"\n")
 	return 0
+}
+
+// posixEnvScript is sourced by sh-compatible shells; root is quoted so that
+// $, backticks, and quotes in the runtime path are never evaluated.
+func posixEnvScript(root string) string {
+	return fmt.Sprintf(`# Muxlio shell environment
+export MUXLIO_HOME=%s
+case ":$PATH:" in
+  *":$MUXLIO_HOME/bin:"*) ;;
+  *) export PATH="$MUXLIO_HOME/bin:$PATH" ;;
+esac
+`, shellQuote(root))
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func fishQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
 }

@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const openNonblock = 0
+
 func configureProcess(cmd *exec.Cmd) { cmd.WaitDelay = time.Second }
 func runProcess(ctx context.Context, cmd *exec.Cmd) error {
 	if err := ctx.Err(); err != nil {

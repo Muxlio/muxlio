@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/muxlio/muxlio-adapters/accounting"
 	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
@@ -49,6 +50,93 @@ func TestBlockedProgressChild(t *testing.T) {
 	err := writeProgress(file, bytes.Repeat([]byte("x"), 4<<20))
 	if err == nil || time.Since(start) > 4*time.Second {
 		t.Fatalf("blocked writer did not return bounded error: %v", err)
+	}
+}
+
+func TestStalledProgressFailsFastChild(t *testing.T) {
+	if os.Getenv("MUXLIO_PROGRESS_STALLED") != "1" {
+		return
+	}
+	if err := writeProgress(logWriter(), bytes.Repeat([]byte("x"), 4<<20)); err == nil {
+		t.Fatal("blocked frame was delivered")
+	}
+	start := time.Now()
+	snapshot := contract.Accounting{Revision: 1, Final: true}
+	p := NewAccountingPublisher()
+	_ = p.Publish(snapshot, true)
+	_ = p.Close()
+	AppendLogChunk("stderr", "diagnostic")
+	if err := AppendAccountingSnapshot(snapshot); err == nil {
+		t.Fatal("stalled channel reported delivery")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("terminal reporting stalled for %s after a timed-out frame", elapsed)
+	}
+}
+
+func TestStalledProgressBoundsTerminalReporting(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStalledProgressFailsFastChild$")
+	cmd.Env = append(os.Environ(), "MUXLIO_PROGRESS_STALLED=1", "MUXLIO_LOG_FD=3")
+	cmd.ExtraFiles = []*os.File{writer}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stalled adapter: %v %s", err, out)
+	}
+}
+
+func TestFinalAccountingIsPublishedOnceChild(t *testing.T) {
+	if os.Getenv("MUXLIO_PROGRESS_FINAL") != "1" {
+		return
+	}
+	r := accounting.NewRecorder()
+	if err := r.SetCoverage(contract.AccountingKey{Kind: "tokens"}, "unknown", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	a, err := FinalizeAccounting(r, NewAccountingPublisher())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteResponse(Response{Outputs: map[string]any{}, Accounting: a}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinalAccountingIsPublishedOnce(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFinalAccountingIsPublishedOnceChild$")
+	cmd.Env = append(os.Environ(), "MUXLIO_PROGRESS_FINAL=1", "MUXLIO_LOG_FD=3")
+	cmd.ExtraFiles = []*os.File{writer}
+	if err = cmd.Start(); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	writer.Close()
+	frames := 0
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		var p contract.Progress
+		if json.Unmarshal(scanner.Bytes(), &p) == nil && p.Accounting != nil {
+			frames++
+		}
+	}
+	if err = cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if frames != 1 {
+		t.Fatalf("final snapshot published %d times", frames)
 	}
 }
 

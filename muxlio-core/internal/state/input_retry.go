@@ -13,17 +13,20 @@ func RetriedInputRequestID(requestID string) string {
 	return fmt.Sprintf("req_%x", sum[:16])
 }
 
-// RenewCancelledInputs returns fresh requests for cancelled waits belonging to
-// incomplete activations. Callers persist these atomically with explicit retry.
-// Fulfilled requests and cancelled requests with successors are left intact.
-func RenewCancelledInputs(requests []InputRequest, activations map[string]bool, now time.Time) []InputRequest {
+// RenewClosedInputs returns fresh requests for cancelled or expired waits
+// belonging to incomplete activations. Callers persist these atomically with
+// explicit retry. Successors are only followed from cancelled requests, so the
+// expired predecessors returned in superseded must be closed as cancelled in
+// the same transaction. Fulfilled requests and requests with successors are
+// left intact.
+func RenewClosedInputs(requests []InputRequest, activations map[string]bool, now time.Time) (renewed []InputRequest, superseded []string) {
 	existing := make(map[string]bool, len(requests))
 	for _, req := range requests {
 		existing[req.RequestID] = true
 	}
-	var renewed []InputRequest
 	for _, req := range requests {
-		if req.State != InputRequestCancelled || !activations[req.ActivationID] {
+		expired := req.State == InputRequestExpired || (req.State == InputRequestPending && req.ExpiresAt != nil && !req.ExpiresAt.After(now))
+		if (req.State != InputRequestCancelled && !expired) || !activations[req.ActivationID] {
 			continue
 		}
 		nextID := RetriedInputRequestID(req.RequestID)
@@ -43,6 +46,9 @@ func RenewCancelledInputs(requests []InputRequest, activations map[string]bool, 
 			next.ExpiresAt = &due
 		}
 		renewed = append(renewed, next)
+		if expired {
+			superseded = append(superseded, req.RequestID)
+		}
 	}
-	return renewed
+	return renewed, superseded
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/api"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/subscription"
@@ -386,6 +387,92 @@ func TestHookBusyAfterCancelDoesNotConsumeRetry(t *testing.T) {
 		t.Fatalf("hook busy consumed retry: %+v", record)
 	}
 	close(release)
+}
+
+func TestBusyHookDeliveriesDoNotStarveWebhooks(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "starve.db"))
+	must(t, err)
+	defer s.Close()
+	delivered := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case delivered <- struct{}{}:
+		default:
+		}
+	}))
+	defer server.Close()
+	local := definition("local:stuck")
+	local.ID = "local"
+	must(t, local.Normalize())
+	must(t, s.CreateSubscription(local))
+	remote := definition(server.URL)
+	remote.ID = "remote"
+	must(t, remote.Normalize())
+	must(t, s.CreateSubscription(remote))
+	for i := 0; i < 40; i++ {
+		must(t, s.EnqueueDelivery(subscription.Delivery{ID: fmt.Sprintf("a%02d", i), SubscriptionID: local.ID, State: subscription.StatePending, MaxRetries: 3}))
+	}
+	must(t, s.EnqueueDelivery(subscription.Delivery{ID: "z", SubscriptionID: remote.ID, State: subscription.StatePending, MaxRetries: 3}))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	var once sync.Once
+	d := subscription.Dispatcher{Store: s, Events: s, Hooks: map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return nil
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Tick(ctx, time.Now()) }()
+	<-entered
+	cancel()
+	<-done
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		must(t, d.Tick(context.Background(), now.Add(time.Duration(i)*time.Second)))
+	}
+	select {
+	case <-delivered:
+	default:
+		t.Fatal("webhook delivery starved behind busy local hook deliveries")
+	}
+	for _, id := range []string{"a00", "a39"} {
+		record, err := s.GetDelivery(id)
+		must(t, err)
+		if record.Attempts != 0 || record.State != subscription.StatePending {
+			t.Fatalf("busy hook consumed retry: %+v", record)
+		}
+	}
+}
+
+func TestWebhookDeliveriesNeverReceiveLocalOperatorCredentials(t *testing.T) {
+	s, err := sqlite.Open(filepath.Join(t.TempDir(), "ssrf.db"))
+	must(t, err)
+	defer s.Close()
+	privileged := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		privileged <- api.LocalNetworkCredentialRequest(r)
+	}))
+	defer server.Close()
+	sub := definition(server.URL + "/v1/runs/victim/cancel")
+	sub.SignatureHeader = "Sec-Fetch-Site"
+	if err := sub.Normalize(); err == nil {
+		t.Fatal("signature header may overwrite the request site")
+	}
+	sub.SignatureHeader = ""
+	must(t, sub.Normalize())
+	must(t, s.CreateSubscription(sub))
+	must(t, s.EnqueueDelivery(subscription.Delivery{ID: "d", SubscriptionID: sub.ID, State: subscription.StatePending, MaxRetries: 1}))
+	must(t, (&subscription.Dispatcher{Store: s, Events: s}).Tick(context.Background(), time.Now()))
+	select {
+	case got := <-privileged:
+		if got {
+			t.Fatal("loopback delivery qualifies for automatic operator credentials")
+		}
+	default:
+		t.Fatal("delivery not attempted")
+	}
 }
 
 func TestDeliveryPreservesJSONNumbersAcrossPersistenceAndRetry(t *testing.T) {

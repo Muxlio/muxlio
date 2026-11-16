@@ -94,6 +94,19 @@ func TestParseCursorTokenUsageTreatsNullCacheFieldsAsAbsent(t *testing.T) {
 	}
 }
 
+func TestParseCursorTokenUsageRejectsMalformedCountsWholesale(t *testing.T) {
+	for _, raw := range []string{
+		`{"inputTokens":-5,"cacheWriteTokens":10}`,
+		`{"outputTokens":-1,"cacheWriteTokens":10}`,
+		`{"inputTokens":"5","outputTokens":3,"cacheWriteTokens":10}`,
+		`{"inputTokens":5,"outputTokens":3,"cacheReadTokens":-1}`,
+	} {
+		if got := parseCursorTokenUsage(json.RawMessage(raw)); got != nil {
+			t.Fatalf("%s: malformed usage leaked %+v", raw, got)
+		}
+	}
+}
+
 func TestMergeTerminalUsagePreservesPriorDimensionsWhenPartial(t *testing.T) {
 	prior := parseCursorTokenUsage(json.RawMessage(`{"inputTokens":100,"outputTokens":40,"cacheReadTokens":12}`))
 	terminal := parseCursorTokenUsage(json.RawMessage(`{"inputTokens":110}`))

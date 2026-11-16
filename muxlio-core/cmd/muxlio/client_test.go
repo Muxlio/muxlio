@@ -25,6 +25,36 @@ func TestResolveServerHonorsDataDirProfiles(t *testing.T) {
 	}
 }
 
+func TestResolveServerNeverSendsRootTokenToRemoteProfiles(t *testing.T) {
+	t.Setenv("MUXLIO_TOKEN", "")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "remote.token"), []byte("scoped-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"token":"root-admin","addr":"127.0.0.1:7600","servers":{
+		"local":{"url":"http://127.0.0.1:7600","credentialRef":"root"},
+		"legacy-local":"http://127.0.0.1:7600",
+		"remote":{"url":"https://remote.example"},
+		"remote-file":{"url":"https://remote.example","tokenFile":"remote.token"},
+		"remote-root":{"url":"https://remote.example","credentialRef":"root"},
+		"plaintext":{"url":"http://203.0.113.5:7600","token":"scoped"},
+		"other-loopback":{"url":"http://127.0.0.1:9999"}}}`
+	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"local": "root-admin", "legacy-local": "root-admin", "remote": "", "remote-file": "scoped-from-file", "other-loopback": ""} {
+		_, token, err := resolveServer(name, root)
+		if err != nil || token != want {
+			t.Errorf("%s: token=%q err=%v", name, token, err)
+		}
+	}
+	for _, name := range []string{"remote-root", "plaintext"} {
+		if _, token, err := resolveServer(name, root); err == nil {
+			t.Errorf("%s accepted with token %q", name, token)
+		}
+	}
+}
+
 func TestCLIRunAcceptsServerAfterPositionals(t *testing.T) {
 	if os.Getenv("MUXLIO_TEST_CLI") == "1" {
 		return

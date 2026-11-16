@@ -33,6 +33,33 @@ async function readCanvasText(
   }
 }
 
+let canvasDataRefTypeCache: ReadonlySet<string> | null = null;
+// Components whose schema admits a dataRef; other `data` props are inline JSON.
+function canvasDataRefTypes(): ReadonlySet<string> {
+  canvasDataRefTypeCache ??= new Set(
+    (canvasSchema.$defs?.node?.anyOf || [])
+      .filter((variant: any) =>
+        JSON.stringify(variant?.properties?.data ?? null).includes(
+          '"#/$defs/dataRef"',
+        ),
+      )
+      .map((variant: any) => variant.properties.type?.const),
+  );
+  return canvasDataRefTypeCache;
+}
+
+// Match the coordinator's encoding/json size, which escapes <, >, & and
+// U+2028/U+2029 that JSON.stringify leaves literal.
+function canvasMarshaledBytes(value: unknown): number {
+  const text = JSON.stringify(value) ?? "null";
+  let extra = 0;
+  for (const char of text) {
+    if (char === "<" || char === ">" || char === "&") extra += 5;
+    else if (char === "\u2028" || char === "\u2029") extra += 3;
+  }
+  return new TextEncoder().encode(text).byteLength + extra;
+}
+
 function validateCanvasDocument(doc: unknown): asserts doc is CanvasDocument {
   const fail = (message: string): never => {
     throw new Error("Invalid Canvas: " + message);
@@ -146,7 +173,7 @@ function validateCanvasDocument(doc: unknown): asserts doc is CanvasDocument {
     remember(node.id);
     if (["select", "toggle", "search"].includes(node.type))
       controls.add(node.id);
-    const ref = node.data;
+    const ref = canvasDataRefTypes().has(node.type) ? node.data : undefined;
     if (ref && !Array.isArray(ref) && typeof ref === "object") {
       if (
         typeof ref.source === "string" &&
@@ -179,8 +206,7 @@ function validateCanvasDocument(doc: unknown): asserts doc is CanvasDocument {
     if (
       source &&
       Object.hasOwn(source, "value") &&
-      new TextEncoder().encode(JSON.stringify(source.value)).byteLength >
-        CANVAS_INLINE_BYTES
+      canvasMarshaledBytes(source.value) > CANVAS_INLINE_BYTES
     )
       fail("Inline data exceeds 256 KiB.");
   }

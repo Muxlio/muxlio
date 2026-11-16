@@ -154,7 +154,8 @@
     return renderViewTemplate("json/json-status-markup-json-status", [viewValue(role), viewValue(note)]);
   }
 
-  function jsonRawMarkup(text, escape, { truncated = false, error = false, note = '' } = {}) {
+  function jsonRawMarkup(text, escape, { truncated = false, error = false, note: rawNote = '' } = {}) {
+    const note = rawNote ? escape(rawNote) : '';
     const banner = truncated
       ? jsonStatusMarkup('Preview shows the first part of the file only. Open the artifact to load the complete JSON.', 'status')
       : error
@@ -166,7 +167,7 @@
     return renderViewTemplate("json/json-raw-markup-pre", [viewValue(banner), viewValue(cls), viewValue(escape(text))]);
   }
 
-  function jsonPanelFromDocument(doc, escape, { title = 'Value', statePath = 'json' } = {}) {
+  function jsonPanelFromDocument(doc, escape, { title = 'Value', statePath = 'json', openDepth = undefined } = {}) {
     if (doc.kind === 'unavailable') {
       return `${jsonStatusMarkup('Output unavailable.', 'status')}`;
     }
@@ -176,7 +177,7 @@
     if (doc.kind === 'error') {
       return `${jsonRawMarkup(doc.raw, escape, { error: true, note: doc.message })}`;
     }
-    return renderViewTemplate("json/json-panel-from-document-json-tree", [viewValue(escape(statePath)), viewValue(jsonTreeMarkup(doc.value, title, 0, statePath, escape))]);
+    return renderViewTemplate("json/json-panel-from-document-json-tree", [viewValue(escape(statePath)), viewValue(jsonTreeMarkup(doc.value, title, 0, statePath, escape, openDepth === undefined ? {} : { openDepth }))]);
   }
 
   function jsonPanelFromText(text, escape, opts: Record<string, any> = {}) {

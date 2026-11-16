@@ -8,9 +8,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestLogPumpCleanupIsBoundedWhenDescriptorOutlivesAdapter(t *testing.T) {
+	previous := adapterLogDrainGrace
+	adapterLogDrainGrace = 50 * time.Millisecond
+	defer func() { adapterLogDrainGrace = previous }()
+	rec := &logRecorder{}
+	sink := NewStoreLogSink(rec, "run", "act", nil)
+	cmd := exec.Command("/bin/sh", "-c", `printf '%s\n' '{"stream":"agent","text":"before exit"}' >&3`)
+	cleanup, err := startAdapterLogPump(cmd, ExecuteRequest{LogSink: sink})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A detached descendant keeps its inherited copy of the log descriptor.
+	held, err := syscall.Dup(int(cmd.ExtraFiles[len(cmd.ExtraFiles)-1].Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(held)
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { cleanup(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("log cleanup blocked on a descriptor held after adapter exit")
+	}
+	_ = sink.Close()
+	if len(rec.chunks) == 0 || string(rec.chunks[0].Data) != "before exit" {
+		t.Fatalf("frames written before exit were lost: %+v", rec.chunks)
+	}
+}
 
 func TestProcessCleansDescendants(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {

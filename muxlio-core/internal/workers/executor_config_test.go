@@ -149,12 +149,12 @@ func TestExecutorTimeoutOverridesGlobalButNotWorkflowLimit(t *testing.T) {
 
 func TestExecutorTimeoutConfigurationBounds(t *testing.T) {
 	for _, seconds := range []int{-1, 86401} {
-		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/kiro": {TimeoutSeconds: seconds}}); err == nil {
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/example": {TimeoutSeconds: seconds}}); err == nil {
 			t.Errorf("accepted timeoutSeconds=%d", seconds)
 		}
 	}
 	for _, seconds := range []int{0, 1, 86400} {
-		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/kiro": {TimeoutSeconds: seconds}}); err != nil {
+		if err := ValidateExecutorConfigs(map[string]ExecutorConfig{"agent/example": {TimeoutSeconds: seconds}}); err != nil {
 			t.Errorf("rejected timeoutSeconds=%d: %v", seconds, err)
 		}
 	}

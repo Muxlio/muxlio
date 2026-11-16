@@ -131,44 +131,67 @@ func WarningsOnly(issues []ValidationError) []ValidationError {
 	return warnings
 }
 
-// visibleOuterNodes returns node IDs from enclosing subgraphs that a nested
-// body subgraph may reference (e.g. prepare before a map in the root).
+// visibleOuterNodes returns node IDs from enclosing subgraphs of any caller of
+// a nested body subgraph. Body node IDs must not shadow any of them.
 func visibleOuterNodes(p *Plan, bodySG string) map[string]bool {
 	vis := map[string]bool{}
-	for id := range visibleOuterNodeDefinitions(p, bodySG, map[string]bool{}) {
+	for id := range outerNodeDefinitions(p, bodySG, map[string]bool{}, false) {
 		vis[id] = true
 	}
 	return vis
 }
 
+// visibleOuterNodeDefinitions returns nodes from enclosing subgraphs that a
+// nested body subgraph may reference (e.g. prepare before a map in the root).
+// A body shared by several callers sees only nodes completed before every one.
 func visibleOuterNodeDefinitions(p *Plan, bodySG string, visiting map[string]bool) map[string]Node {
-	vis := map[string]Node{}
+	return outerNodeDefinitions(p, bodySG, visiting, true)
+}
+
+func outerNodeDefinitions(p *Plan, bodySG string, visiting map[string]bool, everyCaller bool) map[string]Node {
 	if visiting[bodySG] {
-		return vis
+		return map[string]Node{}
 	}
 	visiting[bodySG] = true
 	defer delete(visiting, bodySG)
+	var vis map[string]Node
 	for _, sgName := range sortedKeys(p.Subgraphs) {
 		sg := p.Subgraphs[sgName]
 		for i := range sg.Nodes {
 			node := &sg.Nodes[i]
 			// Nested bodies inherit only outputs completed before invocation.
 			// A branch cannot see its own result or later parent nodes either.
-			if node.BodyRef == bodySG || node.ThenRef == bodySG || node.ElseRef == bodySG {
-				before := map[string]bool{}
-				for _, id := range nodeIDsBefore(sg.Nodes, node.ID) {
-					before[id] = true
+			if node.BodyRef != bodySG && node.ThenRef != bodySG && node.ElseRef != bodySG {
+				continue
+			}
+			caller := outerNodeDefinitions(p, sgName, visiting, everyCaller)
+			before := map[string]bool{}
+			for _, id := range nodeIDsBefore(sg.Nodes, node.ID) {
+				before[id] = true
+			}
+			for _, n := range sg.Nodes {
+				if before[n.ID] {
+					caller[n.ID] = n
 				}
-				for _, n := range sg.Nodes {
-					if before[n.ID] {
-						vis[n.ID] = n
+			}
+			switch {
+			case vis == nil:
+				vis = caller
+			case everyCaller:
+				for id := range vis {
+					if _, ok := caller[id]; !ok {
+						delete(vis, id)
 					}
 				}
-				for id, n := range visibleOuterNodeDefinitions(p, sgName, visiting) {
+			default:
+				for id, n := range caller {
 					vis[id] = n
 				}
 			}
 		}
+	}
+	if vis == nil {
+		vis = map[string]Node{}
 	}
 	return vis
 }
@@ -261,9 +284,10 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 		}
 		// Warn when a scalar output port is never mentioned in the task prompt.
 		// Agents won't know what to write to the output file if it isn't named.
+		promptedAgent := workers.IsAgent(node.Executor) || workers.IsAnyAgent(node.Executor)
 		for port, decl := range node.Outputs {
-			if node.Executor == "command" {
-				continue // command outputs come from the process, not an agent prompt
+			if !promptedAgent {
+				continue // non-agent outputs do not come from a task prompt
 			}
 			if decl.Path != "" {
 				continue // file artifact — path is explicit in the prompt

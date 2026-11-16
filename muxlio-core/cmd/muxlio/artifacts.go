@@ -40,6 +40,7 @@ func cmdArtifacts(args []string, globalDataDir string, globalJSON bool) int {
 	runID := fs.Arg(0)
 
 	var activations []state.Activation
+	local := false
 	if *server == "" {
 		root := *dataDir
 		if root == "" {
@@ -50,15 +51,19 @@ func cmdArtifacts(args []string, globalDataDir string, globalJSON bool) int {
 			store, err := openStore(root)
 			if err == nil {
 				defer store.Close()
-				acts, err := store.ListActivations(runID)
-				if err == nil {
-					activations = acts
+				if _, err := store.GetRun(runID); err == nil {
+					acts, err := store.ListActivations(runID)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "error: reading activations: %v\n", err)
+						return 1
+					}
+					activations, local = acts, true
 				}
 			}
 		}
 	}
 
-	if len(activations) == 0 {
+	if !local {
 		serverURL, token, err := resolveServer(*server, *dataDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)

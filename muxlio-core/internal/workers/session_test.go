@@ -363,6 +363,64 @@ func TestSessionAdapterMayExplicitlyMultiplex(t *testing.T) {
 	}
 }
 
+func TestFailedMultiplexedTurnKeepsSharedCheckpoint(t *testing.T) {
+	s := sessionExecutor(t)
+	manifest, err := s.Descriptor("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Capabilities[contract.CapabilitySessionMultiplex] = true
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(s.scriptPath("test")+".json", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	handle := createSession(t, s, "")
+	req := ExecuteRequest{Executor: "test", Task: "fail", Session: &contract.SessionRequest{Mode: "resume", Handle: handle}}
+	if r, err := s.Execute(req); err != nil || r.Error == "" {
+		t.Fatalf("failing turn: %+v %v", r, err)
+	}
+	if _, err := os.Stat(s.sessionPath("test", handle.ID)); err != nil {
+		t.Fatalf("failed multiplexed turn removed the shared checkpoint: %v", err)
+	}
+	req.Task = ""
+	if r, err := s.Execute(req); err != nil || r.Error != "" || r.Session == nil {
+		t.Fatalf("concurrent turns lost the session: %+v %v", r, err)
+	}
+}
+
+func TestSessionsUseAuthorizedWorkspaceOnMultiWorkspaceWorker(t *testing.T) {
+	s := sessionExecutor(t)
+	s.Workspace = ""
+	registry, err := WorkspaceRegistry{
+		"first":  {WorkerID: s.WorkerID, Path: t.TempDir()},
+		"second": {WorkerID: s.WorkerID, Path: t.TempDir()},
+	}.LocalBindings(s.WorkerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Workspaces = registry
+	// Remote launch authorizes the workspace before the executor runs.
+	authorized := func(req ExecuteRequest, id string) ExecuteRequest {
+		req.WorkspaceID, req.WorkspaceWorkerID = id, s.WorkerID
+		req, err := ApplyAuthorizedWorkspace(req, s.WorkerID, s.Workspaces, s.Workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	created, err := s.Execute(authorized(ExecuteRequest{Executor: "test", Session: &contract.SessionRequest{Mode: "create"}}, "first"))
+	if err != nil || created.Error != "" || created.Session == nil {
+		t.Fatalf("create on multi-workspace worker: %+v %v", created, err)
+	}
+	resume := ExecuteRequest{Executor: "test", Session: &contract.SessionRequest{Mode: "resume", Handle: created.Session}}
+	if r, err := s.Execute(authorized(resume, "second")); err != nil || r.Error == "" {
+		t.Fatalf("session resumed in another workspace: %+v %v", r, err)
+	}
+	if r, err := s.Execute(authorized(resume, "first")); err != nil || r.Error != "" || r.Session == nil {
+		t.Fatalf("resume in original workspace: %+v %v", r, err)
+	}
+}
+
 func TestLiveSessionInputBypassesTurnLockWithoutChangingCheckpoint(t *testing.T) {
 	s := sessionExecutor(t)
 	manifest, err := s.Descriptor("test")

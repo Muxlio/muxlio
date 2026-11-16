@@ -245,19 +245,31 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 	if !sameOrigin(base, discovery) {
 		return fail(fmt.Errorf("Agent Card must share the configured URL origin"))
 	}
+	// A failed read does not terminate an existing remote operation.
+	unavailable := func(err error) adapter.Response {
+		if req.RemoteTask == nil {
+			return fail(err)
+		}
+		if req.Action == "reconcile" {
+			return adapter.Response{Outputs: map[string]any{}, RemoteTask: req.RemoteTask, Reconciliation: &contract.Reconciliation{Status: "inconclusive", Reason: err.Error()}}
+		}
+		ref := *req.RemoteTask
+		ref.Pending = true
+		return adapter.Response{Outputs: map[string]any{}, RemoteTask: &ref, Logs: err.Error()}
+	}
 	c := &client{http: &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return fmt.Errorf("redirects unsupported") }}, token: req.Secrets["A2A_TOKEN"]}
 	resp, err := c.request(ctx, http.MethodGet, cardURL, nil, false)
 	if err != nil {
-		return fail(err)
+		return unavailable(err)
 	}
 	raw, err := readBounded(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		return fail(err)
+		return unavailable(err)
 	}
 	var card card
 	if err = json.Unmarshal(raw, &card); err != nil {
-		return fail(fmt.Errorf("invalid Agent Card"))
+		return unavailable(fmt.Errorf("invalid Agent Card"))
 	}
 	if card.ProtocolVersion != "0.3.0" {
 		return fail(fmt.Errorf("unsupported A2A protocol %q; expected 0.3.0", card.ProtocolVersion))
@@ -332,13 +344,7 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 		}
 		t, e := c.rpc(ctx, "tasks/get", map[string]any{"id": req.RemoteTask.ID})
 		if e != nil {
-			if req.Action == "reconcile" {
-				return adapter.Response{Outputs: map[string]any{}, RemoteTask: req.RemoteTask, Reconciliation: &contract.Reconciliation{Status: "inconclusive", Reason: e.Error()}}
-			}
-			// A failed read does not terminate the remote operation.
-			ref := *req.RemoteTask
-			ref.Pending = true
-			return adapter.Response{Outputs: map[string]any{}, RemoteTask: &ref, Logs: e.Error()}
+			return unavailable(e)
 		}
 		if t.ID != req.RemoteTask.ID || (req.RemoteTask.ContextID != "" && t.ContextID != req.RemoteTask.ContextID) {
 			return fail(fmt.Errorf("A2A task/context identity mismatch"))
@@ -531,7 +537,7 @@ func finish(req *adapter.Request, t task, endpoint string) adapter.Response {
 				r.Outputs[port] = map[string]any{"mime": decl.Mime, "path": outputPath}
 			} else {
 				var value any
-				if e = json.Unmarshal(data, &value); e != nil {
+				if e = contract.DecodeJSON(data, &value); e != nil {
 					r.OutputErrors[port] = "A2A scalar artifact must contain JSON"
 				} else {
 					r.Outputs[port] = value

@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync/atomic"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/contract"
 )
@@ -31,11 +33,20 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 	}
 	cmd.ExtraFiles = append(cmd.ExtraFiles, writer)
 	cmd.Env = append(cmd.Env, muxlioLogFDEnv+"=3")
+	var progress *progressLogSink
+	if req.LogSink != nil {
+		progress = &progressLogSink{LogSink: req.LogSink, redactor: logRedactor{secrets: executionSecrets(req)}}
+		req.LogSink = progress
+	}
 
+	stream := &drainingReader{file: reader}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer reader.Close()
+		if progress != nil {
+			defer progress.finish()
+		}
 		if req.AccountingSink != nil {
 			defer func() {
 				if err := req.AccountingSink.Close(); err != nil && req.LogSink != nil {
@@ -43,7 +54,7 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 				}
 			}()
 		}
-		br := bufio.NewReaderSize(reader, 64*1024)
+		br := bufio.NewReaderSize(stream, 64*1024)
 		for {
 			raw, err := readLimitedLine(br, maxProgressFrameBytes)
 			if len(raw) > 0 {
@@ -68,8 +79,33 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 	}()
 	return func() {
 		writer.Close()
+		stream.exited()
 		<-done
 	}, nil
+}
+
+// adapterLogDrainGrace bounds how long the pump waits for more progress after
+// the adapter exits. A detached descendant may still hold the inherited
+// descriptor, so EOF alone cannot end the stream.
+var adapterLogDrainGrace = time.Second
+
+type drainingReader struct {
+	file *os.File
+	done atomic.Bool
+}
+
+// exited lets buffered frames drain while the stream stays active, then fails
+// a read that waits longer than the grace period.
+func (r *drainingReader) exited() {
+	r.done.Store(true)
+	_ = r.file.SetReadDeadline(time.Now().Add(adapterLogDrainGrace))
+}
+
+func (r *drainingReader) Read(p []byte) (int, error) {
+	if r.done.Load() {
+		_ = r.file.SetReadDeadline(time.Now().Add(adapterLogDrainGrace))
+	}
+	return r.file.Read(p)
 }
 
 func handleProgressFrame(req ExecuteRequest, raw []byte) {

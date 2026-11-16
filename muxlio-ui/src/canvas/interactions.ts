@@ -2,6 +2,7 @@
 
 class CanvasInteractionStore {
   state = new Map<string, CanvasStateValue>();
+  controlTypes = new Map<string, CanvasControl["type"]>();
   activeTabs = new Map<string, string>();
   tableSort = new Map<string, { field: string; direction: "asc" | "desc" }>();
   tablePages = new Map<string, number>();
@@ -17,40 +18,36 @@ class CanvasInteractionStore {
 
   initFromDocument(doc: CanvasDocument): void {
     this.state.clear();
+    this.controlTypes.clear();
     this.activeTabs.clear();
     this.tableSort.clear();
     this.tablePages.clear();
     this.selectedPoints.clear();
     this.collapsedSections.clear();
 
+    // A select without `initial` displays its first option, so filters must
+    // start from that option too.
+    const seedControl = (id: string, ctrl: CanvasControl) => {
+      this.controlTypes.set(id, ctrl.type);
+      if (ctrl.initial !== undefined) this.state.set(id, ctrl.initial);
+      else if (ctrl.type === "select" && ctrl.options?.length)
+        this.state.set(id, ctrl.options[0].value);
+    };
     if (doc.controls) {
       for (const [key, ctrl] of Object.entries(doc.controls)) {
-        const id = ctrl.id || key;
-        if (ctrl.type === "select" && ctrl.initial !== undefined) {
-          this.state.set(id, ctrl.initial);
-        } else if (ctrl.type === "toggle" && ctrl.initial !== undefined) {
-          this.state.set(id, ctrl.initial);
-        } else if (ctrl.type === "search" && ctrl.initial !== undefined) {
-          this.state.set(id, ctrl.initial);
-        }
+        seedControl(ctrl.id || key, ctrl);
       }
     }
 
     const walk = (node: CanvasNode) => {
       if (!node || typeof node !== "object") return;
-      if (node.type === "select" && (node as CanvasControlSelect).initial !== undefined) {
-        this.state.set(node.id, (node as CanvasControlSelect).initial!);
-      } else if (node.type === "toggle" && (node as CanvasControlToggle).initial !== undefined) {
-        this.state.set(node.id, (node as CanvasControlToggle).initial!);
-      } else if (node.type === "search" && (node as CanvasControlSearch).initial !== undefined) {
-        this.state.set(node.id, (node as CanvasControlSearch).initial!);
+      if (node.type === "select" || node.type === "toggle" || node.type === "search") {
+        seedControl(node.id, node as unknown as CanvasControl);
       } else if (node.type === "tabs") {
         const tn = node as CanvasTabsNode;
-        if (tn.initial) {
-          this.activeTabs.set(node.id, tn.initial);
-        } else if (tn.tabs && tn.tabs.length > 0) {
-          this.activeTabs.set(node.id, tn.tabs[0].id);
-        }
+        const tabs = tn.tabs || [];
+        const initial = tabs.find((tab) => tab.id === tn.initial) || tabs[0];
+        if (initial) this.activeTabs.set(node.id, initial.id);
       } else if (node.type === "section") {
         const sn = node as CanvasSectionNode;
         if (sn.collapsed) {

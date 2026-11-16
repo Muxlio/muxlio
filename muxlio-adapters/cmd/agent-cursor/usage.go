@@ -13,13 +13,21 @@ import (
 // cacheWriteTokens are folded into Input so totals match billed prompt tokens.
 // Cached still carries cache read when reported.
 func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenCounters {
-	result := parseCursorCounters(raw)
-	if result == nil {
-		result = adapter.UnavailableTokenCounters()
-	}
 	var values map[string]json.RawMessage
 	if json.Unmarshal(raw, &values) != nil {
 		return nil
+	}
+	for _, key := range cursorCountKeys {
+		if b, ok := values[key]; ok {
+			var n *int64
+			if json.Unmarshal(b, &n) != nil || n != nil && *n < 0 {
+				return nil
+			}
+		}
+	}
+	result := parseCursorCounters(raw)
+	if result == nil {
+		result = adapter.UnavailableTokenCounters()
 	}
 	for _, key := range []string{"cache_creation_input_tokens", "cacheCreationInputTokens", "cacheWriteTokens"} {
 		if b, ok := values[key]; ok {
@@ -41,6 +49,14 @@ func parseCursorTokenUsage(raw json.RawMessage) *adapter.TokenCounters {
 		return nil
 	}
 	return result
+}
+
+var cursorCountKeys = []string{
+	"input_tokens", "uncachedInputTokens", "inputTokens", "prompt_token_count", "prompt_tokens", "promptTokenCount",
+	"output_tokens", "outputTokens", "candidates_token_count", "candidatesTokenCount", "completion_tokens",
+	"cache_read_input_tokens", "cache_read_tokens", "cacheReadInputTokens", "cacheReadTokens",
+	"cached_input_tokens", "cached_tokens", "cachedTokens", "cached_content_token_count", "cachedContentTokenCount", "cached",
+	"cache_creation_input_tokens", "cacheCreationInputTokens", "cacheWriteTokens",
 }
 
 func parseCursorCounters(raw json.RawMessage) *adapter.TokenCounters {

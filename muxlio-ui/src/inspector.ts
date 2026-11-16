@@ -9,13 +9,14 @@ function decodeLogData(data){
   if(typeof data!=='string')return '';
   try{return new TextDecoder().decode(Uint8Array.from(atob(data),c=>c.charCodeAt(0)))}catch{return String(data)}
 }
+function transcriptChunks(logs){
+  const list=(logs||[]).slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
+  return list.some(x=>x.stream==='agent')?list.filter(x=>x.stream==='agent'):list;
+}
 function mergeActivationLogs(actId,logs){
   let state=activationTranscripts.get(actId);
   if(!state){state={agent:'',seen:new Set()};activationTranscripts.set(actId,state);}
-  const list=(logs||[]).slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
-  const hasAgent=list.some(x=>x.stream==='agent');
-  const relevant=hasAgent?list.filter(x=>x.stream==='agent'):list;
-  for(const chunk of relevant){
+  for(const chunk of transcriptChunks(logs)){
     const key=`${chunk.stream||'log'}:${chunk.seq}`;
     if(state.seen.has(key))continue;
     state.seen.add(key);
@@ -172,6 +173,7 @@ function renderInspectorWb(act){
 
 let snapshotPollTimer=null,snapshotPollToken=0;
 let snapshotActivation=null,snapshotCursors=[0],snapshotPageIndex=0;
+function stopInspectorSnapshotPoll(){if(snapshotPollTimer){clearTimeout(snapshotPollTimer);snapshotPollTimer=null}snapshotPollToken++}
 async function loadInspectorSnapshots(act,runId){
  if(snapshotPollTimer)clearTimeout(snapshotPollTimer);
  if(snapshotActivation!==act.id){snapshotActivation=act.id;snapshotCursors=[0];snapshotPageIndex=0;}
@@ -204,7 +206,8 @@ function valueType(v){return MuxlioJson.jsonValueType(v)}
 function treeMarkup(value,key='Value',depth=0,statePath='tree'){return MuxlioJson.jsonTreeMarkup(value,key,depth,statePath,esc)}
 function inputMarkup(value){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Input is null.':'No input recorded.')]);const panel=MuxlioJson.jsonPanelFromValue(value,esc,{title:'Input',statePath:'run:input'});return panel.html}
 function artifactData(v){if(v&&typeof v==='object'&&!Array.isArray(v)&&('mime'in v||'mimeType'in v||'path'in v||'data'in v||'digest'in v||'$artifact'in v))return v;return null}
-function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
+function isWholeArtifactRef(v){return Boolean(v&&typeof v==='object'&&!Array.isArray(v)&&('$artifact'in v||(typeof v.digest==='string'&&typeof (v.mime??v.mimeType)==='string')))}
+function outputItems(value){if(value===undefined||value===null)return [];if(Array.isArray(value))return value.map((v,i)=>[String(i),v]);if(isWholeArtifactRef(value))return [['Output',value]];if(typeof value==='object'){const entries=Object.entries(value);return entries.length?entries:[['Output',value]]}return [['Output',value]]}
 function safePreview(value,mime){let raw;if(typeof value==='string')raw=value;else if(value===undefined||value===null)return null;else raw=JSON.stringify(value,null,2);if(!raw)return null;if(mime&&!/(text\/|json|xml|javascript|yaml|csv|markdown)/i.test(mime))return null;return {text:raw.slice(0,PREVIEW_LIMIT),truncated:raw.length>PREVIEW_LIMIT,raw}}
 function outputMarkup(value, ..._extra: unknown[]){if(value===undefined||value===null)return renderViewTemplate("inspector/input-markup-data-empty", [viewValue(value===null?'Output is null.':'No output recorded.')]);const items=outputItems(value);return `${items.map(([name,item])=>{const ref=artifactData(item);if(!ref){const panel=MuxlioJson.jsonPanelFromValue(item,esc,{title:name,statePath:`output:${name}`});return renderViewTemplate("inspector/output-markup-artifact", [viewValue(esc(name)), viewValue(esc(valueType(item))), viewValue(typeof item==='string'?renderViewTemplate("inspector/output-markup-markdown-body", [viewValue(renderMarkdown(item))]):panel.html)])}const mime=typeof (ref.mime||ref.mimeType)==='string'?(ref.mime||ref.mimeType):'',path=typeof ref.path==='string'?ref.path:'',data=ref.data;let size=typeof data==='string'?new TextEncoder().encode(data).length:null;const meta=[['MIME',mime],['Path',path],['Digest',ref.digest||''],['Size',ref.size??(size===null?'':`${size} B`)]].filter(x=>x[1]!=='');const context=_extra.find(v=>v&&typeof v==='object') as {runId?:string,activationId?:string}|undefined;const owner=context?.activationId?context:typeof activationData!=='undefined'?activationData.find(a=>Object.values(a.outputs||{}).some((v:any)=>ref.digest&&v?.digest===ref.digest)):undefined;const runId=context?.runId||owner?.runId||(typeof current!=='undefined'?current:''),actId=context?.activationId||owner?.id;if(mime.split(';')[0].trim().toLowerCase()==='application/vnd.muxlio.canvas+json'&&runId&&actId){const href='/artifacts/view/'+encodeURIComponent(runId)+'/'+encodeURIComponent(actId)+'/'+encodeURIComponent(name);return renderViewTemplate("inspector/output-canvas",[viewValue(esc(path||name)),viewValue(esc(name)),viewValue(href)])}const jsonPreview=MuxlioJson.jsonArtifactPreview(ref,esc);return renderViewTemplate("inspector/output-markup-artifact-2", [viewValue(esc(path||name)), viewValue(esc(name)), viewValue(meta.length?renderViewTemplate("inspector/output-markup-artifact-meta", [viewValue(meta.map(([k,v])=>renderViewTemplate("inspector/output-markup-dt", [viewValue(esc(k)), viewValue(k==='Digest'?'':esc(v)), viewValue(k==='Digest'?renderViewTemplate("inspector/output-markup-digest-details", [viewValue(esc(v)), viewValue(esc(v))]):esc(v))])).join(''))]):''), viewValue(jsonPreview||''), viewValue(esc(name)), viewValue(esc(name))])}).join('')}`}
 function safeFilename(name){return String(name||'artifact').replace(/[^a-z0-9._-]+/gi,'_').replace(/^\.+/,'').slice(0,100)||'artifact'}
@@ -339,7 +342,7 @@ function requestFields(schema, path=[], required=true) {
   const label=esc(schema?.title||path[path.length-1]||'Response');
   const description=schema?.description?renderSmallContent(schema.description):'';
   if(schema?.type==='object' && schema.properties && required && !Array.isArray(schema.enum)){
-    return renderViewTemplate("inspector/request-fields-fieldset", [viewValue(label), viewValue(Object.entries(schema.properties).map(([key,prop])=>requestFields(prop,[...path,key],(schema.required||[]).includes(key))).join(''))]);
+    return renderViewTemplate("inspector/request-fields-fieldset", [viewValue(esc(JSON.stringify(path))), viewValue(label), viewValue(Object.entries(schema.properties).map(([key,prop])=>requestFields(prop,[...path,key],(schema.required||[]).includes(key))).join(''))]);
   }
   let control;
   if(Array.isArray(schema?.enum))control=renderViewTemplate("inspector/control-select", [viewValue(attrs), viewValue(schema.enum.map(value=>renderViewTemplate("shared/select-option", [viewValue(esc(JSON.stringify(value))), viewValue(esc(JSON.stringify(value)))])).join(''))]);
@@ -352,17 +355,33 @@ function requestFields(schema, path=[], required=true) {
 
 function readRequestResponse(form) {
   let response={};
-  for(const field of form.querySelectorAll('[data-response-path]')){
-    if(field.value==='' && !field.required && field.dataset.responseRequired!=='true')continue;
-    const path=JSON.parse(field.dataset.responsePath);
-    const value=field.hasAttribute('data-json-value')?JSON.parse(field.value):field.value;
-    if(!path.length){response=value;continue}
+  const assign=(path,value,replace=true)=>{
     let obj=response;
     for(const key of path.slice(0,-1)){
       if(!Object.hasOwn(obj,key))Object.defineProperty(obj,key,{value:{},enumerable:true,writable:true});
       obj=obj[key];
     }
-    Object.defineProperty(obj,path[path.length-1],{value,enumerable:true,writable:true,configurable:true});
+    const key=path[path.length-1];
+    if(replace||!Object.hasOwn(obj,key))Object.defineProperty(obj,key,{value,enumerable:true,writable:true,configurable:true});
+  };
+  for(const field of form.querySelectorAll('[data-response-path]')){
+    const path=JSON.parse(field.dataset.responsePath);
+    // Required objects must be present even when all their children are omitted.
+    if(field.dataset.responseObject==='true'){if(path.length)assign(path,{},false);continue}
+    const json=field.hasAttribute('data-json-value');
+    field.setCustomValidity?.('');
+    if((json?field.value.trim():field.value)==='' && !field.required && field.dataset.responseRequired!=='true')continue;
+    let value=field.value;
+    if(json){
+      try{value=JSON.parse(field.value)}
+      catch{
+        const message=`${path.length?path.join('.'):'Response'} must be valid JSON.`;
+        field.setCustomValidity?.(message);field.reportValidity?.();
+        throw Error(message);
+      }
+    }
+    if(!path.length){response=value;continue}
+    assign(path,value);
   }
   return response;
 }

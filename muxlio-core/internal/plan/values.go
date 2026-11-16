@@ -2,6 +2,8 @@ package plan
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"strconv"
@@ -43,6 +45,74 @@ func equalValues(left, right any) bool {
 	default:
 		return reflect.DeepEqual(left, right)
 	}
+}
+
+// compareNumbers orders numbers using the same exact decimal representation as
+// equalValues, so ordering agrees with equality beyond float64 precision.
+func compareNumbers(left, right any) (int, error) {
+	l, lok := decimalValue(left)
+	r, rok := decimalValue(right)
+	if lok && rok {
+		return compareDecimals(l, r), nil
+	}
+	lf, err := toFloat64Val(left)
+	if err != nil {
+		return 0, err
+	}
+	rf, err := toFloat64Val(right)
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case math.IsNaN(lf) || math.IsNaN(rf):
+		return 0, fmt.Errorf("muxlio: cannot compare NaN")
+	case lf < rf:
+		return -1, nil
+	case lf > rf:
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// compareDecimals orders canonical decimalValue forms without expanding
+// exponents: zero is "0", otherwise an optionally signed coefficient without
+// leading or trailing zeros followed by "e" and a base-10 exponent.
+func compareDecimals(left, right string) int {
+	sign := func(s string) int {
+		switch {
+		case s == "0":
+			return 0
+		case strings.HasPrefix(s, "-"):
+			return -1
+		}
+		return 1
+	}
+	ls, rs := sign(left), sign(right)
+	if ls != rs || ls == 0 {
+		switch {
+		case ls < rs:
+			return -1
+		case ls > rs:
+			return 1
+		}
+		return 0
+	}
+	magnitude := func(s string) (string, *big.Int) {
+		s = strings.TrimPrefix(s, "-")
+		cut := strings.IndexByte(s, 'e')
+		exponent, _ := new(big.Int).SetString(s[cut+1:], 10)
+		// The adjusted exponent locates the most significant digit.
+		return s[:cut], exponent.Add(exponent, big.NewInt(int64(cut)))
+	}
+	lc, le := magnitude(left)
+	rc, re := magnitude(right)
+	cmp := le.Cmp(re)
+	if cmp == 0 {
+		// Equal leading positions: digit strings compare lexicographically,
+		// and a longer coefficient with the same prefix has more nonzero digits.
+		cmp = strings.Compare(lc, rc)
+	}
+	return cmp * ls
 }
 
 // decimalValue returns a canonical coefficient and decimal exponent. Keeping

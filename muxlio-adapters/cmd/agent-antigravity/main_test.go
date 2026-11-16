@@ -261,6 +261,45 @@ func TestAgentAntigravityAdapterCapturesResultResponseField(t *testing.T) {
 	}
 }
 
+func runAntigravityFixture(t *testing.T, script string, params json.RawMessage) adapter.Response {
+	t.Helper()
+	bin := buildAgentAntigravity(t)
+	workDir := t.TempDir()
+	fakeCLI := filepath.Join(t.TempDir(), "agy")
+	if err := os.WriteFile(fakeCLI, []byte(versionedFixture(script)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(adapter.Request{Authorization: fixtureAuthorization(), Workspace: workDir, Executor: "agent/antigravity", Task: "t", WorkDir: workDir, NodeID: "n1", Params: params})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "ANTIGRAVITY_CLI="+fakeCLI)
+	cmd.Stdin = strings.NewReader(string(stdin))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter process failed: %v\n%s", err, out)
+	}
+	var resp adapter.Response
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("invalid adapter response: %v\n%s", err, out)
+	}
+	return resp
+}
+
+func TestNestedResultDoesNotClobberTopLevelFields(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		`echo '{"event":"result","status":"error","result":{"status":"SUCCESS","response":"partial"}}'` + "\n"
+	if resp := runAntigravityFixture(t, script, nil); resp.Error == "" {
+		t.Fatalf("nested status hid top-level terminal error: %+v", resp)
+	}
+}
+
+func TestInvalidAntigravityParamsFail(t *testing.T) {
+	script := "#!/bin/sh\n" + `echo '{"type":"result","status":"success","result":"done"}'` + "\n"
+	resp := runAntigravityFixture(t, script, json.RawMessage(`{"model":42}`))
+	if !strings.Contains(resp.Error, "invalid params") {
+		t.Fatalf("invalid params ignored: %+v", resp)
+	}
+}
+
 func TestAgentAntigravityAdapterMessageEventUsesNestedMessage(t *testing.T) {
 	bin := buildAgentAntigravity(t)
 	workDir := t.TempDir()

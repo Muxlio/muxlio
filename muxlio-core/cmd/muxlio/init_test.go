@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/muxlio/muxlio-core/internal/workers"
@@ -115,6 +117,35 @@ func TestInitDefaultCapabilitiesIncludeClaude(t *testing.T) {
 		if !slices.Contains(cfg.Capabilities, want) {
 			t.Fatalf("config capabilities %v missing %q", cfg.Capabilities, want)
 		}
+	}
+}
+
+func TestInitStarterUsesProviderNeutralExecutorAndQuotedEnv(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "run`time $HOME")
+	ws := t.TempDir()
+	old, r, w := captureStdout(t)
+	code := cmdInit([]string{"--data-dir", root, "--workspace", ws, "--starter", "--json"}, "", true)
+	w.Close()
+	restoreStdout(old)
+	_, _ = io.ReadAll(r)
+	if code != 0 {
+		t.Fatalf("cmdInit returned %d", code)
+	}
+	raw, err := os.ReadFile(filepath.Join(ws, "workflows", "sample.plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Subgraphs map[string]struct {
+			Nodes []struct{ Executor string }
+		}
+	}
+	if err := json.Unmarshal(raw, &p); err != nil || p.Subgraphs["root"].Nodes[0].Executor != "agent/any" {
+		t.Fatalf("starter executor: %s %v", raw, err)
+	}
+	env, err := os.ReadFile(filepath.Join(root, "env"))
+	if err != nil || !strings.Contains(string(env), "export MUXLIO_HOME="+shellQuote(root)+"\n") {
+		t.Fatalf("env script: %s %v", env, err)
 	}
 }
 
