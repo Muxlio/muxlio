@@ -150,18 +150,49 @@ regression("analytics regression", async () => {
   assert.equal(model.executorStats.get("<executor>").durationSumMs, 1000);
   assert.equal(model.executorStats.get("<executor>").usageSamples, 1);
   assert.equal(model.measureRollups.get("tokens").subtotal, "9007199254740993");
-  assert.equal(
-    model.measureRollups
-      .get("tokens")
-      .buckets.find((b) => b.dateKey === "2026-01-02").exactTotal,
-    "9007199254740993",
+  const tokenBuckets = model.measureRollups.get("tokens").buckets;
+  const dayMs = Date.parse("2026-01-02T00:00:00.000Z");
+  const owners = tokenBuckets.filter(
+    (b) => dayMs >= b.startMs && dayMs < b.endMs,
   );
-  assert.equal(
-    model.measureRollups
-      .get("tokens")
-      .buckets.find((b) => b.dateKey === "2026-01-01").total,
-    null,
+  assert.equal(owners.length, 1);
+  assert.equal(owners[0].exactTotal, "9007199254740993");
+  assert.ok(
+    tokenBuckets
+      .filter((b) => b !== owners[0])
+      .every((b) => b.exactTotal == null),
   );
+  // Short custom ranges must not repeat a server hour across fractional
+  // buckets. Partial edge hours each retain one accounting owner.
+  for (const [from, to, expectedBuckets] of [
+    ["2026-01-02T00:00:00Z", "2026-01-02T01:00:00Z", 1],
+    ["2026-01-02T00:15:00Z", "2026-01-02T01:15:00Z", 2],
+    ["2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z", 1],
+  ] as const) {
+    const customFilters = { ...filters, from, to };
+    const customRange = h.analyticsResolveRange(customFilters);
+    const customModel = h.buildAnalyticsModel(
+      [run],
+      new Map([[run.id, [attempt]]]),
+      new Map(),
+      {
+        filters: customFilters,
+        range: customRange,
+        accountingData: {
+          ...data,
+          accountingByDay: { "2026-01-02T00": summary() },
+        },
+      },
+    );
+    const buckets = customModel.measureRollups.get("tokens").buckets;
+    assert.equal(buckets.length, expectedBuckets);
+    assert.equal(new Set(buckets.map((b) => b.dateKey)).size, buckets.length);
+    assert.equal(buckets.filter((b) => b.exactTotal != null).length, 1);
+    assert.equal(
+      buckets.find((b) => b.exactTotal != null).exactTotal,
+      "9007199254740993",
+    );
+  }
   assert.equal(
     model.measureRollups.get("tokens").byExecutor[0].exactValue,
     "9007199254740993",

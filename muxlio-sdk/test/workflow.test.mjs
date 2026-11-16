@@ -166,6 +166,33 @@ test('identical workflow source yields identical digests', () => {
   assert.equal(a, b);
 });
 
+test('requiresPassed handles keep ordering edges and loop values', () => {
+  const check = task({ executor: 'command', outputs: { passed: z.boolean() } });
+  const stage = task({ executor: 'command' });
+  const save = task({ executor: 'command' });
+  const { plan } = workflow('ordered-guards', {
+    build: ({ step, repeatUntil }) => {
+      const verification = repeatUntil('verification', {
+        attempt: () => step('verify', check, {}),
+        until: (result) => result.passed,
+        otherwise: () => {},
+      });
+      const staged = step('stage', stage, { report: verification.value }, { requiresPassed: verification });
+      step('save', save, {}, { after: staged, requiresPassed: verification });
+    },
+  });
+  const branches = plan.subgraphs.root.nodes.filter((node) => node.kind === 'branch');
+  const saveBranch = branches.find((node) => node.thenRef.includes('save'));
+  assert.ok(saveBranch.inputs, 'commit branch is missing its ordering input');
+  const edge = Object.values(saveBranch.inputs)[0];
+  assert.equal(edge.ref.port, 'result');
+  assert.match(edge.ref.node, /stage/);
+  const stageGraph = plan.subgraphs[branches.find((node) => node.thenRef.includes('stage')).thenRef];
+  const stageNode = stageGraph.nodes.find((node) => node.id === 'stage');
+  assert.equal(stageNode.inputs.report.expr.op, 'object');
+  assert.equal(stageNode.inputs.report.expr.fields.passed.expr.node, 'verification');
+});
+
 test('unknown step output port fails at compile time', () => {
   const echo = task({ executor: 'fake/echo', outputs: { value: z.string() } });
   assert.throws(() => {

@@ -70,14 +70,15 @@ function buildAnalyticsModel(runs, attemptsByRun, attemptErrors = new Map(), ctx
   const dayBucketTemplate = () => analyticsDayBuckets(range, tz);
 
   const buckets = dayBucketTemplate().map(b => ({ ...b, total: 0, succeeded: 0, failed: 0 }));
-  const bucketByKey = new Map(buckets.map(b => [b.dateKey, b]));
+  const bucketByStart = new Map(buckets.map(b => [b.startMs, b]));
   for (const r of runs) {
     if (!r.createdAt) continue;
     const timestamp = Date.parse(r.createdAt);
     if (!Number.isFinite(timestamp)) continue;
-    const b = analyticsBucketForTimestamp(timestamp, range, tz) || bucketByKey.get(analyticsBucketKey(new Date(timestamp), range, tz));
+    const b = analyticsBucketForTimestamp(timestamp, range, tz);
     if (!b) continue;
-    const row = bucketByKey.get(b.dateKey) || b;
+    const row = bucketByStart.get(b.startMs);
+    if (!row) continue;
     row.total++;
     if (r.state === 'succeeded') row.succeeded++;
     if (r.state === 'failed') row.failed++;
@@ -194,8 +195,8 @@ function buildAnalyticsMeasureRollups(flatAttempts,measures,dayTemplate,range,tz
  const rollups=new Map();
  for(const measure of measures){
   const row=analyticsMeasureSummary(data.accounting,measure),subtotal=analyticsMeasureExact(data.accounting,measure);
-  const buckets=dayTemplate.map(b=>{const summary=data.accountingByDay?.[b.dateKey],exactTotal=analyticsMeasureExact(summary,measure);return {...b,total:analyticsChartValue(exactTotal),exactTotal,reporting:analyticsReporting(analyticsMeasureSummary(summary,measure)),hasData:exactTotal!=null}});
-  const groups=(source)=>Object.entries(source||{}).map(([label,summary])=>{const exactValue=analyticsMeasureExact(summary,measure);return {label,value:analyticsChartValue(exactValue),exactValue,runIds:new Set()}}).filter(x=>x.exactValue!=null).sort((a,b)=>b.value-a.value);
+  const buckets=dayTemplate.map(b=>{const summaries=analyticsDaySummariesForBucket(data.accountingByDay,b,range);let exactTotal=null,reporting=0;for(const summary of summaries){const exact=analyticsMeasureExact(summary,measure);if(exact!=null)exactTotal=exactTotal==null?String(exact):analyticsAddDecimal(exactTotal,String(exact));reporting+=analyticsReporting(analyticsMeasureSummary(summary,measure));}return {...b,total:analyticsChartValue(exactTotal),exactTotal,reporting,hasData:exactTotal!=null}});
+  const groups=(source)=>Object.entries(source||{}).map(([label,summary])=>{const exactValue=analyticsMeasureExact(summary,measure);return {label,value:analyticsChartValue(exactValue),exactValue,runIds:new Set()}}).filter(x=>x.exactValue!=null).sort((a,b)=>analyticsCompareDecimal(b.exactValue,a.exactValue));
   const evidence=flatAttempts.map(({attempt,run})=>{const exactValue=analyticsMeasureExact(attempt.accountingSummary,measure);return {runId:run.id,attemptId:attempt.id||'',executor:attempt.executor||'unknown',workflow:run.workflowName||'Unnamed workflow',value:analyticsChartValue(exactValue),exactValue,bucketProvenance:attempt.finishedAt?'finishedAt':null}});
   rollups.set(measure.id,{measure,buckets,byExecutor:groups(data.accountingByExecutor),byWorkflow:groups(data.accountingByWorkflow),evidence,subtotal,reporting:analyticsReporting(row),precisionWarning:analyticsPrecisionWarning(subtotal),completeness:row?.completeness||'unknown'});
  }

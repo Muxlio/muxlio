@@ -61,11 +61,11 @@ func (s *S3) objectURL(digest string) (*url.URL, error) {
 		}
 	}
 	base, _ := url.Parse(s.config.Endpoint)
-	base.Path = path.Join(base.Path, s.config.Bucket, digest[7:])
+	base.Path = "/" + strings.TrimPrefix(path.Join(base.Path, s.config.Bucket, digest[7:]), "/")
 	return base, nil
 }
 
-func (s *S3) request(ctx context.Context, method, digest string, body io.Reader, payloadHash string) (*http.Response, error) {
+func (s *S3) request(ctx context.Context, method, digest string, body io.Reader, payloadHash string, contentLength int64) (*http.Response, error) {
 	u, err := s.objectURL(digest)
 	if err != nil {
 		return nil, err
@@ -73,6 +73,9 @@ func (s *S3) request(ctx context.Context, method, digest string, body io.Reader,
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return nil, err
+	}
+	if body != nil {
+		req.ContentLength = contentLength
 	}
 	now := time.Now().UTC()
 	date, stamp := now.Format("20060102"), now.Format("20060102T150405Z")
@@ -196,7 +199,12 @@ func (s *S3) PutStream(ctx context.Context, src io.Reader, mime, expected string
 		return Ref{}, err
 	}
 	// Keep ownership of the staging file; the transport closes only the wrapper.
-	resp, err := s.request(ctx, http.MethodPut, digest, io.NopCloser(tmp), digest[7:])
+	// A sized body is required: a chunked PUT with a payload hash is rejected.
+	body := io.ReadCloser(io.NopCloser(tmp))
+	if n == 0 {
+		body = http.NoBody
+	}
+	resp, err := s.request(ctx, http.MethodPut, digest, body, digest[7:], n)
 	closeErr := tmp.Close()
 	if err != nil {
 		return Ref{}, fmt.Errorf("muxlio: S3 upload failed")
@@ -217,7 +225,7 @@ func (s *S3) GetStream(ctx context.Context, digest string) (io.ReadCloser, Ref, 
 	if _, err := s.objectURL(digest); err != nil {
 		return nil, Ref{}, err
 	}
-	resp, err := s.request(ctx, http.MethodGet, digest, nil, hex.EncodeToString(sha256.New().Sum(nil)))
+	resp, err := s.request(ctx, http.MethodGet, digest, nil, hex.EncodeToString(sha256.New().Sum(nil)), 0)
 	if err != nil {
 		return nil, Ref{}, fmt.Errorf("muxlio: S3 download failed")
 	}

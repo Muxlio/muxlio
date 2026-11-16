@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { defineWorkflow, workflow, task } from '../dist/index.js';
 
 test('authoring rejects credential values before emitting a plan', () => {
-  for (const params of [{ secrets: { api: 'raw-credential' } }, { env: { API_KEY: 'raw-credential' } }]) {
+  for (const params of [{ secrets: { api: 'raw-credential' } }, { secret: 'raw-credential' }, { api_token: 'raw-credential' }, { env: { API_KEY: 'raw-credential' } }]) {
     const opts = { executor: 'test', params };
     for (const build of [
       () => defineWorkflow({ name: 'security', build: g => { g.execute('work', opts); } }),

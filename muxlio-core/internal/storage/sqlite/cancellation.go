@@ -53,8 +53,12 @@ func (s *Store) ExpireQueuedAttempt(attemptID string, now time.Time) (bool, erro
 	if req.ExecutionDeadline != nil || req.QueueDeadline == nil || now.Before(*req.QueueDeadline) {
 		return false, nil
 	}
-	_, err = s.db.Exec(`UPDATE dispatches SET state='cancelled' WHERE attempt_id=? AND state='pending'`, attemptID)
-	return err == nil, err
+	res, err := s.db.Exec(`UPDATE dispatches SET state='cancelled' WHERE attempt_id=? AND state='pending'`, attemptID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // ExpireExecutingAttempt fences a timed-out remote attempt even if the worker
@@ -85,10 +89,22 @@ func (s *Store) ExpireExecutingAttempt(attemptID string, now time.Time) (bool, e
 	if req.ExecutionDeadline == nil || now.Before(*req.ExecutionDeadline) {
 		return false, nil
 	}
-	if _, err := tx.Exec(`UPDATE assignments SET state='cancelled',generation=generation+1 WHERE attempt_id=? AND state IN ('active','uncertain')`, attemptID); err != nil {
+	res, err := tx.Exec(`UPDATE dispatches SET state='cancelled' WHERE attempt_id=? AND state IN ('assigned','uncertain')`, attemptID)
+	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`UPDATE dispatches SET state='cancelled' WHERE attempt_id=? AND state IN ('assigned','uncertain')`, attemptID); err != nil {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		// A late completion already lost the deadline check and cancelled this
+		// dispatch without storing a result. The waiter still has to observe
+		// the timeout. A queued cancel does not use this path, so it cannot
+		// become a retryable queue timeout.
+		return true, nil
+	}
+	if _, err := tx.Exec(`UPDATE assignments SET state='cancelled',generation=generation+1 WHERE attempt_id=? AND state IN ('active','uncertain')`, attemptID); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

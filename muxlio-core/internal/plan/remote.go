@@ -90,9 +90,7 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 			return e.store.RecordAccountingSnapshot(query.ID, snapshot)
 		}}
 		result, err := workers.ExecuteAttempt(e.executor, queryReq)
-		if e.context().Err() != nil {
-			return workers.ExecuteResult{}, e.context().Err()
-		}
+		ctxErr := e.context().Err()
 		query.State, query.FinishedAt = "succeeded", time.Now()
 		query.Accounting, query.ExecutionDurationMS = result.Accounting, result.ExecutionDurationMS
 		if result.RemoteTask != nil {
@@ -106,6 +104,20 @@ func (e *Engine) pollRemote(req workers.ExecuteRequest, a state.ExecutionAttempt
 				query.State = "awaiting_reconciliation"
 				query.AwaitReconciliationReason = "poll invocation termination unknown; remote operation remains detached"
 			}
+		}
+		// A cancelled pure lookup must not stay running or hold an active slot.
+		// The remote operation remains detached for a later poll. A definitive
+		// successful lookup is kept.
+		if ctxErr != nil && query.State != "succeeded" {
+			query.State = "failed"
+			query.AwaitReconciliationReason = ""
+			if query.Failure == "" {
+				query.Failure = "remote poll interrupted; remote operation remains detached"
+			}
+			if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
+				return workers.ExecuteResult{}, recordErr
+			}
+			return workers.ExecuteResult{}, ctxErr
 		}
 		if recordErr := e.store.RecordExecutionAttempt(query); recordErr != nil {
 			return workers.ExecuteResult{}, recordErr

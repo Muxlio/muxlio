@@ -133,19 +133,49 @@ func (s *Store) DeliverWebhook(req trigger.WebhookDeliveryRequest) (trigger.Webh
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
+	within := func(ts string) (bool, error) {
+		deliveredAt, err := time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			return false, err
+		}
+		return !now.After(deliveredAt.Add(time.Duration(req.DeduplicationSeconds) * time.Second)), nil
+	}
+	recordDuplicate := func(runID, digest string) (trigger.WebhookDeliveryResult, error) {
+		if _, err := tx.Exec(`INSERT INTO trigger_deliveries(trigger_id, idempotency_key, run_id, workflow_digest, state, timestamp, body_digest) VALUES (?,?,?,?,?,?,?)`, req.TriggerID, req.IdempotencyKey, runID, digest, trigger.DeliveryDuplicate, rfc3339(now), req.BodyDigest); err != nil {
+			return trigger.WebhookDeliveryResult{}, err
+		}
+		return trigger.WebhookDeliveryResult{RunID: runID, WorkflowDigest: digest, Duplicate: true}, tx.Commit()
+	}
+	// Validate keys before body deduplication, including keys first seen on
+	// a duplicate. Their window ends with the original delivered body.
 	if req.IdempotencyKey != "" {
-		var runID, digest, ts string
-		err := tx.QueryRow(`SELECT run_id, workflow_digest, timestamp FROM trigger_deliveries WHERE trigger_id=? AND idempotency_key=? AND state='delivered' ORDER BY id DESC LIMIT 1`, req.TriggerID, req.IdempotencyKey).Scan(&runID, &digest, &ts)
+		var runID, digest, ts, bodyDigest string
+		err := tx.QueryRow(`SELECT d.run_id, d.workflow_digest, origin.timestamp, d.body_digest FROM trigger_deliveries d JOIN trigger_deliveries origin ON origin.trigger_id=d.trigger_id AND origin.run_id=d.run_id AND origin.state='delivered' WHERE d.trigger_id=? AND d.idempotency_key=? AND d.state IN ('delivered','duplicate') ORDER BY d.id DESC LIMIT 1`, req.TriggerID, req.IdempotencyKey).Scan(&runID, &digest, &ts, &bodyDigest)
 		if err == nil {
-			deliveredAt, perr := time.Parse(time.RFC3339Nano, ts)
+			ok, perr := within(ts)
 			if perr != nil {
 				return trigger.WebhookDeliveryResult{}, perr
 			}
-			if !now.After(deliveredAt.Add(time.Duration(req.DeduplicationSeconds) * time.Second)) {
-				if _, err := tx.Exec(`INSERT INTO trigger_deliveries(trigger_id, idempotency_key, run_id, workflow_digest, state, timestamp) VALUES (?,?,?,?,?,?)`, req.TriggerID, req.IdempotencyKey, runID, digest, trigger.DeliveryDuplicate, rfc3339(now)); err != nil {
-					return trigger.WebhookDeliveryResult{}, err
+			if ok {
+				if req.BodyDigest != "" && bodyDigest != "" && req.BodyDigest != bodyDigest {
+					return trigger.WebhookDeliveryResult{}, trigger.ErrIdempotencyConflict
 				}
-				return trigger.WebhookDeliveryResult{RunID: runID, WorkflowDigest: digest, Duplicate: true}, tx.Commit()
+				return recordDuplicate(runID, digest)
+			}
+		} else if err != sql.ErrNoRows {
+			return trigger.WebhookDeliveryResult{}, err
+		}
+	}
+	if req.BodyDigest != "" {
+		var runID, digest, ts string
+		err := tx.QueryRow(`SELECT run_id, workflow_digest, timestamp FROM trigger_deliveries WHERE trigger_id=? AND body_digest=? AND state='delivered' ORDER BY id DESC LIMIT 1`, req.TriggerID, req.BodyDigest).Scan(&runID, &digest, &ts)
+		if err == nil {
+			ok, perr := within(ts)
+			if perr != nil {
+				return trigger.WebhookDeliveryResult{}, perr
+			}
+			if ok {
+				return recordDuplicate(runID, digest)
 			}
 		} else if err != sql.ErrNoRows {
 			return trigger.WebhookDeliveryResult{}, err
@@ -158,7 +188,7 @@ func (s *Store) DeliverWebhook(req trigger.WebhookDeliveryRequest) (trigger.Webh
 	if err := appendEvent(tx, runID, state.EventRunCreated, runID, map[string]any{"triggerId": req.TriggerID, "idempotencyKey": req.IdempotencyKey}); err != nil {
 		return trigger.WebhookDeliveryResult{}, err
 	}
-	if _, err = tx.Exec(`INSERT INTO trigger_deliveries(trigger_id, idempotency_key, run_id, workflow_digest, state, timestamp) VALUES (?,?,?,?,?,?)`, req.TriggerID, req.IdempotencyKey, runID, req.WorkflowDigest, trigger.DeliveryDelivered, rfc3339(now)); err != nil {
+	if _, err = tx.Exec(`INSERT INTO trigger_deliveries(trigger_id, idempotency_key, run_id, workflow_digest, state, timestamp, body_digest) VALUES (?,?,?,?,?,?,?)`, req.TriggerID, req.IdempotencyKey, runID, req.WorkflowDigest, trigger.DeliveryDelivered, rfc3339(now), req.BodyDigest); err != nil {
 		return trigger.WebhookDeliveryResult{}, err
 	}
 	if err := tx.Commit(); err != nil {

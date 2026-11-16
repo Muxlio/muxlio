@@ -18,6 +18,7 @@ func runCommand(ctx context.Context, cmd *exec.Cmd) error {
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err := <-done:
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return err
 	case <-ctx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -26,9 +27,9 @@ func runCommand(ctx context.Context, cmd *exec.Cmd) error {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			return ctx.Err()
 		case <-time.After(500 * time.Millisecond):
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-done
+			return ctx.Err()
 		}
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
-		return ctx.Err()
 	}
 }

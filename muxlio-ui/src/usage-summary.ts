@@ -57,7 +57,7 @@ function usageCardMarkup(label,value,kind){
  const reference=kind==='reference-value';
  const name=reference?(row.effectiveTotal!=null?'Value':'Subtotal'):collected&&estimated?'Known usage':estimated?'Estimated':collected?accountingCollectedLabel(row):'Usage';
  const state=accountingStatus(row);
- let note=total==null?(state==='inapplicable'?'Not applicable':'No usage reported'):row.effectiveTotal!=null?'Complete':state==='unknown'?'Coverage unverified · total may be higher':'Incomplete · total may be higher';
+ let note=total==null?(state==='inapplicable'?'Not applicable':'No usage reported'):row.effectiveTotal!=null?(row.estimatedFallbackSubtotal!=null?'Complete · includes estimates':'Complete'):state==='unknown'?'Coverage unverified · total may be higher':'Incomplete · total may be higher';
  if(reference){const counts=row.attempts||{};const valued=(counts.complete||0)+(counts.partial||0);const unpriced=(counts.unknown||0)+(counts.pending||0);note=(row.effectiveTotal!=null?'Complete':valued+unpriced?`${valued} of ${valued+unpriced} attempts priced · incomplete`:'Incomplete · total may be higher')+(row.methods?.length?' · '+accountingReferenceMethods(row.methods):'')}
  const breakdown=collected&&estimated?[reading(accountingCollectedLabel(row),row.collectedSubtotal),reading('Estimated fallback',row.estimatedFallbackSubtotal)]:[];
  return renderAccountingCard(label,reading(name,total),note,breakdown);
@@ -95,7 +95,7 @@ function buildWorkbenchUsageMarkup(presentation){
   }
   const headline=workbenchUsageHeadlineMeasure(primary);
   const headlineVal=headline.key==='tokens'?`${fmtTokens(headline.value)} tokens`:usageMeasureValue(headline);
-  const label=(headline.key==='tokens'?'Accounting':headline.label)+(headline.isSubtotal?' · subtotal':'');
+  const label=(headline.key==='tokens'?'Accounting':headline.label)+(headline.isSubtotal?' · subtotal':'')+(headline.coverage===' · includes estimates'?headline.coverage:'');
   const accessibleLabel=`${headline.label}${headline.coverage||''}`;
   return renderViewTemplate("usage-summary/build-workbench-usage-markup-stat-4", [viewValue(esc(status)), viewValue(esc(accessibleLabel)), viewValue(esc(headlineVal)), viewValue(esc(label))]);
 }

@@ -24,6 +24,7 @@ func runProcess(ctx context.Context, cmd *exec.Cmd) error {
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err := <-done:
+		// Reaping the leader does not imply that its descendants have exited.
 		killProcessGroup(cmd)
 		return err
 	case <-ctx.Done():
@@ -32,11 +33,11 @@ func runProcess(ctx context.Context, cmd *exec.Cmd) error {
 		}
 		select {
 		case <-done:
+			killProcessGroup(cmd)
 		case <-time.After(500 * time.Millisecond):
 			killProcessGroup(cmd)
 			<-done
 		}
-		killProcessGroup(cmd)
 		return ctx.Err()
 	}
 }

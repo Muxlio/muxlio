@@ -2,7 +2,9 @@ package workers
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +15,8 @@ import (
 
 const muxlioLogFDEnv = "MUXLIO_LOG_FD"
 const maxProgressFrameBytes = 128 << 10
+
+var errFrameTooLong = errors.New("progress frame exceeds limit")
 
 type muxlioLogLine = contract.Progress
 
@@ -39,49 +43,26 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 				}
 			}()
 		}
-		sc := bufio.NewScanner(reader)
-		sc.Buffer(make([]byte, 64*1024), maxProgressFrameBytes)
-		for sc.Scan() {
-			var line muxlioLogLine
-			if json.Unmarshal(sc.Bytes(), &line) != nil {
-				continue
+		br := bufio.NewReaderSize(reader, 64*1024)
+		for {
+			raw, err := readLimitedLine(br, maxProgressFrameBytes)
+			if len(raw) > 0 {
+				handleProgressFrame(req, raw)
 			}
-			variants := 0
-			if line.OperationRef != nil {
-				variants++
+			if err == io.EOF {
+				return
 			}
-			if line.Accounting != nil {
-				variants++
-			}
-			if line.Stream != "" && line.Text != "" {
-				variants++
-			}
-			if variants != 1 {
-				continue
-			}
-			if line.Accounting != nil {
-				if req.AccountingSink != nil && line.Accounting.Validate() == nil {
-					if err := req.AccountingSink.Append(*line.Accounting); err != nil && req.LogSink != nil {
-						_ = req.LogSink.Append("stderr", []byte("accounting progress delivery incomplete"))
-					}
+			if errors.Is(err, errFrameTooLong) {
+				if req.LogSink != nil {
+					_ = req.LogSink.Append("stderr", []byte("skipped a progress frame larger than 128 KiB"))
 				}
 				continue
 			}
-			if line.OperationRef != nil {
-				if req.LogSink == nil {
-					continue
+			if err != nil {
+				if req.LogSink != nil {
+					_ = req.LogSink.Append("stderr", []byte("progress stream ended before later frames"))
 				}
-				clean, err := sanitizeExecution(ExecuteResult{RemoteTask: line.OperationRef}, nil, executionSecrets(req))
-				if err != nil {
-					continue
-				}
-				raw, _ := json.Marshal(clean.RemoteTask)
-				_ = req.LogSink.Append("operation", raw)
-			} else {
-				if req.LogSink == nil {
-					continue
-				}
-				_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(RedactSecrets(line.Text, executionSecrets(req))))
+				return
 			}
 		}
 	}()
@@ -89,6 +70,50 @@ func startAdapterLogPump(cmd *exec.Cmd, req ExecuteRequest) (cleanup func(), err
 		writer.Close()
 		<-done
 	}, nil
+}
+
+func handleProgressFrame(req ExecuteRequest, raw []byte) {
+	var line muxlioLogLine
+	if json.Unmarshal(raw, &line) != nil {
+		return
+	}
+	variants := 0
+	if line.OperationRef != nil {
+		variants++
+	}
+	if line.Accounting != nil {
+		variants++
+	}
+	if line.Stream != "" && line.Text != "" {
+		variants++
+	}
+	if variants != 1 {
+		return
+	}
+	if line.Accounting != nil {
+		if req.AccountingSink != nil && line.Accounting.Validate() == nil {
+			if err := req.AccountingSink.Append(*line.Accounting); err != nil && req.LogSink != nil {
+				_ = req.LogSink.Append("stderr", []byte("accounting progress delivery incomplete"))
+			}
+		}
+		return
+	}
+	if line.OperationRef != nil {
+		if req.LogSink == nil {
+			return
+		}
+		clean, err := sanitizeExecution(ExecuteResult{RemoteTask: line.OperationRef}, nil, executionSecrets(req))
+		if err != nil {
+			return
+		}
+		encoded, _ := json.Marshal(clean.RemoteTask)
+		_ = req.LogSink.Append("operation", encoded)
+		return
+	}
+	if req.LogSink == nil {
+		return
+	}
+	_ = req.LogSink.Append(normalizeLogStream(line.Stream), []byte(RedactSecrets(line.Text, executionSecrets(req))))
 }
 
 // AdapterLogWriter returns the incremental log sink file adapters should write to.
@@ -109,39 +134,44 @@ func ReadAdapterLogLines(r io.Reader, sink LogSink) error {
 	if sink == nil {
 		return nil
 	}
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), maxProgressFrameBytes)
-	for sc.Scan() {
-		var line muxlioLogLine
-		if json.Unmarshal(sc.Bytes(), &line) != nil {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		raw, err := readLimitedLine(br, maxProgressFrameBytes)
+		if errors.Is(err, errFrameTooLong) {
 			continue
 		}
-		variants := 0
-		if line.OperationRef != nil {
-			variants++
-		}
-		if line.Accounting != nil {
-			variants++
-		}
-		if line.Stream != "" && line.Text != "" {
-			variants++
-		}
-		if variants != 1 {
-			continue
-		}
-		if line.Accounting != nil {
-			continue
-		} // this compatibility helper has no accounting sink
-		stream, data := normalizeLogStream(line.Stream), []byte(line.Text)
-		if line.OperationRef != nil {
-			stream = "operation"
-			data, _ = json.Marshal(line.OperationRef)
-		}
-		if err := sink.Append(stream, data); err != nil {
+		if err != nil && err != io.EOF {
 			return err
 		}
+		if len(raw) > 0 {
+			var line muxlioLogLine
+			if json.Unmarshal(raw, &line) == nil {
+				variants := 0
+				if line.OperationRef != nil {
+					variants++
+				}
+				if line.Accounting != nil {
+					variants++
+				}
+				if line.Stream != "" && line.Text != "" {
+					variants++
+				}
+				if variants == 1 && line.Accounting == nil {
+					stream, data := normalizeLogStream(line.Stream), []byte(line.Text)
+					if line.OperationRef != nil {
+						stream = "operation"
+						data, _ = json.Marshal(line.OperationRef)
+					}
+					if appendErr := sink.Append(stream, data); appendErr != nil {
+						return appendErr
+					}
+				}
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
 	}
-	return sc.Err()
 }
 
 // EncodeAdapterLogLine formats one incremental log record for MUXLIO_LOG_FD.
@@ -150,4 +180,42 @@ func EncodeAdapterLogLine(stream, text string) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(muxlioLogLine{Stream: normalizeLogStream(stream), Text: text})
+}
+
+// readLimitedLine returns one line without its newline. A line longer than max
+// is discarded through the next newline so later frames can still be read.
+func readLimitedLine(r *bufio.Reader, max int) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(buf)+len(chunk) > max {
+			if err == bufio.ErrBufferFull {
+				for {
+					_, err = r.ReadSlice('\n')
+					if err == bufio.ErrBufferFull {
+						continue
+					}
+					break
+				}
+			}
+			if err != nil && err != io.EOF {
+				return nil, err
+			}
+			return nil, errFrameTooLong
+		}
+		buf = append(buf, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF {
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return bytes.TrimRight(buf, "\r\n"), io.EOF
+		}
+		if err != nil {
+			return nil, err
+		}
+		return bytes.TrimRight(buf, "\r\n"), nil
+	}
 }

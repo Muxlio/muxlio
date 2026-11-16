@@ -5,8 +5,8 @@ import type { Plan } from './types.js';
  */
 export function assertNoLiteralCredentials(plan: Plan): void {
   const credentialKeys = new Set([
-    'secrets', 'credentials', 'authorization', 'password', 'apikey',
-    'accesstoken', 'refreshtoken', 'token', 'clientsecret',
+    'secrets', 'secret', 'credentials', 'authorization', 'password', 'apikey',
+    'apitoken', 'accesstoken', 'refreshtoken', 'token', 'clientsecret',
   ]);
   const visit = (value: unknown): boolean => {
     if (Array.isArray(value)) return value.some(visit);

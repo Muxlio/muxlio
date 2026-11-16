@@ -80,9 +80,14 @@ function analyticsResolveRange(filters, now = new Date()) {
   if (filters.preset === 'custom' && filters.from && filters.to) {
     const from = new Date(filters.from);
     const span = Math.max(0, Number(end) - Number(from));
-    const buckets = span <= 86400000 ? 24 : span <= 7 * 86400000 ? 7 : 30;
-    const bucketMs = span / buckets;
-    return { from, to: end, spanMs: span, buckets, bucketMs, bucketUnit: span <= 86400000 ? 'hour' : 'day', label: analyticsFormatRangeLabel(from, end) };
+    const bucketUnit = span <= 86400000 ? 'hour' : 'day';
+    const unitMs = bucketUnit === 'hour' ? 3600000 : 86400000;
+    // Match the server's UTC accounting granularity. Fractional calendar
+    // buckets would repeat an hourly summary or split a daily summary.
+    const bucketSpanDays = bucketUnit === 'day' ? Math.max(1, Math.ceil(span / (30 * unitMs))) : 1;
+    const bucketMs = unitMs * bucketSpanDays;
+    const buckets = Math.max(1, Math.ceil(span / bucketMs));
+    return { from, to: end, spanMs: span, buckets, bucketMs, bucketUnit, bucketSpanDays, label: analyticsFormatRangeLabel(from, end) };
   }
   const span = preset?.ms || ANALYTICS_RANGE_PRESETS['30d'].ms;
   const from = new Date(Number(end) - span);
@@ -180,6 +185,7 @@ function analyticsFiltersQueryString(filters, range) {
   if (filters.states?.length) params.set('state', filters.states.join(','));
   if (filters.workflow) params.set('workflow', filters.workflow);
   if (filters.executor) params.set('executor', filters.executor);
+  if (range.bucketUnit === 'hour') params.set('bucket', 'hour');
   params.set('limit', '200');
   params.set('offset', String(Math.max(0, (filters.page - 1) * 200)));
   return params.toString();
@@ -212,11 +218,24 @@ function analyticsStateCounts(runs) {
 
 function analyticsBucketForTimestamp(ms, range, tz = 'UTC') {
   const buckets = analyticsDayBuckets(range, tz);
-  for (const b of buckets) {
+  for (let i = 0; i < buckets.length; i++) {
+    const b = buckets[i];
     if (ms >= b.startMs && ms < b.endMs) return b;
+    if (i === buckets.length - 1 && ms === range.to.getTime() && ms >= b.startMs && ms <= b.endMs) return b;
   }
-  const key = analyticsBucketKey(new Date(ms), range, tz);
-  return buckets.find(b => b.dateKey === key) || null;
+  return null;
+}
+
+function analyticsDaySummariesForBucket(accountingByDay, bucket, range) {
+  if (!accountingByDay) return [];
+  if (range?.bucketUnit === 'hour') {
+    const summary = accountingByDay[bucket.dateKey];
+    return summary ? [summary] : [];
+  }
+  return Object.keys(accountingByDay).filter(day => {
+    const ms = Date.parse(`${day}T00:00:00.000Z`);
+    return Number.isFinite(ms) && ms >= bucket.startMs && ms < bucket.endMs;
+  }).map(day => accountingByDay[day]);
 }
 
 function analyticsApplyFiltersToModelInputs(runs, attemptsByRun, filters, range) {

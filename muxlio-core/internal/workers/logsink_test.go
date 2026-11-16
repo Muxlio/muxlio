@@ -53,3 +53,18 @@ func TestReadAdapterLogLines(t *testing.T) {
 		t.Fatalf("chunks=%+v", rec.chunks)
 	}
 }
+
+func TestReadAdapterLogLinesSkipsOversizedFrame(t *testing.T) {
+	rec := &logRecorder{}
+	sink := NewStoreLogSink(rec, "run-1", "act-1", nil)
+	input := strings.Repeat("x", 200*1024) + "\n{\"stream\":\"agent\",\"text\":\"kept\"}\n"
+	if err := ReadAdapterLogLines(strings.NewReader(input), sink); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.chunks) != 1 || string(rec.chunks[0].Data) != "kept" {
+		t.Fatalf("later frame was dropped: %+v", rec.chunks)
+	}
+}

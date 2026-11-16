@@ -129,19 +129,20 @@ func handleRunSummary(w http.ResponseWriter, r *http.Request, s state.Store, run
 	_ = json.Unmarshal(run.PlanJSON, &pinned)
 	safe.Input = nil
 	safe.Output = nil
+	summary, err := accountingSummary(attempts)
+	if err != nil {
+		writeError(w, 500, CodeStoreError, "accounting summary unavailable")
+		return
+	}
 	writeJSON(w, 200, map[string]any{"id": safe.ID, "workflowName": safe.WorkflowName, "state": safe.State, "createdAt": safe.CreatedAt, "updatedAt": safe.UpdatedAt,
 		"workspaceId": run.WorkspaceID, "originLabel": run.OriginLabel, "callerId": run.CallerID,
 		"planDigest": run.PlanDigest, "fork": run.Fork, "pinned": run.Pinned, "retainedUntil": run.RetainedUntil, "error": diagnostic.Redact(run.Error),
 		"limits": pinned.Limits, "deadlineSeconds": pinned.DeadlineSeconds,
-		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": accountingSummary(attempts), "executionDurationMs": elapsed, "executionDurationKnownMs": knownDuration, "executionDurationMeasuredAttempts": measuredTimingAttempts, "executionDurationMissingAttempts": missingTimingAttempts}})
+		"overview": map[string]any{"attemptStates": states, "heldAttempts": held, "activations": total, "completed": completed, "attempts": len(attempts), "latestEventSeq": latest, "accounting": summary, "executionDurationMs": elapsed, "executionDurationKnownMs": knownDuration, "executionDurationMeasuredAttempts": measuredTimingAttempts, "executionDurationMissingAttempts": missingTimingAttempts}})
 }
 
-func accountingSummary(attempts []state.ExecutionAttempt) any {
-	summary, err := state.SummarizeAccounting(attempts)
-	if err != nil {
-		return nil
-	}
-	return summary
+func accountingSummary(attempts []state.ExecutionAttempt) (any, error) {
+	return state.SummarizeAccounting(attempts)
 }
 
 func runHeader(s state.Store, id string) (*state.Run, error) {

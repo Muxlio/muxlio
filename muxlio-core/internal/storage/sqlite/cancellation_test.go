@@ -289,3 +289,56 @@ func TestRecoveredQueueWithoutDeadlineUsesOriginalQueuedAt(t *testing.T) {
 		t.Fatalf("legacy queue did not expire: %v %v", expired, err)
 	}
 }
+
+func TestAlreadyCancelledDispatchIsNotATimeout(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.CreateRun(&state.Run{ID: "run", State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Minute)
+	deadline := time.Now().Add(time.Minute)
+	raw, _ := json.Marshal(workers.ExecuteRequest{Executor: "test", QueueDeadline: &past})
+	if err := s.EnqueueDispatch(state.Dispatch{AssignmentID: "queued", ActivationID: "queued", AttemptID: "queued", RunID: "run", Executor: "test", Request: raw}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelAttemptWork("queued"); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := s.ExpireQueuedAttempt("queued", time.Now()); err != nil || expired {
+		t.Fatalf("cancelled queue item looked like a timeout: %v %v", expired, err)
+	}
+	runningRaw, _ := json.Marshal(workers.ExecuteRequest{Executor: "test", ExecutionDeadline: &deadline})
+	if err := s.EnqueueDispatch(state.Dispatch{AssignmentID: "running", ActivationID: "running", AttemptID: "running", RunID: "run", Executor: "test", Request: runningRaw}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterWorker(state.Worker{ID: "worker", Capacity: 1, Capabilities: []state.WorkerCapability{{Name: "test"}}, LastSeen: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, _, err := s.ClaimDispatch("worker", time.Now().Add(time.Minute)); err != nil || claimed == nil || claimed.AttemptID != "running" {
+		t.Fatalf("claim=%+v %v", claimed, err)
+	}
+	if err := s.CancelAttemptWork("running"); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := s.ExpireExecutingAttempt("running", deadline.Add(time.Second)); err != nil || !expired {
+		t.Fatalf("deadline-rejected execution did not unblock the waiter: %v %v", expired, err)
+	}
+	future := time.Now().Add(time.Minute)
+	futureRaw, _ := json.Marshal(workers.ExecuteRequest{Executor: "test", ExecutionDeadline: &future})
+	if err := s.EnqueueDispatch(state.Dispatch{AssignmentID: "early", ActivationID: "early", AttemptID: "early", RunID: "run", Executor: "test", Request: futureRaw}); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, _, err := s.ClaimDispatch("worker", time.Now().Add(time.Minute)); err != nil || claimed == nil || claimed.AttemptID != "early" {
+		t.Fatalf("claim=%+v %v", claimed, err)
+	}
+	if err := s.CancelAttemptWork("early"); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := s.ExpireExecutingAttempt("early", time.Now()); err != nil || expired {
+		t.Fatalf("cancel before the execution deadline looked like a timeout: %v %v", expired, err)
+	}
+}

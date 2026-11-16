@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -117,5 +118,57 @@ func TestWebhookNumericInputReadableAfterReopen(t *testing.T) {
 				t.Fatalf("input=%s want %s: %v", got, input, err)
 			}
 		})
+	}
+}
+
+func TestWebhookBodyReplayAndKeyConflict(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "webhooks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tr := trigger.Trigger{ID: "one", WorkflowDigest: "pin", Secret: "0123456789abcdef", Enabled: true}
+	if err := tr.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTrigger(tr); err != nil {
+		t.Fatal(err)
+	}
+	req := trigger.WebhookDeliveryRequest{TriggerID: "one", IdempotencyKey: "event", WorkflowDigest: "pin", PlanJSON: []byte(`{"digest":"pin"}`), Input: json.RawMessage(`{"n":1}`), BodyDigest: "body-a", DeduplicationSeconds: 60}
+	first, err := s.DeliverWebhook(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.IdempotencyKey = "fresh-unsigned-key"
+	replay, err := s.DeliverWebhook(req)
+	if err != nil || !replay.Duplicate || replay.RunID != first.RunID {
+		t.Fatalf("replay=%+v %v", replay, err)
+	}
+	req.IdempotencyKey = "event"
+	req.BodyDigest = "body-b"
+	if _, err := s.DeliverWebhook(req); !errors.Is(err, trigger.ErrIdempotencyConflict) {
+		t.Fatalf("err=%v", err)
+	}
+	// A previously accepted body must not bypass a conflicting key.
+	req.IdempotencyKey = "other-event"
+	second, err := s.DeliverWebhook(req)
+	if err != nil || second.Duplicate {
+		t.Fatalf("second=%+v %v", second, err)
+	}
+	for _, key := range []string{"event", "fresh-unsigned-key"} {
+		req.IdempotencyKey = key
+		if _, err := s.DeliverWebhook(req); !errors.Is(err, trigger.ErrIdempotencyConflict) {
+			t.Fatalf("key %q bypassed conflict with existing body: %v", key, err)
+		}
+	}
+	// Duplicate aliases retain the original acceptance window, even if a
+	// duplicate was recorded later. Reuse after expiry creates a new run.
+	if _, err := s.db.Exec(`UPDATE trigger_deliveries SET timestamp=? WHERE trigger_id='one' AND state='delivered'`, rfc3339(time.Now().Add(-time.Minute-time.Second))); err != nil {
+		t.Fatal(err)
+	}
+	req.IdempotencyKey = "fresh-unsigned-key"
+	next, err := s.DeliverWebhook(req)
+	if err != nil || next.Duplicate || next.RunID == first.RunID || next.RunID == second.RunID {
+		t.Fatalf("expired alias=%+v %v", next, err)
 	}
 }

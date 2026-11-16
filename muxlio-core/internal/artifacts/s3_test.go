@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -17,6 +18,8 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestS3RoundTripAndIntegrity(t *testing.T) {
 	var mu sync.Mutex
 	objects := map[string][]byte{}
+	var contentLength int64
+	var objectPath string
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=test-key/") {
 			t.Errorf("missing SigV4 authorization")
@@ -29,6 +32,8 @@ func TestS3RoundTripAndIntegrity(t *testing.T) {
 		defer mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
+			contentLength = r.ContentLength
+			objectPath = r.URL.Path
 			data, _ := io.ReadAll(r.Body)
 			objects[key] = data
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
@@ -57,6 +62,13 @@ func TestS3RoundTripAndIntegrity(t *testing.T) {
 	data, _ := io.ReadAll(r)
 	if string(data) != "s3 payload" || got.Size != int64(len(data)) {
 		t.Fatalf("unexpected roundtrip %q %+v", data, got)
+	}
+	if contentLength != int64(len("s3 payload")) || !strings.HasPrefix(objectPath, "/bucket/") {
+		t.Fatalf("content-length=%d path=%q", contentLength, objectPath)
+	}
+	signed, err := driver.PresignedURL(context.Background(), http.MethodGet, ref.Digest, time.Minute)
+	if err != nil || !strings.Contains(signed, "/bucket/") {
+		t.Fatalf("presigned path lost its leading slash: %s %v", signed, err)
 	}
 	mu.Lock()
 	objects[ref.Digest[7:]] = []byte("corrupt")

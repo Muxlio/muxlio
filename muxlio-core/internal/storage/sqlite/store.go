@@ -104,7 +104,7 @@ var schemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, created_at)`,
 	`CREATE TABLE IF NOT EXISTS workflow_versions (digest TEXT PRIMARY KEY, plan_json BLOB NOT NULL, created_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS triggers (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, secret TEXT NOT NULL, created_at TEXT NOT NULL)`,
-	`CREATE TABLE IF NOT EXISTS trigger_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_id TEXT NOT NULL, idempotency_key TEXT NOT NULL DEFAULT '', run_id TEXT, workflow_digest TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL, FOREIGN KEY(trigger_id) REFERENCES triggers(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
+	`CREATE TABLE IF NOT EXISTS trigger_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_id TEXT NOT NULL, idempotency_key TEXT NOT NULL DEFAULT '', run_id TEXT, workflow_digest TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL, body_digest TEXT NOT NULL DEFAULT '', FOREIGN KEY(trigger_id) REFERENCES triggers(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_dedup ON trigger_deliveries(trigger_id, idempotency_key, state, timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_run ON trigger_deliveries(run_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_events_operational_type ON events(type,timestamp)`,
@@ -184,6 +184,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE execution_attempts ADD COLUMN operation_ref_json TEXT`,
 		// Reason an attempt is held pending explicit operator reconciliation.
 		`ALTER TABLE execution_attempts ADD COLUMN await_reconciliation_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE trigger_deliveries ADD COLUMN body_digest TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			db.Close()
@@ -1157,7 +1158,7 @@ func (s *Store) SubmitInputResponse(runID, requestID string, response any, respo
 	now := time.Now()
 	// The run-state predicate makes first acceptance atomic with durable
 	// cancellation across connections. Already accepted replay remains valid.
-	res, err := s.db.Exec(`UPDATE input_requests SET state='fulfilled', response_json=?, responder_id=?, fulfilled_at=?, idempotency_key=? WHERE run_id=? AND request_id=? AND state='pending' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state<>'cancelled')`,
+	res, err := s.db.Exec(`UPDATE input_requests SET state='fulfilled', response_json=?, responder_id=?, fulfilled_at=?, idempotency_key=? WHERE run_id=? AND request_id=? AND state='pending' AND (expires_at IS NULL OR muxlio_time_after(expires_at, ?)=1) AND EXISTS (SELECT 1 FROM runs WHERE id=? AND state<>'cancelled')`,
 		string(respJSON), responderID, rfc3339(now), idempotencyKey, runID, requestID, rfc3339(now), runID)
 	if err != nil {
 		return nil, false, err
@@ -1185,7 +1186,7 @@ func (s *Store) SubmitInputResponse(runID, requestID string, response any, respo
 func (s *Store) ExpireInputRequests(now time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.Exec(`UPDATE input_requests SET state='expired' WHERE state='pending' AND expires_at IS NOT NULL AND julianday(expires_at) <= julianday(?)`, rfc3339(now))
+	res, err := s.db.Exec(`UPDATE input_requests SET state='expired' WHERE state='pending' AND expires_at IS NOT NULL AND muxlio_time_after(expires_at, ?)=0`, rfc3339(now))
 	if err != nil {
 		return 0, err
 	}
@@ -1972,8 +1973,22 @@ func (s *Store) SetRunOutput(id string, output any) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n == 0 {
+		var current string
+		err := s.db.QueryRow(`SELECT state FROM runs WHERE id=?`, id).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("muxlio: run %q not found", id)
+		}
+		if err != nil {
+			return err
+		}
+		if current == "cancelled" {
+			return nil
+		}
 		return fmt.Errorf("muxlio: run %q not found", id)
 	}
 	return nil

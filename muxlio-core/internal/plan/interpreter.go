@@ -395,7 +395,9 @@ func (e *Engine) Run(runID string) (runErr error) {
 	rootSG, ok := e.plan.Subgraphs[rootName]
 	if !ok {
 		err := fmt.Errorf("muxlio: root subgraph %q not found", rootName)
-		e.store.SetRunError(runID, err)
+		if setErr := e.store.SetRunError(runID, err); setErr != nil {
+			return setErr
+		}
 		return err
 	}
 
@@ -418,7 +420,9 @@ func (e *Engine) Run(runID string) (runErr error) {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		e.store.SetRunError(runID, err)
+		if setErr := e.store.SetRunError(runID, err); setErr != nil {
+			return setErr
+		}
 		return err
 	}
 	if err := e.checkpoint(); err != nil {
@@ -440,7 +444,9 @@ func (e *Engine) Run(runID string) (runErr error) {
 			return err
 		}
 		if err := e.checkAccounting(attempts, false); err != nil {
-			_ = e.store.SetRunError(runID, err)
+			if setErr := e.store.SetRunError(runID, err); setErr != nil {
+				return setErr
+			}
 			return err
 		}
 	}
@@ -566,11 +572,15 @@ func (e *Engine) executeSubgraph(runID, sgName string, sg Subgraph, scope []stri
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				if run, getErr := e.store.GetRun(runID); getErr == nil && run.State == RunCancelled {
-					_ = e.store.SetActivationState(actID, ActCancelled)
+					if setErr := e.store.SetActivationState(actID, ActCancelled); setErr != nil {
+						return nil, setErr
+					}
 				}
 				return nil, err
 			}
-			_ = e.store.SetActivationError(actID, err)
+			if setErr := e.store.SetActivationError(actID, err); setErr != nil {
+				return nil, setErr
+			}
 			return nil, err
 		}
 		if err := e.checkpoint(); err != nil {
@@ -796,6 +806,12 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.Effect = "reconcilable"
 	}
 	recoveredBase := 0
+	explicitRetryBase := 0
+	if act, err := e.store.GetActivation(actID); err == nil {
+		explicitRetryBase = act.AttemptBase
+	}
+	resumeAfter := 0
+	var resumeFailure error
 	keyedExecutor := ""
 	prior, priorErr := e.store.ListExecutionAttempts(runID, actID)
 	if priorErr != nil {
@@ -866,6 +882,29 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			recoveredBase = a.RetryNumber
 			break
 		}
+		// A recorded failure or cancellation already consumed this attempt id.
+		// Cancellation is only retried after an explicit run retry. A retryable
+		// failure continues at the next id and stops once MaxAttempts is
+		// exhausted, instead of overwriting the stored attempt.
+		if a.State == "cancelled" {
+			if a.RetryNumber <= explicitRetryBase {
+				break
+			}
+			msg := a.Failure
+			if msg == "" {
+				msg = fmt.Sprintf("attempt %s cancelled", a.ID)
+			}
+			return nil, fmt.Errorf("muxlio: %s", msg)
+		}
+		if a.State == "failed" {
+			resumeAfter = a.RetryNumber
+			if a.Failure != "" {
+				resumeFailure = fmt.Errorf("muxlio: %s", a.Failure)
+			} else {
+				resumeFailure = fmt.Errorf("muxlio: attempt %s failed", a.ID)
+			}
+			break
+		}
 	}
 
 	// Each attempt receives a fresh value; executor mutation cannot alter retries.
@@ -875,12 +914,20 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 	}
 	var lastErr error
 	attemptBase := recoveredBase
-	if act, err := e.store.GetActivation(actID); err == nil {
-		if act.AttemptBase > attemptBase {
-			attemptBase = act.AttemptBase
+	if explicitRetryBase > attemptBase {
+		attemptBase = explicitRetryBase
+	}
+	firstAttempt := 1
+	if resumeAfter > attemptBase {
+		firstAttempt = resumeAfter - attemptBase + 1
+		if firstAttempt > maxAttempts {
+			if resumeFailure == nil {
+				resumeFailure = fmt.Errorf("muxlio: execution attempt budget is exhausted")
+			}
+			return nil, resumeFailure
 		}
 	}
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := firstAttempt; attempt <= maxAttempts; attempt++ {
 		req.Inputs = nil
 		if err := decodeExecutionInputs(inputSnapshot, &req.Inputs); err != nil {
 			return nil, err
@@ -993,19 +1040,25 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
 				failureMsg = fmt.Sprintf("run deadline exceeded (node %q, attempt %d)", node.ID, attemptBase+attempt)
 			}
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+				return nil, recordErr
+			}
 			return nil, ctxErr
 		}
 		// Per-node execution timeout: record the attempt as cancelled with an
 		// actionable diagnostic. Do not replay while external completion is unknown.
 		if errors.Is(err, context.DeadlineExceeded) && !admissionExpired {
 			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+				return nil, recordErr
+			}
 			lastErr = fmt.Errorf("muxlio: %s", failureMsg)
 			return nil, lastErr
 		}
 		if errors.Is(err, context.Canceled) {
-			_ = e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)})
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+				return nil, recordErr
+			}
 			return nil, err
 		}
 		if result.Logs != "" {

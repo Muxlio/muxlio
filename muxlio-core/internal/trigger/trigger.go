@@ -64,6 +64,7 @@ var (
 	ErrMappedInputTooLarge = errors.New("muxlio: mapped input exceeds 8 MiB limit")
 	ErrInvalidMapping      = errors.New("muxlio: input mapping is invalid")
 	ErrMappingResolve      = errors.New("muxlio: input mapping could not resolve a payload reference")
+	ErrIdempotencyConflict = errors.New("muxlio: idempotency key was reused with a different webhook body")
 )
 
 // Trigger is an immutable definition that pins a workflow version and
@@ -113,6 +114,10 @@ type WebhookDeliveryRequest struct {
 	PlanJSON             []byte
 	Input                json.RawMessage
 	DeduplicationSeconds int
+	// BodyDigest is the hex SHA-256 of the raw signed body. Identical bodies
+	// collapse inside the deduplication window even when the unsigned
+	// Idempotency-Key header changes. A reused key with a different digest conflicts.
+	BodyDigest string
 }
 
 // WebhookDeliveryResult is the outcome of an atomic delivery. Duplicate is true

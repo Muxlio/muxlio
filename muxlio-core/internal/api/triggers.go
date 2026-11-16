@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -173,7 +175,12 @@ func registerTriggers(mux *http.ServeMux, store state.Store, runner Runner) {
 			reject(400, CodeBadRequest, err.Error())
 			return
 		}
-		result, err := s.DeliverWebhook(trigger.WebhookDeliveryRequest{TriggerID: id, IdempotencyKey: key, WorkflowDigest: tr.WorkflowDigest, WorkflowName: p.Name, PlanJSON: raw, Input: input, DeduplicationSeconds: tr.DeduplicationSeconds})
+		sum := sha256.Sum256(body)
+		result, err := s.DeliverWebhook(trigger.WebhookDeliveryRequest{TriggerID: id, IdempotencyKey: key, WorkflowDigest: tr.WorkflowDigest, WorkflowName: p.Name, PlanJSON: raw, Input: input, DeduplicationSeconds: tr.DeduplicationSeconds, BodyDigest: hex.EncodeToString(sum[:])})
+		if errors.Is(err, trigger.ErrIdempotencyConflict) {
+			reject(http.StatusConflict, CodeIdempotencyKeyConflict, "idempotency key was reused with a different body")
+			return
+		}
 		if err != nil {
 			writeError(w, 500, CodeStoreError, err.Error())
 			return

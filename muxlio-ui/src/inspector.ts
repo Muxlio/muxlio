@@ -312,13 +312,13 @@ async function loadActivation(id,offset=0){
  const run=current,request=++inspectorRequest;
  selectedActivation=id;
  if(selectedActivationDetail?.id!==id){selectedActivationDetail=null;activationTranscripts.clear();}
- attemptOffset=offset;
  try{
   const [act,page]=await Promise.all([
    api(`/v1/runs/${encodeURIComponent(run)}/activations/${encodeURIComponent(id)}`),
    api(`/v1/runs/${encodeURIComponent(run)}/attempts?activationId=${encodeURIComponent(id)}&offset=${offset}&limit=50&details=false`)
   ]);
   if(current!==run||selectedActivation!==id||request!==inspectorRequest)return null;
+  attemptOffset=offset;
   selectedActivationDetail=act;runAttempts=page.attempts||[];attemptPageMore=!!page.hasMore;
   const index=activationData.findIndex(a=>a.id===id);
   if(index>=0)activationData[index]=act;else activationData.push(act);

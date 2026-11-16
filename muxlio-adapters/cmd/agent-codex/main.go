@@ -9,8 +9,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -93,10 +96,24 @@ func main() {
 	_ = recorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "api-equivalent"}, "unknown", "served-model-and-tariff-unverified")
 	stdoutTail := &tailBuffer{limit: 32 * 1024}
 
-	scanner := bufio.NewScanner(stdoutPipe)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
+	stdout := bufio.NewReaderSize(stdoutPipe, 64*1024)
+	for {
+		raw, readErr := readCodexLine(stdout, 1024*1024)
+		if len(raw) == 0 {
+			if readErr == io.EOF {
+				break
+			}
+			if errors.Is(readErr, errCodexLineTooLong) {
+				runErr = appendFailure(runErr, "skipped a codex stdout event larger than 1 MiB")
+				continue
+			}
+			if readErr != nil {
+				runErr = appendFailure(runErr, fmt.Sprintf("reading codex stdout: %v", readErr))
+				break
+			}
+			continue
+		}
+		line := string(raw)
 		_, _ = stdoutTail.Write([]byte(line + "\n"))
 		if !strings.HasPrefix(line, "{") {
 			continue
@@ -180,10 +197,17 @@ func main() {
 				runErr = appendFailure(runErr, "codex stream error")
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		_ = cmd.Process.Kill()
-		runErr = appendFailure(runErr, fmt.Sprintf("reading codex stdout: %v", err))
+		if readErr == io.EOF {
+			break
+		}
+		if errors.Is(readErr, errCodexLineTooLong) {
+			runErr = appendFailure(runErr, "skipped a codex stdout event larger than 1 MiB")
+			continue
+		}
+		if readErr != nil {
+			runErr = appendFailure(runErr, fmt.Sprintf("reading codex stdout: %v", readErr))
+			break
+		}
 	}
 
 	if err := cmd.Wait(); err != nil {
@@ -290,4 +314,44 @@ func appendFailure(current, next string) string {
 		return next
 	}
 	return current + "; " + next
+}
+
+var errCodexLineTooLong = errors.New("codex stdout line exceeds limit")
+
+// readCodexLine returns one JSONL line. An oversized event is discarded through
+// the next newline so a later turn.completed usage record can still be parsed.
+func readCodexLine(r *bufio.Reader, max int) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(buf)+len(chunk) > max {
+			if err == bufio.ErrBufferFull {
+				for {
+					_, err = r.ReadSlice('\n')
+					if err == bufio.ErrBufferFull {
+						continue
+					}
+					break
+				}
+			}
+			if err != nil && err != io.EOF {
+				return nil, err
+			}
+			return nil, errCodexLineTooLong
+		}
+		buf = append(buf, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF {
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return bytes.TrimRight(buf, "\r\n"), io.EOF
+		}
+		if err != nil {
+			return nil, err
+		}
+		return bytes.TrimRight(buf, "\r\n"), nil
+	}
 }

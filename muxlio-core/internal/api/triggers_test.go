@@ -150,11 +150,18 @@ func TestAuthenticatedPinnedWebhooks(t *testing.T) {
 			t.Fatal("delivery lost pin")
 		}
 	}
-	// No idempotency key deliberately creates an independent run.
-	request("POST", "/webhooks/deploy", valid, "", sign(valid, secret), "", 201)
+	// The same signed body is one delivery inside the dedup window, even when
+	// the caller omits the unsigned idempotency key.
+	request("POST", "/webhooks/deploy", valid, "", sign(valid, secret), "", 200)
+	runs, _ = s.ListRuns()
+	if len(runs) != 1 {
+		t.Fatalf("replayed body created another run: %d", len(runs))
+	}
+	other := []byte(`{"event":{"count":9}}`)
+	request("POST", "/webhooks/deploy", other, "", sign(other, secret), "", 201)
 	runs, _ = s.ListRuns()
 	if len(runs) != 2 {
-		t.Fatal("unkeyed delivery did not create run")
+		t.Fatal("different body did not create a run")
 	}
 }
 

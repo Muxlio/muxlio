@@ -60,6 +60,13 @@ regression("accounting presentation regression", async () => {
   assert.match(html, /9223372036\.9B tokens/);
   assert.match(html, /incomplete/);
   assert.match(html, /class="stat-label">Accounting · subtotal<\/div>/);
+  const estimated = amount("100");
+  estimated.collectedSubtotal = "60";
+  estimated.estimatedFallbackSubtotal = "40";
+  assert.match(
+    api.buildWorkbenchUsageMarkup(api.buildUsagePresentation({ tokens: estimated }, { attemptCount: 1 })),
+    /class="stat-label">Accounting · includes estimates<\/div>/,
+  );
   assert.doesNotMatch(
     html,
     /<details|<summary|Known subtotal|coverage|Estimated fallback/,

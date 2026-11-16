@@ -650,7 +650,7 @@ function compileStepRequiresPassed<TOutputs extends TaskOutputSchema>(
   const thenNodes: IRNode[] = [];
   const savedActive = state.activeNodes;
   state.activeNodes = thenNodes;
-  const inner = compileStepExecute(state, id, taskDef, inputs, { after: options.after });
+  const inner = compileStepExecute(state, id, taskDef, inputs, undefined);
   state.activeNodes = savedActive;
 
   const outputPorts = Object.keys(taskDef.def.outputs ?? {});
@@ -662,6 +662,7 @@ function compileStepRequiresPassed<TOutputs extends TaskOutputSchema>(
   state.subgraphs[elseName] = { nodes: [], output: {} };
 
   const branchId = uniqueName(state, `${id}_if_passed`);
+  const control = afterBindings(options.after);
   state.activeNodes.push({
     id: branchId,
     kind: 'branch',
@@ -672,13 +673,17 @@ function compileStepRequiresPassed<TOutputs extends TaskOutputSchema>(
     },
     thenRef: thenName,
     elseRef: elseName,
+    ...(Object.keys(control).length > 0 ? { inputs: control } : {}),
   });
 
   const branchPorts = outputPorts.length > 0 ? outputPorts : ['result'];
   const resultRef: Expr = { op: 'ref', node: branchId, port: 'result' };
+  const completionBinding: Binding = { ref: { node: branchId, port: 'result' } };
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
       if (prop === SYM_IS_TRACED) return true;
+      if (prop === SYM_BINDING) return completionBinding;
+      if (prop === SYM_EXPR) return resultRef;
       if (typeof prop === 'symbol') return undefined;
       const name = String(prop);
       if (!branchPorts.includes(name) && !(outputPorts.length === 0 && name === 'result')) {
@@ -714,16 +719,7 @@ function compileStepExecute<TOutputs extends TaskOutputSchema>(
     inputBindings[key] = toBinding(val);
   }
 
-  // Add control-flow dependencies from `after`.
-  if (options?.after) {
-    const afters = Array.isArray(options.after) ? options.after : [options.after];
-    let n = 0;
-    for (const dep of afters) {
-      if (isTraced(dep)) {
-        inputBindings[`__after_${n++}`] = getBinding(dep);
-      }
-    }
-  }
+  Object.assign(inputBindings, afterBindings(options?.after));
 
   const outputs: Record<string, OutputDecl> = {};
   if (def.outputs) {
@@ -1011,9 +1007,17 @@ function compileRepeatUntil<TOutputs extends TaskOutputSchema>(
   const loopResultRef: Expr = { op: 'ref', node: loopId, port: 'result' };
 
   // value proxy: access .portName → state.value_portName
+  const valueFields: Record<string, Expr> = {};
+  for (const port of attemptPorts) {
+    valueFields[port] = { op: 'field', expr: loopResultRef, name: `value_${port}` };
+  }
+  const valueExpr: Expr = { op: 'object', fields: valueFields };
+  const valueBinding: Binding = { expr: valueExpr };
   const valueHandler: ProxyHandler<object> = {
     get(_t, prop) {
       if (prop === SYM_IS_TRACED) return true;
+      if (prop === SYM_BINDING) return valueBinding;
+      if (prop === SYM_EXPR) return valueExpr;
       if (typeof prop === 'symbol') return undefined;
       const port = String(prop);
       return createTracedRef({
@@ -1106,11 +1110,31 @@ function noteExternalExpr(expr: Expr, localIds: Set<string>, found: Map<string, 
  * Routes `result.report` (etc.) to `{ ref: captureId, port: 'value_<port>' }`
  * for the current loop iteration's attempt outputs.
  */
+function afterBindings(after: unknown): Record<string, Binding> {
+  const bindings: Record<string, Binding> = {};
+  if (after == null) return bindings;
+  const deps = Array.isArray(after) ? after : [after];
+  let n = 0;
+  for (const dep of deps) {
+    if (!isTraced(dep)) continue;
+    const binding = getBinding(dep);
+    if (binding && (binding.ref || binding.expr)) bindings[`__after_${n++}`] = binding;
+  }
+  return bindings;
+}
+
 function createCaptureResultProxy(captureId: string, ports: string[]): any {
   const portSet = new Set(ports);
+  const fields: Record<string, Expr> = {};
+  for (const port of ports) {
+    fields[port] = { op: 'ref', node: captureId, port: `value_${port}` };
+  }
+  const whole: Expr = { op: 'object', fields };
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
       if (prop === SYM_IS_TRACED) return true;
+      if (prop === SYM_BINDING) return { expr: whole };
+      if (prop === SYM_EXPR) return whole;
       if (typeof prop === 'symbol') return undefined;
       const port = String(prop);
       if (!portSet.has(port)) {

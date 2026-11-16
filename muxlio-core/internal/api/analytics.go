@@ -69,7 +69,11 @@ func registerAnalytics(mux *http.ServeMux, store state.Store) {
 				byExecutor[a.Executor] = append(byExecutor[a.Executor], a)
 				byWorkflow[workflows[id]] = append(byWorkflow[workflows[id]], a)
 				if !a.FinishedAt.IsZero() {
-					day := a.FinishedAt.UTC().Format("2006-01-02")
+					layout := "2006-01-02"
+					if r.URL.Query().Get("bucket") == "hour" {
+						layout = "2006-01-02T15"
+					}
+					day := a.FinishedAt.UTC().Format(layout)
 					byDay[day] = append(byDay[day], a)
 				}
 			}
@@ -106,7 +110,7 @@ func registerAnalytics(mux *http.ServeMux, store state.Store) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"accounting": summary, "accountingByRun": accountingByRun, "accountingByAttempt": accountingByAttempt, "accountingByDay": days, "accountingByExecutor": executors, "accountingByWorkflow": workflowSummaries, "accountingPopulation": "returned page of filtered runs; daily amounts use attempt completion date in UTC",
+			"accounting": summary, "accountingByRun": accountingByRun, "accountingByAttempt": accountingByAttempt, "accountingByDay": days, "accountingByExecutor": executors, "accountingByWorkflow": workflowSummaries, "accountingPopulation": accountingPopulation(r),
 			"runs":          snapshot.Runs,
 			"attemptsByRun": attempts,
 			"totalRuns":     snapshot.TotalRuns,
@@ -117,6 +121,13 @@ func registerAnalytics(mux *http.ServeMux, store state.Store) {
 			"populations":   snapshot.Populations,
 		})
 	})
+}
+
+func accountingPopulation(r *http.Request) string {
+	if r.URL.Query().Get("bucket") == "hour" {
+		return "returned page of filtered runs; hourly amounts use attempt completion time in UTC"
+	}
+	return "returned page of filtered runs; daily amounts use attempt completion date in UTC"
 }
 
 func parseAnalyticsQuery(r *http.Request) (state.AnalyticsQuery, error) {
