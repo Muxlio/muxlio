@@ -20,8 +20,7 @@ function run(t, passed, packageCount = 2) {
     })) },
     fake: {
       byExecutor: {
-        'agent/kiro': { outputs: { findings: 'findings artifact', notes: 'fix artifact' } },
-        'agent/antigravity': { outputs: { report: 'review artifact' } },
+        'agent/test': { outputs: { findings: 'findings artifact', notes: 'fix artifact', report: 'review artifact' } },
         command: { outputs: commandOutputs },
       },
       byNode: { verify: { outputs: { ...commandOutputs, passed, exitCode: passed ? 0 : 1, report: 'check artifact' } } },

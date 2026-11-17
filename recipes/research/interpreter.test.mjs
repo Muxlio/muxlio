@@ -25,7 +25,7 @@ function run(t, done, malformed = false) {
   const files = {
     plan,
     input: { topic: 'Test topic', questions: ['Test question'] },
-    fake: { byNode: {
+    fake: { byExecutor: { 'agent/test': { outputs: {} } }, byNode: {
       iterate: { outputs: {
         findings: 'complete findings artifact',
         progress: { iteration: 1, done: malformed ? 'true' : done, answeredCount: done ? 1 : 0,

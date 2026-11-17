@@ -13,7 +13,7 @@ test('package sweep pins bounded serial execution and a concrete input contract'
   assert.equal(packages.maxItems, 200);
   assert.deepEqual(packages.items.required, ['id', 'path', 'kind', 'target']);
   assert.deepEqual(packages.items.properties.kind.enum, ['go', 'npm', 'ui']);
-  assert.deepEqual(plan.requiredExecutors, ['agent/antigravity', 'agent/codex', 'agent/cursor', 'agent/kiro', 'command']);
+  assert.deepEqual(plan.requiredExecutors, ['agent/any', 'command']);
   assert.equal(plan.limits.maxActiveAttempts, 1);
   const map = plan.subgraphs.root.nodes[0];
   assert.equal(map.kind, 'map');
@@ -29,11 +29,11 @@ test('package sweep pins bounded serial execution and a concrete input contract'
 
 test('one agent finds and fixes bugs, then another reviews', () => {
   assert.equal(node('require-clean-workspace').params.failOnOutput, true);
-  assert.equal(node('find-and-fix').executor, 'agent/kiro');
-  assert.deepEqual(node('find-and-fix').fallbackExecutors, ['agent/cursor']);
+  assert.equal(node('find-and-fix').executor, 'agent/any');
+  assert.equal(node('find-and-fix').fallbackExecutors, undefined);
   assert.deepEqual(node('find-and-fix').inputs.__after_0.ref, { node: 'require-clean-workspace', port: 'passed' });
-  assert.equal(node('review').executor, 'agent/antigravity');
-  assert.deepEqual(node('review').fallbackExecutors, ['agent/codex']);
+  assert.equal(node('review').executor, 'agent/any');
+  assert.equal(node('review').fallbackExecutors, undefined);
   assert.deepEqual(node('review').inputs.findings.ref, { node: 'find-and-fix', port: 'findings' });
   assert.equal(node('find-and-fix').retry.maxAttempts, 3);
 });

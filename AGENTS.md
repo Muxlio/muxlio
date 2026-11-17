@@ -1,5 +1,19 @@
 # Architecture boundaries
 
+- Keep the framework domain-agnostic. The coordinator, workers, compiler, SDK
+  primitives, storage, and generic UI must not know whether a workflow performs
+  research, coding, reviews, or any other business task.
+- Express execution behavior through generic predicates, dependencies, schemas,
+  bounds, timeouts, retries, and explicit stop actions. Do not use workflow-domain
+  classifications to select runtime behavior, validation rules, defaults, or
+  success semantics.
+- Keep domain-specific prompts, output shapes, acceptance criteria, progress
+  definitions, and policies in recipes or user-authored workflows. Framework
+  code must not interpret fields such as `review`, `approved`, or issue severity
+  as special; workflows must declare the expressions or contracts to evaluate.
+- Prefer existing generic primitives over new framework abstractions. If a
+  capability cannot be explained without naming a workflow domain, implement it
+  in the recipe first. Tests for framework behavior must use generic fixtures.
 - Keep the coordinator, workers, and UI independent of specific adapters and
   providers.
 - Put provider-specific protocols, event parsing, usage normalization, and

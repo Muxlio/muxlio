@@ -3,8 +3,7 @@ import { progress } from './schemas.js';
 import { maxTaskAttempts } from './limits.js';
 
 const agent = {
-  executor: 'agent/kiro',
-  fallbackExecutors: ['agent/claude', 'agent/codex'],
+  executor: 'agent/any',
   retry: { maxAttempts: maxTaskAttempts, backoffSeconds: 10, maxBackoffSeconds: 60, effect: 'retryable' as const },
   timeoutSeconds: 900,
   queueTimeoutSeconds: 180,

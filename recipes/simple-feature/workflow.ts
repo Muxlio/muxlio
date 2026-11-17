@@ -15,8 +15,7 @@ import { workflow, task, artifact } from '@muxlio/sdk';
 import { z } from 'zod';
 
 const implement = task({
-  executor: 'agent/codex',
-  fallbackExecutors: ['agent/kiro', 'agent/cursor'],
+  executor: 'agent/any',
   task: `Implement the requested feature in this repository, following existing
 conventions. Add or update focused tests if appropriate and run any relevant
 checks. Then write notes.md summarizing what you changed and the exact

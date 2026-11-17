@@ -1,8 +1,7 @@
 import { task, artifact } from '@muxlio/sdk';
 
 export const implement = task({
-  executor: 'agent/kiro',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/any',
   workspaceMode: 'shared-write',
   concurrencyKeys: ['implement-features-workspace'],
   task: `Implement the requested feature in the current workspace, following
@@ -16,8 +15,7 @@ delegate to another agent. Do not commit or push; the recipe creates local commi
   retry: { maxAttempts: 3, effect: 'retryable' },
 });
 export const review = task({
-  executor: 'agent/antigravity',
-  fallbackExecutors: ['agent/codex'],
+  executor: 'agent/any',
   workspaceMode: 'shared-write',
   concurrencyKeys: ['implement-features-workspace'],
   task: `Independently review the feature implementation. Read the implementation
@@ -32,8 +30,7 @@ creates local commits.`,
 });
 
 export const fix = task({
-  executor: 'agent/kiro',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/any',
   workspaceMode: 'shared-write',
   concurrencyKeys: ['implement-features-workspace'],
   task: `Read the verification failure report provided in context. Determine root

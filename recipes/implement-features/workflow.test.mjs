@@ -6,7 +6,7 @@ const plan = compiled.plan;
 
 test('implement-features plan structure', () => {
   assert.equal(plan.name, 'implement-features');
-  assert.ok(plan.requiredExecutors.includes('agent/codex'), 'must require agent/codex');
+  assert.deepEqual(plan.requiredExecutors, ['agent/any', 'command']);
   assert.ok(plan.requiredExecutors.includes('command'));
 
   // No prepare step — the recipe is workspace-agnostic.
@@ -24,14 +24,14 @@ test('implement-features plan structure', () => {
 
   // implement is the first step in the body.
   const implement = body.nodes.find((n) => n.id === 'implement');
-  assert.equal(implement?.executor, 'agent/kiro');
-  assert.deepEqual(implement?.fallbackExecutors, ['agent/cursor']);
+  assert.equal(implement?.executor, 'agent/any');
+  assert.equal(implement?.fallbackExecutors, undefined);
   const review = body.nodes.find((n) => n.id === 'review');
-  assert.equal(review?.executor, 'agent/antigravity');
-  assert.deepEqual(review?.fallbackExecutors, ['agent/codex']);
+  assert.equal(review?.executor, 'agent/any');
+  assert.equal(review?.fallbackExecutors, undefined);
   const fixNode = Object.values(plan.subgraphs).flatMap((g) => g.nodes).find((n) => n.id === 'fix');
-  assert.equal(fixNode?.executor, 'agent/kiro');
-  assert.deepEqual(fixNode?.fallbackExecutors, ['agent/cursor']);
+  assert.equal(fixNode?.executor, 'agent/any');
+  assert.equal(fixNode?.fallbackExecutors, undefined);
 
   const allNodes = Object.values(plan.subgraphs).flatMap((g) => g.nodes);
   assert.equal(allNodes.some((n) => n.id === 'push' ||

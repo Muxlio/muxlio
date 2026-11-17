@@ -5,17 +5,12 @@ import { commitScript, verifyScript } from './commands.js';
 const workspace = { workspaceMode: 'shared-write' as const, concurrencyKeys: ['package-bugfix-workspace'] };
 const investigator = {
   ...workspace,
-  executor: 'agent/kiro',
-  fallbackExecutors: ['agent/cursor'],
+  executor: 'agent/any',
   timeoutSeconds: 1200,
   queueTimeoutSeconds: 1800,
   retry: { maxAttempts: 3, backoffSeconds: 5, maxBackoffSeconds: 30, effect: 'retryable' },
 };
-const reviewer = {
-  ...investigator,
-  executor: 'agent/antigravity',
-  fallbackExecutors: ['agent/codex'],
-};
+const reviewer = investigator;
 const rules = `Follow AGENTS.md. Keep changes scoped to the supplied package and
 related code needed for a demonstrated bug. Do not weaken checks, delegate,
 edit SKILL.md, commit, or push. On retries, inspect the current diff and continue

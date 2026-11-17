@@ -33,7 +33,7 @@ muxlio run recipes/research/workflow.ts recipes/research/input.json \
   --server http://127.0.0.1:7600 --json
 ```
 
-The tasks use `agent/kiro` with `agent/claude` and `agent/codex` fallbacks.
+The tasks use `agent/any` to select a compatible available agent at runtime.
 Configure the worker with an available executor and authorized research tools
 and sources. Tool access comes from the executor environment; the recipe does
 not provision browsing or credentials. Synthesis also needs `muxlio canvas

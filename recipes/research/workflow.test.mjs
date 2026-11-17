@@ -25,6 +25,11 @@ test('research input accepts the example and bounds question count and depth', (
 
 test('research carries the last complete artifact and increments a runtime counter', () => {
   assert.equal(plan.name, 'research');
+  assert.deepEqual(plan.requiredExecutors, ['agent/any']);
+  for (const node of [iterate, synthesis]) {
+    assert.equal(node.executor, 'agent/any');
+    assert.equal(node.fallbackExecutors, undefined);
+  }
   assert.equal(loop.kind, 'loop');
   assert.equal(loop.maxIterations, 40);
   assert.equal(loop.onExhausted ?? 'pause', 'pause');
