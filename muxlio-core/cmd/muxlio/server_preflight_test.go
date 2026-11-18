@@ -67,3 +67,48 @@ func TestServerPreflightThenSubmit(t *testing.T) {
 		t.Fatalf("clean preflight cannot submit: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestWorkspaceRunErrorsKeepLocalPathsPrivate(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	privatePath := filepath.Join(t.TempDir(), "private checkout")
+	c := api.NewCoordinator(store)
+	c.Workspace = privatePath
+	r := &serverRunner{store: store, exec: c, engines: map[string]*plan.Engine{}, workers: map[string]chan struct{}{}, ctx: ctx}
+	t.Cleanup(func() { cancel(); r.wg.Wait(); store.Close() })
+	router := api.NewRouter(store, r)
+
+	var p plan.Plan
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(submissionPlan, `"workspaceMode":"empty"`, `"workspaceMode":"snapshot"`)), &p); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := p.ComputeDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorkflowVersion(digest, compiled); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		body string
+		want int
+	}{
+		{"/v1/runs/preflight", `{"workspaceId":"default","plan":` + string(compiled) + `}`, http.StatusOK},
+		{"/v1/runs", `{"workspaceId":"default","planDigest":"` + digest + `"}`, http.StatusBadRequest},
+	} {
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)))
+		if body := resp.Body.String(); resp.Code != tc.want ||
+			strings.Contains(body, privatePath) || !strings.Contains(body, "could not be prepared") {
+			t.Errorf("%s returned HTTP %d: %s", tc.path, resp.Code, body)
+		}
+	}
+}

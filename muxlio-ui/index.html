@@ -858,6 +858,14 @@
               </svg>
               Refresh
             </button>
+            <button
+              type="button"
+              class="btn primary"
+              id="openRunWorkflow"
+              disabled
+            >
+              Run workflow
+            </button>
           </div>
           <div id="workflowList"></div>
         </section>
@@ -1022,6 +1030,59 @@
         </div>
       </div>
     </div>
+    <dialog
+      id="runWorkflowModal"
+      class="ops-dialog"
+      aria-labelledby="runWorkflowTitle"
+    >
+      <div class="modal-head">
+        <div>
+          <div class="modal-kicker">Workflows</div>
+          <h2 class="modal-title" id="runWorkflowTitle">Run workflow</h2>
+        </div>
+        <button type="button" class="btn ghost" data-close-run-workflow>
+          Close
+        </button>
+      </div>
+      <div class="modal-body ops-form">
+        <label>
+          Workflow version
+          <select id="runWorkflowVersion" autofocus></select>
+        </label>
+        <label>
+          Workspace
+          <select
+            id="runWorkflowWorkspace"
+            aria-label="Authorized workspace"
+          ></select>
+        </label>
+        <label>
+          Run input (JSON)
+          <textarea
+            id="runWorkflowInput"
+            rows="10"
+            spellcheck="false"
+            aria-describedby="runWorkflowInputError"
+          >
+{}</textarea>
+        </label>
+        <p class="subtle" id="runWorkflowInputError" aria-live="polite"></p>
+        <div id="runWorkflowPreflight" aria-live="polite"></div>
+        <p class="subtle" id="runWorkflowStatus" role="status"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-run-workflow>
+            Cancel
+          </button>
+          <button type="button" class="btn" id="runWorkflowPreflightBtn">
+            Preflight
+          </button>
+          <button type="button" class="btn primary" id="runWorkflowSubmitBtn">
+            Start run
+          </button>
+        </div>
+      </div>
+    </dialog>
+
     <div id="outputModal" class="modal" hidden>
       <div
         class="modal-card output-modal-card"

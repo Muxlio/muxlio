@@ -212,3 +212,6 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .insp-record-details{font-size:11px;margin-top:12px}
 .insp-record-details>summary{cursor:pointer;color:var(--muted)}
 .insp-attempt-card>summary:focus-visible,.insp-record-details>summary:focus-visible,.insp-accounting-details>summary:focus-visible{outline:2px solid var(--teal);outline-offset:4px;border-radius:3px}
+.preflight-label{margin-top:12px}
+.preflight-list{margin:6px 0 0;padding-left:18px;font-size:12px;line-height:1.55;color:var(--ink)}
+.preflight-list li{margin:4px 0;overflow-wrap:anywhere}

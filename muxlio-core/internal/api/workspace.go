@@ -124,7 +124,7 @@ func (c *Coordinator) authorizeDispatchWorkspace(req workers.ExecuteRequest, che
 		// Validate input path aliases without shipping coordinator paths to a
 		// different host. The worker independently repeats this preflight.
 		if _, err := workers.ApplyAuthorizedWorkspace(req, "local", registry, ""); err != nil {
-			return req, err
+			return req, fmt.Errorf("workspace %q could not be prepared on its owning worker; check the binding, inputs, and prepared contents", id)
 		}
 		return req, nil
 	}
@@ -137,7 +137,7 @@ func (c *Coordinator) authorizeDispatchWorkspace(req workers.ExecuteRequest, che
 	if c.store != nil {
 		available, err := c.store.ListWorkers(time.Now().Add(-c.heartbeat))
 		if err != nil {
-			return req, err
+			return req, fmt.Errorf("could not check the owning worker for workspace %q", id)
 		}
 		for _, worker := range available {
 			if worker.ID != binding.WorkerID {

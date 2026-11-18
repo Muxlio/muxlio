@@ -326,6 +326,7 @@ navigate=function(){
   if(typeof stopTranscriptPage==='function')stopTranscriptPage();
   stopTranscriptPoll();stopInspectorSnapshotPoll();
   closeCancelRunModal(false);closeRetryRunModal(false);closePlanModal();
+  closeWorkflowRunModal();
   if((document.getElementById('outputModal') as UIElement)?.hidden===false)closeArtifactOutput();
   (document.getElementById('runControls') as UIElement)?.remove();
   for(const c of requestControllers)(c as any).abort();
@@ -375,6 +376,9 @@ window.addEventListener('pagehide',()=>{stopRefresh();for(const c of requestCont
 
 // ── Workflows view ────────────────────────────────────────────────────────
 let workflowVersions=[];
+const openRunWorkflowButton=document.querySelector<HTMLButtonElement>('#openRunWorkflow')!;
+
+openRunWorkflowButton?.addEventListener('click',()=>openWorkflowRunModal(workflowVersions,openRunWorkflowButton));
 
 async function loadWorkflows(force?){
   const epoch=refreshEpoch;
@@ -387,6 +391,7 @@ async function loadWorkflows(force?){
     connectionOK();
   }catch(err){
     if(epoch!==refreshEpoch)return;
+    if(openRunWorkflowButton)openRunWorkflowButton.disabled=true;
     const el=(document.getElementById('workflowList') as UIElement);
     if(el)el.innerHTML=renderNotice(`Unable to load workflows: ${err.message??''}`, {error:true});
     connectionError(err);
@@ -396,12 +401,14 @@ async function loadWorkflows(force?){
 function renderWorkflowList(){
   const el=(document.getElementById('workflowList') as UIElement);
   if(!el)return;
+  if(openRunWorkflowButton)openRunWorkflowButton.disabled=!workflowVersions.length;
   if(!workflowVersions.length){
     el.innerHTML=renderEmptyState("No workflows registered", "Workflows are registered automatically when a run is submitted via the coordinator API.");
     return;
   }
   el.innerHTML=renderViewTemplate("workspace/el-inner-html-tablebox-2", [viewValue(workflowVersions.map(w=>renderViewTemplate("workspace/el-inner-html-primary-cell", [viewValue(esc(w.name||'Unnamed')), viewValue(esc(w.digest?w.digest.slice(0,24)+'…':'-')), viewValue(esc(w.irVersion||'-')), viewValue(esc(date(w.createdAt))), viewValue(esc(w.digest)), viewValue(esc(w.name||''))])).join(''))]);
   el.querySelectorAll<UIElement>('[data-wf-digest]').forEach(btn=>btn.onclick=()=>openPlanModal(btn.dataset.wfDigest,btn.dataset.wfName));
+  el.querySelectorAll<UIElement>('[data-wf-run]').forEach(btn=>btn.onclick=()=>openWorkflowRunModal(workflowVersions,btn,btn.dataset.wfRun));
 }
 
 let planModalRequest=0;

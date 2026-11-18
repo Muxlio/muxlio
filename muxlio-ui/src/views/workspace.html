@@ -61,13 +61,18 @@
         <td class="mono">{{value1}}</td>
         <td style="color:var(--muted)">{{value2}}</td>
         <td style="color:var(--muted)">{{value3}}</td>
-        <td><button class="btn ghost" data-wf-digest="{{value4}}" data-wf-name="{{value5}}">View plan</button></td>
+        <td>
+          <div class="row-actions">
+            <button type="button" class="btn primary" data-wf-run="{{value4}}">Run</button>
+            <button type="button" class="btn ghost" data-wf-digest="{{value4}}" data-wf-name="{{value5}}">View plan</button>
+          </div>
+        </td>
       </tr>
 </template>
 
 <template data-view="el-inner-html-tablebox-2">
 <div class="tablebox"><table>
-    <thead><tr><th>Name</th><th>Digest</th><th>IR Version</th><th>Registered</th><th style="width:80px"></th></tr></thead>
+    <thead><tr><th>Name</th><th>Digest</th><th>IR Version</th><th>Registered</th><th style="width:140px"></th></tr></thead>
     <tbody>{{value0}}
     </tbody></table></div>
 </template>
@@ -148,4 +153,9 @@
 
 <template data-view="progress-markup-span-2">
 <span style="color:var(--red);font-size:10px;display:block;padding:2px 0 0 10px">{{value0}}</span>
+</template>
+
+<template data-view="preflight-section">
+<div class="block-label preflight-label">{{value0}}</div>
+<ul class="preflight-list">{{value1}}</ul>
 </template>

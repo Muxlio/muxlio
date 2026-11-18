@@ -44,6 +44,7 @@
     "src/operations-hub.ts",
     "src/boot.ts",
     "src/workspace.ts",
+    "src/workflow-launch.ts",
     "src/interactions.ts",
     "src/main.ts"
   ],
