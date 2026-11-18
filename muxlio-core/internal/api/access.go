@@ -49,6 +49,9 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 	if !g.active() {
 		return false
 	}
+	if r.Method == http.MethodGet && r.URL.Path == workspaceCatalogPath {
+		return g.RunID == "" && g.WorkerID == "" && g.permits(workspaceCatalogPermission)
+	}
 	if r.Method == http.MethodPost && (r.URL.Path == "/v1/runs" || r.URL.Path == "/v1/runs/preflight") {
 		return g.permits("submit")
 	}

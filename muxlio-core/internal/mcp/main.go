@@ -13,6 +13,7 @@
 //	test            Test a local workflow with fake executors.
 //	start_run       Submit and start a workflow run from Plan IR or a registered digest.
 //	list_runs       List all runs on the coordinator.
+//	list_workspaces Discover canonical workspace IDs on the coordinator.
 //	get_run         Get the current state of a single run.
 //	get_graph       Get the materialised execution graph for a run.
 //	get_events      Retrieve paginated events for a run.
@@ -261,7 +262,7 @@ var tools = []toolDef{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory. Use the same identity in list_runs to discover runs across clients."},
+				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity. Use list_workspaces to find the canonical ID, then use the same ID in preflight_run and list_runs."},
 				"originLabel": map[string]any{"type": "string", "description": "Optional opaque, user-visible origin label."},
 				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by get_workflow, register_workflow_version, or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
 				"plan": map[string]any{
@@ -307,6 +308,17 @@ var tools = []toolDef{
 				"createdBefore": map[string]any{"type": "string", "description": "Exclusive creation timestamp (RFC3339)."},
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
 				"offset":        map[string]any{"type": "integer", "minimum": 0},
+			},
+		},
+	},
+	{
+		Name:        "list_workspaces",
+		Description: "Discover canonical workspace IDs, aliases, owning workers, and point-in-time status. Use workspaceId with preflight_run and start_run, and pin a configured digest as plan.workspaceDigest. Pass nextOffset as offset when hasMore is true. Requires administrator access or workspaces:read.",
+		InputSchema: map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{
+				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+				"offset": map[string]any{"type": "integer", "minimum": 0},
 			},
 		},
 	},
@@ -509,7 +521,7 @@ var tools = []toolDef{
 				},
 				"workspaceId": map[string]any{
 					"type":        "string",
-					"description": "Optional workspace identity, forwarded to the coordinator for workspace-aware validation.",
+					"description": "Optional workspace identity. Use list_workspaces to find the canonical ID for workspace-aware validation.",
 				},
 			},
 			"required": []string{"plan"},
@@ -752,6 +764,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return apiResultOrError(resp)
 	case "list_runs":
 		return s.toolListRuns(args)
+	case "list_workspaces":
+		return s.toolListWorkspaces(args)
 	case "get_run_summary":
 		runID, err := extractRunID(args)
 		if err != nil {
@@ -1245,6 +1259,38 @@ func (s *server) toolListRuns(args json.RawMessage) toolCallResult {
 	return apiResultOrError(resp)
 }
 
+func (s *server) toolListWorkspaces(args json.RawMessage) toolCallResult {
+	var params struct {
+		Limit  *int `json:"limit"`
+		Offset *int `json:"offset"`
+	}
+	if len(args) != 0 {
+		decoder := json.NewDecoder(bytes.NewReader(args))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err != nil {
+			return errResult("invalid arguments: " + err.Error())
+		}
+	}
+	query := url.Values{}
+	if params.Limit != nil {
+		if *params.Limit < 1 || *params.Limit > 200 {
+			return errResult("limit must be between 1 and 200")
+		}
+		query.Set("limit", fmt.Sprint(*params.Limit))
+	}
+	if params.Offset != nil {
+		if *params.Offset < 0 {
+			return errResult("offset must be non-negative")
+		}
+		query.Set("offset", fmt.Sprint(*params.Offset))
+	}
+	resp, err := s.api.get("/v1/workspaces", query)
+	if err != nil {
+		return errResult("coordinator request failed: " + err.Error())
+	}
+	return apiResultOrError(resp)
+}
+
 func (s *server) toolGetRun(args json.RawMessage) toolCallResult {
 	runID, err := extractRunID(args)
 	if err != nil {
@@ -1555,7 +1601,7 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
 				Instructions: "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. " +
-					"For a one-off workflow, whether single-step or multi-step, build or instantiate the plan, validate it with check_plan, and call preflight_run with the plan, run input, and target workspace. After a feasible preflight, call start_run with the complete inline plan and the same input and workspace. The run retains its plan without registration. " +
+					"For a one-off workflow, whether single-step or multi-step, build or instantiate the plan and validate it with check_plan. If it needs a workspace and you have catalog access, use list_workspaces to find a canonical workspace ID and any configured digest. Call preflight_run with the plan, run input, and target workspace. After a feasible preflight, call start_run with the complete inline plan and the same input and workspace. The run retains its plan without registration. " +
 					"Use register_workflow_version when the user asks to save or publish the workflow, or when a concrete use case needs a reusable version or a registered pin for a schedule or trigger. Use planDigest to submit an existing registered version. " +
 					"Use executor any or agent/any when the user accepts any compatible agent; runtime selection reserves available capacity, prefers a different agent from dependencies, and rotates agents on replay-safe failures. For explicit executors, inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run_summary for the canonical outcome and next action; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with trustedSource=true; this permits host filesystem and network access. Use check_plan or JSON for untrusted submissions.",
 			},

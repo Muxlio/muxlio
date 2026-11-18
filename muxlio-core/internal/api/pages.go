@@ -26,13 +26,17 @@ func nonNegativeEventSeq(w http.ResponseWriter, value string) (seq int, ok bool)
 func pageOptions(r *http.Request) (offset, limit int) {
 	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	return normalizePageOptions(offset, limit)
+}
+
+func normalizePageOptions(offset, limit int) (int, int) {
 	if offset < 0 {
 		offset = 0
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	return
+	return offset, limit
 }
 const maxEventPage = 1000
 

@@ -206,6 +206,12 @@ behavior, see the [MCP reference](architecture/mcp-reference.md).
 
 ## Start a one-off workflow inline
 
+If the run needs an authorized workspace, call `list_workspaces` with an
+administrator credential or a `workspaces:read` grant. Use the returned canonical
+`workspaceId` in both `preflight_run` and `start_run`. When the workspace
+has a configured digest, pin it as `workspaceDigest` in the plan. See the
+[tool reference](architecture/mcp-reference.md#list_workspaces).
+
 The following single-step plan echoes the run input. Call `check_plan` with
 the `plan` field. Pass the complete arguments below to `preflight_run`, then
 to `start_run` after a feasible result. Add the same `workspaceId` to both

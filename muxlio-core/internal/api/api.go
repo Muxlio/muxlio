@@ -107,6 +107,9 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 	registerOperations(mux, store, artifactDriver)
 	registerAnalytics(mux, store)
 	registerAvailability(mux, store)
+	mux.HandleFunc(workspaceCatalogPath, func(w http.ResponseWriter, r *http.Request) {
+		handleWorkspaceCatalog(w, r, runner)
+	})
 	if artifactDriver != nil {
 		planner := artifacts.PlannerFromDriver(artifactDriver)
 		mux.HandleFunc("/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {

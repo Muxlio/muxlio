@@ -6,11 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -21,6 +24,7 @@ import (
 const workspaceUsage = `Usage:
   muxlio workspace add <id> <absolute-path> --worker-id <id> [--digest sha256:...] [--alias <alias>...]
   muxlio workspace list [--json]
+  muxlio workspace list --server <profile-or-URL> [--limit N] [--offset N] [--json]
   muxlio workspace show <id> [--json]
   muxlio workspace remove <id>
   muxlio workspace digest <prepared-directory>
@@ -46,6 +50,8 @@ func cmdWorkspace(args []string, dataDir string, jsonOut bool) int {
 	fs.Usage = func() { fmt.Fprint(fs.Output(), workspaceUsage) }
 	var binding workers.WorkspaceBinding
 	var positional int
+	var server, tokenFlag, tokenFile string
+	var limit, offset int
 	switch action {
 	case "add":
 		positional = 2
@@ -63,6 +69,11 @@ func cmdWorkspace(args []string, dataDir string, jsonOut bool) int {
 		})
 	case "list":
 		fs.BoolVar(&jsonOut, "json", jsonOut, "Emit JSON")
+		fs.StringVar(&server, "server", "", "Coordinator URL or profile name")
+		fs.StringVar(&tokenFlag, "token", "", "Bearer authentication token")
+		fs.StringVar(&tokenFile, "token-file", "", "File containing bearer authentication token")
+		fs.IntVar(&limit, "limit", 50, "Remote page size (1–200)")
+		fs.IntVar(&offset, "offset", 0, "Remote page offset")
 	case "show":
 		positional = 1
 		fs.BoolVar(&jsonOut, "json", jsonOut, "Emit JSON")
@@ -88,6 +99,22 @@ func cmdWorkspace(args []string, dataDir string, jsonOut bool) int {
 	explicitConfig := os.Getenv("MUXLIO_CONFIG") != ""
 	var err error
 	switch action {
+	case "list":
+		if server != "" {
+			if limit < 1 || limit > 200 || offset < 0 {
+				fmt.Fprintln(os.Stderr, "error: limit must be 1–200 and offset must be non-negative")
+				return 2
+			}
+			err = listRemoteWorkspaces(server, dataDir, tokenFlag, tokenFile, limit, offset, jsonOut)
+		} else {
+			remoteOnly := false
+			fs.Visit(func(f *flag.Flag) { remoteOnly = remoteOnly || f.Name != "json" && f.Name != "data-dir" })
+			if remoteOnly {
+				fmt.Fprintln(os.Stderr, "error: remote listing options require --server")
+				return 2
+			}
+			err = readWorkspaces(path, explicitConfig, action, "", jsonOut)
+		}
 	case "add":
 		binding.Path = fs.Arg(1)
 		err = addWorkspace(path, explicitConfig, fs.Arg(0), binding)
@@ -108,6 +135,74 @@ func cmdWorkspace(args []string, dataDir string, jsonOut bool) int {
 		return 1
 	}
 	return 0
+}
+
+func listRemoteWorkspaces(server, dataDir, tokenFlag, tokenFile string, limit, offset int, jsonOut bool) error {
+	serverURL, token, err := resolveServer(server, dataDir)
+	if err != nil {
+		return err
+	}
+	// Apply profile transport rules to direct URLs as well.
+	serverURL, token, err = (serverProfile{URL: serverURL, Token: token}).credentials("", dataDir, "")
+	if err != nil {
+		return err
+	}
+	switch {
+	case tokenFlag != "":
+		token = strings.TrimSpace(tokenFlag)
+	case tokenFile != "":
+		raw, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return errors.New("cannot read coordinator token file")
+		}
+		token = strings.TrimSpace(string(raw))
+	}
+	if token == "" {
+		return errors.New("workspace catalog requires a coordinator token")
+	}
+	url := fmt.Sprintf("%s/v1/workspaces?limit=%d&offset=%d", serverURL, limit, offset)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	setAuthHeader(req, token)
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("workspace catalog request failed (HTTP %d)", resp.StatusCode)
+	}
+	var page api.WorkspaceCatalogPage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&page); err != nil {
+		return fmt.Errorf("reading workspace catalog: %w", err)
+	}
+	if jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(page)
+	}
+	fmt.Printf("Workspace status observed at %s\n", page.ObservedAt.Format(time.RFC3339))
+	if len(page.Workspaces) == 0 {
+		fmt.Println("No workspaces on this page.")
+	}
+	for _, entry := range page.Workspaces {
+		fmt.Printf("%q  worker=%q  status=%q", entry.WorkspaceID, entry.WorkerID, entry.Status)
+		if entry.Digest != "" {
+			fmt.Printf("  digest=%q", entry.Digest)
+		}
+		if len(entry.Aliases) > 0 {
+			fmt.Printf("  aliases=%q", entry.Aliases)
+		}
+		if entry.AliasesOmitted > 0 {
+			fmt.Printf("  aliases omitted=%d", entry.AliasesOmitted)
+		}
+		fmt.Println()
+	}
+	if page.HasMore {
+		fmt.Printf("Next page: --offset %d\n", page.NextOffset)
+	}
+	return nil
 }
 
 type workspaceConfig struct {

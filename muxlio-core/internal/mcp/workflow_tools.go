@@ -52,7 +52,7 @@ func init() {
 		name := tools[i].Name
 		catalog := name == "list_workflow_templates" || name == "get_workflow_template" || name == "instantiate_workflow_template"
 		offline := catalog || name == "check_plan" || name == "workflow_template" || name == "list_canvas_components" || name == "get_canvas_component" || name == "validate_canvas"
-		readOnly := name == "list_executors" || name == "explain_capability" || offline || strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "list_runs" || name == "server_health" || name == "list_workflow_versions" || name == "preflight_run"
+		readOnly := name == "list_executors" || name == "explain_capability" || offline || strings.HasPrefix(name, "get_") || name == "read_artifact" || name == "list_runs" || name == "list_workspaces" || name == "server_health" || name == "list_workflow_versions" || name == "preflight_run"
 		tools[i].Annotations = &toolAnnotations{
 			ReadOnly: readOnly, Destructive: !readOnly, Idempotent: readOnly || name == "respond_input_request",
 			OpenWorld: !offline,

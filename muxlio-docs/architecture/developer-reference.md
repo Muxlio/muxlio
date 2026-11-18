@@ -624,6 +624,7 @@ muxlio snapshots <run-id> [--current]               Inspect intermediate artifac
 muxlio gc [--apply TOKEN]                         Preview or apply offline retention cleanup
 muxlio workspace add <id> <absolute-path> --worker-id <id> [--digest sha256:...] [--alias <alias>...]
 muxlio workspace list [--json]                      List locally configured workspace bindings
+muxlio workspace list --server <profile|URL> [--json]  List the coordinator's workspace catalog
 muxlio workspace show <id-or-alias> [--json]        Show a locally configured binding
 muxlio workspace remove <id-or-alias>               Remove a binding from the local config
 muxlio workspace digest <directory>                 Hash prepared workspace contents

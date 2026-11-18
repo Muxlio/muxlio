@@ -81,6 +81,19 @@ operates on its selected local file. `list --json` returns an array of bindings
 and `show <id-or-alias> --json` returns one binding with its canonical ID.
 These operator commands read locally configured paths.
 
+To discover the coordinator's workspace IDs, use a server profile with an
+administrator credential or a `workspaces:read` grant.
+
+```sh
+muxlio workspace list --server production --json
+```
+
+Remote listing returns canonical IDs, aliases, configured digests, and observed
+owner status. It leaves local configuration untouched. If `hasMore` is true,
+pass `nextOffset` with `--offset` to fetch the next page. See the
+[workspace catalog API](architecture/service-reference.md#workspace-catalog-api)
+for the status definitions.
+
 Submit `workspaceId` in `POST /v1/runs`, the MCP `start_run` arguments,
 or the SDK workflow options. Remote CLI submissions accept `--workspace-id`.
 With a workspace registry configured, steps that need a source require an explicit

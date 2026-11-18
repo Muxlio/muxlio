@@ -438,6 +438,25 @@ Validate a compiled Plan IR JSON document locally. No coordinator required.
 
 ---
 
+### `list_workspaces`
+
+List the coordinator's operator-configured workspace identities. Use a returned
+canonical `workspaceId` in `preflight_run` and `start_run`. If
+`digestConfigured` is true, pin the returned `digest` in the plan's
+`workspaceDigest` field.
+
+```json
+{"limit":25,"offset":0}
+```
+
+Both arguments are optional. The tool forwards authenticated
+`GET /v1/workspaces`. It requires administrator access or a dedicated
+`workspaces:read` permission. Results include `workspaces`, `observedAt`,
+and pagination fields. When `hasMore` is true, use `nextOffset` as the next
+`offset`. The returned status is a point-in-time coordinator observation.
+See the [workspace catalog API](service-reference.md#workspace-catalog-api) for
+the response fields and status values.
+
 ### `preflight_run`
 
 Validate feasibility against the coordinator without creating a run, reserving

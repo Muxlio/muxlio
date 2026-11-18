@@ -129,6 +129,7 @@ must not have those powers. Set `accessGrants` in the coordinator configuration:
   "accessGrants": [
     {"tokenFile":"client-a.token","runId":"run-a","permissions":["read","signals"]},
     {"tokenFile":"submitter.token","permissions":["submit"]},
+    {"tokenFile":"catalog.token","permissions":["workspaces:read"]},
     {"tokenFile":"controller.token","runId":"run-a","permissions":["control"]},
     {"tokenFile":"worker-a.token","workerId":"worker-a","permissions":["worker","artifacts:read","artifacts:write"],"artifactDigests":["sha256:..."]}
   ]
@@ -144,6 +145,10 @@ No scoped credential may list all runs or access another run. `submit` separatel
 authorizes creating runs and submission preflight; it does not grant read or
 control access to the resulting run. Provision a run-scoped grant separately
 when those operations are needed.
+`workspaces:read` authorizes only the workspace catalog endpoint, including
+configured digests. Issue it on a grant without a run or worker ID. Submit,
+run read, and worker credentials do not imply catalog access. The catalog
+requires a bearer credential on loopback and private-network connections too.
 `read`, `control` (pause/resume/cancel/retry), `signals`, and `steer` are independent
 permissions. `steer` authorizes session input delivery at
 `/v1/runs/{runId}/sessions/{sessionId}/inputs`, subject to queue permissions and

@@ -4,13 +4,114 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/muxlio/muxlio-core/internal/api"
+	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
+
+func TestWorkspaceListRemoteJSON(t *testing.T) {
+	store := state.New()
+	coordinator := api.NewCoordinator(store)
+	coordinator.Workspaces = workers.WorkspaceRegistry{
+		"project": {WorkerID: "node", Path: "/private/remote", Aliases: []string{"alias"}},
+	}
+	server := httptest.NewServer(api.WithAuth(api.NewRouter(store, &serverRunner{exec: coordinator}), "admin", "worker",
+		api.AccessGrant{Token: "catalog", Permissions: []string{"workspaces:read"}},
+	))
+	defer server.Close()
+
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config.json")
+	raw, err := json.Marshal(map[string]any{
+		"servers":    map[string]serverProfile{"remote": {URL: server.URL, TokenFile: "catalog.token"}},
+		"workspaces": workers.WorkspaceRegistry{"local-project": {WorkerID: "local", Path: "/private/local"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.token"), []byte("catalog\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUXLIO_CONFIG", config)
+	t.Setenv("MUXLIO_TOKEN", "worker")
+	t.Setenv("MUXLIO_SERVER", "remote")
+
+	for _, args := range [][]string{
+		{"workspace", "list", "--server", "remote", "--json", "--limit", "1"},
+		{"--server", server.URL, "--token", "catalog", "workspace", "list", "--limit=1", "--json"},
+	} {
+		output := workspaceCLI(t, 0, args...)
+		var page api.WorkspaceCatalogPage
+		if err := json.Unmarshal([]byte(output), &page); err != nil {
+			t.Fatalf("workspace catalog: %v: %s", err, output)
+		}
+		if strings.Contains(output, "/private/") || strings.Contains(output, "local-project") || page.Limit != 1 ||
+			page.ObservedAt.IsZero() || len(page.Workspaces) != 1 || page.Workspaces[0].WorkspaceID != "project" {
+			t.Fatalf("unexpected remote catalog: %s", output)
+		}
+	}
+	if output := workspaceCLI(t, 0, "workspace", "list", "--json"); !strings.Contains(output, "/private/local") {
+		t.Fatalf("local listing lost its configured path: %s", output)
+	}
+	if output := workspaceCLI(t, 1, "workspace", "list", "--server", server.URL, "--token", "worker", "--json"); !strings.Contains(output, "HTTP 403") {
+		t.Fatalf("unexpected authorization error: %s", output)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "empty.token"), []byte("\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		file, want string
+	}{
+		{"missing.token", "cannot read coordinator token file"},
+		{"empty.token", "workspace catalog requires a coordinator token"},
+	} {
+		output := workspaceCLI(t, 1, "workspace", "list", "--server", "remote", "--token-file", filepath.Join(dir, tc.file), "--json")
+		if !strings.Contains(output, tc.want) {
+			t.Fatalf("unexpected credential file result: %s", output)
+		}
+	}
+	after, err := os.ReadFile(config)
+	if err != nil || !bytes.Equal(after, raw) {
+		t.Fatalf("listing mutated local configuration: %v", err)
+	}
+}
+
+func TestWorkspaceCatalogRequiresExplicitCredentialThroughServiceUI(t *testing.T) {
+	store := state.New()
+	handler := serviceUI(api.WithAuth(api.NewRouter(store, &serverRunner{exec: api.NewCoordinator(store)}), "admin", "worker"), "", "admin")
+	for _, tc := range []struct {
+		url, peer string
+	}{
+		{"http://192.168.1.1:7600/v1/workspaces", "192.168.1.2:1234"},
+		{"http://127.0.0.1:7600/v1/workspaces", "127.0.0.1:1234"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+		req.RemoteAddr = tc.peer
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("credential-free request from %s: %d %s", tc.peer, response.Code, response.Body)
+		}
+		req.Header.Set("Authorization", "Bearer admin")
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("administrator request from %s: %d %s", tc.peer, response.Code, response.Body)
+		}
+	}
+}
 
 func workspaceCLI(t *testing.T, wantCode int, args ...string) string {
 	t.Helper()

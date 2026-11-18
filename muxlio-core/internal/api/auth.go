@@ -115,6 +115,10 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 		}
 		identity := fmt.Sprintf("credential:%x", sha256.Sum256([]byte(tok)))
 		loopback := requestFromLoopback(r)
+		if r.URL.Path == workspaceCatalogPath && tokenMatches(tok, workerToken) {
+			writeError(w, http.StatusForbidden, CodeUnauthorized, "worker token cannot access the workspace catalog")
+			return
+		}
 		for _, grant := range grants {
 			if tokenMatches(tok, grant.Token) {
 				if grant.active() && ((r.URL.Path == "/v1/auth" && r.Method == http.MethodGet) || grant.authorize(r)) {
@@ -125,7 +129,7 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 				return
 			}
 		}
-		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback && LocalCredentialRequest(r) && tok == "" {
+		if clientToken == "" && workerToken == "" && len(grants) == 0 && loopback && LocalCredentialRequest(r) && tok == "" && r.URL.Path != workspaceCatalogPath {
 			downstream.ServeHTTP(w, withCaller(r, Caller{ID: "local-operator", IsAdmin: true}))
 			return
 		}
@@ -152,6 +156,17 @@ func WithAuth(handler http.Handler, clientToken, workerToken string, grants ...A
 		}
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "invalid or missing authorization token")
 	})
+}
+
+// WithLocalNetworkOperatorCredential supplies the service UI's automatic
+// operator credential only for routes that allow implicit operator access.
+func WithLocalNetworkOperatorCredential(r *http.Request, token string) *http.Request {
+	if r.URL.Path == workspaceCatalogPath || token == "" || len(r.Header.Values("Authorization")) != 0 || !LocalNetworkCredentialRequest(r) {
+		return r
+	}
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+token)
+	return r
 }
 
 func bearerCredential(r *http.Request) string {

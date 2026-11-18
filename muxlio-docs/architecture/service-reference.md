@@ -222,6 +222,65 @@ Standalone `server start` accepts its workspace through `MUXLIO_WORKSPACE` and
 enforces the configured API authentication. Fake standalone runs require no workspace or provider
 authentication.
 
+## Workspace catalog API
+
+Use authenticated `GET /v1/workspaces` to discover operator-configured
+workspace identities. Supply an administrator bearer token or a bearer token
+with a `workspaces:read` grant. Issue the grant without a `runId` or `workerId`.
+
+```sh
+curl -H "Authorization: Bearer $MUXLIO_TOKEN" \
+  'https://muxlio.example/v1/workspaces?limit=25&offset=0'
+```
+
+```json
+{
+  "workspaces": [
+    {
+      "workspaceId": "documents",
+      "aliases": ["docs"],
+      "workerId": "local",
+      "digestConfigured": false,
+      "ownerConnected": true,
+      "status": "advertised"
+    }
+  ],
+  "observedAt": "2026-11-18T15:00:00Z",
+  "offset": 0,
+  "nextOffset": 1,
+  "hasMore": false,
+  "limit": 25
+}
+```
+
+The catalog sorts records by canonical `workspaceId` and aliases within each
+record. The default page size is 50 and the maximum is 200. A response size
+limit can shorten alias-heavy pages. If a binding's aliases exceed the budget
+for one record, `aliasesOmitted` gives the number omitted and the canonical
+ID remains available. When `hasMore` is true, use `nextOffset` for the next
+request. An empty catalog returns `"workspaces": []`. The legacy
+single-workspace setting appears as `default` when it supplies the active binding.
+Each record includes `digest` when the operator has pinned a prepared revision.
+
+Each page reflects the coordinator's heartbeat evidence at `observedAt`.
+`ownerConnected` means the owner registered or sent a heartbeat within the
+coordinator's liveness window.
+
+| Status | Observed evidence |
+| --- | --- |
+| `configured` | The binding is configured for the local owner, with no recent owner heartbeat. |
+| `owner_offline` | The remote owner has no recent registration or heartbeat. |
+| `missing_advertised_binding` | The live owner lacks an enabled advertisement for the canonical ID. |
+| `digest_mismatch` | The live owner's digest differs from the configured digest, including when only one side has a digest. |
+| `owner_unavailable` | The live owner advertises the expected binding and is draining or has zero capacity. |
+| `advertised` | The live owner advertises the expected binding and digest, has positive configured capacity, and reports draining as false. |
+
+The endpoint returns workspace metadata only and performs no worker probes or
+filesystem checks. Availability can change before submission. Use `workspaceId`
+and, when configured, set the plan's `workspaceDigest` from the returned
+`digest`. Preflight and execution apply their usual authorization and
+placement checks.
+
 ## Submit tonight, check in the morning
 
 `plan.json` must be a compiled Plan IR envelope member, not a JavaScript recipe.

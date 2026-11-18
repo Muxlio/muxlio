@@ -797,13 +797,7 @@ func serviceUI(next http.Handler, directory, token string) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
-			// Loopback and same-origin private-LAN browsers receive automatic operator credentials.
-			// Explicit client and worker credentials retain their scopes.
-			r = r.Clone(r.Context())
-			if token != "" && len(r.Header.Values("Authorization")) == 0 && api.LocalNetworkCredentialRequest(r) {
-				r.Header.Set("Authorization", "Bearer "+token)
-			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, api.WithLocalNetworkOperatorCredential(r, token))
 			return
 		}
 		name, ok := "", false
@@ -879,4 +873,11 @@ func (r *serverRunner) ResolveRunWorkspaceID(id string) (string, error) {
 		return c.ResolveRunWorkspaceID(id)
 	}
 	return id, nil
+}
+
+func (r *serverRunner) ListWorkspaces(offset, limit int) (api.WorkspaceCatalogPage, error) {
+	if c, ok := r.exec.(*api.Coordinator); ok {
+		return c.ListWorkspaces(offset, limit)
+	}
+	return api.WorkspaceCatalogPage{}, errors.New("workspace catalog requires a coordinator")
 }
