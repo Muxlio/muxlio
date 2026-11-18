@@ -176,8 +176,8 @@ func (h *WorkerProtocolHandler) serveHTTP(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, "workerId and nonnegative capacity are required (0 drains)")
 			return
 		}
-		if !validWorkerID(req.WorkerID) {
-			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, fmt.Sprintf("workerId must be 1..%d letters, digits, '.', '_', '-', '@' or ':' and not . or ..", maxWorkerIDLength))
+		if err := ValidateWorkerID(req.WorkerID); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRegistration, err.Error())
 			return
 		}
 		if req.Capacity > MaxWorkerCapacity {
@@ -374,17 +374,16 @@ const MaxWorkerCapacity = 1024
 
 const maxWorkerIDLength = 128
 
-// Worker IDs are path segments of every subsequent worker endpoint.
-func validWorkerID(id string) bool {
-	if id == "" || len(id) > maxWorkerIDLength || id == "." || id == ".." {
-		return false
-	}
-	for _, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-@:", c)) {
-			return false
+// ValidateWorkerID checks identities used as path segments in worker endpoints.
+func ValidateWorkerID(id string) error {
+	if id != "" && len(id) <= maxWorkerIDLength && id != "." && id != ".." {
+		if strings.IndexFunc(id, func(c rune) bool {
+			return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-@:", c))
+		}) == -1 {
+			return nil
 		}
 	}
-	return true
+	return fmt.Errorf("workerId must be 1..%d letters, digits, '.', '_', '-', '@' or ':' and not . or ..", maxWorkerIDLength)
 }
 
 func validateCapabilities(capabilities []WorkerCapability) error {

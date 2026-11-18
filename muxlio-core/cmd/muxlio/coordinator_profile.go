@@ -142,7 +142,7 @@ func ensureLocalCoordinatorProfile(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := writeInitConfig(path, raw); err != nil {
+		if err := writeRuntimeConfig(path, raw); err != nil {
 			return "", err
 		}
 	}

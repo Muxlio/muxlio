@@ -8,12 +8,12 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
-func cmdWorkspace(args []string) int {
-	if len(args) != 2 || args[0] != "digest" {
+func cmdWorkspaceDigest(args []string) int {
+	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: muxlio workspace digest <prepared-directory>")
 		return 2
 	}
-	path, err := filepath.Abs(args[1])
+	path, err := filepath.Abs(args[0])
 	if err == nil {
 		var digest string
 		digest, err = workers.WorkspaceDigest(path)

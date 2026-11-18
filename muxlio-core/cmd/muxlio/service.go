@@ -88,37 +88,8 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	raw, err := os.ReadFile(path)
 	configDir := filepath.Dir(path)
 	if err == nil {
-		// RawMessage distinguishes omission (default one) from null, which must
-		// not silently turn an intended drain into an accepting worker.
-		var capacity struct {
-			Value json.RawMessage `json:"workerCapacity"`
-		}
-		if err = json.Unmarshal(raw, &capacity); err != nil {
-			return c, fmt.Errorf("config: %w", err)
-		}
-		if len(capacity.Value) != 0 {
-			if string(capacity.Value) == "null" || json.Unmarshal(capacity.Value, &c.WorkerCapacity) != nil || c.WorkerCapacity < 0 || c.WorkerCapacity > api.MaxWorkerCapacity {
-				return c, fmt.Errorf("workerCapacity must be a nonnegative integer no greater than %d (0 drains, default 1)", api.MaxWorkerCapacity)
-			}
-		}
-		if err = json.Unmarshal(raw, &c); err != nil {
-			return c, fmt.Errorf("config: %w", err)
-		}
-		if c.TLSCert != "" && !filepath.IsAbs(c.TLSCert) {
-			c.TLSCert = filepath.Join(configDir, c.TLSCert)
-		}
-		if c.TLSKey != "" && !filepath.IsAbs(c.TLSKey) {
-			c.TLSKey = filepath.Join(configDir, c.TLSKey)
-		}
-		if c.MCP != nil {
-			if strings.TrimSpace(c.MCP.Listen) == "" {
-				return c, fmt.Errorf("mcp.listen is required when mcp is configured")
-			}
-			for _, field := range []*string{&c.MCP.TokenFile, &c.MCP.TLSCert, &c.MCP.TLSKey} {
-				if *field != "" && !filepath.IsAbs(*field) {
-					*field = filepath.Join(configDir, *field)
-				}
-			}
+		if err := decodeServiceConfig(raw, configDir, &c); err != nil {
+			return c, err
 		}
 	} else if explicit || !os.IsNotExist(err) {
 		return c, err
@@ -132,16 +103,56 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	if v := os.Getenv("MUXLIO_CAPABILITIES"); v != "" {
 		c.Capabilities = strings.Split(v, ",")
 	}
+	return c, validateServiceConfig(c)
+}
+
+func decodeServiceConfig(raw []byte, configDir string, c *serviceConfig) error {
+	// RawMessage distinguishes omission (default one) from null, which must
+	// not silently turn an intended drain into an accepting worker.
+	var capacity struct {
+		Value json.RawMessage `json:"workerCapacity"`
+	}
+	if err := json.Unmarshal(raw, &capacity); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if len(capacity.Value) != 0 {
+		if string(capacity.Value) == "null" || json.Unmarshal(capacity.Value, &c.WorkerCapacity) != nil || c.WorkerCapacity < 0 || c.WorkerCapacity > api.MaxWorkerCapacity {
+			return fmt.Errorf("workerCapacity must be a nonnegative integer no greater than %d (0 drains, default 1)", api.MaxWorkerCapacity)
+		}
+	}
+	if err := json.Unmarshal(raw, c); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if c.TLSCert != "" && !filepath.IsAbs(c.TLSCert) {
+		c.TLSCert = filepath.Join(configDir, c.TLSCert)
+	}
+	if c.TLSKey != "" && !filepath.IsAbs(c.TLSKey) {
+		c.TLSKey = filepath.Join(configDir, c.TLSKey)
+	}
+	if c.MCP != nil {
+		if strings.TrimSpace(c.MCP.Listen) == "" {
+			return fmt.Errorf("mcp.listen is required when mcp is configured")
+		}
+		for _, field := range []*string{&c.MCP.TokenFile, &c.MCP.TLSCert, &c.MCP.TLSKey} {
+			if *field != "" && !filepath.IsAbs(*field) {
+				*field = filepath.Join(configDir, *field)
+			}
+		}
+	}
+	return nil
+}
+
+func validateServiceConfig(c serviceConfig) error {
 	if err := workers.ValidateWorkerEnv(c.WorkerEnv); err != nil {
-		return c, fmt.Errorf("workerEnv: %w", err)
+		return fmt.Errorf("workerEnv: %w", err)
 	}
 	if err := workers.ValidateExecutorConfigs(c.Executors); err != nil {
-		return c, err
+		return err
 	}
 	if err := c.Workspaces.Validate(); err != nil {
-		return c, fmt.Errorf("workspaces: %w", err)
+		return fmt.Errorf("workspaces: %w", err)
 	}
-	return c, nil
+	return nil
 }
 
 func cmdService(args []string) int {

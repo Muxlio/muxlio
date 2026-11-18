@@ -41,16 +41,45 @@ and MCP listener together in the background.
 
 ## Select an authorized project per run
 
-For multiple projects, configure `workspaces` in the service's `config.json`:
+Use `muxlio workspace` to manage the operator-owned `workspaces` map in the
+local runtime config. It selects `MUXLIO_CONFIG` when set, then
+`config.json` in the directory selected by `--data-dir`, then `config.json` in
+`MUXLIO_HOME` or
+`~/.muxlio`. Place `--data-dir` before `workspace` or after the workspace
+subcommand.
 
-```json
-{
-  "workspaces": {
-    "frontend": {"workerId": "local", "path": "/srv/frontend", "aliases": ["web"]},
-    "backend": {"workerId": "build-host", "path": "/srv/backend"}
-  }
-}
+For a coordinator with its built-in worker, use the worker ID `local`.
+Provision the directory first, then register it and restart the service.
+
+```sh
+muxlio workspace add documents /srv/muxlio/documents --worker-id local --alias docs
+muxlio workspace list
+muxlio workspace show docs --json
+muxlio service restart
+
+# After retiring this binding
+muxlio workspace remove documents
+muxlio service restart
 ```
+
+For a separate worker, use the exact identity passed to `worker start`.
+Run the same add command on each host, selecting that host's config file.
+The path is absolute on the worker. The owning worker resolves and validates
+it during startup.
+
+```sh
+# On the coordinator host
+MUXLIO_CONFIG=/etc/muxlio/coordinator.json muxlio workspace add dataset /srv/data/current --worker-id data-node --alias data
+
+# On the worker host
+MUXLIO_CONFIG=/etc/muxlio/worker.json muxlio workspace add dataset /srv/data/current --worker-id data-node --alias data
+```
+
+For removal, run `workspace remove dataset` against both files. Restart the
+coordinator and owning worker after updating their configs. Each command
+operates on its selected local file. `list --json` returns an array of bindings
+and `show <id-or-alias> --json` returns one binding with its canonical ID.
+These operator commands read locally configured paths.
 
 Submit `workspaceId` in `POST /v1/runs`, the MCP `start_run` arguments,
 or the SDK workflow options. Remote CLI submissions accept `--workspace-id`.

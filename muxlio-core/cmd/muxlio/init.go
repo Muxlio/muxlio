@@ -235,7 +235,7 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	}
 	if configChanged {
 		raw, _ := json.MarshalIndent(config, "", "  ")
-		if err := writeInitConfig(configPath, raw); err != nil {
+		if err := writeRuntimeConfig(configPath, raw); err != nil {
 			fmt.Fprintln(os.Stderr, "error: configuring worker environment:", err)
 			return 1
 		}
@@ -394,14 +394,22 @@ func cmdInit(args []string, globalDataDir string, globalJSON bool) int {
 	return 0
 }
 
-// Persist setup changes atomically so service restarts cannot read partial JSON.
-func writeInitConfig(path string, raw []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".muxlio-init-*")
+// Persist runtime configuration atomically so service restarts cannot read partial JSON.
+func writeRuntimeConfig(path string, raw []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".muxlio-config-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(file.Name())
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
+		return err
+	}
 	if _, err := file.Write(raw); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
 		file.Close()
 		return err
 	}
