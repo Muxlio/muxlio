@@ -6,7 +6,9 @@ export const feature = z.object({
   context: z.string().optional(),
 });
 
+export const maxFeatures = 20;
+
 export const input = z.object({
   branch: z.string().optional(),
-  features: z.array(feature).min(1).max(20),
+  features: z.array(feature).min(1).max(maxFeatures),
 });

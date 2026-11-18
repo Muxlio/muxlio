@@ -120,6 +120,8 @@ type Node struct {
 	// MaxItems caps the collection size.
 	MaxItems *int `json:"maxItems,omitempty"`
 
+	Appendable *AppendableCollection `json:"appendable,omitempty"`
+
 	// BodyRef names the subgraph invoked once per collection item.
 	BodyRef string `json:"bodyRef,omitempty"`
 

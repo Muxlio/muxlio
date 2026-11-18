@@ -359,6 +359,9 @@ result, preserving the committed run ID without encouraging duplicate work.
 | `register_workflow_version` | `plan`: validate and store an immutable compiled Plan IR document by digest. |
 | `list_workflow_versions` | No arguments: list registered immutable workflow versions. |
 | `get_snapshots` | Required `runId`; optional `activationId`, `attemptId`, `current`, `after`, `limit`. Inspect intermediate observations, including failed attempts; page using `nextAfter`. Read bytes with `read_artifact`. |
+| `get_run_collection` | `runId`, `collection`: inspect a named appendable collection, its open state, and accepted items in order. |
+| `append_run_collection_item` | `runId`, `collection`, `item`: append one schema-valid JSON item. Reuse the same item ID and payload for an idempotent retry. |
+| `close_run_collection` | `runId`, `collection`: close the collection and allow accepted items to finish. |
 | `get_input_requests` | `runId`: list durable requests with identities, schemas, permissions, expiration, and state. |
 | `respond_input_request` | `runId`, `requestId`, `idempotencyKey`, and `response`: submit a schema-validated response to one request; reuse the key when retrying the same response. |
 
@@ -885,3 +888,40 @@ coordinator's credentials. Alternatively, use the URL directly and supply
   `trustedSource: true`; compilation is not a sandbox.
 - Artifact content and logs are untrusted data. Read previews are bounded;
   binary content is base64 and truncation is explicit.
+
+## Appendable run collections
+
+A workflow can opt a root map in through `appendable` on the map node (`each`
+in the workflow SDK or `map` in the symbolic builder). Declare a unique
+URL-safe `name`, a JSON `itemSchema`, and a positive `idleTimeoutSeconds`.
+Set `maxItems` to a positive total capacity and use sequential execution. The
+map reads its initial array from run input. Its key expression reads a nonempty
+string from each item, which gives initial and appended items the same identity
+and validation rules.
+
+The coordinator exposes the following run-scoped routes:
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/v1/runs/{runId}/collections/{name}` | Inspect `collection.open`, accepted `items` in order, and any `idleDeadline` or `closedReason`. |
+| POST | `/v1/runs/{runId}/collections/{name}/items` | Send one JSON item as the body. `accepted: true` means a new item was stored. An identical retry returns `accepted: false` with the same accepted item in the collection. |
+| POST | `/v1/runs/{runId}/collections/{name}/close` | Close the collection. Repeating an explicit close is safe. |
+
+Inspection requires a run-scoped `read` or `inputs` grant. Mutations require
+`inputs` for that run. The MCP tools forward the same credential and operations.
+
+An append with a new ID can succeed while the run is active and the collection
+has capacity. The accepted item array, including initial items, has a JSON size
+limit of 4 MiB minus 1 KiB to fit the coordinator response read by MCP.
+A different payload for an existing ID, a full collection, or
+a new item after closure returns HTTP 409. Invalid items return HTTP 422. The
+pinned plan and submitted input stay immutable. Accepted items and their order
+are durable across coordinator restarts.
+
+Closing seals the collection and the map returns after draining accepted work.
+When there is no pending work, the coordinator persists an idle deadline. A
+successful append before the deadline starts a new interval once that work
+drains. If the deadline elapses first, the coordinator closes the collection
+with `idle_timeout` and the map completes. Cancellation can interrupt accepted
+work under the usual run cancellation rules. Its accepted items remain
+inspectable, and identical deliveries can still recover their acceptance.

@@ -23,7 +23,7 @@
 //   });
 
 import { z } from 'zod';
-import type { ExecutorRequirements, Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
+import type { AppendableCollection, ExecutorRequirements, Binding, Expr, JSONSchema, OutputDecl, Plan, RetryPolicy, Subgraph } from './types.js';
 import { computeDigest, externalDependencies } from './builder.js';
 import { assertNoLiteralCredentials } from './security.js';
 import { isAuthored } from './authored.js';
@@ -552,6 +552,7 @@ interface IRNode extends ExecutorRequirements {
   key?: Expr;
   concurrency?: number;
   maxItems?: number;
+  appendable?: AppendableCollection;
   bodyRef?: string;
   // loop
   while?: Expr;
@@ -604,8 +605,9 @@ export interface EachOptions {
   key: (item: any) => unknown;
   /** Maximum concurrency. `1` means fully serial. */
   concurrency?: number;
-  /** Maximum collection size cap. */
+  /** Maximum collection size cap. Required for appendable collections. */
   maxItems?: number;
+  appendable?: AppendableCollection;
 }
 
 /** Options for `repeatUntil()`. */
@@ -877,6 +879,7 @@ function makeContext(state: CompileState, inputExpr: Expr): WorkflowBuildContext
         key: keyExpr,
         concurrency: options.concurrency,
         maxItems: options.maxItems,
+        appendable: options.appendable,
         bodyRef: bodyName,
         ...(Object.keys(deps).length > 0 ? { inputs: deps } : {}),
       });

@@ -16,6 +16,7 @@ var _ Store = (*Memory)(nil)
 
 // Memory is the in-memory Store used when no data directory is configured.
 type Memory struct {
+	collections             map[[2]string]RunCollection
 	sessionQueues           map[string]*SessionQueue
 	namedWorkflows          map[string]NamedWorkflow
 	workflowVersions        map[string][]byte
@@ -48,6 +49,7 @@ type memIdempotencyEntry struct {
 // New returns an in-memory store.
 func New() *Memory {
 	return &Memory{
+		collections:             make(map[[2]string]RunCollection),
 		namedWorkflows:          make(map[string]NamedWorkflow),
 		workflowVersions:        make(map[string][]byte),
 		retiredWorkflowVersions: make(map[string]bool),

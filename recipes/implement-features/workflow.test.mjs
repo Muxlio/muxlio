@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import compiled from './workflow.ts';
+import live from './live.ts';
 
 const plan = compiled.plan;
 
@@ -74,4 +75,19 @@ test('implement-features plan structure', () => {
   assert.ok(loop, 'body must have a verification loop');
   assert.equal(loop.maxIterations, 10);
   assert.equal(loop.onExhausted, 'pause');
+});
+
+test('live feature batches opt into a bounded sequential collection', () => {
+  const fixed = plan.subgraphs.root.nodes.find(node => node.kind === 'map');
+  const map = live.plan.subgraphs.root.nodes.find(node => node.kind === 'map');
+  assert.equal(fixed.appendable, undefined);
+  assert.equal(live.plan.name, 'implement-features-live');
+  assert.equal(map.concurrency, 1);
+  assert.equal(map.maxItems, live.plan.inputSchema.properties.features.maxItems);
+  assert.deepEqual(map.appendable, {
+    name: 'features',
+    itemSchema: live.plan.inputSchema.properties.features.items,
+    idleTimeoutSeconds: 900,
+  });
+  assert.deepEqual(live.plan.subgraphs[map.bodyRef], plan.subgraphs[fixed.bodyRef]);
 });

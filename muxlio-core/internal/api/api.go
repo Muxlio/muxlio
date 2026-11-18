@@ -441,6 +441,11 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			return
 		}
 
+		if len(parts) == 3 && parts[1] == "collections" {
+			handleRunCollection(w, r, store, runID, parts[2])
+			return
+		}
+
 		if len(parts) >= 2 && parts[1] == "input-requests" {
 			handleInputRequests(w, r, store, runID, parts[2:])
 			return

@@ -3,13 +3,14 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"math"
 	"sort"
 	"strings"
-
-	"github.com/muxlio/muxlio-core/internal/workers"
 	"time"
+
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
+	"github.com/muxlio/muxlio-core/internal/state"
+	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
 // ValidationError is a structured validation error with a stable code.
@@ -69,6 +70,8 @@ func Validate(p *Plan) (errs []ValidationError) {
 		})
 		return errs // can't continue without a root
 	}
+
+	errs = append(errs, p.validateCollections()...)
 
 	// Validate each subgraph.
 	names := make([]string, 0, len(p.Subgraphs))
@@ -489,7 +492,12 @@ func validateNode(p *Plan, sgName string, node Node) []ValidationError {
 
 // ValidateInput checks that the run input conforms to the plan's input schema.
 func ValidateInput(p *Plan, input json.RawMessage) error {
-	if len(p.InputSchema) == 0 {
+	nodes := p.collectionNodes()
+	hasCollections := false
+	for _, node := range nodes {
+		hasCollections = hasCollections || node.Appendable != nil
+	}
+	if len(p.InputSchema) == 0 && !hasCollections {
 		return nil
 	}
 	var value any
@@ -501,13 +509,32 @@ func ValidateInput(p *Plan, input json.RawMessage) error {
 	if err := dec.Decode(&value); err != nil {
 		return err
 	}
-	if err := validateJSONValue(value, p.InputSchema, "input", InputValidationFailed); err != nil {
-		return err
+	if len(p.InputSchema) > 0 {
+		if err := validateJSONValue(value, p.InputSchema, "input", InputValidationFailed); err != nil {
+			return err
+		}
+		var schema map[string]any
+		_ = json.Unmarshal(p.InputSchema, &schema)
+		if err := validateUniqueInputIDs(value, schema, "input"); err != nil {
+			return &ValueValidationFailure{Code: InputValidationFailed, Path: "input", Expected: p.InputSchema, Actual: input, Message: err.Error()}
+		}
 	}
-	var schema map[string]any
-	_ = json.Unmarshal(p.InputSchema, &schema)
-	if err := validateUniqueInputIDs(value, schema, "input"); err != nil {
-		return &ValueValidationFailure{Code: InputValidationFailed, Path: "input", Expected: p.InputSchema, Actual: input, Message: err.Error()}
+	for _, node := range nodes {
+		if node.Appendable == nil {
+			continue
+		}
+		spec, err := node.CollectionSeed(value)
+		if err != nil {
+			return err
+		}
+		if err := state.CheckCollectionSize(spec.Seed.Items); err != nil {
+			return fmt.Errorf("muxlio: collection %q initial items: %w", spec.Seed.Name, err)
+		}
+		for _, item := range spec.Seed.Items {
+			if err := node.ValidateCollectionItem(item.Value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

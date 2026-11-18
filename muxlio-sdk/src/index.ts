@@ -21,6 +21,7 @@ export type {
   OutputDecl,
   RetryPolicy,
   JSONSchema,
+  AppendableCollection,
   ArtifactRef,
 } from './types.js';
 

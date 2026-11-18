@@ -115,6 +115,13 @@ export interface ExecutionSecurityParams {
   };
 }
 
+/** Opts a root sequential map into accepting additional items before closure. */
+export interface AppendableCollection {
+  name: string;
+  itemSchema: JSONSchema;
+  idleTimeoutSeconds: number;
+}
+
 /** A single node within a subgraph. */
 export interface Node extends ExecutorRequirements {
   id: string;
@@ -137,6 +144,7 @@ export interface Node extends ExecutorRequirements {
   key?: Expr;
   concurrency?: number;
   maxItems?: number;
+  appendable?: AppendableCollection;
   bodyRef?: string;
 
   // branch

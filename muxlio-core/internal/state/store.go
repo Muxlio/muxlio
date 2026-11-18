@@ -32,6 +32,7 @@ type WorkflowVersionSummary struct {
 // continue after the process that created it has exited.
 type Store interface {
 	SessionQueueStore
+	UpdateRunCollection(runID string, spec CollectionSpec, action CollectionAction) (RunCollection, bool, error)
 	CreateRun(run *Run) error
 	// CreateRunIdempotent creates a run bound to idempotencyKey, planDigest,
 	// inputDigest and workspaceID.  When a run with the same key already exists

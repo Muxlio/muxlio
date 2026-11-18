@@ -475,6 +475,9 @@ var tools = []toolDef{
 			"required": []string{"runId", "signalName"},
 		},
 	},
+	collectionTool("get_run_collection", "Inspect an appendable collection and its accepted items in execution order.", false),
+	collectionTool("append_run_collection_item", "Append one schema-valid item to an open run collection. Retrying the same item ID and value returns its existing acceptance; changing the value conflicts.", true),
+	collectionTool("close_run_collection", "Close a run collection to new items and let accepted work drain.", false),
 	{
 		Name:        "get_input_requests",
 		Description: "List durable input requests, including distinct request IDs, response schemas, permissions, deadlines and states.",
@@ -779,6 +782,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolControlRun(args, "resume")
 	case "send_signal":
 		return s.toolSendSignal(args)
+	case "get_run_collection", "append_run_collection_item", "close_run_collection":
+		return s.toolRunCollection(name, args)
 	case "get_input_requests", "respond_input_request":
 		return s.toolInputRequest(name, args)
 	case "preflight_run":

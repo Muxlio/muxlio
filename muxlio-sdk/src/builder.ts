@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import { assertNoLiteralCredentials } from './security.js';
 import type {
+  AppendableCollection,
   Binding,
   ExecutorRequirements,
   Expr,
@@ -87,6 +88,7 @@ export interface MapOptions {
   key?: Expr;
   concurrency?: number;
   maxItems?: number;
+  appendable?: AppendableCollection;
   /** Body subgraph builder. Receives a context scoped to the current item. */
   body: (ctx: BuildContext) => Record<string, Binding>;
 }
@@ -296,6 +298,7 @@ class IRBuilder implements BuildContext {
       key: opts.key,
       concurrency: opts.concurrency,
       maxItems: opts.maxItems,
+      appendable: opts.appendable,
       bodyRef: bodyName,
     };
     this.nodes.push(withInputs(node, externalDependencies(id, [bodyName], this.subgraphs)));

@@ -1337,6 +1337,9 @@ func inheritOutputs(parent *EvalContext) map[string]map[string]any {
 // executeMap evaluates the collection, fans out the body subgraph per item,
 // and collects results into an array.
 func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalContext) (map[string]any, error) {
+	if node.Appendable != nil {
+		return e.executeAppendableMap(runID, node, scope, ctx)
+	}
 	itemsVal, err := node.Items.Eval(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("muxlio: evaluating map items: %w", err)
@@ -1350,7 +1353,7 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 		return nil, fmt.Errorf("muxlio: map collection has %d items, exceeds maxItems %d", len(items), *node.MaxItems)
 	}
 
-	bodySG, ok := e.plan.Subgraphs[node.BodyRef]
+	_, ok = e.plan.Subgraphs[node.BodyRef]
 	if !ok {
 		return nil, fmt.Errorf("muxlio: map body subgraph %q not found", node.BodyRef)
 	}
@@ -1389,18 +1392,11 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 	results := make([]any, len(items))
 	if concurrency <= 1 {
 		for i, item := range items {
-			itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", identityComponent(node.ID), identityComponent(keys[i])))
-			itemCtx := &EvalContext{
-				traceContext: ctx.traceContext,
-				Input:        ctx.Input,
-				Item:         item,
-				Outputs:      inheritOutputs(ctx),
-			}
-			itemOutput, err := e.executeSubgraph(runID, node.BodyRef, bodySG, itemScope, itemCtx)
+			result, err := e.executeMapItem(runID, node, scope, ctx, keys[i], item)
 			if err != nil {
 				return nil, err
 			}
-			results[i] = unwrapSubgraphOutput(itemOutput)
+			results[i] = result
 		}
 	} else {
 		type mapResult struct {
@@ -1418,15 +1414,8 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 			go func(index int, item any) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", identityComponent(node.ID), identityComponent(keys[index])))
-				itemCtx := &EvalContext{
-					traceContext: ctx.traceContext,
-					Input:        ctx.Input,
-					Item:         item,
-					Outputs:      inheritOutputs(ctx),
-				}
-				itemOutput, err := e.executeSubgraph(runID, node.BodyRef, bodySG, itemScope, itemCtx)
-				resultCh <- mapResult{index: index, output: unwrapSubgraphOutput(itemOutput), err: err}
+				result, err := e.executeMapItem(runID, node, scope, ctx, keys[index], item)
+				resultCh <- mapResult{index: index, output: result, err: err}
 			}(i, item)
 		}
 		wg.Wait()
@@ -1443,6 +1432,29 @@ func (e *Engine) executeMap(runID string, node *Node, scope []string, ctx *EvalC
 		}
 	}
 
+	return e.finishMap(runID, node, scope, results, concurrency)
+}
+
+func (e *Engine) executeMapItem(runID string, node *Node, scope []string, ctx *EvalContext, key string, item any) (any, error) {
+	body, ok := e.plan.Subgraphs[node.BodyRef]
+	if !ok {
+		return nil, fmt.Errorf("muxlio: map body subgraph %q not found", node.BodyRef)
+	}
+	itemScope := append(append([]string{}, scope...), fmt.Sprintf("map:%s:%s", identityComponent(node.ID), identityComponent(key)))
+	itemCtx := &EvalContext{
+		traceContext: ctx.traceContext,
+		Input:        ctx.Input,
+		Item:         item,
+		Outputs:      inheritOutputs(ctx),
+	}
+	output, err := e.executeSubgraph(runID, node.BodyRef, body, itemScope, itemCtx)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapSubgraphOutput(output), nil
+}
+
+func (e *Engine) finishMap(runID string, node *Node, scope []string, results []any, concurrency int) (map[string]any, error) {
 	if err := e.store.AppendEvent(runID, state.EventMapExpanded, activationID(runID, scope, node.ID), map[string]any{
 		"nodeId":      node.ID,
 		"count":       len(results),

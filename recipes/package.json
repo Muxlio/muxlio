@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --import tsx -e \"for (const path of ['./implement-features/workflow.ts', './fix-package-bugs/workflow.ts', './research/workflow.ts']) { const {default: w} = await import(path); if (!w.plan?.digest) { console.error('recipe plan missing: ' + path); process.exit(1); } }\"",
+    "build": "node --import tsx -e \"for (const path of ['./implement-features/workflow.ts', './implement-features/live.ts', './fix-package-bugs/workflow.ts', './research/workflow.ts']) { const {default: w} = await import(path); if (!w.plan?.digest) { console.error('recipe plan missing: ' + path); process.exit(1); } }\"",
     "test": "node --import tsx --test implement-features/workflow.test.mjs fix-package-bugs/*.test.mjs research/*.test.mjs"
   },
   "dependencies": {

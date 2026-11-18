@@ -297,7 +297,7 @@ func (s *Store) collectGarbage(local *artifacts.Local, policy state.Retention, n
 		`SELECT COALESCE(a.run_id,d.run_id,''),w.payload_json FROM worker_diagnostics w LEFT JOIN execution_attempts a ON a.id=w.attempt_id LEFT JOIN dispatches d ON d.attempt_id=w.attempt_id`,
 		`SELECT run_id,request_json FROM dispatches`,
 		`SELECT run_id,response_json FROM input_requests`, `SELECT run_id,schema_json FROM input_requests`, `SELECT run_id,payload_json FROM signals`,
-		`SELECT run_id,payload_json FROM timers`, `SELECT run_id,queue_json FROM session_input_queues`,
+		`SELECT run_id,payload_json FROM timers`, `SELECT run_id,queue_json FROM session_input_queues`, `SELECT run_id,collection_json FROM run_collections`,
 	} {
 		if err := gcRows(tx, query, func(rows *sql.Rows) error {
 			var id string
