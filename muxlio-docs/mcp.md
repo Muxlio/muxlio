@@ -154,9 +154,10 @@ Client config contracts: [Claude Code](https://code.claude.com/docs/en/mcp),
 
 ## Ask for a workflow
 
-For repeatable work, ask the assistant to use `list_workflow_templates`, inspect
-a template's schemas, and call `instantiate_workflow_template` with your chosen
-executors. The [workflow template catalog](workflow-templates.md) provides five
+To start from a reusable shape, ask the assistant to call
+`list_workflow_templates`, inspect a template's schemas, and call
+`instantiate_workflow_template` with your chosen executors. The
+[workflow template catalog](workflow-templates.md) provides five
 generic shapes and a non-code example. Instantiation returns an ordinary plan
 and digest for inspection, validation and submission with separate run inputs.
 
@@ -168,11 +169,13 @@ you need. For example:
 > and tests. If checks fail, fix the issue and retry up to a limit. Commit locally
 > only after checks pass. Show me the workflow before starting it.
 
-The assistant authors the workflow. It can construct Plan IR directly, validate
-it with `check_plan`, and start it with `start_run`. This does not require downloading
-Muxlio's repository. Developers can also author workflow source and use `build`
-and `test` for reviewed, trusted definitions. Source compilation executes arbitrary
-code with host filesystem and network access. It requires `trustedSource: true` on the MCP call.
+The assistant can construct Plan IR directly or instantiate a template. For
+one-off work, it validates the plan with `check_plan`, runs `preflight_run` with
+the plan, input, and target workspace, then sends those same values to `start_run`
+after a feasible preflight. Both single-step and multi-step plans use this flow.
+Developers can also author workflow source and use `build` and `test` for
+reviewed, trusted definitions. Source compilation executes arbitrary code with
+host filesystem and network access. It requires `trustedSource: true` on the MCP call.
 Prefer `check_plan` or JSON files for untrusted submissions; see the
 [compilation security guide](architecture/execution-security.md#workflow-compilation).
 
@@ -201,7 +204,41 @@ and do not replace later status retrieval.
 For client configuration examples, tool arguments, authentication, and protocol
 behavior, see the [MCP reference](architecture/mcp-reference.md).
 
-## Start a registered workflow
+## Start a one-off workflow inline
+
+The following single-step plan echoes the run input. Call `check_plan` with
+the `plan` field. Pass the complete arguments below to `preflight_run`, then
+to `start_run` after a feasible result. Add the same `workspaceId` to both
+calls when targeting a specific workspace.
+
+```json
+{
+  "plan": {
+    "irVersion": "1.0",
+    "name": "echo",
+    "root": "root",
+    "subgraphs": {
+      "root": {
+        "nodes": [{"id": "echo", "kind": "project", "inputs": {"value": {"expr": {"op": "input"}}}}],
+        "output": {"result": {"ref": {"node": "echo", "port": "value"}}}
+      }
+    }
+  },
+  "input": {"message": "Hello"}
+}
+```
+
+The coordinator retains the exact plan used for the run without adding a
+workflow registry entry. The [template walkthrough](workflow-templates.md#summarize-and-verify-a-museum-guide)
+shows the same inline flow for a multi-step plan.
+
+## Save and start a registered workflow
+
+Register when the user explicitly asks to save or publish a workflow, or when
+a concrete use case needs a reusable version or a registered pin for a
+schedule or trigger. See [schedules](architecture/service-reference.md#run-schedules)
+and [triggers](architecture/developer-reference.md#inbound-webhook-triggers).
+Use the named workflow tools below when publishing under a stable name.
 
 Call `register_workflow_version` once with `{"plan": <compiled Plan IR>}`.
 The coordinator validates and stores an immutable definition and returns its
@@ -216,10 +253,10 @@ The coordinator validates and stores an immutable definition and returns its
 }
 ```
 
-Pass these arguments to `start_run`. Supply exactly one of `planDigest` or
-`plan`; the existing full-plan form remains supported. Inputs must match the
-registered plan's `inputSchema`. The coordinator loads the definition, validates
-input, authorizes the target workspace, and pins the registered bytes and digest
+Pass these arguments to `start_run`. Supply exactly one of `plan` or
+`planDigest`. Inputs must match the registered plan's `inputSchema`.
+The coordinator loads the definition, validates input, authorizes the target
+workspace, and pins the registered bytes and digest
 without rewriting them. Workspace aliases resolve to a canonical run workspace,
 stored separately from the definition. A workspace fixed in the plan cannot be
 overridden with a different workspace.

@@ -574,6 +574,12 @@ func TestMCPInitialize(t *testing.T) {
 	if info["name"] != "muxlio" {
 		t.Fatalf("unexpected server name: %v", info["name"])
 	}
+	instructions, _ := result["instructions"].(string)
+	for _, phrase := range []string{"one-off workflow", "single-step or multi-step", "check_plan", "preflight_run", "start_run with the complete inline plan", "without registration", "save or publish", "schedule or trigger", "planDigest"} {
+		if !strings.Contains(instructions, phrase) {
+			t.Errorf("initialization instructions missing %q", phrase)
+		}
+	}
 }
 
 func TestMCPToolsList(t *testing.T) {
@@ -632,12 +638,23 @@ func TestMCPToolsList(t *testing.T) {
 		"explain_capability":    false,
 		"server_health":         false,
 	}
+	expectedTools["register_workflow_version"] = false
+	expectedGuidance := map[string][]string{
+		"start_run":                 {"inline plan", "check_plan", "preflight_run", "no registration", "planDigest"},
+		"register_workflow_version": {"save or publish", "reusable version", "schedule or trigger", "inline to start_run"},
+	}
 	for _, item := range toolsList {
 		tool, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		name, _ := tool["name"].(string)
+		description, _ := tool["description"].(string)
+		for _, phrase := range expectedGuidance[name] {
+			if !strings.Contains(description, phrase) {
+				t.Errorf("%s description missing %q", name, phrase)
+			}
+		}
 		annotations, ok := tool["annotations"].(map[string]any)
 		if !ok {
 			t.Errorf("tool %s missing annotations", name)

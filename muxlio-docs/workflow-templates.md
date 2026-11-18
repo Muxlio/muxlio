@@ -9,11 +9,13 @@ The catalog currently contains five shapes at version `"1"`.
 A template is a versioned authoring recipe. Instantiation validates parameters
 and compiles an ordinary Plan IR definition, including `inputSchema`,
 `outputSchema`, `requiredExecutors` and its content digest. It performs no work
-and stores nothing. `register_workflow_version` pins that compiled definition
-as an immutable workflow version; `list_workflow_versions` lists those stored
-definitions, independently of the template catalog. Changing executors or tasks
-changes the plan digest. Reusing a compiled plan with different run inputs keeps
-the same plan digest.
+and stores nothing. For a one-off run, validate and preflight the returned plan,
+then submit it inline. When explicitly saving or publishing a workflow, or when
+reuse or a schedule or trigger requires a pin, `register_workflow_version` stores
+the compiled definition as an immutable workflow version. `list_workflow_versions`
+lists those stored definitions independently of the template catalog. Changing
+executors or tasks changes the plan digest. Reusing a compiled plan with
+different run inputs keeps the same plan digest.
 
 Set any step's `executor` to `"any"` (or `"agent/any"`) to let Muxlio choose
 a compatible agent at runtime. This works in templates, JSON plans and SDK
@@ -77,8 +79,9 @@ with available executors. Authoring-client choice does not select an executor.
 The response has `{template:{name,version}, plan, digest}`. Inspect and edit
 `plan` using the same tools as any authored Plan IR. If edited, remove the old
 `digest` or recompute it (for example with the SDK's `computeDigest`). `build`
-and `check_plan` validate JSON plans; registration computes the immutable version's digest.
-Use `preflight_run` and `start_run` with the returned `plan` and separate input:
+and `check_plan` validate JSON plans. Call `preflight_run` with the complete
+plan as `plan` and the following object as `input`. After a feasible result,
+call `start_run` with the same inline plan, input, and workspace.
 
 ```json
 {"request":{"title":"Coastal Stories","dates":"5–20 June","audience":"Families","source":"The exhibition contains paintings and recorded oral histories."}}

@@ -55,20 +55,13 @@ func TestCatalogDiscoveryInstantiationAndSubmission(t *testing.T) {
 					Plan  plan.Plan      `json:"plan"`
 					Input map[string]any `json:"input"`
 				}
-				var err error
-				if r.URL.Path == "/v1/workflow-versions" {
-					err = json.NewDecoder(r.Body).Decode(&body.Plan)
-				} else {
-					err = json.NewDecoder(r.Body).Decode(&body)
-				}
-				if err != nil {
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 				}
 				if body.Plan.Digest != instance.Digest || body.Plan.VerifyDigest() != nil {
 					t.Error("template definition changed in submission")
 				}
 				switch r.URL.Path {
-				case "/v1/workflow-versions":
 				case "/v1/runs/preflight", "/v1/runs":
 					if body.Input["request"] == nil {
 						t.Error("missing separate run input")
@@ -81,9 +74,6 @@ func TestCatalogDiscoveryInstantiationAndSubmission(t *testing.T) {
 			}))
 			defer upstream.Close()
 			client := &server{api: newAPIClient(upstream.URL)}
-			if registered := client.dispatchTool("register_workflow_version", checkArgs); registered.IsError {
-				t.Fatal(registered)
-			}
 			for _, input := range []string{"Museum guide", "Oral history archive"} {
 				submitArgs, _ := json.Marshal(map[string]any{"plan": instance.Plan, "input": map[string]any{"request": input}})
 				for _, tool := range []string{"preflight_run", "start_run"} {
@@ -92,7 +82,7 @@ func TestCatalogDiscoveryInstantiationAndSubmission(t *testing.T) {
 					}
 				}
 			}
-			if requests != 5 {
+			if requests != 4 {
 				t.Fatalf("requests: %d", requests)
 			}
 		})

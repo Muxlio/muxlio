@@ -51,8 +51,13 @@ preflight and any requested approval before the optional live submission.
 With MCP, call `workflow_template` with `{"name":"echo"}` or
 `{"name":"task"}`. Save and edit the returned Plan IR JSON, call `build` with
 its path (or `check_plan` with the JSON object), then pass the validated plan
-and input through `preflight_run` before `start_run`. JSON validation and fake
-testing never execute definition source code or download dependencies.
+and input through `preflight_run`. After a feasible preflight, call `start_run`
+with the complete inline `plan` and the same `input` and workspace. Use this
+sequence for one-off workflows with one step or several. The run retains the
+plan without a registry entry. Register for an explicit save or publish request,
+a concrete need for a reusable version, or a schedule or trigger that pins a
+registered digest. JSON validation and fake testing never execute definition
+source code or download dependencies.
 
 ## Trusted source definitions
 

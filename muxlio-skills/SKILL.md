@@ -33,8 +33,9 @@ semantics or select an executor based on the authoring client's identity.
 ## Prepare and execute one workflow
 
 1. Identify inputs, outputs, dependencies, workspace, success checks, and any
-   requested schedule. Choose the smallest suitable workflow with explicit
-   artifacts, independent verification where needed, and bounded retries.
+   requested schedule or trigger. Build or instantiate the smallest suitable
+   Plan IR with explicit artifacts, independent verification where needed, and
+   bounded retries.
 2. Check coordinator health (`server_health`) and available workers
    (`get_workers`). Select capabilities from their advertised executor contracts,
    regardless of client name. Verify the target workspace identity, worker access
@@ -55,7 +56,13 @@ semantics or select an executor based on the authoring client's identity.
    tests simulate dataflow; preflight checks feasibility; live execution checks
    actual worker behavior. Neither simulation nor a feasible preflight proves
    real outputs correct. Create schedules only when requested and authorized.
-6. Submit once after readiness and any required approval. An accepted run ID
+6. Submit once after readiness and any required approval. For a one-off
+   workflow, pass the complete inline `plan` and the same `input` and workspace
+   to `start_run`, for both single-step and multi-step plans. The run retains
+   its plan without registration. Register when the user explicitly asks to
+   save or publish the workflow, or when a concrete use case needs a reusable
+   version or a registered pin for a schedule or trigger. Use `planDigest` in
+   place of `plan` to submit an existing registered version. An accepted run ID
    means submitted, not completed. Inspect run state, attempts, logs, outputs,
    and artifacts against the success criteria before claiming completion.
    Report queued, running, waiting, failed, or unverified work as such. When
@@ -64,16 +71,19 @@ semantics or select an executor based on the authoring client's identity.
 ## Examples (same decisions in every client)
 
 - "Rewrite this sentence" → rewrite locally. "Use Muxlio to rewrite this
-  sentence" → a minimal workflow, with the same preflight and evidence rules.
+  sentence" → validate and preflight a minimal workflow, then submit it inline.
 - "Research these sources, draft a report, and independently check its claims;
   show me the plan first" → propose research → draft → verify with declared
   artifacts and bounded recovery; inspect capabilities and readiness, then wait
-  for approval. Different clients use the same dependencies and checks, even
-  when their available executor capabilities differ.
+  for approval before submitting the multi-step plan inline. Different clients
+  use the same dependencies and checks, even when their executor capabilities differ.
 - "Run this audit every Monday" → prepare an authorized durable workflow and
-  schedule with explicit timing and outputs. Missing workspace access blocks
-  live submission; a passing fake audit is simulation; an accepted run ID is
-  submitted work. Inspect the actual audit artifacts before reporting success.
+  schedule with explicit timing and outputs. Register the validated plan and
+  use its digest to pin the schedule to that version. A webhook trigger also
+  pins a registered version so future deliveries use the configured plan.
+  Missing workspace access blocks live submission. A passing fake audit is
+  simulation. An accepted run ID indicates submission. Inspect the actual audit
+  artifacts before reporting success.
 
 ## References
 

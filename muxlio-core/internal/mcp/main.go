@@ -160,7 +160,7 @@ type contentBlock struct {
 var tools = []toolDef{
 	{
 		Name:        "workflow_template",
-		Description: "Get a built-in version-matched Plan IR JSON template without a checkout, Node, or downloads. echo returns its input without an executor; task illustrates a generic executor (replace generic/task using list_executors). Save the returned plan as JSON, edit it, validate with build or check_plan, then start_run.",
+		Description: "Get a built-in version-matched Plan IR JSON template without a checkout, Node, or downloads. echo returns its input without an executor; task illustrates a generic executor (replace generic/task using list_executors). Edit the returned plan, validate with check_plan, then use preflight_run and start_run with the inline plan and separate input.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{"echo", "task"}}}, "required": []string{"name"}},
 	},
 	{
@@ -252,7 +252,8 @@ var tools = []toolDef{
 	},
 	{
 		Name: "start_run",
-		Description: "Submit a compiled Plan IR or a registered planDigest to the coordinator and start a workflow run. " +
+		Description: "Start a workflow run on the coordinator. For a one-off run, submit the complete Plan IR as inline plan with separate input after check_plan and a feasible preflight_run. " +
+			"The run retains its plan and no registration is required. Supply exactly one of plan or an existing registered planDigest. " +
 			"Returns the new run ID and initial state. " +
 			"Uses the configured coordinator, which may run on another machine; no local service is required. " +
 			"Supply idempotencyKey on every attempt for the same submission; the coordinator returns the " +
@@ -264,7 +265,7 @@ var tools = []toolDef{
 				"originLabel": map[string]any{"type": "string", "description": "Optional opaque, user-visible origin label."},
 				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by get_workflow, register_workflow_version, or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
 				"plan": map[string]any{
-					"description": "The Plan IR document as a JSON object.",
+					"description": "The complete inline Plan IR as a JSON object. Use for one-off runs.",
 					"type":        "object",
 				},
 				"input": map[string]any{
@@ -281,8 +282,10 @@ var tools = []toolDef{
 		},
 	},
 	{
-		Name:        "register_workflow_version",
-		Description: "Validate and store an immutable Plan IR version on the coordinator, keyed by its content digest.",
+		Name: "register_workflow_version",
+		Description: "Validate and store an immutable Plan IR version on the coordinator, keyed by its content digest. " +
+			"Register when the user asks to save or publish a workflow, or when a concrete use case needs a reusable version or a registered pin for a schedule or trigger. " +
+			"For a single execution, pass the plan inline to start_run without registration.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"plan": map[string]any{"type": "object", "description": "Compiled Plan IR document."}}, "required": []string{"plan"}},
 	},
 	{
@@ -1546,7 +1549,10 @@ func (s *mcpServer) handle(msg jsonRPCRequest) {
 				ProtocolVersion: mcpProtocolVersion,
 				Capabilities:    capabilities{},
 				ServerInfo:      serverInfo{Name: "muxlio", Version: Version},
-				Instructions:    "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. Template versions are authoring recipes; register_workflow_version pins compiled definitions. Validate with check_plan and start with start_run using separate run input. Use executor any or agent/any when the user accepts any compatible agent; runtime selection reserves available capacity, prefers a different agent from dependencies, and rotates agents on replay-safe failures. For explicit executors, inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run_summary for the canonical outcome and next action; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with trustedSource=true; this permits host filesystem and network access. Use check_plan or JSON for untrusted submissions.",
+				Instructions: "Build a workflow with explicit steps, dependencies, executor requirements, and bounded control flow. Discover reusable shapes with list_workflow_templates, inspect schemas with get_workflow_template, and compile an editable plan and digest with instantiate_workflow_template. " +
+					"For a one-off workflow, whether single-step or multi-step, build or instantiate the plan, validate it with check_plan, and call preflight_run with the plan, run input, and target workspace. After a feasible preflight, call start_run with the complete inline plan and the same input and workspace. The run retains its plan without registration. " +
+					"Use register_workflow_version when the user asks to save or publish the workflow, or when a concrete use case needs a reusable version or a registered pin for a schedule or trigger. Use planDigest to submit an existing registered version. " +
+					"Use executor any or agent/any when the user accepts any compatible agent; runtime selection reserves available capacity, prefers a different agent from dependencies, and rotates agents on replay-safe failures. For explicit executors, inspect list_executors first and use explain_capability for request constraints. Starting a run returns immediately; use get_run_summary for the canonical outcome and next action; use get_run, get_activations, get_attempts, get_logs, and read_artifact to inspect progress and results. Use retry_run for a failed run after fixing its cause. Use workflow_template for offline JSON starter plans. build and test execute source code only with trustedSource=true; this permits host filesystem and network access. Use check_plan or JSON for untrusted submissions.",
 			},
 		})
 

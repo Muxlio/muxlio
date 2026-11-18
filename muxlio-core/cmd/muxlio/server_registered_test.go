@@ -5,17 +5,125 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/muxlio/muxlio-core/internal/api"
+	"github.com/muxlio/muxlio-core/internal/mcp"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
+
+func TestMCPInlineSubmissionPersistsWithoutRegistration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "runs.db")
+	open := func() *sqlite.Store {
+		t.Helper()
+		st, err := sqlite.Open(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		return st
+	}
+	connect := func(st *sqlite.Store) func(string, string) string {
+		t.Helper()
+		runner := &serverRunner{store: st, exec: api.NewCoordinator(st), ctx: context.Background(), engines: map[string]*plan.Engine{}, workers: map[string]chan struct{}{}}
+		upstream := httptest.NewServer(api.WithAuth(api.NewRouter(st, runner), "client", "worker"))
+		t.Cleanup(upstream.Close)
+		handler, err := mcp.NewHTTPHandler(upstream.URL, "client", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return func(tool, args string) string {
+			t.Helper()
+			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, args)
+			req := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer client")
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			var response struct {
+				Error  json.RawMessage
+				Result struct {
+					IsError bool
+					Content []struct{ Text string }
+				}
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 ||
+				len(response.Error) != 0 || response.Result.IsError || len(response.Result.Content) != 1 {
+				t.Fatalf("%s: %d %s", tool, w.Code, w.Body.String())
+			}
+			runner.wg.Wait()
+			return response.Result.Content[0].Text
+		}
+	}
+	const definition = `{"irVersion":"1.0","name":"echo","root":"root","subgraphs":{"root":{"nodes":[{"id":"echo","kind":"project","inputs":{"value":{"expr":{"op":"input"}}}}],"output":{"result":{"ref":{"node":"echo","port":"value"}}}}}}`
+	const input = `{"message":"Hello"}`
+	var authored plan.Plan
+	if err := json.Unmarshal([]byte(definition), &authored); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := authored.ComputeDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := json.Marshal(&authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRun := func(st *sqlite.Store, response string) {
+		t.Helper()
+		var result struct{ RunID string }
+		if err := json.Unmarshal([]byte(response), &result); err != nil || result.RunID == "" {
+			t.Fatalf("start_run: %s (%v)", response, err)
+		}
+		run, err := st.GetRun(result.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.State != plan.RunSucceeded || run.PlanDigest != digest || !bytes.Equal(run.PlanJSON, pinned) {
+			t.Fatalf("run state = %s, digest = %s, plan = %s", run.State, run.PlanDigest, run.PlanJSON)
+		}
+		if got, err := json.Marshal(run.Output); err != nil || string(got) != input {
+			t.Fatalf("run output = %s (%v)", got, err)
+		}
+	}
+	st := open()
+	call := connect(st)
+	planArgs := `{"plan":` + definition + `}`
+	runArgs := `{"plan":` + definition + `,"input":` + input + `}`
+	call("check_plan", planArgs)
+	var preflight struct{ Feasible bool }
+	if got := call("preflight_run", runArgs); json.Unmarshal([]byte(got), &preflight) != nil || !preflight.Feasible {
+		t.Fatalf("preflight: %s", got)
+	}
+	inline := call("start_run", runArgs)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st = open()
+	assertRun(st, inline)
+	if versions, err := st.ListWorkflowVersions(); err != nil || len(versions) != 0 {
+		t.Fatalf("inline submission changed workflow registry: %+v (%v)", versions, err)
+	}
+
+	call = connect(st)
+	var registered struct{ Digest string }
+	if got := call("register_workflow_version", planArgs); json.Unmarshal([]byte(got), &registered) != nil || registered.Digest != digest {
+		t.Fatalf("registration: %s", got)
+	}
+	if got, err := st.GetWorkflowVersion(digest); err != nil || !bytes.Equal(got, pinned) {
+		t.Fatalf("registered plan = %s (%v)", got, err)
+	}
+	assertRun(st, call("start_run", fmt.Sprintf(`{"planDigest":%q,"input":%s}`, digest, input)))
+}
 
 func TestRegisteredSubmissionAuthenticatedReusableAndPersistent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "runs.db")

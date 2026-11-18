@@ -360,9 +360,12 @@ restart when SQLite storage is configured.
 
 ## Run schedules
 
-The coordinator polls durable schedules at startup and every second. Use the
-administrator bearer token to register a compiled plan with
-`POST /v1/workflow-versions`, then create an immutable schedule:
+The coordinator polls durable schedules at startup and every second. Each
+schedule pins a registered digest so future fires use the same plan, including
+after a restart. For a scheduled workflow, use the administrator bearer token
+to register the validated plan with `POST /v1/workflow-versions` and use the
+returned digest as `workflowDigest` when creating the schedule. For an immediate
+one-off run, use [inline submission](../mcp.md#start-a-one-off-workflow-inline).
 
 ```http
 POST /v1/schedules

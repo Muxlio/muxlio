@@ -889,8 +889,11 @@ Administrator-only inspection and controls:
 
 ## Inbound webhook triggers
 
-Register a validated plan with `POST /v1/workflow-versions`, then create an
-immutable trigger with `POST /v1/triggers` using the administrator credential:
+A trigger pins a registered digest so each future delivery uses the configured
+plan. Register a validated plan with `POST /v1/workflow-versions`, then use the
+returned digest as `workflowDigest` when creating the trigger with
+`POST /v1/triggers` using the administrator credential. For an immediate
+one-off run, use [inline submission](../mcp.md#start-a-one-off-workflow-inline).
 
 ```json
 {

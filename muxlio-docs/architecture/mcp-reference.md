@@ -15,8 +15,9 @@ Offline authoring tools include `list_workflow_templates` (`{}`),
 Discovery and inspection return JSON Schemas; instantiation returns an editable
 ordinary `plan` with its `digest` and template identity. See the
 [workflow template catalog](../workflow-templates.md) for contracts and examples.
-Templates are reusable authoring recipes; `register_workflow_version` and
-`list_workflow_versions` store and expose pinned compiled plans separately.
+Templates are reusable authoring recipes. For one-off work, validate and
+preflight the compiled plan, then submit it inline. Use the workflow registry
+to save a compiled version for reuse or to pin a schedule or trigger.
 
 ---
 
@@ -468,8 +469,12 @@ preflight before calling `start_run`; preflight never submits automatically.
 
 ### `start_run`
 
-Submit a compiled Plan IR or an immutable registered version to the coordinator
-and start a workflow run.
+For one-off work, build or instantiate a plan, validate it with `check_plan`,
+then call `preflight_run` with the complete plan, run input, and target
+workspace. After a feasible preflight, send the same inline `plan`, `input`,
+and workspace to `start_run`. This works for single-step and multi-step plans.
+The coordinator retains the plan used by the run without registering it.
+See the [inline example](../mcp.md#start-a-one-off-workflow-inline).
 
 **Input:**
 
@@ -492,8 +497,9 @@ Missing versions return 404, retired versions return 410, and inputs that do not
 match the stored input schema are rejected before creating a run. `isError` is set
 if validation fails or the coordinator rejects the request.
 
-Register once, then submit from any authenticated client without resending the
-definition:
+Register when the user explicitly asks to save or publish a workflow, or when
+a concrete use case needs a reusable version or a registered pin for a schedule
+or trigger. Submit an existing registered version by digest.
 
 ```json
 {"planDigest":"sha256:<registered digest>","workspaceId":"project","input":{"request":"Weekly report"},"idempotencyKey":"weekly-report-1"}
@@ -503,7 +509,7 @@ Retries with the same key and matching definition, exact input bytes, caller,
 and authorized workspace return the original run ID. Changed bindings within
 that scope return a conflict. The HTTP equivalent is `POST /v1/runs` with
 `Idempotency-Key` as a header instead of a body field. See
-[registered workflows](../mcp.md#start-a-registered-workflow) for registration
+[registered workflows](../mcp.md#save-and-start-a-registered-workflow) for registration
 and retirement details.
 
 ---
@@ -825,6 +831,9 @@ HTTP errors from the coordinator include the status code:
 ```
 > check_plan {"irVersion":"1.0","name":"batch","subgraphs":{"root":{"nodes":[…]}}}
 {"valid":true,"name":"batch","digest":"sha256:…","errors":[]}
+
+> preflight_run plan=<above> input={"items":[{"id":"a","title":"Topic A"}]}
+{"feasible":true,…}
 
 > start_run plan=<above> input={"items":[{"id":"a","title":"Topic A"}]}
 {"runId":"run_abc123","state":"running"}
