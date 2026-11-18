@@ -550,6 +550,19 @@
               >
                 Run data
               </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                id="tab-collections"
+                aria-controls="wbTabCollections"
+                tabindex="-1"
+                data-wb-tab="collections"
+                hidden
+              >
+                Collections
+              </button>
             </div>
             <div class="wb-body">
               <!-- Graph tab -->
@@ -672,6 +685,25 @@
                     <div class="panel-head"><h2>Run output</h2></div>
                     <div class="panel-body" id="runOutputInspector"></div>
                   </section>
+                </div>
+              </div>
+
+              <div
+                id="wbTabCollections"
+                role="tabpanel"
+                aria-labelledby="tab-collections"
+                tabindex="0"
+                class="graph-panel"
+                hidden
+              >
+                <div class="wb-tab-body wb-tab-body--grid">
+                  <p
+                    id="runCollectionsError"
+                    class="notice"
+                    role="alert"
+                    hidden
+                  ></p>
+                  <div id="runCollections" class="wb-tab-body--grid"></div>
                 </div>
               </div>
 

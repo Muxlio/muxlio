@@ -441,8 +441,12 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			return
 		}
 
-		if len(parts) == 3 && parts[1] == "collections" {
-			handleRunCollection(w, r, store, runID, parts[2])
+		if len(parts) >= 2 && parts[1] == "collections" {
+			collectionPath := ""
+			if len(parts) == 3 {
+				collectionPath = parts[2]
+			}
+			handleRunCollection(w, r, store, runID, collectionPath)
 			return
 		}
 

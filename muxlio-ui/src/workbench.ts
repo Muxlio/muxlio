@@ -301,6 +301,7 @@ function renderWorkbench(r,g,events){
   wbCurrentRunState=r.state;
   wbCurrentRunSummary=r;
   if(typeof refreshInputRequests==='function')refreshInputRequests(r.id);
+  if(typeof refreshRunCollections==='function')refreshRunCollections(r.id);
 
   $('#workbenchView').hidden=false;
   $('#runDetail').hidden=true;
@@ -347,7 +348,7 @@ function renderWorkbench(r,g,events){
 
 function showWbTab(tab){
   wbActiveTab=tab;
-  for(const t of ['graph','events','artifacts','data','operations']){
+  for(const t of ['graph','events','artifacts','data','operations','collections']){
     const el=$(`#wbTab${t[0].toUpperCase()+t.slice(1)}`);
     if(el)el.hidden=t!==tab;
   }

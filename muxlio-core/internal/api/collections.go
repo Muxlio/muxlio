@@ -17,7 +17,7 @@ func handleRunCollection(w http.ResponseWriter, r *http.Request, store state.Sto
 	appendItem := r.Method == http.MethodPost && operation == "items"
 	closeCollection := r.Method == http.MethodPost && operation == "close"
 	if !inspect && !appendItem && !closeCollection {
-		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET collections/:name or POST collections/:name/{items,close}")
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET collections[/:name] or POST collections/:name/{items,close}")
 		return
 	}
 	run, err := store.GetRun(runID)
@@ -25,13 +25,18 @@ func handleRunCollection(w http.ResponseWriter, r *http.Request, store state.Sto
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 		return
 	}
-	if len(run.PlanJSON) == 0 {
-		writeError(w, http.StatusNotFound, CodeNotFound, "run has no appendable collection with that name")
-		return
-	}
 	var pinned plan.Plan
-	if err := json.Unmarshal(run.PlanJSON, &pinned); err != nil {
-		writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+	if len(run.PlanJSON) != 0 {
+		if err := json.Unmarshal(run.PlanJSON, &pinned); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeStoreError, err.Error())
+			return
+		}
+	}
+	if inspect && name == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"collections": pinned.CollectionDeclarations(),
+			"canAppend":   CallerFromRequest(r).HasPermission("inputs"),
+		})
 		return
 	}
 	node, ok := pinned.CollectionNode(name)

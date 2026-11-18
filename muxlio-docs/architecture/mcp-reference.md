@@ -903,6 +903,7 @@ The coordinator exposes the following run-scoped routes:
 
 | Method | Route | Behavior |
 | --- | --- | --- |
+| GET | `/v1/runs/{runId}/collections` | List collection declarations and item schemas from the pinned plan, with `canAppend` indicating whether the caller can append and close collections. |
 | GET | `/v1/runs/{runId}/collections/{name}` | Inspect `collection.open`, accepted `items` in order, and any `idleDeadline` or `closedReason`. |
 | POST | `/v1/runs/{runId}/collections/{name}/items` | Send one JSON item as the body. `accepted: true` means a new item was stored. An identical retry returns `accepted: false` with the same accepted item in the collection. |
 | POST | `/v1/runs/{runId}/collections/{name}/close` | Close the collection. Repeating an explicit close is safe. |

@@ -99,6 +99,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .input-request-field{display:flex;flex-direction:column;gap:5px;margin:10px 0}
 #inputRequests article{padding:12px;border-bottom:1px solid var(--border)}
 #inputRequests input,#inputRequests select,#inputRequests textarea{color:inherit;background:var(--bg);border:1px solid var(--border);padding:8px;max-width:100%}
+.collection-items{padding-inline-start:24px}
+.collection-items li{overflow-wrap:anywhere}
+.collection-items li+li{margin-top:10px}
+.collection-json{white-space:pre-wrap;overflow-wrap:anywhere}
+.collection-field{display:grid;gap:5px;margin:10px 0}
+.collection-field textarea{width:100%;resize:vertical;border:1px solid var(--border);padding:8px;background:var(--bg);font-family:monospace}
+.collection-status:empty{display:none}
 #inputRequests fieldset{border:1px solid var(--border);margin:10px 0}
 
 /* Bounded run views and operational context. */

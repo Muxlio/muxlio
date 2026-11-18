@@ -32,6 +32,7 @@
     "src/core.ts",
     "src/usage-summary.ts",
     "src/workbench.ts",
+    "src/run-collections.ts",
     "src/inspector.ts",
     "src/live.ts",
     "src/transcript.ts",

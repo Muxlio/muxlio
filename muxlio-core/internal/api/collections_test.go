@@ -67,13 +67,76 @@ func newCollectionClient(store state.Store, id string) collectionClient {
 }
 
 func (c collectionClient) call(method, suffix, token, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, "/v1/runs/"+c.runID+"/collections/items"+suffix, strings.NewReader(body))
+	return c.request(method, "/items"+suffix, token, body)
+}
+
+func (c collectionClient) request(method, suffix, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/v1/runs/"+c.runID+"/collections"+suffix, strings.NewReader(body))
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	w := httptest.NewRecorder()
 	c.handler.ServeHTTP(w, req)
 	return w
+}
+
+func TestRunCollectionDeclarations(t *testing.T) {
+	store := state.New()
+	p := collectionPlan(2, 30)
+	root := p.Subgraphs["root"]
+	second := root.Nodes[0]
+	second.ID = "second"
+	second.Appendable = &plan.AppendableCollection{
+		Name: "second", IdleTimeoutSeconds: 15,
+		ItemSchema: json.RawMessage(`{"type":"object","required":["key"]}`),
+	}
+	root.Nodes = append(root.Nodes, second)
+	p.Subgraphs["root"] = root
+	engine := plan.NewEngineWithStore(p, workers.NewFake(), store)
+	id, err := engine.CreateRun(json.RawMessage(`{"items":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newCollectionClient(store, id)
+	for _, tc := range []struct {
+		token     string
+		status    int
+		canAppend bool
+	}{
+		{"admin", 200, true},
+		{"inputs", 200, true},
+		{"read", 200, false},
+		{"other", 403, false},
+		{"", 401, false},
+	} {
+		w := c.request(http.MethodGet, "", tc.token, "")
+		if w.Code != tc.status {
+			t.Fatalf("%q: expected %d, got %d: %s", tc.token, tc.status, w.Code, w.Body)
+		}
+		if w.Code != 200 {
+			continue
+		}
+		var got struct {
+			Collections []plan.AppendableCollection
+			CanAppend   bool
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		want := []plan.AppendableCollection{*root.Nodes[0].Appendable, *second.Appendable}
+		if !reflect.DeepEqual(got.Collections, want) || got.CanAppend != tc.canAppend {
+			t.Fatalf("%q: unexpected declarations: %s", tc.token, w.Body)
+		}
+	}
+
+	if err := store.CreateRun(&state.Run{ID: "without-plan"}); err != nil {
+		t.Fatal(err)
+	}
+	c.runID = "without-plan"
+	w := c.request(http.MethodGet, "", "admin", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"collections":[]`) {
+		t.Fatalf("run without declarations: %d %s", w.Code, w.Body)
+	}
 }
 
 func collectionResponse(t *testing.T, w *httptest.ResponseRecorder, status int) struct {

@@ -1,0 +1,30 @@
+<template data-view="collection">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>{{value0}}</h2>
+      <span data-collection-state class="status-badge"></span>
+    </div>
+    <div class="panel-body">
+      <ol class="collection-items" aria-label="Accepted items"></ol>
+      <p data-collection-empty class="subtle" hidden>No items accepted yet.</p>
+      <p data-collection-load-error class="notice" role="alert" hidden></p>
+      <div data-collection-actions hidden>
+        <button class="btn primary" type="button" data-collection-add>Add item</button>
+        <button class="btn" type="button" data-collection-close>Close collection</button>
+        <p class="subtle">Closing stops new items. Accepted work will finish before the run completes.</p>
+      </div>
+      <form data-collection-editor hidden>
+        <details open>
+          <summary>Item schema</summary>
+          <pre data-collection-schema class="collection-json"></pre>
+        </details>
+        <label class="collection-field">
+          <span>Item JSON</span>
+          <textarea rows="6" spellcheck="false"></textarea>
+        </label>
+        <button class="btn primary" type="submit">Submit item</button>
+      </form>
+      <p data-collection-status role="status" class="collection-status"></p>
+    </div>
+  </section>
+</template>

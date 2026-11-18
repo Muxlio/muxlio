@@ -31,7 +31,9 @@
     const target = event.target as HTMLElement;
     const list = target.closest("[role=tablist]");
     if (!list || target.getAttribute("role") !== "tab") return;
-    const tabs = [...list.querySelectorAll<HTMLButtonElement>("[role=tab]")];
+    const tabs = [
+      ...list.querySelectorAll<HTMLButtonElement>("[role=tab]:not([hidden])"),
+    ];
     const index = tabs.indexOf(target as HTMLButtonElement);
     const next =
       event.key === "ArrowRight"

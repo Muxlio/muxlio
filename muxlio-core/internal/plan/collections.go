@@ -31,6 +31,17 @@ func (p *Plan) collectionNodes() []Node {
 	return p.Subgraphs[root].Nodes
 }
 
+// CollectionDeclarations lists appendable collections in pinned root graph order.
+func (p *Plan) CollectionDeclarations() []AppendableCollection {
+	collections := []AppendableCollection{}
+	for _, node := range p.collectionNodes() {
+		if node.Appendable != nil {
+			collections = append(collections, *node.Appendable)
+		}
+	}
+	return collections
+}
+
 // CollectionNode finds a run-owned collection in the pinned root graph.
 func (p *Plan) CollectionNode(name string) (Node, bool) {
 	for _, node := range p.collectionNodes() {

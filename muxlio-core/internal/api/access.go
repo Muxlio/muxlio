@@ -103,7 +103,8 @@ func (g AccessGrant) authorize(r *http.Request) bool {
 			if len(parts) == 3 && parts[2] == "compare" && r.URL.Query().Get("other") != g.RunID {
 				return false
 			}
-			if (len(parts) == 3 && parts[2] == "input-requests") || (len(parts) == 4 && parts[2] == "collections") {
+			if (len(parts) == 3 && parts[2] == "input-requests") ||
+				((len(parts) == 3 || len(parts) == 4) && parts[2] == "collections") {
 				return g.permits("read") || g.permits("inputs")
 			}
 			// Steering clients reconnect to their submissions' delivery receipts.
