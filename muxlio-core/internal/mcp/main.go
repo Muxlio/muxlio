@@ -262,7 +262,7 @@ var tools = []toolDef{
 			"properties": map[string]any{
 				"workspaceId": map[string]any{"type": "string", "description": "Operator-authorized workspace identity, independent of the client current directory. Use the same identity in list_runs to discover runs across clients."},
 				"originLabel": map[string]any{"type": "string", "description": "Optional opaque, user-visible origin label."},
-				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by register_workflow_version or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
+				"planDigest":  map[string]any{"type": "string", "description": "Immutable content digest returned by get_workflow, register_workflow_version, or list_workflow_versions. Supply instead of plan; the coordinator loads the stored definition and validates typed input."},
 				"plan": map[string]any{
 					"description": "The Plan IR document as a JSON object.",
 					"type":        "object",
@@ -734,6 +734,8 @@ func (s *server) dispatchTool(name string, args json.RawMessage) toolCallResult 
 		return s.toolGetArtifactMetadata(args)
 	case "start_run":
 		return s.toolStartRun(args)
+	case "create_workflow", "get_workflow", "update_workflow":
+		return s.toolNamedWorkflow(name, args)
 	case "register_workflow_version":
 		return s.toolRegisterWorkflowVersion(args)
 	case "list_workflow_versions":

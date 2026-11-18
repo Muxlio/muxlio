@@ -20,6 +20,7 @@ type toolAnnotations struct {
 
 func init() {
 	tools = append(tools, workflowCatalogTools()...)
+	tools = append(tools, namedWorkflowTools()...)
 	tools = append(tools, executorDiscoveryTools()...)
 	tools = append(tools,
 		toolDef{

@@ -42,6 +42,8 @@ const (
 	CodeStaleAssignment        = "MUXLIO_STALE_ASSIGNMENT"
 	CodeRunControlRejected     = "MUXLIO_RUN_CONTROL_REJECTED"
 	CodeInputRequestClosed     = "MUXLIO_INPUT_REQUEST_CLOSED"
+	CodeNamedWorkflowConflict  = "MUXLIO_WORKFLOW_CONFLICT"
+	CodeWorkflowVersionCurrent = "MUXLIO_WORKFLOW_VERSION_CURRENT"
 	CodeIdempotencyKeyConflict = "MUXLIO_IDEMPOTENCY_KEY_CONFLICT"
 
 	// 410 – intentionally removed by retention
@@ -67,6 +69,8 @@ const (
 
 // fix messages paired with their codes.
 var codeFix = map[string]string{
+	CodeNamedWorkflowConflict:                 "Inspect the named workflow and use its current revision for an update.",
+	CodeWorkflowVersionCurrent:                "Switch every named workflow using this current digest before retiring it.",
 	CodeWorkflowVersionRetired:                "Register a new workflow version and submit its digest.",
 	CodeBadRequest:                            "Check the request body and URL parameters; resend a well-formed request.",
 	CodeInvalidJSON:                           "Ensure the request body is a single, valid JSON object.",

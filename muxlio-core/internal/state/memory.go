@@ -17,6 +17,7 @@ var _ Store = (*Memory)(nil)
 // Memory is the in-memory Store used when no data directory is configured.
 type Memory struct {
 	sessionQueues           map[string]*SessionQueue
+	namedWorkflows          map[string]NamedWorkflow
 	workflowVersions        map[string][]byte
 	retiredWorkflowVersions map[string]bool
 	mu                      sync.RWMutex
@@ -47,6 +48,7 @@ type memIdempotencyEntry struct {
 // New returns an in-memory store.
 func New() *Memory {
 	return &Memory{
+		namedWorkflows:          make(map[string]NamedWorkflow),
 		workflowVersions:        make(map[string][]byte),
 		retiredWorkflowVersions: make(map[string]bool),
 		sessionQueues:           make(map[string]*SessionQueue),
@@ -1121,6 +1123,10 @@ func marshalPayload(v any) (map[string]any, error) {
 func (s *Memory) SaveWorkflowVersion(digest string, planJSON []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveWorkflowVersion(digest, planJSON)
+}
+
+func (s *Memory) saveWorkflowVersion(digest string, planJSON []byte) error {
 	if existing, ok := s.workflowVersions[digest]; ok && !bytes.Equal(existing, planJSON) {
 		return fmt.Errorf("muxlio: workflow version %q is immutable", digest)
 	}
@@ -1135,6 +1141,11 @@ func (s *Memory) RetireWorkflowVersion(digest string) error {
 	defer s.mu.Unlock()
 	if _, ok := s.workflowVersions[digest]; !ok {
 		return fmt.Errorf("workflow version %q not found", digest)
+	}
+	for _, workflow := range s.namedWorkflows {
+		if workflow.CurrentDigest == digest {
+			return ErrWorkflowVersionCurrent
+		}
 	}
 	s.retiredWorkflowVersions[digest] = true
 	return nil

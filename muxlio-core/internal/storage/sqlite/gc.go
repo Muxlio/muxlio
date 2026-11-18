@@ -374,7 +374,7 @@ func (s *Store) collectGarbage(local *artifacts.Local, policy state.Retention, n
 			return nil, err
 		}
 	}
-	if err := gcRows(tx, `SELECT id FROM retention_pins WHERE kind='plan'`, func(rows *sql.Rows) error {
+	if err := gcRows(tx, `SELECT id FROM retention_pins WHERE kind='plan' UNION SELECT digest FROM named_workflow_versions`, func(rows *sql.Rows) error {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return err

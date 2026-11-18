@@ -3,8 +3,10 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/muxlio/muxlio-core/internal/api"
@@ -148,5 +150,46 @@ func TestListRunsWithoutArgumentsPreservesGenericDiscovery(t *testing.T) {
 		if len(result.Runs) != 1 || result.Runs[0].ID != "legacy" {
 			t.Fatalf("generic discovery lost legacy run: %+v", result)
 		}
+	}
+}
+
+func TestNamedWorkflowTools(t *testing.T) {
+	st := state.New()
+	coordinator := httptest.NewServer(api.WithAuth(api.NewRouter(st, nil), "admin", "worker"))
+	defer coordinator.Close()
+	s := &server{api: newAPIClient(coordinator.URL, "admin")}
+	call := func(tool, args string) state.NamedWorkflow {
+		t.Helper()
+		got := s.dispatchTool(tool, json.RawMessage(args))
+		if got.IsError {
+			t.Fatalf("%s: %+v", tool, got)
+		}
+		var workflow state.NamedWorkflow
+		if err := json.Unmarshal([]byte(got.Content[0].Text), &workflow); err != nil {
+			t.Fatal(err)
+		}
+		return workflow
+	}
+	const args = `{"workflowId":"sample","plan":{"irVersion":"1.0","name":"First","root":"root","subgraphs":{"root":{"nodes":[]}}}}`
+	first := call("create_workflow", args)
+	update := strings.Replace(args, `"workflowId":"sample"`, `"workflowId":"sample","expectedCurrentRevision":1`, 1)
+	update = strings.Replace(update, "First", "Second", 1)
+	second := call("update_workflow", update)
+	current := call("get_workflow", `{"workflowId":"sample"}`)
+	if current.ID != "sample" || current.CurrentRevision != 2 || current.CurrentDigest != second.CurrentDigest ||
+		len(current.Versions) != 2 || current.Versions[1].Digest != first.CurrentDigest {
+		t.Fatalf("history: %+v", current)
+	}
+	switchBack := fmt.Sprintf(`{"workflowId":"sample","expectedCurrentRevision":2,"planDigest":%q}`, first.CurrentDigest)
+	if got := call("update_workflow", switchBack); got.CurrentDigest != first.CurrentDigest || got.CurrentRevision != 3 {
+		t.Fatalf("switch: %+v", got)
+	}
+	if got := s.dispatchTool("update_workflow", json.RawMessage(update)); !got.IsError ||
+		!strings.Contains(got.Content[0].Text, api.CodeNamedWorkflowConflict) {
+		t.Fatalf("stale publication: %+v", got)
+	}
+	s.api = newAPIClient(coordinator.URL, "worker")
+	if got := s.dispatchTool("get_workflow", json.RawMessage(`{"workflowId":"sample"}`)); !got.IsError {
+		t.Fatalf("worker inspected workflow: %+v", got)
 	}
 }

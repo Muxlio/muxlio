@@ -238,3 +238,32 @@ Unknown digests return 404. Operators can retire a definition with authenticated
 (`MUXLIO_WORKFLOW_VERSION_RETIRED`). Retirement persists across restart and
 does not change existing runs. Uploading identical content does not reactivate a
 retired version. Change the definition and register its new digest.
+
+## Publish a named workflow
+
+Use the coordinator's operator credential to create, inspect, and update named
+workflows. Supply a stable `workflowId` to `create_workflow` along with the
+compiled `plan`. The plan's name is display text and can change across versions.
+
+| MCP tool | HTTP endpoint | Arguments |
+| --- | --- | --- |
+| `create_workflow` | `POST /v1/workflows` | `workflowId`, `plan` |
+| `get_workflow` | `GET /v1/workflows/{workflowId}` | `workflowId` in the HTTP path |
+| `update_workflow` | `POST /v1/workflows/{workflowId}` | `workflowId` in the HTTP path, `expectedCurrentRevision`, and either `plan` or `planDigest` |
+
+Each response includes `currentRevision`, `currentDigest`, and the history
+with each version's digest, display name, and publication time. The current
+version appears first, followed by the other versions in reverse publication
+order. To publish a new version, pass a compiled `plan` and the
+`currentRevision` you observed as `expectedCurrentRevision`. Concurrent
+changes return HTTP 409 for a competing update. Repeating a publication keeps
+the original history entry and timestamp. To switch back, pass the prior
+version's `planDigest` with the same revision guard.
+
+Pass `currentDigest` or any eligible history digest as `planDigest` to
+`start_run`. Workspace selection and authorization still apply when submitting
+the run. Every run keeps its exact plan bytes, and schedules and triggers
+continue to use their configured digest. Choose a new digest explicitly when
+configuring automation. A digest can be retired once no named workflow uses it
+as current. Retired versions remain visible in history and are ineligible for
+selection.

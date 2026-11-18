@@ -111,6 +111,10 @@ type Store interface {
 	GetWorkflowVersion(digest string) ([]byte, error)
 	RetireWorkflowVersion(digest string) error
 	ListWorkflowVersions() ([]WorkflowVersionSummary, error)
+	// PublishWorkflow uses expectedRevision zero to create an ID. Updates
+	// require the current revision observed by the caller.
+	PublishWorkflow(id string, expectedRevision int64, publication WorkflowPublication) (NamedWorkflow, error)
+	GetNamedWorkflow(id string) (NamedWorkflow, error)
 
 	// Chunked logs: bounded append-only worker output.
 	AppendLogChunk(c LogChunk) error

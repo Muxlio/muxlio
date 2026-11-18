@@ -115,6 +115,20 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, created_at)`,
 	`CREATE TABLE IF NOT EXISTS workflow_versions (digest TEXT PRIMARY KEY, plan_json BLOB NOT NULL, created_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS named_workflows (
+		id TEXT PRIMARY KEY,
+		current_digest TEXT NOT NULL REFERENCES workflow_versions(digest),
+		current_revision INTEGER NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_named_workflows_current_digest ON named_workflows(current_digest)`,
+	`CREATE TABLE IF NOT EXISTS named_workflow_versions (
+		workflow_id TEXT NOT NULL REFERENCES named_workflows(id),
+		digest TEXT NOT NULL REFERENCES workflow_versions(digest),
+		publication_revision INTEGER NOT NULL,
+		published_at TEXT NOT NULL,
+		PRIMARY KEY(workflow_id, digest),
+		UNIQUE(workflow_id, publication_revision)
+	)`,
 	`CREATE TABLE IF NOT EXISTS triggers (id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, secret TEXT NOT NULL, created_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS trigger_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_id TEXT NOT NULL, idempotency_key TEXT NOT NULL DEFAULT '', run_id TEXT, workflow_digest TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL, body_digest TEXT NOT NULL DEFAULT '', FOREIGN KEY(trigger_id) REFERENCES triggers(id), FOREIGN KEY(run_id) REFERENCES runs(id))`,
 	`CREATE INDEX IF NOT EXISTS idx_trigger_deliveries_dedup ON trigger_deliveries(trigger_id, idempotency_key, state, timestamp)`,
@@ -2790,21 +2804,31 @@ func (s *Store) MarkOutboxPublished(id string, publishedAt time.Time) error {
 func (s *Store) SaveWorkflowVersion(digest string, planJSON []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var existing []byte
-	err := s.db.QueryRow(`SELECT plan_json FROM workflow_versions WHERE digest=?`, digest).Scan(&existing)
-	if err == nil {
-		if !bytes.Equal(existing, planJSON) {
-			return fmt.Errorf("muxlio: workflow version %q is immutable", digest)
-		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
+	if _, err := saveWorkflowVersion(tx, digest, planJSON); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func saveWorkflowVersion(tx *sql.Tx, digest string, planJSON []byte) (retired bool, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = s.db.Exec(`INSERT INTO workflow_versions (digest, plan_json, created_at) VALUES (?, ?, ?)
-		ON CONFLICT(digest) DO NOTHING`, digest, planJSON, now)
-	return err
+	if _, err := tx.Exec(`INSERT INTO workflow_versions (digest, plan_json, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(digest) DO NOTHING`, digest, planJSON, now); err != nil {
+		return false, err
+	}
+	var existing []byte
+	if err := tx.QueryRow(`SELECT plan_json, retired FROM workflow_versions WHERE digest=?`, digest).Scan(&existing, &retired); err != nil {
+		return false, err
+	}
+	if !bytes.Equal(existing, planJSON) {
+		return false, fmt.Errorf("muxlio: workflow version %q is immutable", digest)
+	}
+	return retired, nil
 }
 
 func (s *Store) GetWorkflowVersion(digest string) ([]byte, error) {
@@ -2828,15 +2852,31 @@ func (s *Store) GetWorkflowVersion(digest string) ([]byte, error) {
 func (s *Store) RetireWorkflowVersion(digest string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result, err := s.db.Exec(`UPDATE workflow_versions SET retired=1 WHERE digest=?`, digest)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE workflow_versions SET retired=1 WHERE digest=?
+		AND NOT EXISTS (SELECT 1 FROM named_workflows WHERE current_digest=?)`, digest, digest)
 	if err != nil {
 		return err
 	}
 	n, err := result.RowsAffected()
-	if err == nil && n == 0 {
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM named_workflows WHERE current_digest=?)`, digest).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return state.ErrWorkflowVersionCurrent
+		}
 		return fmt.Errorf("workflow version %q not found", digest)
 	}
-	return err
+	return tx.Commit()
 }
 
 func (s *Store) ListWorkflowVersions() ([]state.WorkflowVersionSummary, error) {

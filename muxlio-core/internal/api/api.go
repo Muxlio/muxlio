@@ -283,37 +283,13 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "use GET or POST")
 			return
 		}
-		data, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWorkflowPlanBytes))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
 			return
 		}
-		var p plan.Plan
-		if err := json.Unmarshal(data, &p); err != nil {
-			writeError(w, http.StatusBadRequest, CodeInvalidJSON, "invalid plan JSON: "+err.Error())
-			return
-		}
-		if errs := plan.Validate(&p); plan.HasErrors(errs) {
-			writeValidationErrors(w, plan.ErrorsOnly(errs))
-			return
-		}
-		if err := p.VerifyDigest(); err != nil {
-			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
-			return
-		}
-		if p.Digest == "" {
-			d, err := p.ComputeDigest()
-			if err != nil {
-				writeError(w, http.StatusBadRequest, CodeInvalidJSON, "computing digest: "+err.Error())
-				return
-			}
-			p.Digest = d
-		}
-		// Persist the verified plan with its digest in a consistent encoding so
-		// whitespace and an omitted digest do not conflict with an existing pin.
-		data, err = json.Marshal(&p)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, CodeInvalidJSON, err.Error())
+		p, data, ok := validateWorkflowPlan(w, data)
+		if !ok {
 			return
 		}
 		if err := store.SaveWorkflowVersion(p.Digest, data); err != nil {
@@ -335,7 +311,11 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		}
 		if r.Method == http.MethodDelete {
 			if err := store.RetireWorkflowVersion(digest); err != nil {
-				writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+				if errors.Is(err, state.ErrWorkflowVersionCurrent) {
+					writeError(w, http.StatusConflict, CodeWorkflowVersionCurrent, err.Error())
+				} else {
+					writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+				}
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"digest": digest, "retired": true})
@@ -354,6 +334,8 @@ func newRouter(store state.Store, runner Runner, artifactDriver artifacts.Driver
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(raw)
 	})
+
+	registerNamedWorkflows(mux, store)
 
 	mux.HandleFunc("/v1/outputs", func(w http.ResponseWriter, r *http.Request) { handleRunOutputs(w, r, store, "") })
 	mux.HandleFunc("/v1/runs/preflight", func(w http.ResponseWriter, r *http.Request) {
