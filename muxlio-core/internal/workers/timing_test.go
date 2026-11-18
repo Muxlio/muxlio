@@ -19,8 +19,9 @@ import (
 type timingExecutor struct{ err error }
 
 func (x timingExecutor) Execute(ExecuteRequest) (ExecuteResult, error) {
+	started := time.Now()
 	time.Sleep(10 * time.Millisecond)
-	return ExecuteResult{}, x.err
+	return ExecuteResult{WorkerStartedAt: &started}, x.err
 }
 
 func TestRemoteTimingExcludesDispatchAndCompletionDelays(t *testing.T) {
@@ -134,7 +135,8 @@ func TestLocalScriptFailureHasWorkerTiming(t *testing.T) {
 	if err == nil && result.Error == "" {
 		t.Fatal("expected missing adapter failure")
 	}
-	if result.ExecutionDurationMS == nil || *result.ExecutionDurationMS < 0 {
-		t.Fatalf("local failure timing missing: %+v", result)
+	// Pre-launch failures must not fabricate workerStartedAt or duration.
+	if result.WorkerStartedAt != nil || result.ExecutionDurationMS != nil {
+		t.Fatalf("pre-launch failure must omit launch timing: %+v", result)
 	}
 }

@@ -113,6 +113,12 @@ func selectAnyDispatch(tx *sql.Tx, cfg state.AdmissionConfig, d state.Dispatch, 
 			if pinned != "" && name != pinned {
 				continue
 			}
+			if blocked, blockErr := executorUnavailableLocked(tx, worker.ID, name, now); blockErr != nil {
+				registered.Close()
+				return d, false, blockErr
+			} else if blocked {
+				continue
+			}
 			demand := admissionDemand(cfg, name)
 			if !admissionCanFit(cfg, demand, worker.Capacity) {
 				continue

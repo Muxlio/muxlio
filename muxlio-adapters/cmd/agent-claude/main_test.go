@@ -90,11 +90,21 @@ func TestBuildPromptDeclaresOutputs(t *testing.T) {
 		NodeID:  "step1",
 		Outputs: map[string]adapter.OutputDecl{
 			"notes": {Mime: "text/markdown", Path: "notes.md"},
+			"dossier": {
+				Mime:   "application/json",
+				Schema: json.RawMessage(`{"type":"object","required":["dossier"],"properties":{"dossier":{"type":"string"}}}`),
+			},
 		},
 	}
-	prompt := buildPrompt(req)
+	prompt, err := buildPrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(prompt, workDir+"/notes.md") {
 		t.Fatalf("buildPrompt() missing declared output path, got %q", prompt)
+	}
+	if !strings.Contains(prompt, `"required":["dossier"]`) || !strings.Contains(prompt, workDir+"/dossier") {
+		t.Fatalf("buildPrompt() missing dossier schema contract, got %q", prompt)
 	}
 }
 

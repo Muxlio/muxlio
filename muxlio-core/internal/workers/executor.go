@@ -35,9 +35,11 @@ type ExecuteRequest struct {
 	RemoteTask           *contract.RemoteTaskReference `json:"remoteTask,omitempty"`
 	// LifetimeContext is the hosting coordinator lifetime. Its cancellation
 	// suspends durable dispatch for recovery instead of revoking workflow intent.
-	LifetimeContext     context.Context `json:"-"`
-	ExecutionDeadline   *time.Time      `json:"executionDeadline,omitempty"`
-	OnExecutionReturned func()          `json:"-"`
+	LifetimeContext context.Context `json:"-"`
+	// AvailabilityTrial records which cooldown a claimed assignment can clear.
+	AvailabilityTrial   *time.Time `json:"availabilityTrial,omitempty"`
+	ExecutionDeadline   *time.Time `json:"executionDeadline,omitempty"`
+	OnExecutionReturned func()     `json:"-"`
 	// TimeoutSeconds starts when execution begins, excluding dispatch queue time.
 	TimeoutSeconds      *float64 `json:"timeoutSeconds,omitempty"`
 	QueueTimeoutSeconds *float64 `json:"queueTimeoutSeconds,omitempty"`
@@ -271,6 +273,11 @@ func (f *FakeExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
 func (f *FakeExecutor) measured(started time.Time, result ExecuteResult) ExecuteResult {
 	ms := time.Since(started).Milliseconds()
 	result.ExecutionDurationMS = &ms
+	// Non-process executors treat successful Invoke entry as launch.
+	if result.WorkerStartedAt == nil {
+		t := started
+		result.WorkerStartedAt = &t
+	}
 	return result
 }
 
@@ -280,5 +287,6 @@ func (f *FakeExecutor) measured(started time.Time, result ExecuteResult) Execute
 type CompileExecutor struct{}
 
 func (CompileExecutor) Execute(req ExecuteRequest) (ExecuteResult, error) {
-	return ExecuteResult{Outputs: req.Inputs}, nil
+	started := time.Now()
+	return ExecuteResult{Outputs: req.Inputs, WorkerStartedAt: &started}, nil
 }

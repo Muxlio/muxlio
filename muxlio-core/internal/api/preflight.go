@@ -408,6 +408,8 @@ func preflightReasonMessage(reason string) string {
 		return "Install and register the requested executor on an eligible worker."
 	case "executor_not_ready":
 		return "Resolve the failed or missing readiness checks in workerEvidence; run muxlio doctor on the worker host."
+	case "executor_unavailable":
+		return "Wait for the reported recovery time or run an explicit executor recheck after resolving quota or authentication failure."
 	case "executor_version_mismatch":
 		return "Deploy the pinned executor version or update the plan's version requirement."
 	case "missing_required_capability":

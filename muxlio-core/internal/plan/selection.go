@@ -52,6 +52,12 @@ func (e *Engine) prepareExecutionAttempt(req workers.ExecuteRequest, node *Node,
 				}
 			}
 		}
+	} else {
+		resolved, err := e.resolveAvailableExecutor(req.Executor, node)
+		if err != nil {
+			return req, time.Time{}, err
+		}
+		req.Executor = resolved
 	}
 	guarded, err := workers.GuardSelectionRequest(req)
 	if err != nil {
@@ -65,6 +71,113 @@ func (e *Engine) prepareExecutionAttempt(req workers.ExecuteRequest, node *Node,
 	}
 	err = e.admitAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: req.RunID, ActivationID: req.ActivationID, RetryNumber: retryNumber, Executor: req.Executor, State: status, StartedAt: started, Effect: req.Effect, IdempotencyKey: req.IdempotencyKey})
 	return guarded, started, err
+}
+
+// resolveAvailableExecutor checks whether the already-selected executor can be
+// admitted somewhere. FallbackExecutors are applied only by executeExecute's
+// retry/session/effect rules before prepare; this must not switch executors.
+func (e *Engine) resolveAvailableExecutor(executor string, node *Node) (string, error) {
+	_ = node
+	store, _ := e.store.(workers.AvailabilityStore)
+	if store == nil || executor == "" || workers.IsAnyAgent(executor) {
+		return executor, nil
+	}
+	now := time.Now()
+	if workerID := e.knownAvailabilityWorkerID(); workerID != "" {
+		u, err := store.GetExecutorUnavailability(state.ExecutorBinding{WorkerID: workerID, Executor: executor})
+		if err != nil {
+			return "", err
+		}
+		if !state.AvailabilityBlocksAdmission(u, now) {
+			return executor, nil
+		}
+		mismatch := workers.AvailabilityMismatch(u)
+		return "", fmt.Errorf("%w: %s", state.ErrExecutorUnavailable, mismatch.Message)
+	}
+	blocked, err := e.namedExecutorBlockedOnAllWorkers(store, executor, now)
+	if err != nil {
+		return "", err
+	}
+	if blocked == nil {
+		return executor, nil
+	}
+	mismatch := workers.AvailabilityMismatch(blocked)
+	return "", fmt.Errorf("%w: %s", state.ErrExecutorUnavailable, mismatch.Message)
+}
+
+// knownAvailabilityWorkerID returns the executing worker identity when prepare
+// already knows which binding will run (local ScriptExecutor). Empty means
+// claim-time selection among registered workers.
+func (e *Engine) knownAvailabilityWorkerID() string {
+	if holder, ok := e.executor.(interface{ AvailabilityWorkerID() string }); ok {
+		return holder.AvailabilityWorkerID()
+	}
+	return ""
+}
+
+func (e *Engine) availabilityWorkerID() string {
+	if id := e.knownAvailabilityWorkerID(); id != "" {
+		return id
+	}
+	return "local"
+}
+
+type workerRegistry interface {
+	ListWorkers(since time.Time) ([]state.Worker, error)
+}
+
+// namedExecutorBlockedOnAllWorkers reports a representative block when every
+// registered worker that advertises the executor is unavailable. No capable
+// workers means prepare stays open so claim can wait for registration.
+func (e *Engine) namedExecutorBlockedOnAllWorkers(store workers.AvailabilityStore, executor string, now time.Time) (*state.ExecutorUnavailability, error) {
+	registry, ok := e.store.(workerRegistry)
+	if !ok {
+		// In-memory fixtures without a worker registry keep the historical
+		// "local" binding used by unit tests.
+		u, err := store.GetExecutorUnavailability(state.ExecutorBinding{WorkerID: "local", Executor: executor})
+		if err != nil {
+			return nil, err
+		}
+		if state.AvailabilityBlocksAdmission(u, now) {
+			return u, nil
+		}
+		return nil, nil
+	}
+	workersList, err := registry.ListWorkers(now.Add(-24 * time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	var firstBlocked *state.ExecutorUnavailability
+	capable := 0
+	for _, w := range workersList {
+		if w.ID == "" || !workerAdvertises(w, executor) {
+			continue
+		}
+		capable++
+		u, lookupErr := store.GetExecutorUnavailability(state.ExecutorBinding{WorkerID: w.ID, Executor: executor})
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if !state.AvailabilityBlocksAdmission(u, now) {
+			return nil, nil
+		}
+		if firstBlocked == nil {
+			firstBlocked = u
+		}
+	}
+	if capable == 0 {
+		return nil, nil
+	}
+	return firstBlocked, nil
+}
+
+func workerAdvertises(w state.Worker, executor string) bool {
+	for _, cap := range w.Capabilities {
+		if cap.Name == executor {
+			return true
+		}
+	}
+	return false
 }
 
 func selectionPreferences(runID string, node *Node, scope []string, history []state.ExecutionAttempt, dependencies map[string]bool) (*workers.AgentSelectionPreferences, map[string]int) {

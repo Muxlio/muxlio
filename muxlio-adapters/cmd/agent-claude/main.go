@@ -66,7 +66,10 @@ func main() {
 		adapter.Fail("agent-claude: finding working directory: %v", err)
 	}
 
-	prompt := buildPrompt(req)
+	prompt, err := buildPrompt(req)
+	if err != nil {
+		adapter.Fail("agent-claude: %v", err)
+	}
 
 	// --print          non-interactive scripted mode
 	// --output-format  stream-json for machine-readable streaming events
@@ -248,11 +251,15 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
-		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "claude auth login")
+		diagnostics := stderr.String() + "\n" + stdoutTail.String()
+		runErr = adapter.RunnerFailure(runErr, diagnostics, "claude auth login")
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from the terminal result event so
 		// failed attempts that still returned usage are recorded, not estimated
 		// as zero/unavailable. usage is nil when no result event was parsed.
+		if availability := adapter.ClassifyAuthenticationFailure(runErr, diagnostics); availability != nil {
+			adapter.FailWithAvailability(finalAccounting, availability, "agent-claude: %s", withStderr(runErr, stderr.String()))
+		}
 		adapter.FailWithAccounting(finalAccounting, "agent-claude: %s", withStderr(runErr, stderr.String()))
 	}
 
@@ -311,7 +318,7 @@ func extractAssistantText(raw json.RawMessage) []string {
 
 // buildPrompt constructs the full prompt from the request, expanding the
 // optional "feature" input and declaring output file paths.
-func buildPrompt(req *adapter.Request) string {
+func buildPrompt(req *adapter.Request) (string, error) {
 	return adapter.ComposePrompt(req)
 }
 

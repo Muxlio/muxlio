@@ -1,11 +1,13 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/muxlio/muxlio-adapters/contract"
@@ -158,77 +160,60 @@ func readConfined(workDir, path string) ([]byte, error) {
 
 // ComposePrompt builds the common agent prompt from a request: the task
 // description, a workspace rule, an expanded "feature" input (object or string),
-// the inlined content of other input ports (e.g. notes, review feedback,
-// verification reports), and the list of declared output files with their exact
-// absolute paths.
-func ComposePrompt(req *Request) string {
+// bounded inlined inputs (or file references for oversized values), and the
+// declared output contract. Oversized inputs are materialized under
+// WorkDir/handoff before formatting. Callers must treat a non-nil error as a
+// failed invocation (do not start the agent).
+func ComposePrompt(req *Request) (string, error) {
+	return composePrompt(req, true)
+}
+
+// ComposeRemotePrompt is the fileless counterpart for A2A and similar agents.
+// It never fabricates local paths; oversized inputs fail closed.
+func ComposeRemotePrompt(req *Request) (string, error) {
+	return composePrompt(req, false)
+}
+
+func composePrompt(req *Request, localFiles bool) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("request is required")
+	}
+	if err := materializeInputHandoff(req, localFiles); err != nil {
+		return "", err
+	}
 	var sb strings.Builder
 	sb.WriteString(req.Task)
-	sb.WriteString("\n\nWorkspace rule: keep all generated notes, plans, and report files inside the run scratch directory at ")
-	sb.WriteString(req.WorkDir)
-	sb.WriteString(" using the exact absolute paths listed below; make intended source changes in the current repository working directory. Do not create incidental files there.")
+	if localFiles {
+		sb.WriteString("\n\nWorkspace rule: keep all generated notes, plans, and report files inside the run scratch directory at ")
+		sb.WriteString(req.WorkDir)
+		sb.WriteString(" using the exact absolute paths listed below; make intended source changes in the current repository working directory. Do not create incidental files there.")
+	}
 
-	// Expand the "feature" input (object or string).
 	if fv, ok := req.Inputs["feature"]; ok {
-		switch feature := fv.(type) {
-		case map[string]any:
-			sb.WriteString("\n")
-			if title, _ := feature["title"].(string); title != "" {
-				sb.WriteString(fmt.Sprintf("\nFeature title: %s", title))
-			}
-			if desc, _ := feature["feature"].(string); desc != "" {
-				sb.WriteString(fmt.Sprintf("\nFeature: %s", desc))
-			}
-			if files, ok := feature["files"].([]any); ok && len(files) > 0 {
-				sb.WriteString("\nFiles to read first:")
-				for _, f := range files {
-					if s, ok := f.(string); ok {
-						sb.WriteString(fmt.Sprintf("\n  - %s", s))
-					}
-				}
-			}
-			if spec, _ := feature["spec"].(string); spec != "" {
-				sb.WriteString(fmt.Sprintf("\n\nSpec:\n%s", spec))
-			}
-			if ctx, _ := feature["context"].(string); ctx != "" {
-				sb.WriteString(fmt.Sprintf("\n\nContext:\n%s", ctx))
-			}
-			if id, _ := feature["id"].(string); id != "" {
-				sb.WriteString(fmt.Sprintf("\n\nFeature ID: %s", id))
-			}
-		case string:
-			sb.WriteString(fmt.Sprintf("\n\nFeature input:\n%s", feature))
+		featureText, err := formatFeature(req.WorkDir, fv, localFiles)
+		if err != nil {
+			return "", err
 		}
+		sb.WriteString(featureText)
 	}
 
-	// Include every input port, inlining artifacts and serializing structured
-	// JSON values. "feature" is expanded above and "workspace" selects the
-	// working directory, so both are excluded here.
-	for name, val := range req.Inputs {
-		if name == "feature" || name == "workspace" {
-			continue
-		}
-		var content string
-		var inline bool
-		object, structured := val.(map[string]any)
-		_, artifact := object["mime"]
-		// A domain object may have a path or data field without being an
-		// artifact. Keep all its fields instead of reading that path.
-		if !structured || artifact {
-			content, inline = InputContent(req.WorkDir, val)
-		}
-		if !inline {
-			encoded, err := json.MarshalIndent(val, "", "  ")
-			if err != nil {
-				continue
-			}
-			content = string(encoded)
-		}
-		sb.WriteString(fmt.Sprintf("\n\n--- %s ---\n%s", name, content))
+	sb.WriteString(FormatInputSections(req.WorkDir, req.Inputs))
+	sb.WriteString(DescribeOutputs(req, localFiles))
+	if req.NodeID != "" {
+		sb.WriteString(fmt.Sprintf("\n\nNode ID: %s", req.NodeID))
 	}
+	return sb.String(), nil
+}
 
-	// Declared outputs — split into scalars and file artifacts so the agent
-	// knows exactly what to write in each case.
+// DescribeOutputs formats declared output ports for agent prompts. When
+// localPaths is true, absolute workDir paths are included; otherwise only port
+// names and MIME/schema contracts are described (for remote/fileless agents).
+// Port names are sorted for stable prompts. An empty or absent schema means the
+// author intentionally permits arbitrary data for that port.
+func DescribeOutputs(req *Request, localPaths bool) string {
+	if req == nil || len(req.Outputs) == 0 {
+		return ""
+	}
 	var scalarPorts, artifactPorts []string
 	for port, decl := range req.Outputs {
 		if decl.Path == "" {
@@ -237,27 +222,62 @@ func ComposePrompt(req *Request) string {
 			artifactPorts = append(artifactPorts, port)
 		}
 	}
+	sort.Strings(scalarPorts)
+	sort.Strings(artifactPorts)
+	var sb strings.Builder
+	sb.WriteString("\n\nOutput contract: each output port name identifies a destination, not a field inside the JSON value. Write the value matching the authored schema (when present) directly; do not wrap it in a new object unless that wrapper is part of the schema. An empty or absent schema permits arbitrary JSON for that port.")
 	if len(scalarPorts) > 0 {
-		sb.WriteString("\n\nScalar outputs — write each as a file containing ONLY the raw JSON literal (no prose, no markdown, no surrounding text):")
+		if localPaths {
+			sb.WriteString("\n\nScalar outputs — write each as a file containing ONLY the raw JSON literal (no prose, no markdown, no surrounding text):")
+		} else {
+			sb.WriteString("\n\nScalar outputs — return each as a named artifact whose content is ONLY the raw JSON literal:")
+		}
 		for _, port := range scalarPorts {
 			decl := req.Outputs[port]
-			sb.WriteString(fmt.Sprintf("\n  %s/%s", req.WorkDir, port))
+			if localPaths {
+				sb.WriteString(fmt.Sprintf("\n  port %q → %s/%s", port, req.WorkDir, port))
+			} else {
+				sb.WriteString(fmt.Sprintf("\n  port %q", port))
+			}
 			switch decl.Mime {
-			case "application/json":
-				sb.WriteString("  — JSON value, e.g. true, false, 42, or \"some string\"")
+			case "", "application/json":
+				sb.WriteString("  — JSON value")
 			default:
 				sb.WriteString(fmt.Sprintf("  (mime: %s)", decl.Mime))
 			}
+			appendOutputSchema(&sb, decl.Schema)
 		}
 	}
 	if len(artifactPorts) > 0 {
-		sb.WriteString("\n\nFile artifact outputs — write each file to its exact absolute path:")
+		if localPaths {
+			sb.WriteString("\n\nFile artifact outputs — write each file to its exact absolute path:")
+		} else {
+			sb.WriteString("\n\nFile artifact outputs — return each as a named artifact with the declared MIME type:")
+		}
 		for _, port := range artifactPorts {
 			decl := req.Outputs[port]
-			sb.WriteString(fmt.Sprintf("\n  %s/%s  (mime: %s)", req.WorkDir, decl.Path, decl.Mime))
+			if localPaths {
+				sb.WriteString(fmt.Sprintf("\n  port %q → %s/%s  (mime: %s)", port, req.WorkDir, decl.Path, decl.Mime))
+			} else {
+				sb.WriteString(fmt.Sprintf("\n  port %q  (mime: %s)", port, decl.Mime))
+			}
+			appendOutputSchema(&sb, decl.Schema)
 		}
 	}
-
-	sb.WriteString(fmt.Sprintf("\n\nNode ID: %s", req.NodeID))
 	return sb.String()
+}
+
+func appendOutputSchema(sb *strings.Builder, schema json.RawMessage) {
+	trimmed := bytes.TrimSpace(schema)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, trimmed); err != nil {
+		sb.WriteString("\n    schema: ")
+		sb.Write(trimmed)
+		return
+	}
+	sb.WriteString("\n    schema: ")
+	sb.Write(compact.Bytes())
 }

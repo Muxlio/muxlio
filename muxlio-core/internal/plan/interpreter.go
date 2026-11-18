@@ -313,6 +313,9 @@ func (e *Engine) Retry(runID string) error {
 		return fmt.Errorf("muxlio: retry: %w", err)
 	}
 	e.plan = &pinned
+	if err := rejectExhaustedLoopContinuation(&pinned, acts, run.Input); err != nil {
+		return err
+	}
 	// Reset incomplete activations and transition the run atomically. This
 	// also clears stale activation errors while preserving successful outputs.
 	if err := e.store.RetryRun(runID); err != nil {
@@ -998,6 +1001,23 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		req.AttemptID = logicalAttemptID(actID, attemptBase+attempt)
 		guarded, started, prepareErr := e.prepareExecutionAttempt(req, node, scope, prior, keyedExecutor, attemptBase+attempt)
 		if prepareErr != nil {
+			// Pre-existing unavailability is a failed attempt so retry rules can
+			// select FallbackExecutors on the next iteration instead of aborting.
+			if errors.Is(prepareErr, state.ErrExecutorUnavailable) {
+				finished := time.Now()
+				if started.IsZero() {
+					started = finished
+				}
+				if recordErr := e.admitAttempt(state.ExecutionAttempt{
+					ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt,
+					Executor: executor, State: "failed", StartedAt: started, FinishedAt: finished,
+					Failure: prepareErr.Error(), Effect: req.Effect, IdempotencyKey: idempotencyKey,
+				}); recordErr != nil {
+					return nil, recordErr
+				}
+				lastErr = prepareErr
+				continue
+			}
 			return nil, prepareErr
 		}
 		req.Executor, req.AgentSelection = guarded.Executor, guarded.AgentSelection
@@ -1084,7 +1104,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
 				failureMsg = fmt.Sprintf("run deadline exceeded (node %q, attempt %d)", node.ID, attemptBase+attempt)
 			}
-			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, WorkerStartedAt: result.WorkerStartedAt, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
 				return nil, recordErr
 			}
 			return nil, ctxErr
@@ -1093,14 +1113,14 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		// actionable diagnostic. Do not replay while external completion is unknown.
 		if errors.Is(err, context.DeadlineExceeded) && !admissionExpired {
 			failureMsg := fmt.Sprintf("execution interrupted (node %q, attempt %d): %v; external effect completion unknown", node.ID, attemptBase+attempt, err)
-			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: failureMsg, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, WorkerStartedAt: result.WorkerStartedAt, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
 				return nil, recordErr
 			}
 			lastErr = fmt.Errorf("muxlio: %s", failureMsg)
 			return nil, lastErr
 		}
 		if errors.Is(err, context.Canceled) {
-			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
+			if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: req.AttemptID, RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: "cancelled", StartedAt: started, FinishedAt: time.Now(), Failure: err.Error(), Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, WorkerStartedAt: result.WorkerStartedAt, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)}); recordErr != nil {
 				return nil, recordErr
 			}
 			return nil, err
@@ -1116,7 +1136,12 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 		} else if result.Error != "" {
 			failure = diagnostic.Redact(workers.RedactSecrets(result.Error, guarded.Secrets))
 		}
-		attemptResult := &state.AttemptResult{Session: result.Session, ExecutionSucceeded: failure == "", Outputs: result.Outputs}
+		attemptResult := &state.AttemptResult{Session: result.Session, Availability: result.Availability, ExecutionSucceeded: failure == "", Outputs: result.Outputs}
+		if _, queued := e.executor.(workers.QueuedExecutor); !queued && result.Availability != nil {
+			if store, ok := e.store.(workers.AvailabilityStore); ok {
+				_ = workers.RecordAvailability(store, e.availabilityWorkerID(), executor, result.Availability, time.Now())
+			}
+		}
 		var validationErr error
 		if failure == "" {
 			validationErr = ValidateExecuteResult(node.Outputs, result)
@@ -1207,7 +1232,7 @@ func (e *Engine) executeExecute(runID string, node *Node, scope []string, ctx *E
 			heldReason = awaitReconciliationReason(req.Effect, node.ID, req.AttemptID)
 			attemptState = "awaiting_reconciliation"
 		}
-		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: logicalAttemptID(actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
+		if recordErr := e.store.RecordExecutionAttempt(state.ExecutionAttempt{ID: logicalAttemptID(actID, attemptBase+attempt), RunID: runID, ActivationID: actID, RetryNumber: attemptBase + attempt, Executor: executor, State: attemptState, StartedAt: started, FinishedAt: time.Now(), Failure: failure, Result: attemptResult, Accounting: result.Accounting, ExecutionDurationMS: result.ExecutionDurationMS, WorkerStartedAt: result.WorkerStartedAt, Effect: req.Effect, IdempotencyKey: idempotencyKey, OperationRef: result.RemoteTask, AwaitReconciliationReason: heldReason}); recordErr != nil {
 			return nil, recordErr
 		}
 		if e.plan.Limits != nil {
@@ -1489,8 +1514,13 @@ func (e *Engine) executeBranch(runID string, node *Node, scope []string, ctx *Ev
 	return map[string]any{"result": result}, nil
 }
 
-// loopProgressKey is stored on loop activation outputs when a loop pauses exhausted.
-const loopProgressKey = "__muxlioLoopProgress"
+// loopProgressKey is the durable loop checkpoint entry. Prefer the shared
+// state constant so views and the interpreter stay aligned.
+const loopProgressKey = state.LoopProgressOutputKey
+
+// ErrLoopExhaustedUnchanged is returned when retry/resume cannot advance an
+// exhausted loop under unchanged bounds and state.
+var ErrLoopExhaustedUnchanged = errors.New("muxlio: loop is exhausted under unchanged bounds; fork with new bounds or a new plan to continue")
 
 // loopCheckpointIteration checks durable counters before converting to the
 // platform's int. A malformed checkpoint must never restart the loop at zero.
@@ -1533,15 +1563,17 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 	iteration := 0
 	var currentState any
 	restoredCheckpoint := false
+	var restoredProgress map[string]any
 	if existing, err := e.store.GetActivation(actID); err == nil && existing.Outputs != nil {
-		if prog, state, ok := loopProgressFromOutputs(existing.Outputs); ok {
+		if prog, saved, ok := loopProgressFromOutputs(existing.Outputs); ok {
 			restoredCheckpoint = true
+			restoredProgress = prog
 			var err error
 			iteration, err = loopCheckpointIteration(prog["iteration"])
 			if err != nil {
 				return nil, err
 			}
-			currentState = state
+			currentState = saved
 		}
 	}
 	// A restored JSON null is durable state, not a missing checkpoint.
@@ -1558,24 +1590,25 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		return nil, fmt.Errorf("muxlio: loop body subgraph %q not found", node.BodyRef)
 	}
 
+	if restoredCheckpoint {
+		if exhaustedFlag, _ := restoredProgress["exhausted"].(bool); exhaustedFlag {
+			still, err := e.loopWhileTrue(node, ctx, currentState)
+			if err != nil {
+				return nil, err
+			}
+			if still && (maxIter == 0 || iteration >= maxIter) {
+				return nil, fmt.Errorf("%w: loop %q at iteration %d", ErrLoopExhaustedUnchanged, node.ID, iteration)
+			}
+		}
+	}
+
 	exhausted := false
 	for {
 		if iteration >= maxIter {
 			if maxIter > 0 {
-				whileCtx := &EvalContext{
-					traceContext: ctx.traceContext,
-					Input:        ctx.Input,
-					Item:         ctx.Item,
-					State:        currentState,
-					Outputs:      ctx.Outputs,
-				}
-				condVal, err := node.While.Eval(whileCtx)
+				cond, err := e.loopWhileTrue(node, ctx, currentState)
 				if err != nil {
-					return nil, fmt.Errorf("muxlio: evaluating loop while: %w", err)
-				}
-				cond, ok := condVal.(bool)
-				if !ok {
-					return nil, fmt.Errorf("muxlio: loop while must be boolean, got %T", condVal)
+					return nil, err
 				}
 				if cond {
 					exhausted = true
@@ -1584,21 +1617,9 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 			break
 		}
 
-		// Evaluate while condition with current state.
-		whileCtx := &EvalContext{
-			traceContext: ctx.traceContext,
-			Input:        ctx.Input,
-			Item:         ctx.Item,
-			State:        currentState,
-			Outputs:      ctx.Outputs,
-		}
-		condVal, err := node.While.Eval(whileCtx)
+		cond, err := e.loopWhileTrue(node, ctx, currentState)
 		if err != nil {
-			return nil, fmt.Errorf("muxlio: evaluating loop while: %w", err)
-		}
-		cond, ok := condVal.(bool)
-		if !ok {
-			return nil, fmt.Errorf("muxlio: loop while must be boolean, got %T", condVal)
+			return nil, err
 		}
 		if !cond {
 			break
@@ -1635,6 +1656,18 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 		}
 
 		iteration++
+		// Persist progress after every completed body iteration before another
+		// iteration may begin. JSON null state is preserved.
+		progress := map[string]any{
+			"result": currentState,
+			loopProgressKey: map[string]any{
+				"iteration": iteration,
+				"exhausted": false,
+			},
+		}
+		if err := e.store.PersistActivationOutputs(actID, progress); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := e.store.AppendEvent(runID, state.EventLoopIterated, activationID(runID, scope, node.ID), map[string]any{
@@ -1646,17 +1679,20 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 	}
 
 	if exhausted {
+		checkpoint := map[string]any{
+			"result": currentState,
+			loopProgressKey: map[string]any{
+				"iteration": iteration,
+				"exhausted": true,
+			},
+		}
 		switch node.OnExhausted {
 		case "fail":
+			if err := e.store.CheckpointActivation(actID, checkpoint); err != nil {
+				return nil, err
+			}
 			return nil, fmt.Errorf("muxlio: loop %q exhausted after %d iterations", node.ID, iteration)
 		case "pause", "":
-			checkpoint := map[string]any{
-				"result": currentState,
-				loopProgressKey: map[string]any{
-					"iteration": iteration,
-					"exhausted": true,
-				},
-			}
 			if err := e.store.CheckpointActivation(actID, checkpoint); err != nil {
 				return nil, err
 			}
@@ -1670,6 +1706,25 @@ func (e *Engine) executeLoop(runID string, node *Node, scope []string, ctx *Eval
 	}
 
 	return map[string]any{"result": currentState}, nil
+}
+
+func (e *Engine) loopWhileTrue(node *Node, ctx *EvalContext, currentState any) (bool, error) {
+	whileCtx := &EvalContext{
+		traceContext: ctx.traceContext,
+		Input:        ctx.Input,
+		Item:         ctx.Item,
+		State:        currentState,
+		Outputs:      ctx.Outputs,
+	}
+	condVal, err := node.While.Eval(whileCtx)
+	if err != nil {
+		return false, fmt.Errorf("muxlio: evaluating loop while: %w", err)
+	}
+	cond, ok := condVal.(bool)
+	if !ok {
+		return false, fmt.Errorf("muxlio: loop while must be boolean, got %T", condVal)
+	}
+	return cond, nil
 }
 
 func loopProgressFromOutputs(outputs map[string]any) (progress map[string]any, state any, ok bool) {

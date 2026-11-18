@@ -26,11 +26,12 @@ function latestAttemptForActivation(attempts,activationId){
 }
 function activationActivityElapsed(act,attempts,nowIso){
   const attempt=latestAttemptForActivation(attempts,act.id);
-  if(attempt?.startedAt){
-    const stillActive=['running','waiting','paused'].includes(attempt.state);
-    const end=stillActive?nowIso:(attempt.finishedAt||null);
-    if(end)return formatElapsed(attempt.startedAt,end);
-  }
+  // Activity elapsed uses admission startedAt so paused/waiting/held entries and
+  // older runs keep timing. Process start (workerStartedAt) stays in operations.
+  if(!attempt?.startedAt)return null;
+  const stillActive=['running','waiting','paused'].includes(attempt.state);
+  const end=stillActive?nowIso:(attempt.finishedAt||null);
+  if(end)return formatElapsed(attempt.startedAt,end);
   return null;
 }
 function materializedStateCounts(acts){

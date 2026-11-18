@@ -69,8 +69,12 @@ func main() {
 		adapter.Fail("agent-cursor: finding working directory: %v", err)
 	}
 
+	prompt, err := adapter.ComposePrompt(req)
+	if err != nil {
+		adapter.Fail("agent-cursor: %v", err)
+	}
 	args, err := adapter.AuthorizeRunner(req, cli, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
-		return invocationArgs(p, version, model, req.WorkDir, adapter.ComposePrompt(req))
+		return invocationArgs(p, version, model, req.WorkDir, prompt)
 	})
 	if err != nil {
 		adapter.Fail("agent-cursor: %v", err)
@@ -195,7 +199,10 @@ func main() {
 	finalAccounting := accountingRecorder.Finish()
 	adapter.AppendLogChunk("stderr", diagnostics.String())
 	fail := func(format string, args ...any) {
-		_ = adapter.WriteResponse(adapter.Response{Error: adapter.RunnerFailure(fmt.Sprintf(format, args...), diagnostics.String()+"\n"+stdoutDiagnostics.String(), "agent login"), Logs: diagnostics.String(), Accounting: finalAccounting})
+		message := adapter.RunnerFailure(fmt.Sprintf(format, args...), diagnostics.String()+"\n"+stdoutDiagnostics.String(), "agent login")
+		resp := adapter.Response{Error: message, Logs: diagnostics.String(), Accounting: finalAccounting}
+		resp.Availability = adapter.ClassifyAuthenticationFailure(message, diagnostics.String()+"\n"+stdoutDiagnostics.String())
+		_ = adapter.WriteResponse(resp)
 	}
 	if readErr != nil {
 		fail("agent-cursor: reading stream: %v", readErr)

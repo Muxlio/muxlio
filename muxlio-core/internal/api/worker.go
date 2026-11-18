@@ -99,6 +99,8 @@ type WorkerCompletion struct {
 	Reconciliation      *contract.Reconciliation         `json:"reconciliation,omitempty"`
 	RemoteTask          *contract.RemoteTaskReference    `json:"remoteTask,omitempty"`
 	ExecutionDurationMS *int64                           `json:"executionDurationMs,omitempty"`
+	WorkerStartedAt     *time.Time                       `json:"workerStartedAt,omitempty"`
+	Availability        *contract.Availability           `json:"availability,omitempty"`
 }
 
 // WorkerLogAppend carries one incremental log chunk for an active assignment.

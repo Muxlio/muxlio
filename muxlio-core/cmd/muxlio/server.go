@@ -369,6 +369,10 @@ func (r *serverRunner) ControlRun(runID, action string) error {
 			r.mu.Unlock()
 			return fmt.Errorf("cannot resume run in state %q", run.State)
 		}
+		if err := plan.RejectExhaustedLoopResume(r.store, runID); err != nil {
+			r.mu.Unlock()
+			return err
+		}
 		changed, err := r.store.TransitionRunState(runID, []string{plan.RunPaused}, plan.RunRunning)
 		if err != nil {
 			r.mu.Unlock()

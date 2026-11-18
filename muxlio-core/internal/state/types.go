@@ -147,6 +147,7 @@ func (f *ValueValidationFailure) Error() string {
 type AttemptResult struct {
 	Session            *contract.SessionHandle `json:"session,omitempty"`
 	Diagnostic         *diagnostic.Diagnostic  `json:"diagnostic,omitempty"`
+	Availability       *contract.Availability  `json:"availability,omitempty"`
 	ExecutionSucceeded bool                    `json:"executionSucceeded"`
 	Outputs            map[string]any          `json:"outputs,omitempty"`
 	ValidationFailure  *ValueValidationFailure `json:"validationFailure,omitempty"`
@@ -171,10 +172,14 @@ type ExecutionAttempt struct {
 	Executor                 string               `json:"executor"`
 	State                    string               `json:"state"`
 	StartedAt                time.Time            `json:"startedAt"`
-	FinishedAt               time.Time            `json:"finishedAt"`
-	Failure                  string               `json:"failure,omitempty"`
-	Result                   *AttemptResult       `json:"result,omitempty"`
-	ExecutionDurationMS      *int64               `json:"executionDurationMs,omitempty"`
+	// WorkerStartedAt is set only after a successful executor launch. Missing
+	// means launch never happened (queue expiry, selection rejection, Start
+	// failure). Replay must not clear a known launch time.
+	WorkerStartedAt     *time.Time     `json:"workerStartedAt,omitempty"`
+	FinishedAt          time.Time      `json:"finishedAt"`
+	Failure             string         `json:"failure,omitempty"`
+	Result              *AttemptResult `json:"result,omitempty"`
+	ExecutionDurationMS *int64         `json:"executionDurationMs,omitempty"`
 
 	// Effect is the declared policy: pure, idempotent-with-key, reconcilable,
 	// nonretryable, or a legacy alias. It is

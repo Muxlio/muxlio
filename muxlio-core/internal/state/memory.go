@@ -32,6 +32,7 @@ type Memory struct {
 	assignments             map[string]*Assignment
 	attempts                []ExecutionAttempt
 	outbox                  []*OutboxRecord
+	unavailable             map[string]*ExecutorUnavailability
 	// idempotencyKeys tracks run creation idempotency for in-process callers.
 	idempotencyKeys map[[2]string]*memIdempotencyEntry // key → entry
 }
@@ -56,6 +57,7 @@ func New() *Memory {
 		signalSeq:               make(map[string]int),
 		inputRequests:           make(map[string]*InputRequest),
 		assignments:             make(map[string]*Assignment),
+		unavailable:             make(map[string]*ExecutorUnavailability),
 		idempotencyKeys:         make(map[[2]string]*memIdempotencyEntry),
 	}
 }
@@ -408,6 +410,10 @@ func (s *Memory) CheckpointActivation(id string, outputs map[string]any) error {
 	return s.setActivationOutputs(id, outputs, "waiting")
 }
 
+func (s *Memory) PersistActivationOutputs(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "")
+}
+
 func (s *Memory) setActivationOutputs(id string, outputs map[string]any, next string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -427,6 +433,9 @@ func (s *Memory) setActivationOutputs(id string, outputs map[string]any, next st
 		return err
 	}
 	a.Outputs = snapshot
+	if next == "" {
+		return nil
+	}
 	a.State = next
 	s.appendEventLocked(a.RunID, EventTypeForActivationState(next), id, map[string]any{
 		"ports": outputKeys(outputs),
@@ -915,6 +924,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 			if a.ExecutionDurationMS == nil {
 				a.ExecutionDurationMS = s.attempts[i].ExecutionDurationMS
 			}
+			if a.WorkerStartedAt == nil {
+				a.WorkerStartedAt = s.attempts[i].WorkerStartedAt
+			}
 			if a.StartedAt.IsZero() {
 				a.StartedAt = s.attempts[i].StartedAt
 			}
@@ -943,6 +955,9 @@ func (s *Memory) RecordExecutionAttempt(a ExecutionAttempt) error {
 
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
+	}
+	if a.WorkerStartedAt != nil {
+		payload["workerStartedAt"] = *a.WorkerStartedAt
 	}
 	payload["effect"] = a.Effect
 	payload["idempotencyKey"] = a.IdempotencyKey

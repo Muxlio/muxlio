@@ -368,8 +368,12 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 	if _, err = rand.Read(id); err != nil {
 		return fail(err)
 	}
+	prompt, err := remotePrompt(req)
+	if err != nil {
+		return fail(err)
+	}
 	t, err := c.rpc(ctx, "message/send", map[string]any{
-		"message":       map[string]any{"kind": "message", "role": "user", "messageId": fmt.Sprintf("%x", id), "parts": []any{map[string]any{"kind": "text", "text": remotePrompt(req)}}},
+		"message":       map[string]any{"kind": "message", "role": "user", "messageId": fmt.Sprintf("%x", id), "parts": []any{map[string]any{"kind": "text", "text": prompt}}},
 		"configuration": map[string]any{"blocking": false},
 	})
 	if err != nil {
@@ -379,15 +383,13 @@ func execute(parent context.Context, req *adapter.Request) adapter.Response {
 	return result
 }
 
-func remotePrompt(req *adapter.Request) string {
+func remotePrompt(req *adapter.Request) (string, error) {
 	// Remote agents do not have access to worker filesystem paths.
-	raw, _ := json.Marshal(req.Inputs)
-	outputs := make(map[string]string)
-	for port, decl := range req.Outputs {
-		outputs[port] = decl.Mime
+	prompt, err := adapter.ComposeRemotePrompt(req)
+	if err != nil {
+		return "", err
 	}
-	ports, _ := json.Marshal(outputs)
-	return req.Task + "\nInputs (JSON): " + string(raw) + "\nReturn A2A artifacts named for each output port; scalar ports contain JSON. Output ports (MIME): " + string(ports)
+	return prompt + "\nReturn A2A artifacts named for each output port; scalar ports contain JSON.", nil
 }
 
 func (c *client) subscribe(ctx context.Context, ref *contract.RemoteTaskReference) error {

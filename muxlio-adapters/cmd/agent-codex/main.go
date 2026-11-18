@@ -36,7 +36,10 @@ func main() {
 		adapter.Fail("agent-codex: %v", err)
 	}
 
-	prompt := adapter.ComposePrompt(req)
+	prompt, err := adapter.ComposePrompt(req)
+	if err != nil {
+		adapter.Fail("agent-codex: %v", err)
+	}
 	var params struct {
 		Model string `json:"model"`
 	}
@@ -221,12 +224,16 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
-		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "codex login")
+		diagnostics := stderr.String() + "\n" + stdoutTail.String()
+		runErr = adapter.RunnerFailure(runErr, diagnostics, "codex login")
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
 		// Preserve provider-reported usage from turn.completed so failed
 		// attempts that still returned usage are recorded, not estimated
 		// as zero/unavailable. Accounting is empty when no turn.completed was
 		// parsed, which omitempty reports as absent (matching Fail).
+		if availability := adapter.ClassifyAuthenticationFailure(runErr, diagnostics); availability != nil {
+			adapter.FailWithAvailability(finalAccounting, availability, "agent-codex: %s", withStderr(runErr, stderr.String()))
+		}
 		adapter.FailWithAccounting(finalAccounting, "agent-codex: %s", withStderr(runErr, stderr.String()))
 	}
 

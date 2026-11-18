@@ -67,7 +67,10 @@ func main() {
 		adapter.Fail("agent-antigravity: finding working directory: %v", err)
 	}
 
-	prompt := buildPrompt(req)
+	prompt, err := buildPrompt(req)
+	if err != nil {
+		adapter.Fail("agent-antigravity: %v", err)
+	}
 
 	// --prompt                        non-interactive scripted mode
 	// --output-format                 stream-json for machine-readable streaming events
@@ -98,6 +101,7 @@ func main() {
 	// Parse the newline-delimited stream-json event stream.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var availability *contract.Availability
 	var completed bool
 	usageSequence := 0
 	usageSource := ""
@@ -232,14 +236,19 @@ func main() {
 			}
 			if raw, ok := ev["error"]; ok && len(raw) > 0 && string(raw) != "null" {
 				var detail struct {
+					Type    string `json:"type"`
 					Message string `json:"message"`
 				}
-				if json.Unmarshal(raw, &detail) == nil && detail.Message != "" {
-					runErr = appendFailure(runErr, detail.Message)
+				if json.Unmarshal(raw, &detail) == nil && (detail.Message != "" || detail.Type != "") {
+					if detail.Message != "" {
+						runErr = appendFailure(runErr, detail.Message)
+					}
+					availability = mergeAvailability(availability, classifyAntigravityError(detail.Type, detail.Message))
 				} else {
 					var s string
 					if json.Unmarshal(raw, &s) == nil && s != "" {
 						runErr = appendFailure(runErr, s)
+						availability = mergeAvailability(availability, classifyAntigravityError("", s+"\n"+stderr.String()))
 					}
 				}
 			}
@@ -321,7 +330,14 @@ func main() {
 	_ = accountingRecorder.SetCoverage(contract.AccountingKey{Kind: "cost", Currency: "USD", Basis: "unspecified"}, "unknown", reason)
 	finalAccounting := accountingRecorder.Finish()
 	if runErr != "" {
-		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "agy (sign in interactively or configure ANTIGRAVITY_API_KEY)")
+		diagnostics := stderr.String() + "\n" + stdoutTail.String()
+		runErr = adapter.RunnerFailure(runErr, diagnostics, "agy (sign in interactively or configure ANTIGRAVITY_API_KEY)")
+		if availability == nil {
+			availability = classifyAntigravityError("", runErr+"\n"+diagnostics)
+		}
+		if availability != nil {
+			adapter.FailWithAvailability(finalAccounting, availability, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
+		}
 		adapter.FailWithAccounting(finalAccounting, "agent-antigravity: %s", withStderr(runErr, stderr.String()))
 	}
 
@@ -380,7 +396,7 @@ func extractAssistantText(raw json.RawMessage) []string {
 
 // buildPrompt constructs the full prompt from the request, expanding the
 // optional "feature" input and declaring output file paths.
-func buildPrompt(req *adapter.Request) string {
+func buildPrompt(req *adapter.Request) (string, error) {
 	return adapter.ComposePrompt(req)
 }
 
@@ -431,6 +447,13 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *tailBuffer) String() string { return string(b.data) }
+
+func mergeAvailability(current, next *contract.Availability) *contract.Availability {
+	if next == nil {
+		return current
+	}
+	return next
+}
 
 func withStderr(reason, stderr string) string {
 	stderr = strings.TrimSpace(stderr)

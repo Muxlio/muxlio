@@ -68,7 +68,7 @@ while [ ! -f "$1" ]; do sleep 0.01; done
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { done <- runProcess(ctx, cmd) }()
+			go func() { _, err := runProcess(ctx, cmd); done <- err }()
 			if cancelled {
 				deadline := time.Now().Add(2 * time.Second)
 				for {

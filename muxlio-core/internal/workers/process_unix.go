@@ -15,20 +15,24 @@ func configureProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second
 }
-func runProcess(ctx context.Context, cmd *exec.Cmd) error {
+
+// runProcess starts cmd and returns the wall time of a successful Start.
+// A zero startedAt means the process never launched.
+func runProcess(ctx context.Context, cmd *exec.Cmd) (startedAt time.Time, err error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return time.Time{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return time.Time{}, err
 	}
+	startedAt = time.Now()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err := <-done:
 		// Reaping the leader does not imply that its descendants have exited.
 		killProcessGroup(cmd)
-		return err
+		return startedAt, err
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -40,7 +44,7 @@ func runProcess(ctx context.Context, cmd *exec.Cmd) error {
 			killProcessGroup(cmd)
 			<-done
 		}
-		return ctx.Err()
+		return startedAt, ctx.Err()
 	}
 }
 

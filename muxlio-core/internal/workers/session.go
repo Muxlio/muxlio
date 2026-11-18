@@ -36,6 +36,9 @@ func (s *ScriptExecutor) sessionOwner() string {
 	return "local:" + s.SessionEnvironment()
 }
 
+// AvailabilityWorkerID is the worker side of the durable unavailability binding.
+func (s *ScriptExecutor) AvailabilityWorkerID() string { return s.sessionOwner() }
+
 func newSessionInstance() string {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {

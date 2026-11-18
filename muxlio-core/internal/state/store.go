@@ -60,6 +60,10 @@ type Store interface {
 	// waiting, without publishing a successful completion. Terminal activations
 	// are unchanged; a cancelled run rejects the write.
 	CheckpointActivation(id string, outputs map[string]any) error
+	// PersistActivationOutputs saves durable progress without changing the
+	// activation state. Used for mid-loop checkpoints while the activation
+	// remains running.
+	PersistActivationOutputs(id string, outputs map[string]any) error
 	SetActivationError(id string, err error) error
 
 	GetEvents(runID string, after, limit int) ([]Event, error)

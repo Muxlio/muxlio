@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -343,7 +344,10 @@ func TestComposePromptContainsTask(t *testing.T) {
 		Task:    "Do the thing.",
 		WorkDir: "/tmp/work",
 	}
-	p := ComposePrompt(req)
+	p, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(p, "Do the thing.") {
 		t.Error("prompt missing task text")
 	}
@@ -364,7 +368,10 @@ func TestComposePromptExpandsFeature(t *testing.T) {
 			},
 		},
 	}
-	p := ComposePrompt(req)
+	p, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(p, "Add pause/resume") {
 		t.Error("prompt missing feature description")
 	}
@@ -386,7 +393,10 @@ func TestComposePromptInlinesArtifactInput(t *testing.T) {
 			"notes": map[string]any{"path": path, "mime": "text/markdown"},
 		},
 	}
-	p := ComposePrompt(req)
+	p, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(p, "Implementation notes here") {
 		t.Error("prompt missing inlined notes content")
 	}
@@ -407,7 +417,10 @@ func TestComposePromptPreservesStructuredAndScalarInputs(t *testing.T) {
 			"targets":  []any{"one", "two"},
 		},
 	}
-	prompt := ComposePrompt(req)
+	prompt, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, value := range req.Inputs {
 		encoded, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
@@ -431,7 +444,10 @@ func TestComposePromptListsOutputFiles(t *testing.T) {
 			"passed": {Mime: "application/json"},                // scalar
 		},
 	}
-	p := ComposePrompt(req)
+	p, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Artifact output listed with full path
 	if !contains(p, "/tmp/work/notes.md") {
 		t.Error("prompt missing artifact output path")
@@ -449,6 +465,50 @@ func TestComposePromptListsOutputFiles(t *testing.T) {
 	}
 	if !contains(p, "File artifact outputs") {
 		t.Error("prompt missing File artifact outputs section")
+	}
+}
+
+func TestComposePromptIncludesOutputSchemas(t *testing.T) {
+	dossierSchema := json.RawMessage(`{"type":"object","required":["dossier"],"properties":{"dossier":{"type":"string"},"nested":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}`)
+	req := &Request{
+		Task:    "Build a dossier.",
+		WorkDir: "/tmp/work",
+		Outputs: map[string]OutputDecl{
+			"zeta":    {Mime: "application/json"},
+			"dossier": {Mime: "application/json", Schema: dossierSchema},
+			"report":  {Mime: "text/markdown", Path: "report.md"},
+			"empty":   {Mime: "application/json", Schema: json.RawMessage(`{}`)},
+			"absent":  {Mime: "application/json"},
+		},
+	}
+	p, err := ComposePrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(p, `port "dossier" → /tmp/work/dossier`) {
+		t.Fatalf("missing dossier port path: %s", p)
+	}
+	if !contains(p, `"required":["dossier"]`) || !contains(p, `"nested"`) {
+		t.Fatalf("missing authored schema: %s", p)
+	}
+	if !contains(p, "not a field inside the JSON value") {
+		t.Fatal("missing port-vs-field guidance")
+	}
+	if !contains(p, `port "report" → /tmp/work/report.md`) {
+		t.Fatal("missing file artifact path")
+	}
+	dossierIdx := strings.Index(p, `port "dossier"`)
+	emptyIdx := strings.Index(p, `port "empty"`)
+	zetaIdx := strings.Index(p, `port "zeta"`)
+	if !(dossierIdx < emptyIdx && emptyIdx < zetaIdx) {
+		t.Fatalf("scalar ports not sorted: dossier=%d empty=%d zeta=%d", dossierIdx, emptyIdx, zetaIdx)
+	}
+	remote := DescribeOutputs(req, false)
+	if contains(remote, "/tmp/work") {
+		t.Fatal("remote description must not invent local paths")
+	}
+	if !contains(remote, `"required":["dossier"]`) {
+		t.Fatal("remote description must include schema")
 	}
 }
 

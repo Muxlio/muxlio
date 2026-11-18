@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
@@ -48,14 +49,23 @@ func TestInvalidOnExhaustedRejectedAtValidation(t *testing.T) {
 
 func TestInvalidOnExhaustedFailsAtRuntimeForPinnedPlan(t *testing.T) {
 	p := loopExhaustionProbePlan("bogus")
-	engine := NewEngine(p, workers.NewFake())
+	store := state.New()
+	engine := NewEngineWithStore(p, workers.NewFake(), store)
 	if _, err := engine.CreateRun(json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "invalid plan") {
 		t.Fatalf("CreateRun should reject invalid plan: %v", err)
 	}
 	// A pinned plan may bypass CreateRun validation; the interpreter must not
-	// treat exhaustion as success for unknown policies.
+	// treat exhaustion as success for unknown policies. Seed the activation
+	// the mid-iteration progress checkpoint expects.
+	const runID = "run"
+	if err := store.CreateRun(&state.Run{ID: runID, WorkflowName: "pinned", State: RunRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateActivation(&state.Activation{ID: runID + ":loop", RunID: runID, NodeID: "loop", State: ActRunning}); err != nil {
+		t.Fatal(err)
+	}
 	node := &p.Subgraphs["root"].Nodes[0]
-	if _, err := engine.executeLoop("run", node, nil, &EvalContext{}); err == nil || !strings.Contains(err.Error(), "invalid onExhausted") {
+	if _, err := engine.executeLoop(runID, node, nil, &EvalContext{}); err == nil || !strings.Contains(err.Error(), "invalid onExhausted") {
 		t.Fatalf("executeLoop: %v", err)
 	}
 }

@@ -74,7 +74,10 @@ func main() {
 		adapter.Fail("agent-kiro: finding working directory: %v", err)
 	}
 
-	prompt := adapter.ComposePrompt(req)
+	prompt, err := adapter.ComposePrompt(req)
+	if err != nil {
+		adapter.Fail("agent-kiro: %v", err)
+	}
 
 	args, err := adapter.AuthorizeRunner(req, kiroCLI, func(p *contract.AuthorizationPolicy, version string) ([]string, error) {
 		return invocationArgs(p, version, model, req.WorkDir, prompt)
@@ -265,10 +268,14 @@ func main() {
 		adapter.AppendLogChunk("stderr", "accounting-finalization-failed: confirmed progress remains partial")
 	}
 	if runErr != "" {
-		runErr = adapter.RunnerFailure(runErr, stderr.String()+"\n"+stdoutTail.String(), "kiro-cli login")
+		diagnostics := stderr.String() + "\n" + stdoutTail.String()
+		runErr = adapter.RunnerFailure(runErr, diagnostics, "kiro-cli login")
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(adapter.Redact(stdoutTail.String())), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
+		if availability := adapter.ClassifyAuthenticationFailure(runErr, diagnostics); availability != nil {
+			adapter.FailWithAvailability(finalAccounting, availability, "agent-kiro: %s", withStderr(runErr, stderr.String()))
+		}
 		adapter.FailWithAccounting(finalAccounting, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 	}
 

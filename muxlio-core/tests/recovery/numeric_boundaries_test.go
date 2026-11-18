@@ -46,8 +46,8 @@ func TestLoopCheckpointNumericIteration(t *testing.T) {
 			if err := s.SetRunState(id, plan.RunRunning); err != nil {
 				t.Fatal(err)
 			}
-			if err := engines[id].Run(id); err != nil {
-				t.Fatal(err)
+			if err := engines[id].Run(id); err == nil || !strings.Contains(err.Error(), "exhausted under unchanged bounds") {
+				t.Fatalf("expected exhausted conflict, got %v", err)
 			}
 			after, err := s.GetActivation(id + ":loop")
 			if err != nil {

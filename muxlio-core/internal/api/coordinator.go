@@ -247,9 +247,14 @@ func (c *Coordinator) Complete(workerID string, req WorkerCompletion) error {
 	if err := req.RemoteAccounting.Validate(); err != nil {
 		return invalidCompletionError{message: "invalid remote completion accounting: " + err.Error()}
 	}
-	result := workers.ExecuteResult{OutputErrors: req.OutputErrors, AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Accounting: req.Accounting, RemoteAccounting: req.RemoteAccounting, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS}
+	result := workers.ExecuteResult{OutputErrors: req.OutputErrors, AcknowledgedInputs: req.AcknowledgedInputs, Outputs: req.Outputs, Logs: req.Logs, Accounting: req.Accounting, RemoteAccounting: req.RemoteAccounting, Session: req.Session, SessionID: req.SessionID, Reconciliation: req.Reconciliation, RemoteTask: req.RemoteTask, ExecutionDurationMS: req.ExecutionDurationMS, WorkerStartedAt: req.WorkerStartedAt, Availability: req.Availability}
 	if req.Error != nil {
 		result.Error = req.Error.Message
+	}
+	if result.Availability != nil {
+		if err := result.Availability.Validate(); err != nil {
+			return invalidCompletionError{message: "invalid completion availability: " + err.Error()}
+		}
 	}
 	if req.State != "succeeded" && result.Error == "" {
 		result.Error = "worker assignment " + req.State

@@ -107,8 +107,15 @@ func (s *ScriptExecutor) Execute(req ExecuteRequest) (result ExecuteResult, exec
 	result, err := s.executeSession(req)
 	telemetry.Duration(ctx, "muxlio.adapter.duration", time.Since(started), req.Executor)
 	result, err = sanitizeExecution(result, err, executionSecrets(req))
-	elapsed := time.Since(started).Milliseconds()
-	result.ExecutionDurationMS = &elapsed
+	// Duration is only meaningful after a successful launch. Pre-launch
+	// rejection must not fabricate executionDurationMs.
+	if result.WorkerStartedAt != nil {
+		elapsed := time.Since(*result.WorkerStartedAt).Milliseconds()
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		result.ExecutionDurationMS = &elapsed
+	}
 	return result, err
 }
 
@@ -257,26 +264,34 @@ func (s *ScriptExecutor) execute(req ExecuteRequest) (ExecuteResult, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr := runProcess(ctx, cmd)
+	workerStarted, runErr := runProcess(ctx, cmd)
+	withLaunch := func(r ExecuteResult) ExecuteResult {
+		if !workerStarted.IsZero() {
+			started := workerStarted
+			r.WorkerStartedAt = &started
+		}
+		return r
+	}
 	secrets := executionSecrets(req)
 	if ctx.Err() != nil {
-		return ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: stderr.redacted(secrets)}, nil
+		return withLaunch(ExecuteResult{Error: "adapter execution timed out or cancelled", Logs: stderr.redacted(secrets)}), nil
 	}
 	if runErr != nil && stdout.Len() == 0 {
 		// Script failed with no stdout — surface stderr as executor error.
-		return ExecuteResult{
+		return withLaunch(ExecuteResult{
 			Error: fmt.Sprintf("adapter %q failed: %v", req.Executor, runErr), Logs: stderr.redacted(secrets),
-		}, nil
+		}), nil
 	}
 
 	// Parse stdout as ExecuteResult.
 	result, err := contract.ParseResult(stdout.Bytes())
 	if err != nil {
-		return ExecuteResult{
+		return withLaunch(ExecuteResult{
 			Error: fmt.Sprintf("adapter %q returned invalid JSON: %v\nstdout: %s\nstderr: %s",
 				req.Executor, err, boundedLog(stdout.redacted(secrets)), stderr.redacted(secrets)), Logs: stderr.redacted(secrets),
-		}, nil
+		}), nil
 	}
+	result = withLaunch(result)
 	result.Error = RedactSecrets(result.Error, secrets)
 	if result.Reconciliation != nil {
 		result.Reconciliation.Reason = diagnostic.Redact(RedactSecrets(result.Reconciliation.Reason, secrets))

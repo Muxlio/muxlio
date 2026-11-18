@@ -149,7 +149,11 @@ func execute(req *adapter.Request) adapter.Response {
 		adapter.AppendLogChunk("acp", string(raw))
 		return nil
 	}
-	runErr := client.Execute(ctx, cwd, adapter.ComposePrompt(req))
+	prompt, err := adapter.ComposePrompt(req)
+	if err != nil {
+		adapter.Fail("agent-acp: %v", err)
+	}
+	runErr := client.Execute(ctx, cwd, prompt)
 	_ = stdin.Close()
 	if runErr != nil {
 		_ = cmd.Process.Kill()

@@ -2,6 +2,7 @@ package recovery_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -132,16 +133,21 @@ func createReconciliationRun(t *testing.T, p *plan.Plan, s state.Store, executor
 
 func resumeReconciliationRun(t *testing.T, s state.Store, executor workers.Executor, id string) {
 	t.Helper()
+	if err := resumeReconciliationRunErr(t, s, executor, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func resumeReconciliationRunErr(t *testing.T, s state.Store, executor workers.Executor, id string) error {
+	t.Helper()
 	engines, err := plan.RecoverRuns(s, executor)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	if engines[id] == nil {
-		t.Fatal("run was not recovered")
+		return fmt.Errorf("run was not recovered")
 	}
-	if err := engines[id].Run(id); err != nil {
-		t.Fatal(err)
-	}
+	return engines[id].Run(id)
 }
 
 func exhaustedReconciliationPlan(onExhausted string) *plan.Plan {
@@ -171,18 +177,36 @@ func TestExhaustedLoopCheckpointRestart(t *testing.T) {
 						}
 					}
 					s = reopen()
-					resumeReconciliationRun(t, s, executor, id)
+					runErr := resumeReconciliationRunErr(t, s, executor, id)
 					run, err := s.GetRun(id)
-					if err != nil || run.State != plan.RunPaused || len(executor.Calls()) != 0 {
+					if err != nil || len(executor.Calls()) != 0 {
 						t.Fatalf("run=%+v err=%v downstream calls=%d", run, err, len(executor.Calls()))
 					}
 					act, err := s.GetActivation(id + ":loop")
-					if err != nil || act.State != plan.ActWaiting || act.Outputs["__muxlioLoopProgress"] == nil {
+					if err != nil || act.Outputs["__muxlioLoopProgress"] == nil {
 						t.Fatalf("lost loop progress: activation=%+v err=%v", act, err)
 					}
 					result, err := json.Marshal(act.Outputs["result"])
 					if err != nil || string(result) != "1" {
 						t.Fatalf("loop result=%s want 1: %v", result, err)
+					}
+					switch stage {
+					case "before-checkpoint", "paused":
+						// before-checkpoint: exhausted flag not durable yet, so
+						// resume re-runs and pauses. paused: run is already
+						// paused so Run is a no-op without ControlRun resume.
+						if runErr != nil || run.State != plan.RunPaused || act.State != plan.ActWaiting {
+							t.Fatalf("%s resume: run=%+v act=%+v err=%v", stage, run, act, runErr)
+						}
+					default:
+						// Durable exhausted progress under a still-running walk
+						// cannot advance unchanged.
+						if runErr == nil || !strings.Contains(runErr.Error(), "exhausted under unchanged bounds") {
+							t.Fatalf("expected exhausted conflict, got %v", runErr)
+						}
+						if run.State != plan.RunFailed {
+							t.Fatalf("run state=%q", run.State)
+						}
 					}
 				})
 			}
@@ -216,13 +240,16 @@ func TestNullLoopCheckpointRestart(t *testing.T) {
 						}
 					}
 					s = reopen()
-					resumeReconciliationRun(t, s, executor, id)
+					runErr := resumeReconciliationRunErr(t, s, executor, id)
+					if runErr == nil || !strings.Contains(runErr.Error(), "exhausted under unchanged bounds") {
+						t.Fatalf("expected exhausted conflict, got %v", runErr)
+					}
 					run, err := s.GetRun(id)
-					if err != nil || run.State != plan.RunPaused || len(executor.Calls()) != 0 {
+					if err != nil || run.State != plan.RunFailed || len(executor.Calls()) != 0 {
 						t.Fatalf("run=%+v err=%v downstream calls=%d", run, err, len(executor.Calls()))
 					}
 					after, err := s.GetActivation(id + ":loop")
-					if err != nil || after.State != plan.ActWaiting || !reflect.DeepEqual(before.Outputs, after.Outputs) {
+					if err != nil || !reflect.DeepEqual(before.Outputs, after.Outputs) {
 						t.Fatalf("checkpoint changed: before=%+v after=%+v err=%v", before, after, err)
 					}
 				})
@@ -245,10 +272,13 @@ func TestLegacySucceededLoopCheckpointRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = reopen()
-	resumeReconciliationRun(t, s, executor, id)
+	runErr := resumeReconciliationRunErr(t, s, executor, id)
+	if runErr == nil || !strings.Contains(runErr.Error(), "exhausted under unchanged bounds") {
+		t.Fatalf("expected exhausted conflict, got %v", runErr)
+	}
 	run, _ := s.GetRun(id)
-	if run.State != plan.RunPaused || len(executor.Calls()) != 0 {
-		t.Fatalf("legacy checkpoint bypassed pause: state=%s calls=%d", run.State, len(executor.Calls()))
+	if run.State != plan.RunFailed || len(executor.Calls()) != 0 {
+		t.Fatalf("legacy exhausted checkpoint must conflict: state=%s calls=%d", run.State, len(executor.Calls()))
 	}
 }
 

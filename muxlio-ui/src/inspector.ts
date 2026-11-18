@@ -125,7 +125,7 @@ function buildAttemptUsageMarkup(act){
  const attempts=typeof runAttempts!=='undefined'?runAttempts:[];
  const rows=attempts.filter(a=>a.activationId===act.id).sort((a,b)=>(a.retryNumber||0)-(b.retryNumber||0));
  if(!rows.length)return '';
- return renderViewTemplate("inspector/build-attempt-usage-markup-insp-section", [viewValue(rows.map((a,i)=>renderViewTemplate("inspector/build-attempt-usage-markup-section", [viewValue(esc(attemptOffset+i+1)), viewValue(buildAttemptAccountingPreviewMarkup(a.accounting)), viewValue(buildAttemptAccountingMarkup(a.accounting))])).join(''))]);
+ return renderViewTemplate("inspector/build-attempt-usage-markup-insp-section", [viewValue(rows.map(a=>renderViewTemplate("inspector/build-attempt-usage-markup-section", [viewValue(esc(a.retryNumber)), viewValue(buildAttemptAccountingPreviewMarkup(a.accounting)), viewValue(buildAttemptAccountingMarkup(a.accounting))])).join(''))]);
 }
 
 function buildInspectorAttemptsMarkup(attempts){

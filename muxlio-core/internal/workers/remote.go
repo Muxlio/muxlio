@@ -100,6 +100,8 @@ type remoteCompletion struct {
 	Reconciliation      *contract.Reconciliation         `json:"reconciliation,omitempty"`
 	RemoteTask          *contract.RemoteTaskReference    `json:"remoteTask,omitempty"`
 	ExecutionDurationMS *int64                           `json:"executionDurationMs,omitempty"`
+	WorkerStartedAt     *time.Time                       `json:"workerStartedAt,omitempty"`
+	Availability        *contract.Availability           `json:"availability,omitempty"`
 }
 
 // RemoteWorkerConfig describes an outbound worker connection.
@@ -509,8 +511,11 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				e = execCtx.Err()
 				r.Outputs = nil
 			}
-			if r.ExecutionDurationMS == nil {
-				elapsed := time.Since(started).Milliseconds()
+			if r.ExecutionDurationMS == nil && r.WorkerStartedAt != nil {
+				elapsed := time.Since(*r.WorkerStartedAt).Milliseconds()
+				if elapsed < 0 {
+					elapsed = 0
+				}
 				r.ExecutionDurationMS = &elapsed
 			}
 			_ = logSink.Close()
@@ -753,7 +758,7 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 				reconciliation.Reason = diagnostic.Redact(RedactSecrets(reconciliation.Reason, executeReq.Secrets))
 				result.Reconciliation = &reconciliation
 			}
-			completion := remoteCompletion{OutputErrors: result.OutputErrors, AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Accounting: result.Accounting, RemoteAccounting: result.RemoteAccounting, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS}
+			completion := remoteCompletion{OutputErrors: result.OutputErrors, AcknowledgedInputs: result.AcknowledgedInputs, AssignmentID: assignment.AssignmentID, RunID: assignment.RunID, ActivationID: assignment.ActivationID, AttemptID: assignment.AttemptID, CoordinatorEpoch: assignment.CoordinatorEpoch, Generation: assignment.Generation, State: "succeeded", Outputs: result.Outputs, Logs: result.Logs, Accounting: result.Accounting, RemoteAccounting: result.RemoteAccounting, Session: result.Session, SessionID: result.SessionID, Reconciliation: result.Reconciliation, RemoteTask: result.RemoteTask, ExecutionDurationMS: result.ExecutionDurationMS, WorkerStartedAt: result.WorkerStartedAt, Availability: result.Availability}
 			if child.revoked {
 				completion.State = "cancelled"
 				completion.Outputs = nil

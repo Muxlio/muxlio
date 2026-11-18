@@ -67,7 +67,7 @@ func (s *ScriptExecutor) probe(ctx context.Context, name string, launch func() (
 	cmd.WaitDelay = time.Second
 	var output probeBuffer
 	cmd.Stdout = &output
-	if runProcess(ctx, cmd) != nil || output.overflow {
+	if _, err := runProcess(ctx, cmd); err != nil || output.overflow {
 		add(contract.ProbeBinary, false, "adapter probe failed or timed out")
 		return r
 	}

@@ -2,15 +2,16 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/muxlio/muxlio-adapters/adapter"
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func TestTailBufferKeepsLastLimitBytes(t *testing.T) {
@@ -93,7 +94,10 @@ func TestBuildPromptDeclaresOutputs(t *testing.T) {
 			"notes": {Mime: "text/markdown", Path: "notes.md"},
 		},
 	}
-	prompt := buildPrompt(req)
+	prompt, err := buildPrompt(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(prompt, workDir+"/notes.md") {
 		t.Fatalf("buildPrompt() missing declared output path, got %q", prompt)
 	}
@@ -168,13 +172,38 @@ func TestAgentAntigravityAdapterAntigravityResultErrorStatus(t *testing.T) {
 		t.Fatalf("adapter process failed: %v\n%s", err, out)
 	}
 	var resp struct {
-		Error string `json:"error"`
+		Error        string `json:"error"`
+		Availability *struct {
+			Reason  string     `json:"reason"`
+			RetryAt *time.Time `json:"retryAt"`
+		} `json:"availability"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, out)
 	}
 	if !strings.Contains(resp.Error, "quota exceeded") {
 		t.Fatalf("expected Antigravity result error in response, got %q", resp.Error)
+	}
+	if resp.Availability == nil || resp.Availability.Reason != "quota_exhausted" {
+		t.Fatalf("expected availability quota_exhausted, got %+v", resp.Availability)
+	}
+	if resp.Availability.RetryAt != nil {
+		t.Fatal("quota response must preserve an unknown reset time")
+	}
+}
+
+func TestAntigravityAvailabilityIndividualQuotaReset(t *testing.T) {
+	msg := "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 6h0m0s."
+	got := classifyAntigravityError("QuotaError", msg)
+	if got == nil || got.Reason != "quota_exhausted" {
+		t.Fatalf("got %+v", got)
+	}
+	if got.RetryAt == nil {
+		t.Fatal("expected RetryAt from Resets in")
+	}
+	delta := time.Until(*got.RetryAt)
+	if delta < 5*time.Hour+50*time.Minute || delta > 6*time.Hour+10*time.Minute {
+		t.Fatalf("RetryAt delta=%v want ~6h", delta)
 	}
 }
 

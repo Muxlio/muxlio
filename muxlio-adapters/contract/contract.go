@@ -46,6 +46,10 @@ type Result struct {
 	Session            *SessionHandle          `json:"session,omitempty"`
 	Accounting         *Accounting             `json:"accounting,omitempty"`
 	Reconciliation     *Reconciliation         `json:"reconciliation,omitempty"`
+	// Availability reports confirmed quota exhaustion or authentication failure
+	// for future admission. It is independent of Error, accounting, and effect
+	// safety. Temporary rate limits must not set this field.
+	Availability *Availability `json:"availability,omitempty"`
 	// OutputErrors records invalid or unreadable JSON ports independently of
 	// executor completion. Outputs may retain rejected text for diagnostics.
 	OutputErrors map[string]string `json:"outputErrors,omitempty"`
@@ -58,6 +62,10 @@ type Result struct {
 	// operation failure. Lookup errors must not claim a terminal reference.
 	RemoteTask          *RemoteTaskReference `json:"remoteTask,omitempty"`
 	ExecutionDurationMS *int64               `json:"executionDurationMs,omitempty"`
+	// WorkerStartedAt is the wall time of a successful executor launch
+	// (process Start or equivalent invocation). It is distinct from coordinator
+	// admit/queue time and must stay unset when launch never happened.
+	WorkerStartedAt *time.Time `json:"workerStartedAt,omitempty"`
 }
 
 // ParseResult accepts exactly one result object. A JSON null is not a completed
@@ -94,6 +102,9 @@ func ParseResult(raw []byte) (Result, error) {
 	}
 	if result.ExecutionDurationMS != nil && *result.ExecutionDurationMS < 0 {
 		return Result{}, fmt.Errorf("executor duration must be non-negative")
+	}
+	if err := result.Availability.Validate(); err != nil {
+		return Result{}, err
 	}
 	if result.RemoteTask != nil && result.RemoteTask.Pending && (result.RemoteTask.ID == "" || result.Error != "" || result.Session != nil) {
 		return Result{}, fmt.Errorf("pending remote task requires an identity and cannot contain an error or local session")

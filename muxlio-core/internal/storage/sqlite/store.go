@@ -48,6 +48,18 @@ var schemaStmts = []string{
 	`CREATE TABLE IF NOT EXISTS agent_selection_turns (executor TEXT PRIMARY KEY, turn INTEGER NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_buckets (provider_key TEXT PRIMARY KEY, tokens REAL NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admission_queue (activation_id TEXT PRIMARY KEY, reason TEXT NOT NULL)`,
+	// Executor unavailability is keyed by worker+executor only; that is the
+	// trustworthy identity a worker can establish without inventing account scopes.
+	`CREATE TABLE IF NOT EXISTS executor_unavailability (
+		worker_id TEXT NOT NULL,
+		executor TEXT NOT NULL,
+		reason TEXT NOT NULL,
+		message TEXT NOT NULL DEFAULT '',
+		retry_at TEXT,
+		updated_at TEXT NOT NULL,
+		recheck_held_until TEXT,
+		PRIMARY KEY(worker_id, executor)
+	)`,
 	`CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   workflow_name TEXT NOT NULL,
@@ -184,6 +196,8 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE execution_attempts ADD COLUMN operation_ref_json TEXT`,
 		// Reason an attempt is held pending explicit operator reconciliation.
 		`ALTER TABLE execution_attempts ADD COLUMN await_reconciliation_reason TEXT NOT NULL DEFAULT ''`,
+		// Wall time of successful worker process/invocation start; distinct from admit started_at.
+		`ALTER TABLE execution_attempts ADD COLUMN worker_started_at TEXT`,
 		`ALTER TABLE trigger_deliveries ADD COLUMN body_digest TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
@@ -353,12 +367,12 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 		now = current
 	}
 	var requestJSON string
+	var req workers.ExecuteRequest
 	requestErr := tx.QueryRow(`SELECT d.request_json FROM dispatches d JOIN assignments a ON a.attempt_id=d.attempt_id WHERE a.attempt_id=? AND a.assignment_id=? AND a.worker_id=? AND a.run_id=? AND a.activation_id=? AND a.generation=? AND a.coordinator_epoch=?`, a.AttemptID, a.AssignmentID, a.WorkerID, a.RunID, a.ActivationID, a.Generation, a.CoordinatorEpoch).Scan(&requestJSON)
 	if requestErr != nil && requestErr != sql.ErrNoRows {
 		return false, requestErr
 	}
 	if requestErr == nil {
-		var req workers.ExecuteRequest
 		if err := decodePersistedValue(requestJSON, &req); err != nil {
 			return false, err
 		}
@@ -418,6 +432,11 @@ func (s *Store) CompleteWorkerAssignment(a state.Assignment, terminalState strin
 		}
 		if completion.Accounting != nil {
 			if err := recordWorkerAccountingTx(tx, a, *completion.Accounting); err != nil {
+				return false, err
+			}
+		}
+		if requestErr == nil && req.Executor != "" {
+			if err := completeExecutorAvailability(tx, a.WorkerID, req, terminalState, result[0], now); err != nil {
 				return false, err
 			}
 		}
@@ -725,6 +744,16 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		if !workers.MatchWorkerDispatch(workerID, d.Executor, []byte(raw), caps, workerLabels) {
 			continue
 		}
+		if blocked, blockErr := executorUnavailableLocked(tx, workerID, d.Executor, now); blockErr != nil {
+			rows.Close()
+			return nil, 0, blockErr
+		} else if blocked {
+			if _, err = tx.Exec(`INSERT INTO admission_queue(activation_id,reason) VALUES(?,?) ON CONFLICT(activation_id) DO UPDATE SET reason=excluded.reason`, d.ActivationID, "executor_unavailable"); err != nil {
+				rows.Close()
+				return nil, 0, err
+			}
+			continue
+		}
 		demand = admissionDemand(cfg, d.Executor)
 		d.Request = []byte(raw)
 		reason, checkErr := admissionReason(tx, cfg, d, demand, workerID, capacity, time.Now())
@@ -739,9 +768,17 @@ func (s *Store) ClaimDispatchForEpoch(workerID string, lease time.Time, epoch in
 		if reason != "" {
 			continue
 		}
+		hadAvailabilityTrial := envelope.AvailabilityTrial != nil
+		envelope.AvailabilityTrial, err = availabilityTrial(tx, workerID, d.Executor)
+		if err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
 		if envelope.TimeoutSeconds != nil && *envelope.TimeoutSeconds > 0 {
 			deadline := time.Now().Add(time.Duration(*envelope.TimeoutSeconds * float64(time.Second)))
 			envelope.ExecutionDeadline = &deadline
+		}
+		if envelope.ExecutionDeadline != nil || envelope.AvailabilityTrial != nil || hadAvailabilityTrial {
 			encoded, err := json.Marshal(envelope)
 			if err != nil {
 				rows.Close()
@@ -1372,7 +1409,7 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 		}
 		operationRefJSON = string(raw)
 	}
-	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,accounting_revision,accounting_final,accounting_hash,operation_attempt_id,operation_action) VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?),?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,result_json=COALESCE(excluded.result_json,execution_attempts.result_json),execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms),effect=COALESCE(NULLIF(execution_attempts.effect,''),excluded.effect),idempotency_key=COALESCE(NULLIF(execution_attempts.idempotency_key,''),excluded.idempotency_key),operation_ref_json=COALESCE(excluded.operation_ref_json,execution_attempts.operation_ref_json),await_reconciliation_reason=CASE WHEN excluded.state IN ('failed','succeeded','cancelled','resolved') THEN excluded.await_reconciliation_reason WHEN excluded.await_reconciliation_reason<>'' THEN excluded.await_reconciliation_reason ELSE execution_attempts.await_reconciliation_reason END,accounting_json=COALESCE(excluded.accounting_json,execution_attempts.accounting_json),accounting_revision=CASE WHEN excluded.accounting_revision>execution_attempts.accounting_revision THEN excluded.accounting_revision ELSE execution_attempts.accounting_revision END,accounting_final=MAX(execution_attempts.accounting_final,excluded.accounting_final),accounting_hash=COALESCE(excluded.accounting_hash,execution_attempts.accounting_hash),operation_attempt_id=COALESCE(NULLIF(execution_attempts.operation_attempt_id,''),excluded.operation_attempt_id),operation_action=COALESCE(NULLIF(execution_attempts.operation_action,''),excluded.operation_action)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, resultJSON, a.ID, a.ExecutionDurationMS, a.Effect, a.IdempotencyKey, operationRefJSON, a.AwaitReconciliationReason, accountingJSON, accountingRevision, accountingFinal, accountingHash, a.OperationAttemptID, a.OperationAction)
+	_, err = tx.Exec(`INSERT INTO execution_attempts(id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,accounting_revision,accounting_final,accounting_hash,operation_attempt_id,operation_action,worker_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=?),?),?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,failure=excluded.failure,result_json=COALESCE(excluded.result_json,execution_attempts.result_json),execution_duration_ms=COALESCE((SELECT SUM(duration_ms) FROM worker_execution_timings WHERE attempt_id=excluded.id),excluded.execution_duration_ms,execution_attempts.execution_duration_ms),effect=COALESCE(NULLIF(execution_attempts.effect,''),excluded.effect),idempotency_key=COALESCE(NULLIF(execution_attempts.idempotency_key,''),excluded.idempotency_key),operation_ref_json=COALESCE(excluded.operation_ref_json,execution_attempts.operation_ref_json),await_reconciliation_reason=CASE WHEN excluded.state IN ('failed','succeeded','cancelled','resolved') THEN excluded.await_reconciliation_reason WHEN excluded.await_reconciliation_reason<>'' THEN excluded.await_reconciliation_reason ELSE execution_attempts.await_reconciliation_reason END,accounting_json=COALESCE(excluded.accounting_json,execution_attempts.accounting_json),accounting_revision=CASE WHEN excluded.accounting_revision>execution_attempts.accounting_revision THEN excluded.accounting_revision ELSE execution_attempts.accounting_revision END,accounting_final=MAX(execution_attempts.accounting_final,excluded.accounting_final),accounting_hash=COALESCE(excluded.accounting_hash,execution_attempts.accounting_hash),operation_attempt_id=COALESCE(NULLIF(execution_attempts.operation_attempt_id,''),excluded.operation_attempt_id),operation_action=COALESCE(NULLIF(execution_attempts.operation_action,''),excluded.operation_action),worker_started_at=COALESCE(execution_attempts.worker_started_at,excluded.worker_started_at)`, a.ID, a.RunID, a.ActivationID, a.RetryNumber, a.Executor, a.State, rfc3339(a.StartedAt), rfc3339(a.FinishedAt), a.Failure, resultJSON, a.ID, a.ExecutionDurationMS, a.Effect, a.IdempotencyKey, operationRefJSON, a.AwaitReconciliationReason, accountingJSON, accountingRevision, accountingFinal, accountingHash, a.OperationAttemptID, a.OperationAction, optionalRFC3339(a.WorkerStartedAt))
 	if err != nil {
 		return err
 	}
@@ -1390,6 +1427,9 @@ func (s *Store) RecordExecutionAttempt(a state.ExecutionAttempt) error {
 
 	if a.ExecutionDurationMS != nil {
 		payload["executionDurationMs"] = *a.ExecutionDurationMS
+	}
+	if a.WorkerStartedAt != nil {
+		payload["workerStartedAt"] = *a.WorkerStartedAt
 	}
 	if a.Effect != "" {
 		payload["effect"] = a.Effect
@@ -1491,7 +1531,7 @@ func (s *Store) listExecutionAttemptPage(runID, activationID string, offset, lim
 func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offset, limit int, details bool, attemptID string, analyticsOrder bool) ([]state.ExecutionAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,operation_attempt_id,operation_action,COALESCE((SELECT COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId')) FROM runs WHERE runs.id=execution_attempts.run_id),'') FROM execution_attempts WHERE run_id=?`
+	query := `SELECT id,run_id,activation_id,retry_number,executor,state,started_at,finished_at,failure,result_json,execution_duration_ms,effect,idempotency_key,operation_ref_json,await_reconciliation_reason,accounting_json,operation_attempt_id,operation_action,worker_started_at,COALESCE((SELECT COALESCE(workspace_id,json_extract(NULLIF(plan_json,''),'$.workspaceId')) FROM runs WHERE runs.id=execution_attempts.run_id),'') FROM execution_attempts WHERE run_id=?`
 	args := []any{runID}
 	if activationID != "" {
 		query += ` AND activation_id=?`
@@ -1524,10 +1564,11 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 	for rows.Next() {
 		var a state.ExecutionAttempt
 		var started, finished string
+		var workerStarted sql.NullString
 		var resultJSON, accountingJSON sql.NullString
 		var execDuration sql.NullInt64
 		var operationRefJSON, effect, idempotencyKey, awaitReconciliation sql.NullString
-		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &accountingJSON, &a.OperationAttemptID, &a.OperationAction, &a.WorkspaceID); err != nil {
+		if err := rows.Scan(&a.ID, &a.RunID, &a.ActivationID, &a.RetryNumber, &a.Executor, &a.State, &started, &finished, &a.Failure, &resultJSON, &execDuration, &effect, &idempotencyKey, &operationRefJSON, &awaitReconciliation, &accountingJSON, &a.OperationAttemptID, &a.OperationAction, &workerStarted, &a.WorkspaceID); err != nil {
 			return nil, err
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, started)
@@ -1537,6 +1578,13 @@ func (s *Store) listExecutionAttemptPageOrdered(runID, activationID string, offs
 		a.FinishedAt, err = time.Parse(time.RFC3339Nano, finished)
 		if err != nil {
 			return nil, err
+		}
+		if workerStarted.Valid && workerStarted.String != "" {
+			t, parseErr := time.Parse(time.RFC3339Nano, workerStarted.String)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			a.WorkerStartedAt = &t
 		}
 		if resultJSON.Valid {
 			if err := decodePersistedValue(resultJSON.String, &a.Result); err != nil {
@@ -2277,6 +2325,10 @@ func (s *Store) CheckpointActivation(id string, outputs map[string]any) error {
 	return s.setActivationOutputs(id, outputs, "waiting")
 }
 
+func (s *Store) PersistActivationOutputs(id string, outputs map[string]any) error {
+	return s.setActivationOutputs(id, outputs, "")
+}
+
 func (s *Store) setActivationOutputs(id string, outputs map[string]any, next string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2310,6 +2362,12 @@ func (s *Store) setActivationOutputs(id string, outputs map[string]any, next str
 	}
 	if current == "cancelled" || current == "succeeded" || current == "failed" {
 		return nil
+	}
+	if next == "" {
+		if _, err := tx.Exec(`UPDATE activations SET outputs_json = ? WHERE id = ?`, raw, id); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	if _, err := tx.Exec(`UPDATE activations SET outputs_json = ?, state = ? WHERE id = ?`, raw, next, id); err != nil {
 		return err
@@ -2533,6 +2591,13 @@ func marshalJSON(v any) ([]byte, error) {
 
 func rfc3339(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func optionalRFC3339(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return rfc3339(*t)
 }
 
 func boolToInt(b bool) int {
