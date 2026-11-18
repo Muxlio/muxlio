@@ -122,6 +122,7 @@ func main() {
 	// Collect all assistant text chunks; watch for runFinished.
 	var textChunks adapter.BoundedBuffer
 	var runErr string
+	var quota *contract.Availability
 	var completed bool
 	var usage *adapter.TokenCounters
 	var estimate kiroOutputEstimator
@@ -221,6 +222,9 @@ func main() {
 			}
 			if payload.Error != "" {
 				runErr = appendFailure(runErr, payload.Error)
+				if report := kiroQuotaAvailability(payload.Error); report != nil {
+					quota = report
+				}
 			}
 		case "runError":
 			var payload struct {
@@ -236,6 +240,9 @@ func main() {
 			switch {
 			case payload.Message != "":
 				runErr = appendFailure(runErr, payload.Message)
+				if report := kiroQuotaAvailability(payload.Message); report != nil {
+					quota = report
+				}
 			case payload.Stage != "":
 				runErr = appendFailure(runErr, fmt.Sprintf("kiro run error at stage %s", payload.Stage))
 			default:
@@ -273,6 +280,9 @@ func main() {
 		diagnosticPath := filepath.Join(req.WorkDir, "kiro-stream.jsonl")
 		_ = os.WriteFile(diagnosticPath, []byte(adapter.Redact(stdoutTail.String())), 0o600)
 		runErr = appendFailure(runErr, "stdout tail: "+stdoutTail.String())
+		if quota != nil {
+			adapter.FailWithAvailability(finalAccounting, quota, "agent-kiro: %s", withStderr(runErr, stderr.String()))
+		}
 		if availability := adapter.ClassifyAuthenticationFailure(runErr, diagnostics); availability != nil {
 			adapter.FailWithAvailability(finalAccounting, availability, "agent-kiro: %s", withStderr(runErr, stderr.String()))
 		}

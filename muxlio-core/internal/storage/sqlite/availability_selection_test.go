@@ -10,17 +10,33 @@ import (
 	"github.com/muxlio/muxlio-core/internal/workers"
 )
 
-func TestSelectAnyDispatchSkipsUnavailableExecutor(t *testing.T) {
+func TestSelectAgentAnySkipsExecutorDuringQuotaCooldown(t *testing.T) {
 	s := openTemp(t)
 	selectionRun(t, s)
 	selectionWorker(t, s, "w1", 2, "agent/a", "agent/b")
-	now := time.Now()
-	if err := s.MarkExecutorUnavailable(state.ExecutorBinding{WorkerID: "w1", Executor: "agent/a"}, contract.Availability{
-		Reason: contract.AvailabilityQuotaExhausted, Message: "quota",
-	}, now); err != nil {
+	selectionDispatch(t, s, "first", workers.ExecuteRequest{Executor: "agent/a"})
+	first, generation := admissionClaim(t, s, "w1")
+	if first == nil || first.Executor != "agent/a" {
+		t.Fatalf("expected initial claim against agent/a: %+v", first)
+	}
+	raw, err := json.Marshal(workers.ExecuteResult{
+		Error: "quota", Availability: &contract.Availability{Reason: contract.AvailabilityQuotaExhausted, Message: "quota"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	selectionDispatch(t, s, "any", workers.ExecuteRequest{})
+	a := state.Assignment{RunID: first.RunID, ActivationID: first.ActivationID, AssignmentID: first.AssignmentID,
+		AttemptID: first.AttemptID, WorkerID: "w1", Generation: generation}
+	if accepted, err := s.CompleteWorkerAssignment(a, "failed", time.Now(), raw); err != nil || !accepted {
+		t.Fatalf("quota completion accepted=%v err=%v", accepted, err)
+	}
+	block, err := s.GetExecutorUnavailability(state.ExecutorBinding{WorkerID: "w1", Executor: "agent/a"})
+	if err != nil || block == nil || block.Reason != contract.AvailabilityQuotaExhausted || block.RetryAt == nil || block.RetryAt.Sub(block.UpdatedAt) != workers.DefaultQuotaRetryAfter {
+		t.Fatalf("expected default quota cooldown on agent/a: %+v, err=%v", block, err)
+	}
+	selectionDispatch(t, s, "next", workers.ExecuteRequest{
+		Executor: "agent/any", AgentSelection: &workers.AgentSelectionPreferences{PreviousExecutors: []string{"agent/b"}},
+	})
 	d, _ := admissionClaim(t, s, "w1")
 	if d == nil {
 		t.Fatal("expected claim against available agent/b")

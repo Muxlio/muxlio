@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/muxlio/muxlio-adapters/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/muxlio/muxlio-adapters/contract"
 )
 
 func TestParseKiroUsageFromStructuredResultMetadata(t *testing.T) {
@@ -351,7 +352,7 @@ func TestKiroStreamReportsModelFromFlatConfigUpdate(t *testing.T) {
 	t.Fatalf("selected model missing: %+v", resp.Accounting.Models)
 }
 
-func runKiroFixture(t *testing.T, stream string, extra map[string]any) (string, string) {
+func runKiroFixture(t *testing.T, stream string, extra map[string]any) (contract.Result, string) {
 	t.Helper()
 	bin := buildAgentKiro(t)
 	workDir := t.TempDir()
@@ -386,21 +387,19 @@ func runKiroFixture(t *testing.T, stream string, extra map[string]any) (string, 
 	if err != nil {
 		t.Fatalf("adapter process failed: %v", err)
 	}
-	var resp struct {
-		Error string `json:"error"`
-	}
+	var resp contract.Result
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("invalid adapter JSON: %v\n%s", err, raw)
 	}
-	return resp.Error, workDir
+	return resp, workDir
 }
 
 func TestKiroRunFinishedKeepsEveryFailureReason(t *testing.T) {
 	stream := `{"type":"runFinished","data":{"status":"failed","exitCode":3,"error":"quota exhausted"}}` + "\n"
 	got, _ := runKiroFixture(t, stream, nil)
 	for _, want := range []string{"status failed", "code 3", "quota exhausted"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("error %q lost %q", got, want)
+		if !strings.Contains(got.Error, want) {
+			t.Fatalf("error %q lost %q", got.Error, want)
 		}
 	}
 }
@@ -420,8 +419,59 @@ func TestKiroDiagnosticStreamIsRedacted(t *testing.T) {
 func TestInvalidKiroParamsFail(t *testing.T) {
 	stream := `{"type":"runFinished","data":{"status":"success"}}` + "\n"
 	got, _ := runKiroFixture(t, stream, map[string]any{"params": json.RawMessage(`{"model":7}`)})
-	if !strings.Contains(got, "invalid params") {
-		t.Fatalf("error = %q, want invalid params failure", got)
+	if !strings.Contains(got.Error, "invalid params") {
+		t.Fatalf("error = %q, want invalid params failure", got.Error)
+	}
+}
+
+func TestKiroTerminalFailureAvailability(t *testing.T) {
+	const quotaMessage = "You've reached your monthly usage limit."
+	const quotaFailure = quotaMessage + ` Please return next month to continue building. (Request ID: fixture) (code -32000): {"errorType":"UsageLimitReachedError","retryErrorType":"CLIENT_ERROR","requestId":"fixture","actions":["upgradePlan"]}`
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name, failure, prefix, reason string
+		retryAt                       *time.Time
+	}{
+		{name: "monthly quota", failure: quotaFailure, reason: contract.AvailabilityQuotaExhausted},
+		{name: "provider reset", failure: strings.TrimSuffix(quotaFailure, "}") + `,"resetAt":"` + reset.Format(time.RFC3339) + `"}`, reason: contract.AvailabilityQuotaExhausted, retryAt: &reset},
+		{name: "invalid reset", failure: strings.TrimSuffix(quotaFailure, "}") + `,"resetAt":"next month"}`, reason: contract.AvailabilityQuotaExhausted},
+		{name: "transient rate limit", failure: `Too many requests. Try again shortly. (code -32000): {"errorType":"ThrottlingException","retryErrorType":"THROTTLING"}`},
+		{name: "quota quoted by assistant", failure: "connection closed", prefix: `{"type":"text","data":{"content":"You've reached your monthly usage limit. (code -32000): {\"errorType\":\"UsageLimitReachedError\"}"}}` + "\n"},
+		{name: "authentication", failure: "not logged in", reason: contract.AvailabilityAuthenticationFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message, err := json.Marshal(tc.failure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream := tc.prefix + `{"type":"runError","data":{"stage":"prompt","message":` + string(message) + `,"usage":{"input_tokens":7}}}` + "\n"
+			got, _ := runKiroFixture(t, stream, nil)
+			if !strings.HasPrefix(got.Error, "agent-kiro: "+tc.failure) {
+				t.Fatalf("error = %q, want original failure %q", got.Error, tc.failure)
+			}
+			if tc.reason == "" {
+				if got.Availability != nil {
+					t.Fatalf("unexpected availability: %+v", got.Availability)
+				}
+				return
+			}
+			if got.Availability == nil || got.Availability.Reason != tc.reason {
+				t.Fatalf("availability = %+v, want %q", got.Availability, tc.reason)
+			}
+			retryAt := got.Availability.RetryAt
+			if tc.retryAt == nil && retryAt != nil || tc.retryAt != nil && (retryAt == nil || !retryAt.Equal(*tc.retryAt)) {
+				t.Fatalf("retryAt = %v, want %v", retryAt, tc.retryAt)
+			}
+			if got.Accounting == nil || !got.Accounting.Final {
+				t.Fatalf("missing final accounting: %+v", got.Accounting)
+			}
+			for _, entry := range got.Accounting.Entries {
+				if entry.Tokens != nil && entry.Tokens.Input.Collected != nil && entry.Tokens.Input.Collected.Value == "7" {
+					return
+				}
+			}
+			t.Fatalf("missing reported input usage: %+v", got.Accounting.Entries)
+		})
 	}
 }
 
