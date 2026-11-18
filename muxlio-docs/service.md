@@ -95,7 +95,8 @@ pass `nextOffset` with `--offset` to fetch the next page. See the
 for the status definitions.
 
 Submit `workspaceId` in `POST /v1/runs`, the MCP `start_run` arguments,
-or the SDK workflow options. Remote CLI submissions accept `--workspace-id`.
+or the SDK workflow options. Remote CLI submissions accept `--workspace-id` on
+`muxlio submit` and `muxlio run … --server`.
 With a workspace registry configured, steps that need a source require an explicit
 ID. Aliases such as `web` are stored as the canonical ID (`frontend`) in the run
 and its attempts. The legacy single `workspace` configuration selects `default`.

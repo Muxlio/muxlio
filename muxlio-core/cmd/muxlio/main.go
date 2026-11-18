@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
-	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"io"
 	"net/http"
 	"net/url"
@@ -22,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/muxlio/muxlio-core/internal/coordinatorlog"
+	"github.com/muxlio/muxlio-core/internal/diagnostic"
 	"github.com/muxlio/muxlio-core/internal/plan"
 	"github.com/muxlio/muxlio-core/internal/state"
 	"github.com/muxlio/muxlio-core/internal/storage/sqlite"
@@ -37,7 +37,7 @@ Usage:
   muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
   muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
   muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
-  muxlio run <workflow.ts|plan.json> [input.json]     Run a plan (fake or real executor; or --server to submit remotely)
+  muxlio run <workflow.ts|plan.json> [input.json]     Run a plan (see muxlio run --help for remote options)
   muxlio graph <workflow.ts|plan.json|run-id>         Display DAG visualization (ascii, json, mermaid)
   muxlio inspect <workflow.ts|plan.json|run-id>       Print plan structure or run status
   muxlio snapshots <run-id> [--current] [--attempt ID] Inspect intermediate artifacts
@@ -80,8 +80,17 @@ Options:
   --adapters <dir>        Directory of executor adapter scripts (real execution)
   --workspace <dir>       Authorized workspace for standalone run (or MUXLIO_WORKSPACE)
                           Worker start uses this as the worker-local adapter workspace
+  --workspace-id <id>     Coordinator workspace identity for run --server
   --data-dir <dir>        Runtime data directory (default: ~/.muxlio)
   --addr <host:port>      Address for server to listen on (default: 127.0.0.1:7600)
+`
+
+const runUsage = `Usage:
+  muxlio run <workflow.ts|plan.json> [input.json] [--fake-config <file> | --adapters <dir> --workspace <absolute-dir>] [--json]
+  muxlio run <workflow.ts|plan.json> [input.json] --server <profile|URL> [--workspace-id <id>] [--json]
+
+Use --workspace with --adapters for standalone execution. Use --workspace-id
+to select an operator-authorized workspace for a coordinator run.
 `
 
 func main() {
@@ -98,6 +107,8 @@ func main() {
 	addr := "127.0.0.1:7600"
 	workerCoordinator, workerID, workerCapabilities, workerCapacity := "", "", "", ""
 	serverFlag := ""
+	workspaceIDFlag := ""
+	invalidWorkspaceIDFlag := false
 	tokenFlag := ""
 	tokenFileFlag := ""
 	workerTokenFlag := ""
@@ -137,6 +148,9 @@ func main() {
 				stateFilters = append(stateFilters, parseStateFlag(val)...)
 			case "server":
 				serverFlag = val
+			case "workspace-id":
+				workspaceIDFlag = val
+				invalidWorkspaceIDFlag = invalidWorkspaceIDFlag || strings.TrimSpace(val) == ""
 			case "token":
 				tokenFlag = val
 			case "token-file":
@@ -207,6 +221,13 @@ func main() {
 			if i < len(before) {
 				serverFlag = before[i]
 			}
+		case "--workspace-id":
+			i++
+			if i < len(before) && !strings.HasPrefix(before[i], "-") && strings.TrimSpace(before[i]) != "" {
+				workspaceIDFlag = before[i]
+			} else {
+				invalidWorkspaceIDFlag = true
+			}
 		case "--token":
 			i++
 			if i < len(before) {
@@ -272,15 +293,42 @@ func main() {
 		os.Exit(cmdTest(testArgs, jsonOut))
 
 	case "run":
-		if len(args) < 2 {
-			die("run requires a plan file path (and optionally an input file path)")
+		if invalidWorkspaceIDFlag {
+			die("--workspace-id requires a non-empty workspace ID")
 		}
-		runArgs := args[1:]
-		runArgs, workspace = absorbFlagValue("workspace", runArgs, workspace)
-		runArgs, fakeConfig = absorbFlagValue("fake-config", runArgs, fakeConfig)
-		runArgs, serverFlag = absorbFlagValue("server", runArgs, serverFlag)
-		runArgs, dataDir = absorbFlagValue("data-dir", runArgs, dataDir)
-		runArgs = withoutArg(runArgs, "--json")
+		runFlags := map[string]*string{
+			"workspace": &workspace, "workspace-id": &workspaceIDFlag,
+			"fake-config": &fakeConfig, "adapters": &adaptersDir, "data-dir": &dataDir,
+			"server": &serverFlag, "token": &tokenFlag, "token-file": &tokenFileFlag,
+		}
+		var runArgs []string
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			switch arg {
+			case "--help", "-h":
+				fmt.Print(runUsage)
+				return
+			case "--json":
+				continue
+			}
+			name := longFlagName(arg)
+			value, embedded := longFlagOptionalValue(arg)
+			if dst := runFlags[name]; dst != nil && (arg == "--"+name || embedded && strings.HasPrefix(arg, "-")) {
+				if !embedded {
+					if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+						die("--" + name + " requires a value")
+					}
+					i++
+					value = args[i]
+				}
+				if name == "workspace-id" && strings.TrimSpace(value) == "" {
+					die("--workspace-id requires a non-empty workspace ID")
+				}
+				*dst = value
+				continue
+			}
+			runArgs = append(runArgs, arg)
+		}
 		if len(runArgs) < 1 {
 			die("run requires a plan file path (and optionally an input file path)")
 		}
@@ -288,7 +336,7 @@ func main() {
 		if len(runArgs) >= 2 {
 			inputArg = runArgs[1]
 		}
-		os.Exit(cmdRun(runArgs[0], inputArg, fakeConfig, adaptersDir, dataDir, workspace, serverFlag, tokenFlag, tokenFileFlag, jsonOut))
+		os.Exit(cmdRun(runArgs[0], inputArg, fakeConfig, adaptersDir, dataDir, workspace, workspaceIDFlag, serverFlag, tokenFlag, tokenFileFlag, jsonOut))
 
 	case "graph":
 		os.Exit(cmdGraph(args[1:], dataDir, jsonOut))
@@ -697,7 +745,11 @@ func cmdRunsWithStore(store state.Store, stateFilters []string, jsonOut bool) in
 	return 0
 }
 
-func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
+func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace, workspaceID, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
+	if workspaceID != "" && serverArg == "" {
+		fmt.Fprintln(os.Stderr, "error: --workspace-id requires --server. Use --workspace for a standalone checkout path.")
+		return 2
+	}
 	shutdownTelemetry, telemetryErr := setupTelemetry()
 	if telemetryErr != nil {
 		fmt.Fprintln(os.Stderr, telemetryErr)
@@ -710,7 +762,7 @@ func cmdRun(planPath, inputPath, fakeConfigPath, adaptersDir, dataDir, workspace
 
 	// If --server is provided, compile locally and submit to the remote coordinator.
 	if serverArg != "" {
-		return cmdRunRemote(ctx, planPath, inputPath, dataDir, serverArg, tokenFlagVal, tokenFileFlagVal, jsonOut)
+		return cmdRunRemote(ctx, planPath, inputPath, dataDir, workspaceID, serverArg, tokenFlagVal, tokenFileFlagVal, jsonOut)
 	}
 
 	p, err := loadPlan(planPath)
@@ -890,7 +942,7 @@ func strOrDefault(s, def string) string {
 // and then polls until the run reaches a terminal state, printing progress as
 // events arrive. This is semantically equivalent to `muxlio submit` followed by
 // `muxlio status`, but in a single blocking call.
-func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
+func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, workspaceID, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
 	serverURL, profileToken, err := resolveServer(serverArg, dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -933,10 +985,11 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, serverArg, 
 		fmt.Fprintf(os.Stderr, "error: marshalling plan: %v\n", err)
 		return 1
 	}
-	submitBody, _ := json.Marshal(map[string]json.RawMessage{
-		"plan":  json.RawMessage(planBytes),
-		"input": json.RawMessage(inputData),
-	})
+	submitBody, err := json.Marshal(runSubmission{WorkspaceID: workspaceID, Plan: planBytes, Input: inputData})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: encoding run submission: %v\n", err)
+		return 1
+	}
 	submitReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/runs", bytes.NewReader(submitBody))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: creating request: %v\n", err)

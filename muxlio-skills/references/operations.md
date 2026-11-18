@@ -49,7 +49,7 @@ muxlio init [--data-dir dir] [--workspace dir] [--agent name] [--starter]
 muxlio build <workflow.ts|plan.json> [--out file]
 muxlio check <workflow.ts|plan.json>
 muxlio test <workflow.ts|plan.json> --input in.json
-muxlio run <workflow.ts|plan.json> [input.json]
+muxlio run <workflow.ts|plan.json> [input.json] [--server <profile|URL> [--workspace-id id]]
 muxlio graph <workflow.ts|plan.json|run-id>
 muxlio inspect <workflow.ts|plan.json|run-id>
 muxlio events <run-id> [--since seq] [--limit N]
@@ -63,7 +63,7 @@ muxlio upgrade [--prefix dir]
 muxlio server start|install
 muxlio worker start
 muxlio service start|stop|restart [--config path]
-muxlio submit [--server URL] plan.json input.json
+muxlio submit [--server URL] [--workspace-id id] plan.json input.json
 muxlio status [--server URL] [run-id]
 muxlio pause|resume|cancel [--server URL] run-id
 muxlio version

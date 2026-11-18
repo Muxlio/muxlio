@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+type runSubmission struct {
+	WorkspaceID string          `json:"workspaceId,omitempty"`
+	Plan        json.RawMessage `json:"plan"`
+	Input       json.RawMessage `json:"input"`
+}
+
 func cmdRemote(command string, args []string, dataDir string) int {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile name")
@@ -48,11 +54,7 @@ func cmdRemote(command string, args []string, dataDir string) int {
 			fmt.Fprintln(os.Stderr, e)
 			return 1
 		}
-		raw, e := json.Marshal(struct {
-			WorkspaceID string          `json:"workspaceId,omitempty"`
-			Plan        json.RawMessage `json:"plan"`
-			Input       json.RawMessage `json:"input"`
-		}{*workspaceID, p, input})
+		raw, e := json.Marshal(runSubmission{WorkspaceID: *workspaceID, Plan: p, Input: input})
 		if e != nil {
 			fmt.Fprintln(os.Stderr, e)
 			return 1

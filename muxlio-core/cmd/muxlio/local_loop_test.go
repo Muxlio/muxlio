@@ -30,7 +30,7 @@ func TestRunAllowsValidationWarnings(t *testing.T) {
 	defer server.Close()
 	for _, target := range []string{"", server.URL} {
 		old, r, w := captureStdout(t)
-		code := cmdRun(path, "", "", "", dir, "", target, "", "", true)
+		code := cmdRun(path, "", "", "", dir, "", "", target, "", "", true)
 		w.Close()
 		restoreStdout(old)
 		out, _ := io.ReadAll(r)
@@ -56,7 +56,7 @@ func TestRunRejectsMissingBindingBeforeDispatch(t *testing.T) {
 	defer server.Close()
 	for _, target := range []string{"", server.URL} {
 		// An invalid adapter/workspace would return 2 if preflight did not run first.
-		if code := cmdRun(path, "", "", filepath.Join(dir, "absent-adapters"), dir, "relative", target, "", "", true); code != 1 {
+		if code := cmdRun(path, "", "", filepath.Join(dir, "absent-adapters"), dir, "relative", "", target, "", "", true); code != 1 {
 			t.Fatalf("target=%q code=%d", target, code)
 		}
 	}

@@ -209,6 +209,12 @@ for its graph, queue reason, attempts, and artifacts. `muxlio cancel RUN_ID
 --server http://127.0.0.1:7600` cancels it; `muxlio resume RUN_ID --server
 http://127.0.0.1:7600` continues a paused run.
 
+If the coordinator has multiple authorized workspaces, list them with
+`muxlio workspace list --server <profile-or-URL>`, then pass
+`--workspace-id <id>` on `muxlio run`. You can reuse the same TypeScript source
+or compiled Plan IR for each authorized workspace when the plan leaves the
+workspace unbound. See [workspace configuration examples](../service.md#select-an-authorized-project-per-run).
+
 ### Run with real adapters
 
 For a capability comparison, decision guide, and minimal ACP/A2A examples, see
@@ -307,7 +313,9 @@ muxlio service start
 # Submit compiled Plan IR JSON (not .ts); CLI prints the coordinator response and exits
 muxlio submit --server http://127.0.0.1:7600 plan.json input.json
 # Loopback requests load the bearer token from ~/.muxlio/config.json automatically
-# Use muxlio build/check first, or muxlio run plan.ts input.json --server ... to compile locally then block until done
+# List IDs and aliases available on this coordinator. A single workspace from init is named default.
+muxlio workspace list --server http://127.0.0.1:7600
+muxlio run plan.ts input.json --server http://127.0.0.1:7600 --workspace-id default
 
 # Check on it later
 muxlio status --server http://127.0.0.1:7600
@@ -318,7 +326,7 @@ muxlio service stop
 muxlio service restart
 ```
 
-`muxlio run plan.ts input.json --server http://127.0.0.1:7600` compiles the workflow locally, submits it remotely, and blocks until a terminal state (like submit + poll). Closing the client or SSH session does not cancel the coordinator's work. Pause takes effect at the next operation boundary; cancel stops local adapter processes when possible.
+`muxlio run plan.ts input.json --server http://127.0.0.1:7600` compiles the workflow locally, submits it remotely, and blocks until a terminal state (like submit + poll). Add `--workspace-id <id>` to bind the run to a coordinator workspace identity without editing the workflow or plan file (same field as `muxlio submit --workspace-id`). Closing the client or SSH session does not cancel the coordinator's work. Pause takes effect at the next operation boundary; cancel stops local adapter processes when possible.
 
 For remote access, forward over SSH instead of exposing the API (see [muxlio-docs/service.md](service-reference.md#submit-tonight-check-in-the-morning) for details):
 
@@ -616,7 +624,8 @@ muxlio init [--data-dir dir] [--workspace dir] [--agent name] [--starter]
 muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
 muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
 muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
-muxlio run <workflow.ts|plan.json> [input.json]     Run a plan (fake or real executor; or --server to submit remotely)
+muxlio run <workflow.ts|plan.json> [input.json]     Run a plan locally
+muxlio run <workflow.ts|plan.json> [input.json] --server <profile|URL> [--workspace-id id]  Run via a coordinator
 muxlio graph <workflow.ts|plan.json|run-id>         Display DAG visualization (ascii, json, mermaid)
 muxlio inspect <workflow.ts|plan.json|run-id>       Print plan structure or run status
 muxlio events <run-id> [--since seq] [--limit N]    Print run execution events
@@ -640,13 +649,13 @@ muxlio worker start                                 Connect an outbound remote w
 muxlio service start [--config path]                Start supervised coordinator, worker and UI (background)
 muxlio service stop [--config path]                 Stop the running service
 muxlio service restart [--config path]              Stop then start the service (start if not running)
-muxlio submit [--server URL] plan.json input.json    Submit a durable run
+muxlio submit [--server URL] [--workspace-id id] plan.json input.json    Submit a durable run
 muxlio status [--server URL] [run-id]                Query remote run status
 muxlio pause|resume|cancel [--server URL] run-id      Control a remote run
 muxlio version                                      Print version info
 ```
 
-Global options: `--json`, `--server <profile|URL>`, `--token <token>`, `--token-file <file>`, `--fake-config <file>`, `--adapters <dir>`, `--workspace <dir>`, `--data-dir <dir>`, `--addr <host:port>`.
+Global options: `--json`, `--server <profile|URL>`, `--workspace-id <id>`, `--token <token>`, `--token-file <file>`, `--fake-config <file>`, `--adapters <dir>`, `--workspace <dir>`, `--data-dir <dir>`, `--addr <host:port>`.
 
 See [workspace configuration examples](../service.md#select-an-authorized-project-per-run) for built-in and remote workers.
 
