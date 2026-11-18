@@ -315,6 +315,7 @@ muxlio submit --server http://127.0.0.1:7600 plan.json input.json
 # Loopback requests load the bearer token from ~/.muxlio/config.json automatically
 # List IDs and aliases available on this coordinator. A single workspace from init is named default.
 muxlio workspace list --server http://127.0.0.1:7600
+muxlio preflight plan.ts input.json --server http://127.0.0.1:7600 --workspace-id default
 muxlio run plan.ts input.json --server http://127.0.0.1:7600 --workspace-id default
 
 # Check on it later
@@ -626,6 +627,8 @@ muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
 muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
 muxlio run <workflow.ts|plan.json> [input.json]     Run a plan locally
 muxlio run <workflow.ts|plan.json> [input.json] --server <profile|URL> [--workspace-id id]  Run via a coordinator
+muxlio preflight <workflow.ts|plan.json> [input.json] --server <profile|URL> --workspace-id <id> [--json]
+                                                    Check coordinator feasibility without starting a run
 muxlio graph <workflow.ts|plan.json|run-id>         Display DAG visualization (ascii, json, mermaid)
 muxlio inspect <workflow.ts|plan.json|run-id>       Print plan structure or run status
 muxlio events <run-id> [--since seq] [--limit N]    Print run execution events

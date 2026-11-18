@@ -140,12 +140,19 @@ func (c *Coordinator) authorizeDispatchWorkspace(req workers.ExecuteRequest, che
 			return req, err
 		}
 		for _, worker := range available {
-			if worker.ID == binding.WorkerID && worker.Labels[workers.WorkspaceIdentityLabelPrefix+id] == "true" && (req.WorkspaceDigest == "" || worker.Labels[workers.WorkspaceDigestLabelPrefix+id] == req.WorkspaceDigest) {
-				return req, nil
+			if worker.ID != binding.WorkerID {
+				continue
 			}
+			if worker.Labels[workers.WorkspaceIdentityLabelPrefix+id] != "true" {
+				return req, fmt.Errorf("owning worker %q does not advertise workspace %q. Configure and advertise the binding on that worker", binding.WorkerID, id)
+			}
+			if req.WorkspaceDigest != "" && worker.Labels[workers.WorkspaceDigestLabelPrefix+id] != req.WorkspaceDigest {
+				return req, fmt.Errorf("owning worker %q advertises a mismatched digest for workspace %q. Provision and advertise the plan's pinned contents", binding.WorkerID, id)
+			}
+			return req, nil
 		}
 	}
-	return req, fmt.Errorf("workspace %q has no available owning worker %q advertising the requested content revision; no checkout substitution is allowed", id, binding.WorkerID)
+	return req, fmt.Errorf("workspace %q has no available owning worker %q. Confirm the worker is registered and sending heartbeats", id, binding.WorkerID)
 }
 
 // ResolveRunWorkspaceID resolves current aliases for discovery. Unknown selectors

@@ -94,6 +94,30 @@ pass `nextOffset` with `--offset` to fetch the next page. See the
 [workspace catalog API](architecture/service-reference.md#workspace-catalog-api)
 for the status definitions.
 
+Check the workflow, input, and selected workspace before submitting a run.
+
+```sh
+muxlio preflight workflow.ts input.json --server production --workspace-id dataset
+muxlio preflight plan.json --server production --workspace-id data --json
+```
+
+Preflight imports and evaluates workflow source locally just like
+`muxlio run --server`. Use source you trust, or supply a compiled Plan IR JSON
+file to skip local source evaluation. Preflight accepts the same server
+profiles, URLs, and bearer credentials. Omitted input defaults to `{}`.
+The coordinator validates the plan and input, resolves workspace aliases, and
+uses recent worker information to check executor requirements. For steps that
+use a workspace, it also checks ownership and the content digest. The check runs
+without creating a run, reserving capacity, or dispatching work. Provider access,
+quota, and execution-time conditions remain unverified.
+
+Use `--json` to get the complete `POST /v1/runs/preflight` response, including
+executor diagnostics, worker evidence, and the lists of checks performed and
+unverified or deferred checks. MCP `preflight_run` uses the same endpoint.
+The CLI rejects responses over 32 MiB. It exits with code 0 when the coordinator
+reports feasible, 1 when the plan is infeasible or the check fails, and 2 for
+usage errors.
+
 Submit `workspaceId` in `POST /v1/runs`, the MCP `start_run` arguments,
 or the SDK workflow options. Remote CLI submissions accept `--workspace-id` on
 `muxlio submit` and `muxlio run … --server`.

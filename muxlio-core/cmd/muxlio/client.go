@@ -19,6 +19,25 @@ type runSubmission struct {
 	Input       json.RawMessage `json:"input"`
 }
 
+func resolveClientServer(serverArg, dataDir, tokenFlag, tokenFile string) (string, string, error) {
+	serverURL, profileToken, err := resolveServer(serverArg, dataDir)
+	if err != nil {
+		return "", "", err
+	}
+	token := loadToken(tokenFlag, tokenFile)
+	if token == "" {
+		token = profileToken
+	}
+	return serverURL, token, nil
+}
+
+func readRunInput(path string) (json.RawMessage, error) {
+	if path == "" {
+		return json.RawMessage(`{}`), nil
+	}
+	return os.ReadFile(path)
+}
+
 func cmdRemote(command string, args []string, dataDir string) int {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	server := fs.String("server", os.Getenv("MUXLIO_SERVER"), "coordinator URL or profile name")

@@ -38,6 +38,8 @@ Usage:
   muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
   muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
   muxlio run <workflow.ts|plan.json> [input.json]     Run a plan (see muxlio run --help for remote options)
+  muxlio preflight <workflow.ts|plan.json> [input.json] --server <profile|URL> --workspace-id <id> [--json]
+                                                       Check feasibility without starting a run
   muxlio graph <workflow.ts|plan.json|run-id>         Display DAG visualization (ascii, json, mermaid)
   muxlio inspect <workflow.ts|plan.json|run-id>       Print plan structure or run status
   muxlio snapshots <run-id> [--current] [--attempt ID] Inspect intermediate artifacts
@@ -80,7 +82,7 @@ Options:
   --adapters <dir>        Directory of executor adapter scripts (real execution)
   --workspace <dir>       Authorized workspace for standalone run (or MUXLIO_WORKSPACE)
                           Worker start uses this as the worker-local adapter workspace
-  --workspace-id <id>     Coordinator workspace identity for run --server
+  --workspace-id <id>     Coordinator workspace identity for remote runs and preflight
   --data-dir <dir>        Runtime data directory (default: ~/.muxlio)
   --addr <host:port>      Address for server to listen on (default: 127.0.0.1:7600)
 `
@@ -116,6 +118,9 @@ func main() {
 	var stateFilters []string
 	raw := os.Args[1:]
 	before, args := partitionArgs(raw)
+	if len(args) > 0 && args[0] == "preflight" {
+		os.Exit(cmdPreflight(append(before, args[1:]...), dataDir))
+	}
 	if len(args) == 0 && len(before) > 0 {
 		args = before
 		before = nil
@@ -943,14 +948,10 @@ func strOrDefault(s, def string) string {
 // events arrive. This is semantically equivalent to `muxlio submit` followed by
 // `muxlio status`, but in a single blocking call.
 func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, workspaceID, serverArg, tokenFlagVal, tokenFileFlagVal string, jsonOut bool) int {
-	serverURL, profileToken, err := resolveServer(serverArg, dataDir)
+	serverURL, token, err := resolveClientServer(serverArg, dataDir, tokenFlagVal, tokenFileFlagVal)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
-	}
-	token := loadToken(tokenFlagVal, tokenFileFlagVal)
-	if token == "" {
-		token = profileToken
 	}
 
 	// 1. Compile / load plan locally.
@@ -968,15 +969,10 @@ func cmdRunRemote(ctx context.Context, planPath, inputPath, dataDir, workspaceID
 	}
 
 	// 2. Read input (default to {}).
-	var inputData []byte
-	if inputPath != "" {
-		inputData, err = os.ReadFile(inputPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: reading input: %v\n", err)
-			return 1
-		}
-	} else {
-		inputData = []byte("{}")
+	inputData, err := readRunInput(inputPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: reading input: %v\n", err)
+		return 1
 	}
 
 	// 3. Submit to coordinator.

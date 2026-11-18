@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -212,40 +213,41 @@ func collectExecutorRequirements(p *plan.Plan) []*executorRequirements {
 // Without a worker registry, execute nodes cannot be considered feasible.
 // Use Coordinator.PreflightRun to include workspace authorization.
 func PreflightRun(p *plan.Plan, input json.RawMessage, store state.Store) PreflightResponse {
-	return preflightRun(p, input, store, nil)
+	return preflightRun(p, input, store, nil, "")
 }
 
-func preflightRun(p *plan.Plan, input json.RawMessage, store any, coordinator *Coordinator) PreflightResponse {
+func preflightRun(p *plan.Plan, input json.RawMessage, store any, coordinator *Coordinator, workspaceError string) PreflightResponse {
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
 	resp := PreflightResponse{
-		Verified:    []string{"plan_structural_validity"},
-		InputSchema: p.InputSchema,
-		Deferred:    []string{"dynamic_input_bindings", "worker_secret_resolution", "current_tool_authorization", "execution_environment_and_dependencies"},
-		Unverified:  unverifiedItems,
+		WorkspaceError: workspaceError,
+		Verified:       []string{"plan_structural_validity"},
+		InputSchema:    p.InputSchema,
+		Deferred:       []string{"dynamic_input_bindings", "worker_secret_resolution", "current_tool_authorization", "execution_environment_and_dependencies"},
+		Unverified:     unverifiedItems,
 	}
 
 	// Work on a copy; workspace authorization must not mutate the caller plan.
 	copy := *p
 	p = &copy
-	if err := p.VerifyDigest(); err != nil {
-		resp.WorkspaceError = err.Error()
+	if resp.WorkspaceError == "" {
+		if err := p.VerifyDigest(); err != nil {
+			resp.WorkspaceError = err.Error()
+		}
 	}
 	if coordinator != nil && resp.WorkspaceError == "" {
 		if err := coordinator.AuthorizePlanWorkspace(p, input); err != nil {
 			resp.WorkspaceError = err.Error()
-		} else {
-			resp.WorkspaceID = p.WorkspaceID
-			resp.Verified = append(resp.Verified, "workspace_authorization")
-			if p.WorkspaceID != "" {
-				_, binding, err := coordinator.workspaceRegistry().Resolve(p.WorkspaceID)
-				if err == nil {
-					resp.WorkspaceWorkerID = binding.WorkerID
-				}
+		}
+		resp.Verified = append(resp.Verified, "workspace_authorization")
+		if p.WorkspaceID != "" {
+			id, binding, err := coordinator.workspaceRegistry().Resolve(p.WorkspaceID)
+			if err == nil {
+				resp.WorkspaceID, resp.WorkspaceWorkerID = id, binding.WorkerID
 			}
 		}
-	} else if coordinator == nil {
+	} else {
 		resp.Unverified = append(append([]string{}, resp.Unverified...), "workspace_authorization")
 	}
 	// 1. Structural plan validation.
@@ -305,11 +307,12 @@ func preflightRun(p *plan.Plan, input json.RawMessage, store any, coordinator *C
 	for _, req := range execReqs {
 		req.request.WorkspaceID, req.request.WorkspaceWorkerID = resp.WorkspaceID, resp.WorkspaceWorkerID
 		req.request.WorkspaceDigest = p.WorkspaceDigest
-		ep := buildExecutorPreflight(req.request.Executor, req, liveWorkers)
-		resp.Executors = append(resp.Executors, ep)
+		workspaceBlocked := req.workspaceRequired && resp.WorkspaceError != ""
+		ep := buildExecutorPreflight(req.request.Executor, req, liveWorkers, workspaceBlocked, hasRegistry && resp.WorkerError == "")
 		if !ep.Satisfiable {
 			allExecutorsSatisfiable = false
 		}
+		resp.Executors = append(resp.Executors, ep)
 	}
 
 	resp.Feasible = !planHasErrors && resp.InputError == "" && allExecutorsSatisfiable && resp.WorkspaceError == "" && resp.WorkerError == ""
@@ -318,7 +321,7 @@ func preflightRun(p *plan.Plan, input json.RawMessage, store any, coordinator *C
 
 // buildExecutorPreflight checks whether any live worker can satisfy the
 // given executor requirements and returns a populated ExecutorPreflight.
-func buildExecutorPreflight(execName string, req *executorRequirements, liveWorkers []state.Worker) ExecutorPreflight {
+func buildExecutorPreflight(execName string, req *executorRequirements, liveWorkers []state.Worker, workspaceBlocked, hasWorkerSnapshot bool) ExecutorPreflight {
 	ep := ExecutorPreflight{
 		Executor: execName,
 		NodeIDs:  req.nodeIDs,
@@ -348,22 +351,28 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 		ep.Diagnostics = []string{guardErr.Error()}
 		return ep
 	}
-	if len(liveWorkers) == 0 {
-		ep.BlockingReasons = []string{"no_live_workers"}
-		ep.Diagnostics = []string{"Register a worker and confirm its heartbeat before submitting this plan."}
-		return ep
-	}
 	raw, err := json.Marshal(guarded)
 	if err != nil {
 		ep.BlockingReasons = []string{"invalid_execution_request"}
 		return ep
 	}
 	reasons := make(map[string]struct{})
+	owner := guarded.WorkspaceWorkerID
+	ownerLive := false
 	for _, w := range liveWorkers {
 		for _, capability := range w.Capabilities {
 			if capability.Name == execName || (workers.IsAnyAgent(execName) && workers.IsAgent(capability.Name)) {
 				ep.WorkerEvidence = append(ep.WorkerEvidence, PreflightWorkerEvidence{WorkerID: w.ID, LastSeen: w.LastSeen, Capability: capability})
 			}
+		}
+		if req.workspaceRequired && owner != "" {
+			if w.ID != owner {
+				continue
+			}
+			ownerLive = true
+		}
+		if workspaceBlocked {
+			continue
 		}
 		if !w.Draining && w.Capacity > 0 && workers.MatchWorkerDispatch(w.ID, execName, raw, w.Capabilities, w.Labels) {
 			ep.MatchingWorkers = append(ep.MatchingWorkers, w.ID)
@@ -389,6 +398,16 @@ func buildExecutorPreflight(execName string, req *executorRequirements, liveWork
 	sort.Slice(ep.WorkerEvidence, func(i, j int) bool { return ep.WorkerEvidence[i].WorkerID < ep.WorkerEvidence[j].WorkerID })
 	ep.Satisfiable = len(ep.MatchingWorkers) > 0
 	if !ep.Satisfiable {
+		switch {
+		case workspaceBlocked:
+			reasons["workspace_authorization_failed"] = struct{}{}
+		case !hasWorkerSnapshot:
+			reasons["worker_registry_unavailable"] = struct{}{}
+		case req.workspaceRequired && owner != "" && !ownerLive:
+			reasons["workspace_owner_offline"] = struct{}{}
+		case len(liveWorkers) == 0:
+			reasons["no_live_workers"] = struct{}{}
+		}
 		for r := range reasons {
 			ep.BlockingReasons = append(ep.BlockingReasons, r)
 		}
@@ -418,6 +437,14 @@ func preflightReasonMessage(reason string) string {
 		return "Enable the required isolation runtime on an eligible worker."
 	case "placement_label_mismatch":
 		return "Register a worker with the required placement labels or adjust the node's placement."
+	case "no_live_workers":
+		return "Register a worker and confirm its heartbeat before submitting this plan."
+	case "worker_registry_unavailable":
+		return "Restore access to the worker registry and retry preflight."
+	case "workspace_authorization_failed":
+		return "Resolve the reported workspace error before evaluating worker eligibility."
+	case "workspace_owner_offline":
+		return "The owning worker has no recent heartbeat. Confirm it is registered and online."
 	case "workspace_revision_mismatch":
 		return "Provision and advertise the prepared workspace content revision pinned by the plan."
 	case "workspace_owner_mismatch":
@@ -566,24 +593,30 @@ func handlePreflightRun(w http.ResponseWriter, r *http.Request, store state.Stor
 func (c *Coordinator) PreflightRun(req PreflightRequest) PreflightResponse {
 	p := req.Plan
 	if err := p.VerifyDigest(); err != nil {
-		resp := preflightRun(&p, req.Input, c.store, nil)
-		resp.Feasible = false
-		resp.WorkspaceError = err.Error()
-		return resp
+		return preflightRun(&p, req.Input, c.store, c, err.Error())
 	}
 	if req.WorkspaceID != "" {
 		if p.WorkspaceID != "" {
-			original, _, e1 := c.workspaceRegistry().Resolve(p.WorkspaceID)
-			selected, _, e2 := c.workspaceRegistry().Resolve(req.WorkspaceID)
-			if e1 != nil || e2 != nil || original != selected {
-				resp := preflightRun(&p, req.Input, c.store, nil)
-				resp.Feasible = false
-				resp.WorkspaceError = "submission and plan workspace IDs disagree or are unregistered; select an operator-configured workspace ID"
-				return resp
+			registry := c.workspaceRegistry()
+			original, _, planErr := registry.Resolve(p.WorkspaceID)
+			selected, _, selectedErr := registry.Resolve(req.WorkspaceID)
+			if planErr != nil || selectedErr != nil || original != selected {
+				var message string
+				switch {
+				case selectedErr != nil:
+					message = "selected workspace: " + selectedErr.Error()
+				case planErr != nil:
+					message = "plan workspace: " + planErr.Error()
+				default:
+					message = fmt.Sprintf("submission and plan workspace IDs disagree: selected %q, plan requires %q", selected, original)
+				}
+				return preflightRun(&p, req.Input, c.store, c, message)
 			}
 		}
 		p.WorkspaceID = req.WorkspaceID
-		_, _ = p.ComputeDigest()
+		if _, err := p.ComputeDigest(); err != nil {
+			return preflightRun(&p, req.Input, c.store, c, err.Error())
+		}
 	}
-	return preflightRun(&p, req.Input, c.store, c)
+	return preflightRun(&p, req.Input, c.store, c, "")
 }
