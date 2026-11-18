@@ -26,6 +26,9 @@ func TestExplicitCredentialReferencesAndTransport(t *testing.T) {
 		{name: "remote root override forbidden", endpoint: "https://remote.example", ref: "root", override: "explicit", fail: true},
 		{name: "unknown reference", endpoint: "http://localhost:7600", ref: "typo", fail: true},
 		{name: "insecure remote", endpoint: "http://remote.example", override: "explicit", fail: true},
+		{name: "private IPv4", endpoint: "http://192.168.1.1:7600", override: "explicit", want: "explicit"},
+		{name: "private IPv6", endpoint: "http://[fd00::1]:7600", override: "explicit", want: "explicit"},
+		{name: "private IP root forbidden", endpoint: "http://192.168.1.1:7600", ref: "root", fail: true},
 		{name: "explicit override", endpoint: "http://localhost:7600", ref: "root", override: "override", want: "override"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

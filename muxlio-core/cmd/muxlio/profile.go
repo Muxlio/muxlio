@@ -27,7 +27,7 @@ func (p serverProfile) credentials(cfgPath, dataDir, rootToken string) (string, 
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", "", fmt.Errorf("invalid coordinator URL in server profile; use an HTTP(S) URL without credentials, query, or fragment")
 	}
-	if u.Scheme == "http" && !coordinatorconfig.IsLoopback(u.Hostname()) {
+	if u.Scheme == "http" && !coordinatorconfig.AllowsPlainHTTP(u.Hostname()) {
 		return "", "", fmt.Errorf("remote coordinator %s requires HTTPS", u.Host)
 	}
 	if p.CredentialRef != "" && p.CredentialRef != "root" {

@@ -37,18 +37,21 @@ func TestResolveServerNeverSendsRootTokenToRemoteProfiles(t *testing.T) {
 		"remote":{"url":"https://remote.example"},
 		"remote-file":{"url":"https://remote.example","tokenFile":"remote.token"},
 		"remote-root":{"url":"https://remote.example","credentialRef":"root"},
+		"lan":{"url":"http://192.168.1.1:7600","token":"lan-token"},
+		"lan-no-token":"http://192.168.1.1:7600",
+		"lan-root":{"url":"http://192.168.1.1:7600","credentialRef":"root"},
 		"plaintext":{"url":"http://203.0.113.5:7600","token":"scoped"},
 		"other-loopback":{"url":"http://127.0.0.1:9999"}}}`
 	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"local": "root-admin", "legacy-local": "root-admin", "remote": "", "remote-file": "scoped-from-file", "other-loopback": ""} {
+	for name, want := range map[string]string{"local": "root-admin", "legacy-local": "root-admin", "remote": "", "remote-file": "scoped-from-file", "lan": "lan-token", "lan-no-token": "", "other-loopback": ""} {
 		_, token, err := resolveServer(name, root)
 		if err != nil || token != want {
 			t.Errorf("%s: token=%q err=%v", name, token, err)
 		}
 	}
-	for _, name := range []string{"remote-root", "plaintext"} {
+	for _, name := range []string{"remote-root", "lan-root", "plaintext"} {
 		if _, token, err := resolveServer(name, root); err == nil {
 			t.Errorf("%s accepted with token %q", name, token)
 		}

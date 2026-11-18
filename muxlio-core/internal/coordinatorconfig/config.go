@@ -99,8 +99,8 @@ func ResolveFile(path, target, envServer, envToken string) (string, string, erro
 		}
 		return strings.TrimSpace(string(raw)), nil
 	}
-	if u.Scheme == "http" && !IsLoopback(u.Hostname()) {
-		return "", "", fmt.Errorf("remote coordinator requires HTTPS; configure an explicit scoped profile")
+	if u.Scheme == "http" && !AllowsPlainHTTP(u.Hostname()) {
+		return "", "", fmt.Errorf("remote coordinator %s requires HTTPS", u.Host)
 	}
 	if selected.CredentialRef != "" && selected.CredentialRef != "root" {
 		return "", "", fmt.Errorf("unknown coordinator credentialRef; use root only for a local profile")
@@ -119,6 +119,16 @@ func ResolveFile(path, target, envServer, envToken string) (string, string, erro
 		token, err = readToken(config.coordinatorCredentials)
 	}
 	return strings.TrimRight(selected.URL, "/"), token, err
+}
+
+// AllowsPlainHTTP accepts loopback and literal private IP addresses. Names
+// other than localhost require HTTPS regardless of their DNS records.
+func AllowsPlainHTTP(host string) bool {
+	if IsLoopback(host) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsPrivate()
 }
 
 // IsLoopback recognizes literal loopback endpoints without DNS inference.
