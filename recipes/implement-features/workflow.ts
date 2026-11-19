@@ -3,9 +3,10 @@
 // Batch feature implementation: implement → review → verify/fix loop → commit.
 // Shared-write tasks retain the worker checkout's Git metadata.
 //
+// Register the checkout as a workspace before submitting the recipe.
 //   muxlio check recipes/implement-features/workflow.ts
-//   muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json \
-//     --adapters adapters --data-dir ~/.muxlio --json
+//   muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.example.json \
+//     --server local --workspace-id localhost --json
 import { workflow, zodToJsonSchema } from '@muxlio/sdk';
 import { feature as featureSchema, input, maxFeatures } from './schemas.js';
 import { commit, fix, implement, requireCleanWorkspace, review, stageChanges, verify } from './tasks.js';

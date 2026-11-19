@@ -89,9 +89,9 @@ Both SDK authoring APIs preserve these declarations.
   directory. Pure steps can opt into fork output reuse with this mode.
 * `read-only`: mounts the source read-only through a required isolation backend.
   Native execution rejects this mode because it cannot enforce it.
-* `shared-write`: explicitly exposes the source as writable. Requires at least
-  one exclusive key. Every task accessing the same mutable tree or external
-  resource must declare the same key, including tasks in different runs.
+* `shared-write`: explicitly exposes the source as writable. Coordinator
+  admission automatically reserves the resolved workspace exclusively across
+  runs. Use explicit `concurrencyKeys` to reserve other shared resources.
 
 For example, `{ "workspaceMode": "shared-write", "concurrencyKeys":
 ["repository:project", "deployment:staging"] }` reserves both resources with
@@ -101,10 +101,9 @@ releases them. Lost holders stay uncertain until reconciliation, including
 requests declaring `effect: "none"`. Cancelled holders retain their keys until the worker confirms completion;
 lease expiry alone does not prove that a process has stopped.
 
-Keyed execution requires coordinator worker admission. Direct script execution
-(including local `muxlio run --adapters`) rejects concurrency keys because it
-cannot enforce the coordinator's durable reservations. Submit keyed workflows
-to a coordinator with a registered worker instead.
+Shared writes and explicit concurrency keys require coordinator worker
+admission. Submit those workflows to a coordinator with a registered worker to
+enforce the durable reservations.
 
 Attempt scratch directories are allocated exclusively beneath the attempt ID;
 restarting an attempt creates a fresh execution directory. Scratch must be outside
@@ -330,6 +329,9 @@ stderr is returned in the completion `logs` field; stdout remains reserved for
 the adapter's JSON `ExecuteResult`. A completion includes the assignment's
 fencing identity and either outputs or a structured execution error.
 
+The same worker can run inside a local Docker sandbox. See the
+[Docker Sandbox walkthrough](../docker-sandbox.md) for workspace registration,
+agent mixins, and a shared Git checkout.
 
 ## Admission budgets and fairness
 

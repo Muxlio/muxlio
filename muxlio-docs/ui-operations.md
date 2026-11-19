@@ -25,6 +25,9 @@ row **Run** action to open the launch dialog. Pick the immutable version and an
 authorized workspace, then edit the JSON input, which starts at `{}`. A single
 workspace is preselected and visible, including the legacy `default` workspace.
 If the catalog lists several workspaces, select the one you want to use.
+For example, if your workstation and the `sbx` Docker worker both offer Codex,
+choose `localhost` for the host checkout or `sandbox` for the Docker checkout.
+The workflow can use the same `agent/codex` executor in either place. [Host and sandbox example](docker-sandbox.md#choose-a-worker-by-workspace)
 
 Select **Preflight** to validate the plan, workspace binding, and input schema.
 The dialog shows the coordinator's diagnostics and unverified checks. A feasible
@@ -35,6 +38,20 @@ and JSON in the same dashboard tab to reuse its submission key.
 
 The dialog requires workspace catalog access. If it reports that your
 credential cannot read the catalog, ask the operator for `workspaces:read` access.
+
+## Add items to a running workflow
+
+Open a run that declares an appendable collection. Its collection panel shows
+the accepted items in order and whether the collection is open. Select **Add item**,
+enter JSON that matches the displayed **Item schema**, and choose **Submit item**.
+An item with a new ID joins the queue in acceptance order. Select **Close collection**
+to finish accepting items and let the queued work drain. These actions require
+the `inputs` permission for the run.
+
+For example, the live feature recipe exposes a **features** collection. Submit
+`{"id":"next-feature","feature":"Describe the next change"}` to add work on the
+current batch branch. That collection closes after 15 minutes without pending
+work. [Docker Sandbox example](docker-sandbox.md#run-two-features-on-the-same-branch)
 
 ## Take the next action
 

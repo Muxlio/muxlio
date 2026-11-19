@@ -57,6 +57,7 @@ nav:
   - Home: index.md
   - Choosing an adapter: adapters.md
   - Service Guide: service.md
+  - Docker Sandbox walkthrough: docker-sandbox.md
   - MCP Integration: mcp.md
   - Workflow templates: workflow-templates.md
   - Observability UI: ui-operations.md
@@ -68,6 +69,7 @@ nav:
       - Worker Protocol: architecture/worker-protocol.md
       - Artifact Storage: architecture/artifact-storage.md
       - Environment Manifests: architecture/environment-manifests.md
+      - Prepared Workspace Handoff: architecture/workspace-handoff.md
       - Execution Security: architecture/execution-security.md
       - CLI and SDK Reference: architecture/developer-reference.md
       - Service Reference: architecture/service-reference.md

@@ -53,9 +53,10 @@ run `muxlio service start` before using MCP.
 
 Profiles may be URL strings or objects with `url`, `token`, and/or `tokenFile`.
 `MUXLIO_TOKEN` overrides configured tokens. Profiles never inherit top-level
-credentials implicitly. The `root` credential reference is restricted to loopback;
-remote profiles require their own scoped credentials and HTTPS. Relative token
-file paths resolve against the config directory.
+credentials implicitly. The `root` credential reference is restricted to loopback.
+Use separate scoped credentials for other profiles. Coordinator URLs accept
+plain HTTP for loopback and literal private IP addresses. Hostnames other than
+`localhost` require HTTPS. Relative token file paths resolve against the config directory.
 
 Run `muxlio integrations doctor` to diagnose coordinator configuration,
 connectivity, TLS, authentication and workers read permission. Use `--server NAME`

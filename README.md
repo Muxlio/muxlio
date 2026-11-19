@@ -36,7 +36,16 @@ Implement → Review → Run checks → Commit locally → Next feature
 The workflow runs the repository's build and tests before committing. After ten
 unsuccessful verification attempts it pauses for attention. You can inspect the
 change, review notes, test output, and execution history before deciding to push.
-The recipe creates local commits; it does not push them.
+Each verified commit becomes the starting point for the next feature.
+
+To run the batch in a private Git clone, follow the
+[Docker Sandbox walkthrough](muxlio-docs/docker-sandbox.md). One sandbox worker
+offers Claude Code, Codex, Cursor, and shell commands. The example takes two
+dependent features from setup through preflight, execution, and fetching the
+commits. The [live recipe](recipes/README.md#append-features-to-a-running-batch)
+also lets you add features to the same branch while the batch is running.
+If you set up both workspaces, choose `localhost` to run on the host or `sandbox`
+to run on the `sbx` worker.
 
 I keep Muxlio running on a Mac mini, queue work through my assistant, and review
 progress later. You choose the machine: your workstation, another computer, or
@@ -65,12 +74,12 @@ Install and sign in to the agent CLIs your workflows will use separately.
 With Muxlio installed, initialize the workspace where work should happen:
 
 ```sh
-muxlio init --agent kiro
+muxlio init --client kiro --scope project
 muxlio service start
 ```
 
-Choose `--agent` for your assistant. `init` allows all bundled executors by default,
-including agent tools, commands, workspace writes, and network access. Change
+Choose `--client` for your authoring assistant. `init` allows all bundled
+executors by default, including agent tools, commands, workspace writes, and network access. Change
 `executors` in `~/.muxlio/config.json` to restrict permissions; repeated init
 preserves explicit policies and disabled executors. `init` prepares the workspace settings,
 credentials, agent instructions, and MCP settings. The service starts the
@@ -93,6 +102,10 @@ execution graph, attempts, live logs, and generated artifacts. Pause, resume, or
 retry when appropriate. Uncertain external effects require reconciliation before
 work can safely repeat.
 
+To launch a registered workflow from the dashboard, select its version and an
+authorized workspace, enter the inputs, and run preflight. See the
+[dashboard guide](muxlio-docs/ui-operations.md#launch-a-workflow).
+
 ```sh
 muxlio service stop
 muxlio service restart
@@ -104,6 +117,7 @@ muxlio service restart
 | --- | --- |
 | [Which adapter should I use?](muxlio-docs/adapters.md) — native CLIs, ACP, and A2A | [Adapter capability reference](muxlio-docs/architecture/developer-reference.md#run-with-real-adapters) |
 | [Service Guide](muxlio-docs/service.md) — setup and service controls | [Service reference](muxlio-docs/architecture/service-reference.md) |
+| [Docker Sandbox walkthrough](muxlio-docs/docker-sandbox.md) — run dependent features in a private clone | [Worker protocol](muxlio-docs/architecture/worker-protocol.md) |
 | [MCP Integration](muxlio-docs/mcp.md) — build and run from your assistant | [MCP tools and protocol](muxlio-docs/architecture/mcp-reference.md) |
 | [Observability UI](muxlio-docs/ui-operations.md) — follow progress and results | [Operations API](muxlio-docs/architecture/operations-reference.md) |
 | [Benchmarks](muxlio-docs/benchmarks.md) — what the suite checks | [Benchmark methodology](muxlio-docs/architecture/benchmark-methodology.md) |

@@ -10,11 +10,12 @@ permissions of the account that starts it.
 
 ## Build and install locally
 
-Requires Go matching `muxlio-core/go.mod` (currently 1.26). Runtime use requires
-neither Go nor Node nor a source checkout. Agent provider CLIs and the tools
-needed by the selected command adapter must separately be on PATH.
+Builds require Go matching `muxlio-core/go.mod` (currently 1.26) and Node.js
+22.13 or later to build the UI. Installed workers need the agent CLIs and
+tools selected by the workflow on `PATH`.
 
 ```sh
+npm ci
 bash scripts/build-release.sh /private/tmp/muxlio-install
 /private/tmp/muxlio-install/bin/muxlio version
 # Install to a stable user prefix and make the CLI available in this shell:
@@ -163,12 +164,9 @@ credentials or upstream branch to complete a run. Authorize command execution
 with `executors.command.allow: true` in `config.json` and restart the service
 after changing configuration.
 
-Review and push the commits manually from the worker when ready, using your
-normal Git authentication. Commits remain on that machine until pushed.
-
-Existing submitted runs retain their compiled plans. Removing the push step
-from the recipe applies to newly compiled and submitted runs; it does not remove
-that step from an older failed run.
+Review and push from the worker when ready, using your normal Git authentication.
+With a worker in a Docker Sandbox private clone, you can fetch the commits locally
+for review. See the [Docker Sandbox walkthrough](../docker-sandbox.md#fetch-and-review-the-commits).
 
 ### Dedicated provider credentials
 
@@ -213,7 +211,7 @@ coordinator is reachable from untrusted networks.
 Environment overrides: `MUXLIO_HOME`, `MUXLIO_ADDR`, `MUXLIO_ADAPTERS`, `MUXLIO_UI`,
 `MUXLIO_WORKSPACE`, `MUXLIO_CAPABILITIES` (comma-separated), `MUXLIO_TLS_CERT`,
 `MUXLIO_TLS_KEY`, `MUXLIO_SERVER`, `MUXLIO_TOKEN`, `MUXLIO_CONFIG`. Explicit environment values override configuration.
-See the README Configuration section for the full field reference.
+See the [runtime configuration reference](developer-reference.md#configuration) for the full field list.
 
 Standalone commands remain available. For real standalone execution, explicitly
 select the project with `muxlio run plan.json input.json --adapters /path/to/adapters

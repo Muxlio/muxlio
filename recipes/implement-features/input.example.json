@@ -1,0 +1,14 @@
+{
+  "features": [
+    {
+      "id": "summary-formatter",
+      "feature": "Add a plain-text run summary formatter to the CLI with unit tests.",
+      "context": "Format the run ID, workflow name, and status. Leave CLI output as it is for this feature."
+    },
+    {
+      "id": "status-summary",
+      "feature": "Add a --summary option to the status command for a single run.",
+      "context": "Use the formatter from summary-formatter. Add a test that exercises the new output and preserve the existing default and JSON output."
+    }
+  ]
+}

@@ -52,12 +52,12 @@ muxlio version
 Then, from the workspace you want to use:
 
 ```sh
-muxlio init --agent kiro --allow-command
+muxlio init --client kiro --scope project
 muxlio service start
 ```
 
 `init` prepares your workspace configuration, credentials, agent instructions,
-and MCP settings. `--allow-command` permits workflow command steps.
+and MCP settings. Fresh configs enable the bundled executors, including `command`.
 `service start` starts the coordinator, worker, UI, and MCP listener together.
 
 Connect your assistant with the [MCP guide](mcp.md). Ask it to build a workflow
@@ -68,6 +68,10 @@ the files and tools your workflow uses.
 For the feature example, the workflow and its verification commands are in the
 [implement-features recipe](https://github.com/Muxlio/muxlio/tree/main/recipes/implement-features).
 Use it as a starting point and adapt the steps, agents, and checks to your work.
+The [Docker Sandbox walkthrough](docker-sandbox.md) shows two dependent features
+running against one branch in a private clone with Claude Code, Codex, Cursor,
+and command execution available on the `sbx` worker. Select `localhost` for the
+host checkout or `sandbox` for the Docker checkout.
 Follow a run in the UI at `http://localhost:7600` or ask your assistant for its status.
 
 <div class="home-section-heading"><div><span class="section-kicker">EXPLORE MUXLIO</span><h2>Guides and reference</h2></div></div>

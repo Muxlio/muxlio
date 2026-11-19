@@ -53,12 +53,13 @@ through the UI or your assistant.
 ### Prerequisites
 
 - **Go** 1.26+ (to build the coordinator, CLI, and adapters)
-- **Node.js** 18+ (for the TypeScript SDK, compiler, testing harness, and UI)
+- **Node.js** 22.13+ (for the full TypeScript build and UI)
 - **Agent provider CLIs** on `PATH` for whichever executors you intend to use (e.g. `agy`, `claude`, `codex`, `kiro`)
 
 ### Build from source
 
 ```sh
+npm ci                 # installs the pinned workspace dependencies
 npm run setup          # builds release prefix under ~/.muxlio and muxlio init
 npm run release        # build CLI, adapters, and UI into ~/.muxlio (no init)
 ```
@@ -88,11 +89,11 @@ muxlio init --data-dir ~/.muxlio --workspace /absolute/path/to/project --agent a
 # --starter writes a sample workflow; --client (or --agent) installs the complete skill bundle for that client.
 ```
 
-For workflows that run checks or local Git commands, use `muxlio init --agent kiro --allow-command`
-from the target project. The flag explicitly authorizes command checks and local
-Git commits while preserving other executor settings. `muxlio service start` also
-starts the configured MCP listener; no Muxlio source checkout or separate MCP
-process is needed to build and start workflows through your assistant.
+Fresh configs enable the bundled executors, including `command` for build checks
+and Git. Repeated initialization preserves explicit policies. Use
+`muxlio init --allow-command` to re-enable command execution in an existing config.
+`muxlio service start` also starts the configured MCP listener, so an installed
+service can build and start workflows through your assistant.
 
 Default capabilities match the shipped adapters: `agent/a2a`, `agent/acp`, `agent/antigravity`, `agent/claude`, `agent/codex`, `agent/cursor`, `agent/kiro`, and `command`. Edit `capabilities` in config to restrict what the service will run.
 
@@ -289,13 +290,17 @@ submitting this recipe. Shared writes require durable coordinator admission,
 which automatically serializes writes to the resolved workspace; direct
 `--adapters` execution cannot enforce these reservations.
 
-Review the commits in the worker's workspace and push manually when ready.
-Commits stay on that worker until you push them.
+Review the commits in the worker's workspace and push manually when ready. With
+a Docker Sandbox worker in clone mode, fetch them from the host using its Git
+remote. See the [Docker Sandbox walkthrough](../docker-sandbox.md).
+
+This example uses `localhost` as a workspace ID for a checkout registered to
+the `local` worker. To run the same recipe in Docker, select `sandbox` instead.
 
 ```sh
 muxlio check recipes/implement-features/workflow.ts
-muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.json \
-  --server http://127.0.0.1:7600 --json
+muxlio run recipes/implement-features/workflow.ts recipes/implement-features/input.example.json \
+  --server local --workspace-id localhost --json
 ```
 
 The recipe splits task definitions into `tasks.ts` and Zod input schemas into `schemas.ts`, imported by `workflow.ts` — the same pattern to follow for your own multi-file workflows.

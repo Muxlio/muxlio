@@ -23,7 +23,7 @@ workflow commands need as well.
 From the project or workspace where you want work to happen:
 
 ```sh
-muxlio init --client kiro --scope project --allow-command
+muxlio init --client kiro --scope project
 muxlio service start
 ```
 
@@ -32,8 +32,10 @@ or `antigravity`. It installs Muxlio authoring instructions and registers its lo
 `--agent` is a compatible alias for the authoring client, independent of workflow
 execution adapters. Antigravity receives instructions only until its MCP CLI
 contract can be verified. Use `--scope user` for user registration.
-`--allow-command` explicitly permits command steps, including build checks and
-Git commands. Omit it if your workflows do not need command execution.
+Fresh configs enable all bundled executors, including `command` for build checks
+and Git. To restrict execution, edit `executors` in `config.json`. Repeated
+initialization preserves explicit policies and disabled executors. Use
+`--allow-command` to re-enable a previously disabled `command` executor.
 
 `init` saves your workspace and prepares runtime directories, access credentials,
 and MCP settings. `service start` starts the coordinator, local worker, web UI,
@@ -127,6 +129,9 @@ and its attempts. The legacy single `workspace` configuration selects `default`.
 
 Each identity belongs to one worker. Configure the same identity and owner in
 that worker's runtime `config.json`, with a path that exists on that machine.
+When two workers offer the same executor, such as `agent/codex`, selecting the
+workspace selects its owner for steps that use that workspace. For a host and
+sandbox example, see [Choose a worker by workspace](docker-sandbox.md#choose-a-worker-by-workspace).
 Workers resolve symlinks at startup and check bindings again before execution.
 Unknown IDs, unauthorized input paths, unavailable owning workers, and missing
 worktrees fail closed; another checkout is never substituted. Client current
@@ -156,6 +161,9 @@ calls through the client (requires login and trust approvals). See the MCP guide
 for remote HTTP profiles, repair and removal.
 The worker needs the files being processed; the installed service does not need
 Muxlio's source repository.
+
+To keep a feature batch and its tools inside a local Docker sandbox, follow the
+[Docker Sandbox walkthrough](docker-sandbox.md) for a worker in a private Git clone.
 
 ## Manage the service
 

@@ -24,6 +24,10 @@ Markdown report and Canvas dashboard.
 
 ## Append features to a running batch
 
+The [Docker Sandbox walkthrough](../muxlio-docs/docker-sandbox.md) shows how to
+run the fixed or live feature recipe on a sandbox worker with Claude Code,
+Codex, Cursor, and `command` in one private Git clone.
+
 Submit `recipes/implement-features/live.ts` to the coordinator using the same input
 and workspace as the fixed batch in `recipes/implement-features/workflow.ts`. Keep
 the run ID returned by submission. The live recipe accepts up to 20 features
