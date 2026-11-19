@@ -253,6 +253,11 @@
 .home-section-heading .section-kicker { display: block; margin-bottom: .55rem; }
 .home-section-heading > p { max-width: 400px; margin: 0 0 .15rem; color: #9fb0b2; font-size: .76rem; line-height: 1.7; }
 .home-path-heading { margin-bottom: 1.25rem; }
+.vocab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: .5rem; }
+.vocab-card { padding: 1rem 1.1rem; border: 1px solid #28383a; border-radius: 9px; background: #111a1c; }
+.vocab-card strong { display: block; color: #dfeae8; font-size: .77rem; font-weight: 650; }
+.vocab-card small { display: block; margin-top: 6px; color: #90a2a4; font-size: .65rem; line-height: 1.55; }
+.vocab-card code { font-size: .61rem; }
 .path-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .path-card { display: grid; grid-template-columns: 36px minmax(0, 1fr) 20px; align-items: center; gap: 12px; padding: 1rem; border: 1px solid #28383a; border-radius: 9px; background: #111a1c; color: inherit !important; text-decoration: none !important; transition: border-color .18s ease, transform .18s ease, background .18s ease; }
 .path-card:hover { transform: translateY(-2px); border-color: #4b7972; background: #152120; }
@@ -285,7 +290,7 @@
   .step-state { font-size: .45rem; }
   .section-intro { grid-template-columns: 1fr; gap: .6rem; }
   .section-intro .section-kicker { grid-column: auto; }
-  .benefit-grid, .path-grid, .home-proof-band { grid-template-columns: 1fr; }
+  .benefit-grid, .path-grid, .vocab-grid, .home-proof-band { grid-template-columns: 1fr; }
   .benefit-card { min-height: 205px; }
   .home-proof-band { gap: 1.8rem; margin-bottom: 3.5rem; }
   .home-section-heading { align-items: flex-start; flex-direction: column; gap: .65rem; }

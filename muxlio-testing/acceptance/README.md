@@ -1,5 +1,9 @@
 # Installed-client acceptance
 
+Developer documentation for the installed-product matrix (not published on the
+Muxlio docs site). Context: [What Muxlio is](../../muxlio-docs/index.md#what-is-muxlio),
+[Setup defaults](../../muxlio-docs/service.md#setup-defaults).
+
 Unit tests (`npm test`, `go test ./...`) do not require a release or credentials.
 The separate installed-client CI job builds the actual release, then runs this
 suite on Linux and macOS in an OS/client-version matrix. Each job selects a

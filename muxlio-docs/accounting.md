@@ -1,5 +1,7 @@
 # Accounting
 
+--8<-- "snippets/root-context.md"
+
 Adapters, persisted attempts, worker completions, API responses, CLI output, and
 TypeScript clients share canonical accounting. Protocol identifiers remain v1.
 

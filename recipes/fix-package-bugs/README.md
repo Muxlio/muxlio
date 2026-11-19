@@ -1,5 +1,7 @@
 # Find and fix package bugs
 
+Context: [What Muxlio is](../../muxlio-docs/index.md#what-is-muxlio), [Setup defaults](../../muxlio-docs/service.md#setup-defaults).
+
 This recipe walks through packages in a checkout, one at a time. It uses the
 same agent handoff as [implement-features](../implement-features/workflow.ts):
 

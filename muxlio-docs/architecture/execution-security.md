@@ -1,5 +1,7 @@
 # Execution credentials and trust boundaries
 
+--8<-- "snippets/reference-context.md"
+
 Commands and agents execute arbitrary code. Native agent adapters require an
 explicit operator authorization policy, described below. Other executors without
 security declarations retain trusted native execution: host network, host
@@ -53,10 +55,10 @@ boundary capabilities:
 | `docker-vm` (macOS Docker Desktop) | None | Image, scratch and declared mounts | Namespaces inside a shared Linux VM | Only explicitly supplied credentials |
 
 Docker Desktop containers share the VM kernel; they are not a dedicated microVM
-per agent. Docker Sandboxes (`sbx`) is a separate product with its own workspace,
-network and credential policies; it is not automatically selected or treated as
-equivalent to an offline backend. New integrations must implement the backend
-contract and pass conformance before operators advertise them.
+per agent. New integrations must implement the backend contract and pass
+conformance before operators advertise them. Docker Sandboxes (`sbx`) is a
+**separate** operator pattern for hosting a whole worker; see
+[Docker Sandboxes and Muxlio workers](#docker-sandboxes-sbx-and-muxlio-workers).
 
 Workspace capabilities distinguish `private-clone` (an independent regular-file
 snapshot in scratch), `read-only-host`, and `writable-host`. A private clone
@@ -75,6 +77,8 @@ readiness probes run through the same backend and environment filter before
 work starts; they do not execute natively when required isolation is unavailable.
 Worker registration probes still inspect the operator-managed host environment.
 
+## Per-attempt isolation backends
+
 Before advertising a backend, run its real boundary conformance on the worker:
 
 ```sh
@@ -92,6 +96,68 @@ read-only versus writable mounts, and simultaneous independent scratch trees.
 An explicitly selected unavailable backend fails the test. Without explicit
 selection, the suite tests installed Linux bubblewrap or skips with a reason;
 a skipped test does not qualify a backend. Re-run after runtime/config changes.
+
+## Docker Sandboxes (`sbx`) and Muxlio workers
+
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`) let you run a
+**remote Muxlio worker** inside Docker's managed environment (VM, mixins, Git
+clone, credential injection). Muxlio does **not** select or provision `sbx`
+automatically. The coordinator usually stays on the **host** loopback; the
+sandbox worker dials out to `host.docker.internal:7600` (or another host address
+you allow in Docker policy).
+
+| Layer | What it controls |
+| --- | --- |
+| Docker `sbx` | Sandbox lifecycle, agent CLI kits, credential placeholders, optional network rules to the host |
+| Muxlio coordinator (host) | Plan validation, scheduling, SQLite state, administrator token, artifact proxy |
+| Muxlio worker inside `sbx` | Step execution with configured `capabilities`, native agent authorization, optional per-attempt isolation only if the worker advertises backends |
+
+This is **not** the same as per-attempt `bwrap` / `oci` / `docker-vm` backends
+in the table above. A worker process running inside `sbx` still uses **native
+trusted** agent execution for typical recipes unless a step declares
+`executionPolicy` / `isolation` that requires an advertised backend **inside
+that worker**. Building Muxlio into a Linux sandbox does not, by itself, turn
+every agent call into an OCI-isolated attempt on a macOS host.
+
+### Credentials and tokens
+
+- Keep the coordinator **administrator** token on the host (`config.json`). Do
+  not paste it into workflow inputs or sandbox shell history.
+- Give the sandbox worker only the cluster **worker token** (file or env), with
+  the same power as any remote worker: claim assignments and transfer artifacts
+  for that coordinator. The [Docker Sandbox walkthrough](../docker-sandbox.md)
+  shows copying the token through a host prompt into a protected file in `sbx`.
+- Provider credentials for Claude, Codex, and Cursor inside `sbx` are normally
+  **Docker-managed** (`sbx secret set`, mixins, placeholders). Configure
+  `executors.<capability>.env` on the sandbox worker with placeholder names Docker
+  resolves; Muxlio still filters ambient env and never takes secrets from plan
+  text.
+
+### Network and workspaces
+
+- `sbx policy allow network localhost:7600` (or your coordinator port) is an
+  **operator** Docker policy so the worker reaches the host API. Muxlio does not
+  configure Docker Sandboxes network rules.
+- Register the same logical **workspace ID** on the host (path as seen from inside
+  `sbx`) and on the sandbox worker (local path). Preflight and the UI workspace
+  picker choose which worker runs each step. See
+  [Choose a worker by workspace](../docker-sandbox.md#choose-a-worker-by-workspace)
+  and [Workspace catalog](service-reference.md#workspace-catalog-api).
+
+### Containment expectations
+
+- A **private Git clone** inside `sbx` limits damage to the host checkout but is
+  **not** a substitute for scoped API grants, executor `authorization` policies,
+  or per-attempt isolation when you need enforced boundaries for untrusted code.
+- Steps that mutate the sandbox workspace still run with the worker's configured
+  agent policies (default: broad native trust after `muxlio init`). Tighten
+  `executors.<capability>.authorization` in the sandbox `config.json` the same way
+  as on a host worker.
+- Artifact uploads from the sandbox worker use the worker token; treat the
+  coordinator and that token as a trusted pair for the batch you run.
+
+End-to-end setup, mixins, and commit fetch: [Docker Sandbox walkthrough](../docker-sandbox.md).
+Worker registration and heartbeats: [Worker protocol](worker-protocol.md).
 
 The operator configures each worker executor with handle-to-environment-name
 mappings, for example:

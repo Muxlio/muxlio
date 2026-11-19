@@ -1,5 +1,7 @@
 # Muxlio Error Codes
 
+--8<-- "snippets/errors-context.md"
+
 Plan diagnostics carry stable machine-readable codes, severity, phase, and repair
 guidance. HTTP error envelopes contain code and message, with fix and details
 when available.
@@ -148,6 +150,86 @@ when `POST /v1/runs` receives a structurally invalid plan.
 - **Cause:** A retry policy has out-of-range `maxAttempts` or negative backoff durations.
 - **Fix:** Set `maxAttempts` to 0–100 and backoff durations to non-negative values.
 
+### MUXLIO_BAD_TIMEOUT
+- **Phase:** plan
+- **Cause:** `timeoutSeconds`, `queueTimeoutSeconds`, or `requestExpiresSeconds` is not a finite, non-negative duration within allowed bounds.
+- **Fix:** Set timeout fields to finite, non-negative numbers of seconds.
+
+### MUXLIO_BAD_DEADLINE
+- **Phase:** plan
+- **Cause:** `deadlineSeconds` is negative or exceeds maximum duration limits.
+- **Fix:** Set `deadlineSeconds` to a finite, positive duration in seconds.
+
+### MUXLIO_BAD_RUN_LIMITS
+- **Phase:** plan
+- **Cause:** Run-wide limits (e.g. `limits.maxElapsedSeconds`, `limits.maxTotalAttempts`) are negative or invalid.
+- **Fix:** Specify valid, positive numeric bounds for run-wide limits.
+
+### MUXLIO_BAD_WORKSPACE
+- **Phase:** plan
+- **Cause:** An execute node declares an invalid workspace mode or exclusive keys.
+- **Fix:** Set `workspace.mode` to `"snapshot"` or `"shared-write"`, and verify exclusive concurrency keys.
+
+### MUXLIO_BAD_WORKSPACE_DIGEST
+- **Phase:** plan
+- **Cause:** `workspaceDigest` is malformed or specified without an explicit `workspaceId`.
+- **Fix:** Use a valid SHA-256 digest (`sha256:<64 hex chars>`) and specify an authorized `workspaceId`.
+
+### MUXLIO_EXECUTION_POLICY
+- **Phase:** plan
+- **Cause:** Execution permissions, secret references, or isolation constraints are invalid.
+- **Fix:** Declare allowed secret names and an enforced isolation runtime for restricted attempts.
+
+### MUXLIO_ENVIRONMENT
+- **Phase:** plan
+- **Cause:** An environment manifest contains malformed variables, unrecognized permissions, or literal secrets.
+- **Fix:** Provide valid normalized environment pins and use secret references instead of inline credentials.
+
+### MUXLIO_LITERAL_CREDENTIAL
+- **Phase:** plan
+- **Cause:** Execution parameters or manifests contain literal credentials or private tokens.
+- **Fix:** Remove literal credentials and reference secrets via operator-configured worker handles (`secretRefs`).
+
+### MUXLIO_MISSING_CHILD_REF
+- **Phase:** plan
+- **Cause:** A `child` node is missing `childRef`.
+- **Fix:** Set `childRef` to the name of an existing subgraph.
+
+### MUXLIO_UNBOUNDED_CHILD
+- **Phase:** plan
+- **Cause:** A `child` node is missing a positive `maxDepth` bound.
+- **Fix:** Set `maxDepth` to a positive integer hard upper bound.
+
+### MUXLIO_BAD_BINDING
+- **Phase:** plan
+- **Cause:** An input binding does not contain exactly one of `ref` or `expr`.
+- **Fix:** Use `ref` for a node output or `expr` for a computed or literal value.
+
+### MUXLIO_BAD_PORT
+- **Phase:** plan
+- **Cause:** An input binding references an undeclared output port on a node.
+- **Fix:** Reference a declared output port or declare the port on the producing node's outputs.
+
+### MUXLIO_DEPENDENCY_CYCLE
+- **Phase:** plan
+- **Cause:** Node dependencies form a circular reference within a subgraph.
+- **Fix:** Remove circular node references so dependencies form a directed acyclic graph.
+
+### MUXLIO_BAD_COLLECTION
+- **Phase:** plan
+- **Cause:** An appendable collection declaration on a map or node is invalid.
+- **Fix:** Specify a valid collection name and item schema.
+
+### MUXLIO_BAD_EFFECT
+- **Phase:** plan
+- **Cause:** Unknown retry effect policy specified on an execute node.
+- **Fix:** Use a supported effect policy (`pure`, `idempotent`, `reconcilable`, `retryable`, or `nonretryable`).
+
+### MUXLIO_BAD_ON_EXHAUSTED
+- **Phase:** plan
+- **Cause:** An invalid `onExhausted` action was set on a loop node.
+- **Fix:** Set `onExhausted` to `"fail"` or `"proceed"`.
+
 ## HTTP API Errors (Request / Protocol Layer)
 
 These are the top-level `code` values returned directly in non-2xx responses.
@@ -193,11 +275,6 @@ These appear in run error fields (not API response codes) for failures during pl
 - **Phase:** run
 - **Cause:** The collection has more items than `maxItems` allows.
 - **Fix:** Increase `maxItems` or reduce the collection size.
-
-### Dependency cycle
-- **Phase:** plan
-- **Cause:** Nodes in a subgraph form a circular dependency.
-- **Fix:** Break the cycle by removing or redirecting a binding.
 
 ## Diagnostic identity and repair workflow
 
@@ -252,3 +329,12 @@ and repair fields take priority over payload details. Normal successful output
 and artifact responses retain their existing contracts. Known execution and
 environment credentials, sensitive structured keys, authorization values, URL
 credentials, and recognizable token strings are redacted before transport.
+
+## Related documentation
+
+| Topic | Page |
+| --- | --- |
+| Plan validation before submit | [MCP `check_plan`](../architecture/mcp-reference.md#check_plan), [durable execution](../architecture/durable-execution.md) |
+| Redaction and secrets in runs | [Execution security](../architecture/execution-security.md) |
+| HTTP error envelopes from the API | [Service reference](../architecture/service-reference.md) |
+

@@ -262,7 +262,13 @@ func TestUncooperativeHookCancellationIsBounded(t *testing.T) {
 	must(t, s.EnqueueDelivery(subscription.Delivery{ID: "one", SubscriptionID: sub.ID, State: subscription.StatePending, MaxRetries: 1}))
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	d := subscription.Dispatcher{Store: s, Events: s, Hooks: map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error { close(entered); <-release; return nil }}}
+	slotReleased := make(chan struct{})
+	d := subscription.Dispatcher{Store: s, Events: s, Hooks: map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error {
+		close(entered)
+		<-release
+		close(slotReleased)
+		return nil
+	}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -293,21 +299,31 @@ func TestUncooperativeHookCancellationIsBounded(t *testing.T) {
 		t.Fatalf("contention consumed an attempt: %+v", record)
 	}
 	close(release)
+	select {
+	case <-slotReleased:
+	case <-time.After(time.Second):
+		t.Fatal("stuck hook did not exit after release")
+	}
 	d.Hooks = map[string]subscription.Hook{"stuck": func(context.Context, []byte, string) error { return fmt.Errorf("unavailable") }}
 	now := time.Now().UTC()
-	for deadline := time.Now().Add(time.Second); ; {
+	// Advance the synthetic clock past any hook-busy deferral recorded while the slot
+	// was still held; a fixed now would keep deferred deliveries skipped forever.
+	retryAt := now.Add(3 * time.Hour)
+	for deadline := time.Now().Add(3 * time.Second); ; {
 		if time.Now().After(deadline) {
 			t.Fatal("released hook did not free its slot")
 		}
-		must(t, d.Tick(context.Background(), now.Add(2*time.Hour)))
+		must(t, d.Tick(context.Background(), retryAt))
 		record, err = s.GetDelivery("one")
 		must(t, err)
 		if record.Attempts > 0 {
 			break
 		}
+		retryAt = retryAt.Add(time.Second)
 		time.Sleep(time.Millisecond)
 	}
-	must(t, d.Tick(context.Background(), now.Add(3*time.Hour)))
+	// Second attempt must run after the backoff recorded on the first failure.
+	must(t, d.Tick(context.Background(), retryAt.Add(30*time.Second)))
 	dead, err := s.ListDeadLetters(10)
 	must(t, err)
 	if len(dead) != 1 {

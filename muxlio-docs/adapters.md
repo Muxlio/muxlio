@@ -1,5 +1,7 @@
 # Which adapter should I use?
 
+--8<-- "snippets/root-context.md"
+
 Muxlio runs workflow steps through **executor capabilities** (for example
 `agent/codex` or `agent/a2a`). Each capability is implemented by an **adapter**
 binary on the worker. Pick an adapter based on where the agent runs, how you
@@ -20,8 +22,9 @@ Shipped executors: `agent/antigravity`, `agent/claude`, `agent/codex`,
 `agent/cursor`, and `agent/kiro`.
 
 Each adapter runs that vendor's installed CLI in the attempt workspace. Setup is
-the same as using the CLI directly: install it, sign in, and list the capability in
-`~/.muxlio/config.json` if you restrict workers. Steps run **locally** on the
+the same as using the CLI directly: install it, sign in, and include the
+capability in `capabilities` in `~/.muxlio/config.json` when you restrict
+workers. Steps run **locally** on the
 worker. Provider streaming and tool activity appear in Muxlio live logs when the
 CLI emits them (`progress` capability). These adapters report **token usage** when
 the provider supplies it; they do not treat context-window occupancy as consumed
@@ -159,7 +162,7 @@ Workflow: [`examples/a2a.workflow.ts`](https://github.com/Muxlio/muxlio/tree/mai
 
 1. Deploy or select an A2A 0.3.0 agent with `remoteTask` support on the card.
 2. Configure a worker secret handle that resolves to `A2A_TOKEN` (see
-   [execution security](architecture/execution-security.md)). For example, map
+   [execution security → secret handles](architecture/execution-security.md)). For example, map
    the handle to the name of an environment variable that contains your token:
 
 ```json
@@ -190,6 +193,23 @@ muxlio run examples/a2a.workflow.ts examples/a2a.input.json \
 For ambiguous remote outcomes, see
 [Recovery and limits](architecture/service-reference.md#recovery-and-limits) and
 [Run with real adapters — agent/a2a](architecture/developer-reference.md#run-with-real-adapters).
+
+## Where the worker runs
+
+Adapter choice is separate from **where the worker process runs** and from
+**per-attempt isolation** on that worker.
+
+| Placement | Typical use | Read next |
+| --- | --- | --- |
+| Host `local` worker (`muxlio service start`) | Default install; native CLIs use operator login on the machine | [Service Guide](service.md) |
+| Outbound remote worker | Coordinator on one host, execution on another | [Worker protocol](architecture/worker-protocol.md) |
+| Worker inside [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`) | Private Git clone, Docker-managed agent credentials, coordinator on host loopback | [Docker Sandbox walkthrough](docker-sandbox.md), [Docker Sandboxes and Muxlio workers](architecture/execution-security.md#docker-sandboxes-sbx-and-muxlio-workers) |
+| `params.isolation` with `bwrap` / `oci` / `docker-vm` | Enforced boundaries for a **single attempt** on a worker that advertises backends | [Per-attempt isolation](architecture/execution-security.md#per-attempt-isolation-backends) |
+
+Native CLI adapters still invoke the vendor CLI on the **worker**; they do not by
+themselves move execution to a vendor cloud unless that CLI does. Secret handles,
+scoped API tokens, and executor `authorization` policies apply in every placement.
+See [Execution security](architecture/execution-security.md).
 
 ## Providing a compatible agent
 

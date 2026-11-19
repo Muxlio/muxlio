@@ -1,6 +1,9 @@
 # Workflow recipes
 
-For common shapes, start with the built-in [workflow template catalog](../muxlio-docs/workflow-templates.md).
+Worked examples for the execution model on the
+[documentation home](../muxlio-docs/index.md#what-is-muxlio) and
+[setup defaults](../muxlio-docs/service.md#setup-defaults). For common shapes,
+start with the built-in [workflow template catalog](../muxlio-docs/workflow-templates.md).
 Any MCP client can call `list_workflow_templates`, inspect a template with
 `get_workflow_template`, and compile it with `instantiate_workflow_template`.
 The five versioned shapes cover sequential verification, bounded parallel maps,

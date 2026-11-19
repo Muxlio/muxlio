@@ -1,5 +1,7 @@
 # USD recovery for bundled CLI adapters
 
+--8<-- "snippets/root-context.md"
+
 This implements the conservative recovery policy reviewed on 12 November 2026.
 Direct, attributable tool amounts precede local estimates. No source in this
 implementation establishes invoice-backed cash payments. Cost lookups cannot

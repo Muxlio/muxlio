@@ -1,7 +1,7 @@
 site_name: Muxlio
 site_description: >-
-  A durable workflow execution engine that coordinates AI agents and tools
-  through compiled, content-addressed plans.
+  Durable workflow coordinator for multi-step work across AI agents and
+  command-line tools—compiled plans, persistent runs, workers, and adapters.
 site_url: https://muxlio.github.io/muxlio/
 repo_url: https://github.com/Muxlio/muxlio
 repo_name: Muxlio/muxlio
@@ -9,6 +9,9 @@ edit_uri: edit/main/muxlio-docs/
 
 docs_dir: muxlio-docs
 site_dir: site
+
+exclude_docs: |
+  snippets/*
 
 theme:
   name: material
@@ -61,7 +64,9 @@ nav:
   - MCP Integration: mcp.md
   - Workflow templates: workflow-templates.md
   - Observability UI: ui-operations.md
-  - Accounting: accounting.md
+  - Accounting:
+      - Contract and limits: accounting.md
+      - USD cost recovery: usd-cost-recovery.md
   - Benchmarks: benchmarks.md
   - Architecture:
       - Overview: architecture/overview.md

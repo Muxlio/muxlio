@@ -1,10 +1,12 @@
 # Service configuration reference
 
+--8<-- "snippets/reference-context.md"
+
 `muxlio service start` starts a background process that owns the coordinator,
-one outbound local worker, static UI, and configured MCP HTTP listener. The UI
-and coordinator share a port; MCP uses its own configured port. Logs go to
-`logs/service.log` under the runtime directory. Use `muxlio service stop` or
-`restart` to manage it. Under launchd, systemd, or another supervisor, set
+one outbound local worker, bundled UI, and optional MCP HTTP listener. Default
+listen ports and stdio MCP registration: [Setup defaults](../service.md#setup-defaults).
+Logs go to `logs/service.log` under the runtime directory. Use `muxlio service stop`
+or `restart` to manage it. Under launchd, systemd, or another supervisor, set
 `MUXLIO_DAEMON=0` to keep the service in the foreground. It runs with the
 permissions of the account that starts it.
 
@@ -362,7 +364,8 @@ keychains or environment-only credentials may require an audited custom
 adapter. This feature does not claim automatic desktop credential forwarding.
 Optional macOS VM isolation uses Docker Desktop with explicit opt-in, an approved
 Linux image and the `desktop-linux` context; unavailable backends fail closed.
-See [sandbox boundaries and conformance](execution-security.md).
+See [per-attempt isolation and conformance](execution-security.md#per-attempt-isolation-backends)
+and [Docker Sandboxes workers](execution-security.md#docker-sandboxes-sbx-and-muxlio-workers).
 Native trusted execution
 does not promise network/filesystem containment. Back up the SQLite database
 using SQLite-aware tooling. Retention, admission budgets, and scoped API credentials

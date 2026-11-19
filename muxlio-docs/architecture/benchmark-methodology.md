@@ -1,5 +1,7 @@
 # Benchmark methodology
 
+--8<-- "snippets/reference-context.md"
+
 The open [reference suite](https://github.com/Muxlio/muxlio/tree/main/muxlio-core/benchmarks) runs incident processing
 workflows through the real Plan interpreter, SQLite store and executor contract.
 It retains individual observations and execution evidence. It is a reproducibility

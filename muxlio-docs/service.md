@@ -1,7 +1,21 @@
 # Start Muxlio
 
+--8<-- "snippets/root-context.md"
+
+Muxlio is a **durable workflow coordinator** for multi-step work across AI agents
+and command-line tools. You author an immutable **plan**; **`service start`**
+runs the **coordinator**, a local **worker**, the web UI, and MCP on the machine
+that executes your workflows. Each **run** keeps state after your chat
+disconnects.
+
 Run Muxlio on the machine that will do the work. That can be your workstation,
 another computer, or a server. Keep that machine running while workflows execute.
+Use it when steps need verification, retries, or hand-offs between agents and
+shell commands—not for one-off questions you can answer in the client. Plan/run vocabulary is on the [documentation home](index.md#what-is-muxlio).
+
+## Setup defaults
+
+--8<-- "snippets/setup-defaults.md"
 
 ## Install
 
@@ -27,19 +41,20 @@ muxlio init --client kiro --scope project
 muxlio service start
 ```
 
-Choose `--client` for the assistant you use: `kiro`, `codex`, `claude`, `cursor`,
-or `antigravity`. It installs Muxlio authoring instructions and registers its local stdio MCP server.
-`--agent` is a compatible alias for the authoring client, independent of workflow
-execution adapters. Antigravity receives instructions only until its MCP CLI
-contract can be verified. Use `--scope user` for user registration.
+Choose `--client` for the assistant you use (`kiro`, `codex`, `claude`, `cursor`,
+or `antigravity` for instructions only). Client registration rules and default
+ports are in [Setup defaults](#setup-defaults). Use `--scope user` for user-wide
+discovery. `--agent` is a compatible alias for `--client`.
 Fresh configs enable all bundled executors, including `command` for build checks
-and Git. To restrict execution, edit `executors` in `config.json`. Repeated
+and Git. To restrict which capabilities the local worker advertises, edit
+`capabilities` in `config.json`. Use the `executors` map for per-executor
+operator policies (`allow`, timeouts, environment, and authorization). Repeated
 initialization preserves explicit policies and disabled executors. Use
 `--allow-command` to re-enable a previously disabled `command` executor.
 
-`init` saves your workspace and prepares runtime directories, access credentials,
-and MCP settings. `service start` starts the coordinator, local worker, web UI,
-and MCP listener together in the background.
+`init` saves your workspace and prepares runtime directories and access
+credentials. `service start` starts the coordinator, local worker, bundled UI,
+and MCP HTTP listener as described under [Setup defaults](#setup-defaults).
 
 ## Select an authorized project per run
 
@@ -154,16 +169,14 @@ Independent worktrees remain eligible to execute in parallel.
 
 ## Connect and run
 
-Open **http://localhost:7600** for the UI. Connect your assistant using the
-[MCP guide](mcp.md), then ask it to build, validate, and run a workflow.
-Run `muxlio integrations doctor --client kiro --scope project` to verify tool
-calls through the client (requires login and trust approvals). See the MCP guide
-for remote HTTP profiles, repair and removal.
+Open **`http://127.0.0.1:7600/`** for the bundled UI. Follow [Setup defaults](#setup-defaults) for MCP; use the [MCP guide](mcp.md) for `integrations doctor`, remote HTTP, or repair. Then ask your assistant to build, validate, and run a workflow.
 The worker needs the files being processed; the installed service does not need
 Muxlio's source repository.
 
 To keep a feature batch and its tools inside a local Docker sandbox, follow the
 [Docker Sandbox walkthrough](docker-sandbox.md) for a worker in a private Git clone.
+Read [Execution security → Docker Sandboxes](architecture/execution-security.md#docker-sandboxes-sbx-and-muxlio-workers)
+for how outer `sbx` containment relates to coordinator tokens and per-attempt isolation.
 
 ## Manage the service
 

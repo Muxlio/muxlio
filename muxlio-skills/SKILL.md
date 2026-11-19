@@ -5,6 +5,10 @@ description: Decide whether to delegate durable, multi-step, scheduled, independ
 
 # Muxlio workflows
 
+Muxlio is a durable workflow coordinator (immutable plans, durable runs, workers,
+adapters). Human setup: https://muxlio.github.io/muxlio/#what-is-muxlio and
+https://muxlio.github.io/muxlio/service/#setup-defaults
+
 ## Decide whether to delegate
 
 Apply this decision guide in every client. Client wrappers may select native

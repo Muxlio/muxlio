@@ -1,5 +1,7 @@
 # Pinned environment manifests
 
+--8<-- "snippets/reference-context.md"
+
 Reproducibility records the software and permissions used for a plan. It does
 not promise deterministic model output. Existing unpinned plans continue to use
 the baseline executor contract.
@@ -68,7 +70,9 @@ launch, including `PATH`, `HOME`, and runner resolution overrides. Include every
 variable needed by the operator-managed installation. Internal log transport is
 injected separately. Permissions record the declared environment and do not
 grant access: existing worker authorization, execution policy, secret handles,
-and isolation enforcement still apply.
+and isolation enforcement still apply. Manifest permissions do not replace
+worker isolation backends or Docker Sandboxes outer containment; see
+[Execution security](execution-security.md).
 
 Secrets remain in operator configuration and transient execution envelopes.
 Exported manifests contain only names, normalized versions, digests, and known

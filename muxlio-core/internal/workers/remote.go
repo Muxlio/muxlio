@@ -141,7 +141,14 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 	shutdown := parent.Done()
 	ctx, stop := context.WithCancel(ctx)
 	var children sync.WaitGroup
-	defer func() { stop(); children.Wait() }()
+	var cancelActive func()
+	defer func() {
+		stop()
+		if cancelActive != nil {
+			cancelActive()
+		}
+		children.Wait()
+	}()
 	base, err := url.Parse(strings.TrimRight(cfg.CoordinatorURL, "/"))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return fmt.Errorf("invalid coordinator URL")
@@ -363,6 +370,13 @@ func RunRemoteWorker(ctx context.Context, cfg RemoteWorkerConfig, executor Execu
 		err        error
 	}
 	active := make(map[string]*attempt)
+	cancelActive = func() {
+		for _, child := range active {
+			if child.cancel != nil {
+				child.cancel()
+			}
+		}
+	}
 	type inputResult struct {
 		id      string
 		receipt remoteInputReceipt

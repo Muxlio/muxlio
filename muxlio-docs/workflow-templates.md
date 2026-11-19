@@ -1,12 +1,14 @@
 # Reusable workflow templates
 
+--8<-- "snippets/root-context.md"
+
 Codex, Kiro, Claude and other MCP clients can discover and instantiate the same
 catalog without writing TypeScript or constructing a complete graph. Call
 `list_workflow_templates` with `{}`, then `get_workflow_template` with a `name`
 and explicit `version`. Both return parameter, run input and output JSON Schemas.
 The catalog currently contains five shapes at version `"1"`.
 
-A template is a versioned authoring recipe. Instantiation validates parameters
+Instantiation validates parameters
 and compiles an ordinary Plan IR definition, including `inputSchema`,
 `outputSchema`, `requiredExecutors` and its content digest. It performs no work
 and stores nothing. For a one-off run, validate and preflight the returned plan,

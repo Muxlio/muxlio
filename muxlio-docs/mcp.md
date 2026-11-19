@@ -1,21 +1,31 @@
 # Use Muxlio from your assistant
 
-MCP connects your assistant to Muxlio. You describe the work; the assistant
-builds a workflow, validates it, starts a run, and helps you inspect the results.
+--8<-- "snippets/root-context.md"
+
+MCP connects your assistant to the coordinator so it can author plans, validate
+them, start runs, and inspect results while execution continues independently.
+Use it for multi-step, durable work—not for one-off chat tasks unless you
+explicitly want orchestration.
 
 ## Connect once
 
-First follow [Start Muxlio](service.md). The service starts its MCP listener at
-**http://localhost:7602/mcp** by default.
+First follow [Start Muxlio](service.md) and [Setup defaults](service.md#setup-defaults):
+run `muxlio service start`, then use stdio `muxlio-mcp` (normal for assistants)
+or optional Streamable HTTP on port **7602**.
 
-Register your authoring client from the workspace:
+Verify stdio registration:
 
 ```sh
-muxlio integrations add --client kiro --scope project
 muxlio integrations doctor --client kiro --scope project
 ```
 
-Choose `claude` (Claude Code), `codex` (CLI and IDE), `cursor`, or `kiro`.
+Use `integrations add` only when [Setup defaults](service.md#setup-defaults)
+says you need it:
+
+```sh
+muxlio integrations add --client kiro --scope project
+```
+
 Registration is noninteractive and uses the installed absolute `muxlio-mcp`
 executable over stdio by default. Use `--binary /absolute/path/to/muxlio-mcp`
 if it is not beside `muxlio` or on PATH. The bridge reads coordinator credentials
@@ -83,12 +93,6 @@ For saved remote endpoints, add an `mcpProfiles` entry to your protected Muxlio
 ```json
 {"mcpProfiles":{"office":{"url":"https://muxlio.example.com/mcp","bearerEnv":"MUXLIO_MCP_TOKEN"}}}
 ```
-
-`muxlio init --client NAME --scope project` combines setup, authoring instructions
-and local stdio registration. `--agent NAME` remains a compatible authoring-client
-alias; it does not select an execution adapter. Init defaults to project scope.
-Antigravity currently receives instructions only: no installed CLI contract was
-available to verify MCP registration, so `integrations` rejects it explicitly.
 
 ### Install and invoke the Muxlio skill
 

@@ -1,8 +1,25 @@
 # Run dependent features in a Docker sandbox
 
+--8<-- "snippets/root-context.md"
+
 Run a batch in a private Git clone inside a named [Docker sandbox](https://docs.docker.com/ai/sandboxes/). The host runs the Muxlio coordinator and dashboard. One worker inside the sandbox offers Claude Code, Codex, Cursor, and the `command` executor for builds, tests, and Git. Each feature starts from the preceding feature's verified local commit, so separate agent sessions can build on the same code.
 
 This example uses Muxlio's own repository as the project and provisions the worker manually. Docker Sandboxes manages the environment and Muxlio manages the run.
+
+## Security and trust boundaries
+
+Read [Execution credentials and trust boundaries](architecture/execution-security.md#docker-sandboxes-sbx-and-muxlio-workers)
+before running untrusted code. In short:
+
+- The **coordinator and administrator token stay on the host**; the sandbox holds
+  only a **worker token** and executes steps you authorize through
+  `capabilities` and executor policies.
+- Docker controls **outer** containment (`sbx` VM, mixins, `sbx policy` network
+  rules). Muxlio's **per-attempt** `bwrap` / `oci` / `docker-vm` backends are
+  separate unless you advertise them on the worker inside `sbx` and the plan
+  requires isolation.
+- Provider keys are injected by Docker into the sandbox; configure placeholders
+  in the sandbox worker's `config.json`, not in workflow inputs.
 
 ## Choose a worker by workspace
 
@@ -167,7 +184,7 @@ muxlio run recipes/implement-features/workflow.ts recipes/implement-features/inp
   --server local --workspace-id sandbox
 ```
 
-Muxlio implements and reviews the first feature, runs the repository's build and tests inside the sandbox, and commits after the checks pass. The second feature then starts with the formatter already committed. Failed checks feed a bounded repair loop. After ten unsuccessful verification attempts, the run pauses on that feature. Follow logs, notes, and test results in the host dashboard at `http://localhost:7600`.
+Muxlio implements and reviews the first feature, runs the repository's build and tests inside the sandbox, and commits after the checks pass. The second feature then starts with the formatter already committed. Failed checks feed a bounded repair loop. After ten unsuccessful verification attempts, the run pauses on that feature. Follow logs, notes, and test results on the host UI at `http://127.0.0.1:7600/` ([Setup defaults](service.md#setup-defaults)).
 
 The recipe uses `agent/any` for implementation, review, and repair, so Muxlio selects an eligible ready agent for each step. To assign specific agents, edit the corresponding tasks in `tasks.ts`, for example `agent/codex` for implementation, `agent/claude` for review, and `agent/cursor` for repair. The repair step runs when verification fails. The `command` executor handles verification and commits in the same clone.
 

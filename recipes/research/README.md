@@ -1,5 +1,7 @@
 # Research
 
+Context: [What Muxlio is](../../muxlio-docs/index.md#what-is-muxlio), [Setup defaults](../../muxlio-docs/service.md#setup-defaults).
+
 This recipe researches a topic one question at a time, carrying a complete
 `findings.md` artifact into the next iteration. Each pass reassesses coverage,
 records evidence and gaps, and returns structured progress. When all questions

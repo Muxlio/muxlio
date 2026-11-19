@@ -1,5 +1,7 @@
 # Remote worker protocol v1
 
+--8<-- "snippets/reference-context.md"
+
 ## Accounting snapshots
 
 Worker protocol and executor contract identifiers remain `v1` and `1`.
@@ -329,9 +331,12 @@ stderr is returned in the completion `logs` field; stdout remains reserved for
 the adapter's JSON `ExecuteResult`. A completion includes the assignment's
 fencing identity and either outputs or a structured execution error.
 
-The same worker can run inside a local Docker sandbox. See the
-[Docker Sandbox walkthrough](../docker-sandbox.md) for workspace registration,
-agent mixins, and a shared Git checkout.
+The same worker can run inside [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)
+(`sbx`). That pattern is **outer** worker placement, not automatic per-attempt
+`bwrap`/`oci` isolation. See
+[Docker Sandboxes and Muxlio workers](execution-security.md#docker-sandboxes-sbx-and-muxlio-workers)
+and the [Docker Sandbox walkthrough](../docker-sandbox.md) for workspace
+registration, worker tokens, agent mixins, and a shared Git checkout.
 
 ## Admission budgets and fairness
 

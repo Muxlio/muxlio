@@ -1,6 +1,12 @@
 # CLI, SDK, and configuration reference
 
-Muxlio lets you build multi-step workflows across AI agents — Antigravity, Claude, Codex, Cursor, Kiro — and command tools, then run them durably on a coordinator that survives client disconnects. Submit a plan tonight and check the results in the morning.
+--8<-- "snippets/reference-context.md"
+
+Muxlio runs multi-step work across AI agents — Antigravity, Claude, Codex,
+Cursor, Kiro — and command tools. You compile workflows to immutable **plans**;
+each **run** executes on the coordinator and survives client disconnects. Default
+install ports and MCP setup: [Setup defaults](../service.md#setup-defaults).
+Submit a plan tonight and check the results in the morning.
 
 Workflows are defined in TypeScript, compiled to a canonical **Plan IR** JSON document, and interpreted by a Go coordinator. No JavaScript reaches the runtime: the IR is the contract between authoring and execution. Plans are immutable and content-addressed (SHA-256 digest), so a run always executes the exact bytes that were submitted.
 
@@ -334,7 +340,7 @@ muxlio service restart
 
 `muxlio run plan.ts input.json --server http://127.0.0.1:7600` compiles the workflow locally, submits it remotely, and blocks until a terminal state (like submit + poll). Add `--workspace-id <id>` to bind the run to a coordinator workspace identity without editing the workflow or plan file (same field as `muxlio submit --workspace-id`). Closing the client or SSH session does not cancel the coordinator's work. Pause takes effect at the next operation boundary; cancel stops local adapter processes when possible.
 
-For remote access, forward over SSH instead of exposing the API (see [muxlio-docs/service.md](service-reference.md#submit-tonight-check-in-the-morning) for details):
+For remote access, forward over SSH instead of exposing the API (see [service reference](service-reference.md#submit-tonight-check-in-the-morning) for details):
 
 ```sh
 ssh -N -L 17600:127.0.0.1:7600 mac-mini
@@ -462,8 +468,10 @@ The `muxlio-mcp` binary exposes coordinator operations as MCP tools over stdio o
 }
 ```
 
-`muxlio init` registers MCP HTTP at `127.0.0.1:7602` and prepares persistent
-authentication tokens. The service starts and stops MCP with the coordinator.
+Install defaults and client registration are in [Setup defaults](../service.md#setup-defaults).
+`muxlio init` prepares `mcp.listen`, tokens, and—for clients other than
+`antigravity`—stdio `muxlio-mcp` in the authoring client's config. `muxlio
+service start` runs coordinator, worker, bundled UI, and MCP HTTP together.
 For direct network access, run `muxlio init --mcp-listen 0.0.0.0:7602` and
 `muxlio service restart` on the server, then connect the client to
 `http://<server>:7602/mcp`. HTTP requests
@@ -471,7 +479,23 @@ require the listener's bearer token (the coordinator token by default); optional
 TLS is available with `mcp.tlsCert` and `mcp.tlsKey`. No SSH or local MCP process is
 required for this connection. See the [network setup](mcp-reference.md#network-transport-streamable-http).
 
-Available tools include `build`, `test`, `check_plan`, `start_run`, `list_runs`, `get_run`, `get_graph`, `get_events`, `get_activations`, `get_attempts`, `get_logs`, `get_snapshots`, `register_workflow_version`, `list_workflow_versions`, `get_input_requests`, `respond_input_request`, `read_artifact`, `get_artifact_metadata`, `cancel_run`, `pause_run`, `resume_run`, `retry_run`, `send_signal`, `get_workers`, and `server_health`. Saved coordinator profiles and bearer authentication are supported; for example, use `muxlio-mcp --server coordinator`. See [muxlio-docs/mcp.md](../mcp.md) for the full reference.
+The authoritative tool catalog is [MCP tool reference](mcp-reference.md).
+Registered tools include authoring (`build`, `test`, `check_plan`,
+`workflow_template`, `list_workflow_templates`, `get_workflow_template`,
+`instantiate_workflow_template`, `list_canvas_components`, `get_canvas_component`,
+`validate_canvas`), run control (`preflight_run`, `start_run`, `retry_run`,
+`cancel_run`, `pause_run`, `resume_run`, `send_signal`), inspection
+(`get_run_summary`, `get_run`, `list_runs`, `get_graph`, `get_events`,
+`get_activations`, `get_attempts`, `get_logs`, `get_snapshots`, `read_artifact`,
+`get_artifact_metadata`), collections (`get_run_collection`,
+`append_run_collection_item`, `close_run_collection`), durable input
+(`get_input_requests`, `respond_input_request`), workflow catalog
+(`register_workflow_version`, `list_workflow_versions`, `create_workflow`,
+`get_workflow`, `update_workflow`), and discovery (`list_workspaces`,
+`list_executors`, `explain_capability`, `get_workers`, `server_health`). Saved
+coordinator profiles and bearer authentication are supported; for example, use
+`muxlio-mcp --server coordinator`. See [MCP integration](../mcp.md) for setup and
+usage.
 
 ## Testing with fakes
 
@@ -625,8 +649,10 @@ cannot reveal another run through comparison.
 ## CLI reference
 
 ```text
-muxlio init [--data-dir dir] [--workspace dir] [--agent name] [--starter]
-                                                    Initialize runtime and optionally install agent skills/sample workflow
+muxlio init [--client name] [--scope project|user] [--data-dir dir] [--workspace dir] [--starter] [--allow-command]
+                                                    Initialize Muxlio and register authoring-client MCP (--agent is an alias)
+muxlio integrations add|list|doctor|repair|remove   Register and verify authoring-client MCP setup (--client NAME --scope project|user)
+muxlio template echo|task                          Print a built-in offline JSON workflow template
 muxlio build <workflow.ts|plan.json> [--out file]    Compile workflow to canonical Plan IR
 muxlio check <workflow.ts|plan.json>                Validate a workflow or plan
 muxlio test <workflow.ts|plan.json> --input in.json  Test run with fake executor
@@ -637,29 +663,33 @@ muxlio preflight <workflow.ts|plan.json> [input.json] --server <profile|URL> --w
 muxlio graph <workflow.ts|plan.json|run-id>         Display DAG visualization (ascii, json, mermaid)
 muxlio inspect <workflow.ts|plan.json|run-id>       Print plan structure or run status
 muxlio events <run-id> [--since seq] [--limit N]    Print run execution events
-muxlio snapshots <run-id> [--current]               Inspect intermediate artifact snapshots
-muxlio gc [--apply TOKEN]                         Preview or apply offline retention cleanup
+muxlio snapshots <run-id> [--current] [--attempt ID] Inspect intermediate artifact snapshots
+muxlio gc [--apply TOKEN]                          Preview or apply offline retention cleanup
 muxlio workspace add <id> <absolute-path> --worker-id <id> [--digest sha256:...] [--alias <alias>...]
 muxlio workspace list [--json]                      List locally configured workspace bindings
 muxlio workspace list --server <profile|URL> [--json]  List the coordinator's workspace catalog
 muxlio workspace show <id-or-alias> [--json]        Show a locally configured binding
 muxlio workspace remove <id-or-alias>               Remove a binding from the local config
-muxlio workspace digest <directory>                 Hash prepared workspace contents
+muxlio workspace digest <directory>                 Hash prepared workspace contents for portable handoff
+muxlio canvas catalog|validate <file>               Inspect canvas component catalog or validate a canvas document
 muxlio artifacts <run-id>                           List artifacts generated by run
 muxlio signal <run-id> --name <sig> [--data file]   Deliver external signal to waiting run
-muxlio runs [--state state]                       List runs in the local runtime (optionally filtered by state)
+muxlio runs [--data-dir dir] [--state state]        List runs in runtime (optionally filtered by state)
 muxlio ui [--server URL] [--port port] [--open]     Launch or open the Observability UI
 muxlio env [--shell bash|zsh|fish]                  Display or export environment configuration
 muxlio doctor [--server URL]                        Run installation and environment health checks
 muxlio upgrade [--prefix dir]                       Upgrade Muxlio runtime from source repository
 muxlio server start|install                         Start or install the coordinator server
-muxlio worker start                                 Connect an outbound remote worker (auto-detects capabilities)
+muxlio worker start --workspace dir                 Connect an outbound remote worker (auto-detects capabilities)
+muxlio worker status [--adapters DIR] [--json]      Probe local executor readiness
 muxlio service start [--config path]                Start supervised coordinator, worker and UI (background)
 muxlio service stop [--config path]                 Stop the running service
 muxlio service restart [--config path]              Stop then start the service (start if not running)
 muxlio submit [--server URL] [--workspace-id id] plan.json input.json    Submit a durable run
 muxlio status [--server URL] [run-id]                Query remote run status
 muxlio pause|resume|cancel [--server URL] run-id      Control a remote run
+muxlio test-event --server URL --secret-file FILE [--idempotency-key KEY] trigger-id payload.json
+                                                    Send a signed webhook (creates a real run)
 muxlio version                                      Print version info
 ```
 

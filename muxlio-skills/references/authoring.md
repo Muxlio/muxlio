@@ -1,5 +1,7 @@
 # Authoring Muxlio workflows
 
+Human-oriented setup: [What Muxlio is](https://muxlio.github.io/muxlio/#what-is-muxlio), [Setup defaults](https://muxlio.github.io/muxlio/service/#setup-defaults).
+
 Muxlio executes Plan IR JSON. You can construct that plan directly with MCP or
 compile a TypeScript definition using the SDK. The coordinator interprets the
 plan; JavaScript runs at compile time only.

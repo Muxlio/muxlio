@@ -1,5 +1,10 @@
 # Durable execution contracts
 
+These rules define what the Muxlio **coordinator** guarantees for every **run**
+of an immutable **plan**. For vocabulary and install defaults, see [What Muxlio is](../index.md#what-is-muxlio)
+and [Setup defaults](../service.md#setup-defaults). For how plans reach workers,
+see [Architecture overview](overview.md) and [How it works](developer-reference.md#how-it-works).
+
 A workflow is a domain-neutral graph. Runs, activations, attempts, waits, and
 remote operations describe execution, independent of an executor or provider.
 Scheduling extensions must preserve these identities and recovery rules.

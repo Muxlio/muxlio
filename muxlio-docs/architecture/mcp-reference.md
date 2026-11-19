@@ -1,13 +1,17 @@
 # MCP protocol and tool reference
 
+--8<-- "snippets/reference-context.md"
+
 The `muxlio-mcp` binary exposes Muxlio operations as tools over the
 [Model Context Protocol](https://spec.modelcontextprotocol.io/) (MCP).
 Any MCP-capable assistant — Codex, Cursor, Claude Code, or another — can call
 these tools to build, check, run, and inspect Muxlio workflows without leaving
 its chat interface.
 
-The MCP server is an adapter to the existing HTTP API. It does not execute
-runs itself; the Muxlio coordinator must be running separately.
+The MCP server is an adapter to the coordinator HTTP API. It does not execute
+steps itself. Stdio `muxlio-mcp` requires a reachable coordinator; Streamable HTTP
+MCP is served by the same process as `muxlio service start` when `mcp` is
+configured (see [Setup defaults](../service.md#setup-defaults)).
 
 Offline authoring tools include `list_workflow_templates` (`{}`),
 `get_workflow_template` (`{name, version}`), and `instantiate_workflow_template`
@@ -25,11 +29,11 @@ to save a compiled version for reuse or to pin a schedule or trigger.
 
 1. Build or install Muxlio. After `bash scripts/build-release.sh PREFIX`, the
    binary lives at `PREFIX/bin/muxlio-mcp`.
-2. Have a reachable coordinator and any credentials it requires. It can run on
-   another machine; no local coordinator or worker is required on the MCP host.
-   See the [service guide](../service.md) to deploy one if needed.
-3. Configure its URL or saved profile, then call `server_health` and `get_workers`
-   to check connectivity and execution capacity.
+2. Run through [Start Muxlio](../service.md) and [Setup defaults](../service.md#setup-defaults)
+   (`init`, `service start`, client registration).
+3. Have a reachable coordinator and credentials. The MCP host can be remote from
+   workers; stdio `muxlio-mcp` only needs coordinator HTTP access.
+4. Call `server_health` and `get_workers` to check connectivity and capacity.
 
 ---
 
@@ -365,6 +369,25 @@ result, preserving the committed run ID without encouraging duplicate work.
 | `close_run_collection` | `runId`, `collection`: close the collection and allow accepted items to finish. |
 | `get_input_requests` | `runId`: list durable requests with identities, schemas, permissions, expiration, and state. |
 | `respond_input_request` | `runId`, `requestId`, `idempotencyKey`, and `response`: submit a schema-validated response to one request; reuse the key when retrying the same response. |
+
+### Template catalog, starter plans, named workflows, and canvas
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `workflow_template` | `{name}` with `echo` or `task`: return embedded starter Plan IR without a checkout. |
+| `list_workflow_templates` | `{}`: discover catalog names, versions, and JSON Schemas. |
+| `get_workflow_template` | `{name, version}`: inspect one catalog entry. |
+| `instantiate_workflow_template` | `{name, version, parameters}`: compile to ordinary Plan IR with `digest`; no run or registration. |
+| `create_workflow` | `{workflowId, plan}`: publish the first version of a named workflow (operator credential). |
+| `get_workflow` | `{workflowId}`: current revision, digest, and version history. |
+| `update_workflow` | `{workflowId, expectedCurrentRevision, plan? \| planDigest?}`: publish a new version or select a prior digest. |
+| `list_canvas_components` | `{}`: list approved Canvas component types. |
+| `get_canvas_component` | `{type}`: schema, events, children, and example for one component. |
+| `validate_canvas` | `{content? \| path?}`: validate a Canvas v1 document locally. |
+
+Named workflow MCP tools mirror `POST/GET /v1/workflows` on the coordinator. The
+[MCP integration guide](../mcp.md#publish-a-named-workflow) walks through
+`create_workflow`, revision guards, and starting runs from `currentDigest`.
 
 ### `get_attempts`
 

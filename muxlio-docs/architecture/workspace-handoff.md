@@ -1,5 +1,7 @@
 # Prepared workspace handoff
 
+--8<-- "snippets/reference-context.md"
+
 A client can launch a run from a laptop against a prepared workspace on another
 machine. Workspace IDs authorize a directory and its owning worker; an optional
 `workspaceDigest` in the plan pins its contents independently of host paths.
@@ -55,6 +57,12 @@ and non-UTF-8 paths or symlink targets are rejected. File contents may contain
 arbitrary bytes. Git commit IDs, repository origins, and Git metadata are not part
 of this content identity: different commits with identical prepared contents have
 the same digest. Changes to tracked, untracked, or ignored files are included.
+
+Digest pins prove **content**, not that the owning worker is isolated from your
+laptop or the public internet. Trust the worker host, network path, and tokens
+you use to reach the coordinator; see
+[Execution security](execution-security.md) and, for an `sbx` worker,
+[Docker Sandbox security](../docker-sandbox.md#security-and-trust-boundaries).
 
 Keep prepared inputs unchanged while runs use them. Snapshot mode gives each
 attempt independent writable files. `shared-write` can modify the bound directory,

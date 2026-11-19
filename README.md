@@ -5,6 +5,7 @@
 <h1 align="center">Muxlio</h1>
 
 <p align="center">Build a workflow. Let your agents run it.</p>
+<p align="center"><sub>Durable workflow coordinator for AI agents and command-line tools</sub></p>
 
 <p align="center">
   <a href="https://muxlio.github.io/muxlio/">Documentation</a> ·
@@ -13,13 +14,23 @@
   <a href="LICENSE">Apache-2.0</a>
 </p>
 
-Muxlio runs multi-step workflows across AI agents and command tools. You or your
-assistant define the steps, their inputs, and the checks they must pass. Muxlio
-executes the workflow, saves progress, and gives you a place to follow the work.
+Muxlio is a **durable workflow coordinator** for multi-step work that mixes AI
+agents (Claude, Codex, Cursor, Kiro, and others) with ordinary command-line
+tools. You or your assistant describe the steps, inputs, success checks, and
+outputs; Muxlio compiles that into an immutable **plan**, executes it on a
+long-running **coordinator**, and keeps **runs** observable after your chat
+disconnects.
 
-Use it for work that needs several steps, checks, or hand-offs. Your client can
-disconnect while the coordinator continues running. You can return to the run's
-status, logs, outputs, and any failure that needs attention.
+Use it when work needs several dependent steps, verification, retries, or
+hand-offs between agents and shell commands—not for one-off questions you can
+answer in the client. Return later to the same run for status, logs, artifacts,
+and anything that failed or paused.
+
+A **workflow** (often shipped as a **recipe** in this repository) is the authored
+logic; a **run** is one execution of that plan with your inputs. The
+[architecture overview](muxlio-docs/architecture/overview.md) and
+[developer reference](muxlio-docs/architecture/developer-reference.md#how-it-works)
+spell out coordinator, workers, adapters, and Plan IR in more detail.
 
 ## One example: implement a list of features
 
@@ -78,17 +89,37 @@ muxlio init --client kiro --scope project
 muxlio service start
 ```
 
-Choose `--client` for your authoring assistant. `init` allows all bundled
-executors by default, including agent tools, commands, workspace writes, and network access. Change
-`executors` in `~/.muxlio/config.json` to restrict permissions; repeated init
-preserves explicit policies and disabled executors. `init` prepares the workspace settings,
-credentials, agent instructions, and MCP settings. The service starts the
-coordinator, local worker, UI, and configured MCP listener together.
+Choose `--client` for your authoring assistant (`claude`, `codex`, `cursor`,
+`kiro`, or `antigravity` for instructions only). `init` allows all bundled
+executors by default, including agent tools, commands, workspace writes, and
+network access. For supported clients, it also registers stdio `muxlio-mcp` in
+that client's config. Change `capabilities` in `~/.muxlio/config.json` to limit
+which executors the worker advertises; use the `executors` map for per-executor
+policies. Repeated init preserves explicit settings and disabled executors.
+`init` prepares workspace settings and credentials; `service start` runs the
+coordinator, worker, bundled UI, and MCP HTTP listener. Default ports and MCP
+client rules: [Setup defaults](muxlio-docs/service.md#setup-defaults).
 
-[Connect your assistant through MCP](muxlio-docs/mcp.md), then ask it to build a
-workflow for your task. Describe the inputs, the steps to run, and the output you need.
-Have it validate the workflow and show you the plan before starting the run.
+After setup, verify stdio MCP with `muxlio integrations doctor` when the service
+guide applies; see the [MCP guide](muxlio-docs/mcp.md). Ask your assistant to
+build a workflow, validate it, and show you the plan before starting the run.
 Developers can also author workflows directly with the TypeScript SDK.
+
+### Author a workflow without a checkout
+
+Installed releases support offline JSON authoring: run
+`muxlio template echo > workflow.json`, then `muxlio check workflow.json`.
+The `echo` template needs no executor; `muxlio template task` shows a generic
+task with input and output bindings. Templates are embedded in the binaries
+and shipped in `share/muxlio/templates`. With MCP, use `workflow_template`,
+then `check_plan` and `start_run`. No Node packages or registry access are
+needed for JSON authoring, validation, fake testing, or submission.
+
+See [the installed authoring guide](muxlio-skills/references/authoring.md) for
+an empty-workspace example and submission instructions. Optional TypeScript/
+JavaScript compilation executes arbitrary code, requires
+project-local dependencies installed from
+your pinned lockfile, and never implicitly downloads packages.
 
 The installed service does not need Muxlio's source checkout. Workers need the
 files, authenticated agent CLIs, and tools required by your workflow.
@@ -97,7 +128,7 @@ are available if you prefer to build the runtime yourself.
 
 ## Follow the work
 
-Open **http://localhost:7600** or ask your assistant for run status. Inspect the
+Open **http://127.0.0.1:7600/** or ask your assistant for run status. Inspect the
 execution graph, attempts, live logs, and generated artifacts. Pause, resume, or
 retry when appropriate. Uncertain external effects require reconciliation before
 work can safely repeat.
@@ -136,19 +167,3 @@ for supported paths, Cursor version handling, and preservation of existing edits
 ## License
 
 [Apache License 2.0](LICENSE).
-
-### Author a workflow without a checkout
-
-Installed releases support offline JSON authoring: run
-`muxlio template echo > workflow.json`, then `muxlio check workflow.json`.
-The `echo` template needs no executor; `muxlio template task` shows a generic
-task with input and output bindings. Templates are embedded in the binaries
-and shipped in `share/muxlio/templates`. With MCP, use `workflow_template`,
-then `check_plan` and `start_run`. No Node packages or registry access are
-needed for JSON authoring, validation, fake testing, or submission.
-
-See [the installed authoring guide](muxlio-skills/references/authoring.md) for
-an empty-workspace example and submission instructions. Optional TypeScript/
-JavaScript compilation executes arbitrary code, requires
-project-local dependencies installed from
-your pinned lockfile, and never implicitly downloads packages.

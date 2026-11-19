@@ -1,5 +1,7 @@
 # Benchmarks
 
+--8<-- "snippets/root-context.md"
+
 Muxlio includes a reference suite for checking workflow execution and saving
 the raw results behind measurements. It is a tool you can run, not a published claim
 that Muxlio or one agent provider is faster than another.

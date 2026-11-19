@@ -1,5 +1,9 @@
 # UI development
 
+Shipped UI is served from the coordinator on `muxlio service start`. Port layout:
+[Setup defaults](../muxlio-docs/service.md#setup-defaults). This package is for
+developing that UI; see [Observability UI](../muxlio-docs/ui-operations.md).
+
 All authored UI code is TypeScript: browser views in `src/`, the HTTP server in
 `src/server.ts`, build tooling in `scripts/`, and tests in `test/`. Styles live in
 `src/styles/`. `index.html` is the static application shell.

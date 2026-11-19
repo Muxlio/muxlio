@@ -1,5 +1,7 @@
 # Operations API reference
 
+--8<-- "snippets/reference-context.md"
+
 The UI exposes coordinator state through the shared executor contract. Executor
 names are identifiers; capability and readiness reports determine what is shown.
 

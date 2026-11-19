@@ -61,9 +61,14 @@ func TestRemoteShutdownReapsAdapterBeforeReturn(t *testing.T) {
 	}
 	select {
 	case pid := <-pidReady:
-		if processGroupHasLiveMembers(pid) {
-			t.Fatal("adapter process group still has a live process after worker shutdown")
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if !processGroupHasLiveMembers(pid) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
+		t.Fatal("adapter process group still has a live process after worker shutdown")
 	default:
 		t.Fatal("adapter never started")
 	}

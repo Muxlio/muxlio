@@ -1,8 +1,11 @@
 # Follow your workflows
 
-Open **http://localhost:7600** after starting the Muxlio service. If Muxlio runs
-on another machine, use SSH port forwarding to its loopback address, or the
-HTTPS address of its authenticated browser gateway.
+--8<-- "snippets/root-context.md"
+
+Port layout: [Setup defaults](service.md#setup-defaults). After
+`muxlio service start`, open **`http://127.0.0.1:7600/`**. If Muxlio runs on
+another machine, use SSH port forwarding to its loopback address, or the HTTPS
+address of its authenticated browser gateway.
 
 ## Find a run
 

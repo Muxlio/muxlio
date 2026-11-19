@@ -1,5 +1,7 @@
 # Execution permissions and recovery
 
+Human-oriented setup: [What Muxlio is](https://muxlio.github.io/muxlio/#what-is-muxlio), [Setup defaults](https://muxlio.github.io/muxlio/service/#setup-defaults).
+
 A skill invocation does not grant execution permissions. Keep workflows within
 the user's authorized workspace, tools, and intended external effects.
 `muxlio init --allow-command` explicitly authorizes the command executor; use it

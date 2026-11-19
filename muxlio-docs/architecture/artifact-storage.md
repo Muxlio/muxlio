@@ -1,5 +1,7 @@
 # Artifact storage configuration
 
+--8<-- "snippets/reference-context.md"
+
 Remote artifact transfers are limited to 256 MiB per object. Uploads are staged
 and checked against their SHA-256 digest and declared nonzero size before sending;
 the coordinator's proxy also bounds request bodies and verifies content before
@@ -21,7 +23,8 @@ apply those headers to every request, including resumed downloads.
 
 The coordinator uses its local content-addressed artifact directory by default.
 To enable direct S3-compatible object transfers, set these environment variables
-before starting `muxlio server start`:
+before starting `muxlio service start` (or `muxlio server start` for
+coordinator-only installs):
 
 ```sh
 export MUXLIO_S3_ENDPOINT=https://objects.example.test
@@ -31,7 +34,7 @@ export MUXLIO_S3_SECRET_KEY=...
 export MUXLIO_S3_REGION=us-east-1 # optional; defaults to us-east-1
 export MUXLIO_S3_SESSION_TOKEN=... # optional
 export MUXLIO_S3_THRESHOLD_BYTES=5242880 # optional; defaults to 5 MiB
-muxlio server start
+muxlio service start
 ```
 
 Transfers at or above the threshold are written to S3 using path-style requests

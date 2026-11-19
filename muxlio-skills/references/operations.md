@@ -1,5 +1,7 @@
 # Operating Muxlio
 
+Human-oriented setup: [What Muxlio is](https://muxlio.github.io/muxlio/#what-is-muxlio), [Setup defaults](https://muxlio.github.io/muxlio/service/#setup-defaults).
+
 Follow the shared decision guide in [the skill](../SKILL.md) before delegating.
 With MCP, construct or instantiate Plan IR, call `check_plan`, and require a
 feasible `preflight_run` for the intended plan, input, and workspace. For a

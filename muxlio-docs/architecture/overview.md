@@ -1,5 +1,13 @@
 # Muxlio Architecture Overview
 
+--8<-- "snippets/reference-context.md"
+
+Muxlio executes immutable **Plan IR** on a Go **coordinator** (SQLite state).
+**Workers** run **adapters** (agent CLIs, A2A, `command`, and others). Each
+**run** pins its plan digest. UI and `muxlio-mcp` call the HTTP API; they do not
+execute steps. Install layout: [Setup defaults](../service.md#setup-defaults).
+Diagram: [How it works](developer-reference.md#how-it-works).
+
 Run timing has two definitions: **Elapsed time** is wall-clock time from run creation to completion (or the current time while active), including queueing, pauses, and waits. **Total execution time** is the sum of worker-reported executor durations across attempts with a confirmed measurement, including failures and retries, excluding coordinator dispatch queues, pauses, retry backoff, and external waits. Parallel worker durations add together and can exceed elapsed time. Active totals include the measured attempts completed so far. Attempts without a confirmed worker duration are omitted from the displayed sum; their time is not estimated from coordinator timestamps.
 
 The [durable execution contracts](durable-execution.md) define run, activation,
@@ -10,8 +18,10 @@ readings, provenance, aggregation, and run-budget enforcement.
 ## System boundary
 
 Muxlio executes immutable workflow plans against durable state. Workflow
-authors choose what work to do; adapters perform effects; the coordinator
-knows only execution; the independently run UI observes it through the API.
+authors choose what work to do; adapters perform effects on workers; the
+coordinator schedules execution and persists state. The bundled or standalone UI
+and `muxlio-mcp` observe and control runs through the HTTP API—they do not
+execute steps themselves.
 
 ## Components
 
@@ -23,17 +33,21 @@ The execution engine. Contains:
 - **internal/artifacts/** — content-addressed artifact store
 - **internal/coordinatorlog/** — structured lifecycle logging (redacts secrets)
 - **internal/api/** — HTTP coordinator API (Bearer-token auth on `/v1/*`)
-- **internal/sandbox/** — execution isolation backends and boundary checks
+- **internal/sandbox/** — per-attempt isolation backends (`bwrap`, `oci`,
+  `docker-vm`) and boundary checks; distinct from hosting a worker in
+  [Docker Sandboxes](../docker-sandbox.md) ([execution security](execution-security.md#docker-sandboxes-sbx-and-muxlio-workers))
 - **internal/schedule/**, **internal/subscription/**, and **internal/trigger/** — durable schedules, outbound lifecycle subscriptions, and inbound webhook triggers
 - **internal/telemetry/** and **internal/diagnostic/** — OpenTelemetry integration and structured diagnostics
 - **cmd/muxlio/** — CLI entry point and service supervisor
 - **cmd/muxlio-mcp/** — standalone MCP server
 
-The coordinator exposes only the HTTP API. The standalone **muxlio-ui** package
-serves the observability page and reverse-proxies `/v1/*` and `/healthz` to a
-configurable coordinator URL (`MUXLIO_API_URL`, default
-`http://127.0.0.1:7600`). Run it with `npm --prefix muxlio-ui start`; it listens
-on port 7601 by default.
+`muxlio service start` serves the coordinator API (`/v1/*`, `/healthz`) and the
+bundled observability UI on the same listen address (`addr`, default
+`http://127.0.0.1:7600`). The standalone **muxlio-ui** package and
+`muxlio ui` are an alternate front-end: they reverse-proxy `/v1/*` and `/healthz`
+to a configurable coordinator URL (`MUXLIO_API_URL`, default
+`http://127.0.0.1:7600`). Run the package with `npm --prefix muxlio-ui start`
+or the CLI helper; both listen on port **7601** by default.
 
 ### muxlio-sdk (TypeScript)
 The symbolic builder (Frontend B). Authors workflows declaratively and

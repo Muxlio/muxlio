@@ -1,5 +1,7 @@
 # Muxlio Canvas
 
+Human-oriented setup: [What Muxlio is](https://muxlio.github.io/muxlio/#what-is-muxlio), [Setup defaults](https://muxlio.github.io/muxlio/service/#setup-defaults).
+
 Canvas lets any executor publish an **immutable, declarative UI document** as an ordinary workflow artifact. The Muxlio web UI renders it using an allowlisted component registry. Agents control content, layout, data selection, and local interactions; they never provide HTML, CSS, JavaScript, or operational actions.
 
 ## When to use Canvas vs Markdown
