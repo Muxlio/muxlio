@@ -8,6 +8,10 @@ class Muxlio < Formula
   depends_on "node"
 
   def install
+    # Fresh HEAD clones have no node_modules; the UI build needs TypeScript and
+    # PDF bundlers from workspace devDependencies.
+    ENV["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] = "1"
+    system "npm", "ci", "--include=dev"
     system "bash", "scripts/build-release.sh", prefix.to_s
   end
 

@@ -23,6 +23,11 @@ for adapter in agent-a2a agent-acp agent-antigravity agent-claude agent-codex ag
 done
 # Retire the old bundled adapter when upgrading an existing runtime prefix.
 rm -f -- "$destination/libexec/muxlio/adapters/command-go-test"
+# Homebrew/fresh clones have no node_modules. The UI build imports TypeScript
+# and PDF bundlers from workspace devDependencies.
+if [ ! -e "$repo/node_modules/typescript" ] && [ ! -e "$repo/muxlio-ui/node_modules/typescript" ]; then
+  (cd "$repo" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-1}" npm ci --include=dev)
+fi
 (cd "$repo" && npm run build --workspace muxlio-ui)
 cp "$repo/muxlio-ui/index.html" "$repo/muxlio-ui/logo.png" "$repo/muxlio-ui/favicon.ico" \
   "$destination/share/muxlio/ui/"

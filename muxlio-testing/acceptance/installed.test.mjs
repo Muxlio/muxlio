@@ -178,7 +178,7 @@ for (const client of clients) for (const scope of client.projectOnly ? ['project
     }, 'worker-adapter: eventual cross-adapter completion', recoverRemote ? 60000 : 30000);
     assert.equal(result.output.result, 'installed-result');
     assert.equal(remoteSubmissions, 1, 'worker-adapter: recovery resubmitted the remote operation');
-    assert.match(remoteInput, /"source":"installed-result"/, 'worker-adapter: cross-adapter input was lost');
+    assert.match(remoteInput, /--- source ---[\r\n]+installed-result/, 'worker-adapter: cross-adapter input was lost');
     if (recoverRemote) assert.ok(remotePolls > 0, 'worker-adapter: recovery did not poll the remote task');
     assert.match(result.output.report.digest, /^sha256:[a-f0-9]{64}$/);
     assert.equal((await mcp.value('read_artifact', { digest: result.output.report.digest })).content, 'remote result', 'worker-adapter: A2A artifact contents');
