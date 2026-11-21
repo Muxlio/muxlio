@@ -74,6 +74,9 @@ regression("smoke regression", async () => {
       "Execution journal",
       "Click a node",
       'aria-label="Main navigation"',
+      'aria-label="Muxlio links"',
+      "https://muxlio.github.io/muxlio/",
+      "https://github.com/Muxlio/muxlio",
     ]) {
       assert.ok(html.includes(feature), `app should render ${feature}`);
     }
